@@ -450,7 +450,7 @@ int main() {
 
         // 1. Compile & Benchmark numlang
         let nl_exe = compile_numlang(nl_code, &test_dir, &slug);
-        let (nl_min, nl_avg, nl_code_out, nl_pass) = benchmark_exe(&nl_exe, expected_code, 3);
+        let (nl_min, nl_avg, nl_code_out, nl_pass) = benchmark_exe(&nl_exe, expected_code, 5);
         println!(
             "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
             name, "numlang", nl_min, nl_avg, if nl_pass { "PASS" } else { "FAIL" }
@@ -459,7 +459,7 @@ int main() {
 
         // 2. Compile & Benchmark Rust
         if let Some(rs_exe) = compile_rust(rs_code, &test_dir, &slug) {
-            let (rs_min, rs_avg, rs_code_out, rs_pass) = benchmark_exe(&rs_exe, expected_code, 3);
+            let (rs_min, rs_avg, rs_code_out, rs_pass) = benchmark_exe(&rs_exe, expected_code, 5);
             println!(
                 "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
                 "", "Rust -O", rs_min, rs_avg, if rs_pass { "PASS" } else { "FAIL" }
@@ -469,7 +469,7 @@ int main() {
 
         // 3. Compile & Benchmark C
         if let Some(c_exe) = compile_c(c_code, &test_dir, &slug) {
-            let (c_min, c_avg, c_code_out, c_pass) = benchmark_exe(&c_exe, expected_code, 3);
+            let (c_min, c_avg, c_code_out, c_pass) = benchmark_exe(&c_exe, expected_code, 5);
             println!(
                 "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
                 "", "C (/O2)", c_min, c_avg, if c_pass { "PASS" } else { "FAIL" }
