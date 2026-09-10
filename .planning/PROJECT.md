@@ -8,12 +8,14 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current State: v2.0 Benchmark Supremacy (Shipped)
+## Current Milestone: v3.0 Total Rust Decimation
 
-**Status:** Complete. Achieved verified performance supremacy over C (`cl.exe /O2`) and Rust (`rustc -O`) across core numerical benchmarks:
-- **Math Loop Accumulator (10M iters)**: numlang (**50.38ms**) outperforms Rust (**51.32ms**) and C (**57.40ms**).
-- **Hardware SIMD Vector Dot (10M iters)**: numlang (**70.63ms**) is **more than 2.15x faster** than C (**151.74ms**).
-- **Matrix-Vector Multiplication (1M iters)**: Direct parity with C and Rust.
+**Goal:** Decisively defeat Rust (`rustc -O`) across ALL benchmark workloads with statistically significant speed advantages.
+
+**Target features:**
+- **Recursive Call Unrolling & Inlining**: Eliminate 50%+ of function call frames in recursive workloads like `fib` through AST-level recursion unrolling and inline optimization.
+- **Scalar Replacement of Aggregates (SROA) & Register Promotion**: Promote small fixed arrays (`N <= 16`) to Cranelift SSA variables, completely eliminating stack memory loads and stores from tight numerical loops.
+- **Victory Verification**: Benchmark harness proving that `numlang` beats Rust across Recursive Fibonacci, Math Loop Accumulator, SIMD Vector Dot, and Matrix-Vector Multiplication.
 
 ## Requirements
 
@@ -32,16 +34,19 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] Native SIMD vector instructions and 8-way multi-accumulator FMA dot products (v2.0)
 - [x] Expanded benchmark suite proving measurable speed advantage over C and Rust (v2.0)
 
-### Next Milestone Goals (v3.0)
+### Active (v3.0)
 
-- [ ] **Multi-threaded Parallel Engine (PAR-01)**: Work-stealing runtime for multicore CPU parallelism across array maps and reductions.
-- [ ] **GPU Acceleration & Offloading (GPU-01)**: SPIR-V / PTX code emission for massive vector/tensor computations on discrete GPUs.
+- [ ] **REC-01**: Recursive call unrolling optimization pass expands self-recursive calls by depth 1-2, slashing function call overhead by 50%+.
+- [ ] **SROA-01**: Scalar Replacement of Aggregates (SROA) promotes small fixed array elements (`N <= 16`) into Cranelift SSA variables, eliminating stack memory round-trips.
+- [ ] **SROA-02**: Array element reads `arr[c]` and mutations `arr[c] = v` for promoted arrays lower directly to SSA register reads and updates.
+- [ ] **SROA-03**: Vector operations (`dot`, `vec_add`, `sum`) operating on promoted arrays execute directly in registers without memory loads.
+- [ ] **VICTORY-01**: Automated benchmark verification proves `numlang` achieves statistically significant speedup over `rustc -O` across all 4 workloads.
 
 ### Out of Scope
 
-- Exponential speedup over existing compiled languages across all arbitrary programs — Physical hardware limits (memory bandwidth, clock cycles, cache hierarchies) bound all software.
-- Garbage collected runtime — Excluded to guarantee predictable latency and zero-cost abstractions.
-- Dynamic typing and runtime interpretation — Excluded in favor of ahead-of-time (AOT) static optimization.
+- Arbitrary exponential speedup across non-parallelizable code — Physical CPU clock cycles, IPC limits, and cache bandwidth bound single-thread throughput.
+- Garbage collection runtime — Excluded to guarantee predictable latency and zero-cost abstractions.
+- Dynamic typing / reflection — Statically typed AOT compilation is chosen for maximum optimization capability.
 
 ## Context
 
