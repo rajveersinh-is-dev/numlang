@@ -27,6 +27,21 @@ pub enum CompilerDiagnostic {
         #[label("syntax error occurred here")]
         span: SourceSpan,
     },
+
+    #[error("Type error: {message}")]
+    #[diagnostic(
+        code(numlang::typecheck::type_error),
+        help("{help}")
+    )]
+    TypeError {
+        message: String,
+        help: String,
+        #[source_code]
+        src: NamedSource<String>,
+        #[label("{label}")]
+        span: SourceSpan,
+        label: String,
+    },
 }
 
 impl CompilerDiagnostic {
@@ -62,6 +77,75 @@ impl CompilerDiagnostic {
             },
         }
     }
+
+    pub fn from_type_error(err: crate::typecheck::TypeError, filename: &str, source: &str) -> Self {
+        let span = err.span();
+        let (message, label, help) = match &err {
+            crate::typecheck::TypeError::TypeMismatch { expected, found, .. } => (
+                format!("Type mismatch: expected `{}`, found `{}`", expected, found),
+                format!("expected `{}`, found `{}`", expected, found),
+                "numlang requires exact type matching without implicit conversions".to_string(),
+            ),
+            crate::typecheck::TypeError::UndeclaredVariable { name, .. } => (
+                format!("Undeclared variable `{}`", name),
+                "not found in this scope".to_string(),
+                "Ensure variable is declared with `let` before use".to_string(),
+            ),
+            crate::typecheck::TypeError::UndeclaredFunction { name, .. } => (
+                format!("Undeclared function `{}`", name),
+                "function not declared".to_string(),
+                "Define the function with `fn` before calling it".to_string(),
+            ),
+            crate::typecheck::TypeError::CannotMutateImmutable { name, .. } => (
+                format!("Cannot mutate immutable variable `{}`", name),
+                "cannot assign twice to immutable variable".to_string(),
+                "Consider declaring the variable as mutable: `let mut`".to_string(),
+            ),
+            crate::typecheck::TypeError::DuplicateDeclaration { name, .. } => (
+                format!("Identifier `{}` is already declared in this scope", name),
+                "duplicate definition".to_string(),
+                "Use a different name or remove redundant declaration".to_string(),
+            ),
+            crate::typecheck::TypeError::InvalidConditionType { found, .. } => (
+                format!("Condition must evaluate to `bool`, found `{}`", found),
+                format!("expected `bool`, found `{}`", found),
+                "Use a comparison or boolean expression in if/while conditions".to_string(),
+            ),
+            crate::typecheck::TypeError::InvalidBinaryOperands { op, left, right, .. } => (
+                format!("Cannot apply operator `{:?}` to `{}` and `{}`", op, left, right),
+                "mismatched operand types".to_string(),
+                "Binary operators require matching numeric or boolean operands".to_string(),
+            ),
+            crate::typecheck::TypeError::InvalidUnaryOperand { op, found, .. } => (
+                format!("Cannot apply unary operator `{:?}` to `{}`", op, found),
+                "invalid operand type".to_string(),
+                "Ensure operand type matches operator expectation".to_string(),
+            ),
+            crate::typecheck::TypeError::ArityMismatch { name, expected, found, .. } => (
+                format!("Function `{}` expected {} arguments, received {}", name, expected, found),
+                format!("expected {} arguments", expected),
+                "Ensure call site passes the correct number of arguments".to_string(),
+            ),
+            crate::typecheck::TypeError::UnknownType { name, .. } => (
+                format!("Unknown type `{}`", name),
+                "unrecognized type name".to_string(),
+                "Supported primitive types are: i32, i64, f32, f64, bool, void".to_string(),
+            ),
+            crate::typecheck::TypeError::InvalidReturn { expected, found, .. } => (
+                format!("Function return type mismatch: expected `{}`, found `{}`", expected, found),
+                format!("expected `{}`, returned `{}`", expected, found),
+                "Ensure returned value matches the function's declared return type".to_string(),
+            ),
+        };
+
+        CompilerDiagnostic::TypeError {
+            message,
+            help,
+            src: NamedSource::new(filename, source.to_string()),
+            span: span.into(),
+            label,
+        }
+    }
 }
 
 pub fn format_tokens(tokens: &[SpannedToken]) -> String {
@@ -81,3 +165,8 @@ pub fn format_tokens(tokens: &[SpannedToken]) -> String {
 pub fn format_ast(program: &Program) -> String {
     format!("{:#?}", program)
 }
+
+pub fn format_typed_ast(program: &crate::typecheck::TypedProgram) -> String {
+    format!("{:#?}", program)
+}
+
