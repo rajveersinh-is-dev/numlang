@@ -114,3 +114,42 @@ fn test_parse_function_and_statements() {
         _ => panic!("Expected if statement"),
     }
 }
+
+#[test]
+fn test_parse_mut_and_assignment() {
+    let src = r#"
+        fn mutate_counter() {
+            let mut count: i64 = 0;
+            count = count + 1;
+        }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let program = parse(&tokens).unwrap();
+    assert_eq!(program.functions.len(), 1);
+
+    let func = &program.functions[0];
+    assert_eq!(func.body.stmts.len(), 2);
+
+    match &func.body.stmts[0] {
+        Stmt::Let {
+            name,
+            is_mutable,
+            ty,
+            ..
+        } => {
+            assert_eq!(name, "count");
+            assert!(*is_mutable);
+            assert_eq!(ty.as_deref(), Some("i64"));
+        }
+        _ => panic!("Expected let mut statement"),
+    }
+
+    match &func.body.stmts[1] {
+        Stmt::Assign { name, .. } => {
+            assert_eq!(name, "count");
+        }
+        _ => panic!("Expected assign statement"),
+    }
+}
+
