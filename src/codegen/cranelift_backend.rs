@@ -34,6 +34,62 @@ fn type_to_clif(ty: Type) -> types::Type {
     }
 }
 
+fn compute_magic_s64(d: i64) -> (i64, u8, bool) {
+    let ad = d.unsigned_abs() as u128;
+    let t = (1u128 << 63) + (if d < 0 { 1 } else { 0 });
+    let anc = t - 1 - (t % ad);
+    let mut p = 63u32;
+    let mut q1 = (1u128 << p) / anc;
+    let mut r1 = (1u128 << p) % anc;
+    let mut q2 = (1u128 << p) / ad;
+    let mut r2 = (1u128 << p) % ad;
+    loop {
+        p += 1;
+        q1 *= 2;
+        r1 *= 2;
+        if r1 >= anc {
+            q1 += 1;
+            r1 -= anc;
+        }
+        q2 *= 2;
+        r2 *= 2;
+        if r2 >= ad {
+            q2 += 1;
+            r2 -= ad;
+        }
+        let delta = ad - r2;
+        if !(q1 < delta || (q1 == delta && r1 == 0)) {
+            break;
+        }
+    }
+    let m = q2 + 1;
+    let shift = (p - 64) as u8;
+    let add_indicator = m >= (1u128 << 63);
+    let m_signed = m as i64;
+    (m_signed, shift, add_indicator)
+}
+
+fn get_constant_int(expr: &TypedExpr) -> Option<i64> {
+    match expr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => Some(*val),
+        TypedExpr::Unary {
+            op: UnaryOp::Neg,
+            expr,
+            ..
+        } => match &**expr {
+            TypedExpr::Literal {
+                lit: TypedLiteral::Int(val, _),
+                ..
+            } => Some(-val),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub struct CraneliftCompiler {
     module: ObjectModule,
     func_ids: HashMap<String, FuncId>,
@@ -447,6 +503,161 @@ impl<'a> FunctionTranslationState<'a> {
 
         builder.switch_to_block(ok_block);
         builder.seal_block(ok_block);
+    }
+
+    fn emit_fast_signed_div(
+        &mut self,
+        l: Value,
+        r: Value,
+        d: i64,
+        operand_ty: &Type,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Value, CodegenError> {
+        if d == 0 {
+            return Ok(builder.ins().sdiv(l, r));
+        }
+        if d == 1 {
+            return Ok(l);
+        }
+        if d == -1 {
+            return Ok(builder.ins().ineg(l));
+        }
+
+        let is_i32 = *operand_ty == Type::I32;
+        let n = if is_i32 {
+            builder.ins().sextend(types::I64, l)
+        } else {
+            l
+        };
+
+        let ad = d.unsigned_abs();
+        let q64 = if ad.is_power_of_two() {
+            let k = ad.trailing_zeros();
+            let q_pos = if k == 1 {
+                let sign = builder.ins().ushr_imm_s(n, 63);
+                let biased = builder.ins().iadd(n, sign);
+                builder.ins().sshr_imm_s(biased, 1)
+            } else {
+                let sign = builder.ins().sshr_imm_s(n, 63);
+                let bias = builder.ins().ushr_imm_s(sign, (64 - k) as i64);
+                let biased = builder.ins().iadd(n, bias);
+                builder.ins().sshr_imm_s(biased, k as i64)
+            };
+            if d < 0 {
+                builder.ins().ineg(q_pos)
+            } else {
+                q_pos
+            }
+        } else {
+            let (m, shift, add_ind) = compute_magic_s64(d.abs());
+            let m_val = builder.ins().iconst(types::I64, m);
+            let mut hi = builder.ins().smulhi(n, m_val);
+            if add_ind {
+                hi = builder.ins().iadd(hi, n);
+            }
+            let shifted = if shift > 0 {
+                builder.ins().sshr_imm_s(hi, shift as i64)
+            } else {
+                hi
+            };
+            let sign = builder.ins().ushr_imm_s(n, 63);
+            let q_pos = builder.ins().iadd(shifted, sign);
+            if d < 0 {
+                builder.ins().ineg(q_pos)
+            } else {
+                q_pos
+            }
+        };
+
+        if is_i32 {
+            Ok(builder.ins().ireduce(types::I32, q64))
+        } else {
+            Ok(q64)
+        }
+    }
+
+    fn emit_fast_signed_rem(
+        &mut self,
+        l: Value,
+        r: Value,
+        d: i64,
+        operand_ty: &Type,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Value, CodegenError> {
+        if d == 0 {
+            return Ok(builder.ins().srem(l, r));
+        }
+        if d == 1 || d == -1 {
+            let clif_ty = type_to_clif(operand_ty.clone());
+            return Ok(builder.ins().iconst(clif_ty, 0));
+        }
+
+        let is_i32 = *operand_ty == Type::I32;
+        let n = if is_i32 {
+            builder.ins().sextend(types::I64, l)
+        } else {
+            l
+        };
+
+        let ad = d.unsigned_abs();
+        let q64 = if ad.is_power_of_two() {
+            let k = ad.trailing_zeros();
+            let q_pos = if k == 1 {
+                let sign = builder.ins().ushr_imm_s(n, 63);
+                let biased = builder.ins().iadd(n, sign);
+                builder.ins().sshr_imm_s(biased, 1)
+            } else {
+                let sign = builder.ins().sshr_imm_s(n, 63);
+                let bias = builder.ins().ushr_imm_s(sign, (64 - k) as i64);
+                let biased = builder.ins().iadd(n, bias);
+                builder.ins().sshr_imm_s(biased, k as i64)
+            };
+            if d < 0 {
+                builder.ins().ineg(q_pos)
+            } else {
+                q_pos
+            }
+        } else {
+            let (m, shift, add_ind) = compute_magic_s64(d.abs());
+            let m_val = builder.ins().iconst(types::I64, m);
+            let mut hi = builder.ins().smulhi(n, m_val);
+            if add_ind {
+                hi = builder.ins().iadd(hi, n);
+            }
+            let shifted = if shift > 0 {
+                builder.ins().sshr_imm_s(hi, shift as i64)
+            } else {
+                hi
+            };
+            let sign = builder.ins().ushr_imm_s(n, 63);
+            let q_pos = builder.ins().iadd(shifted, sign);
+            if d < 0 {
+                builder.ins().ineg(q_pos)
+            } else {
+                q_pos
+            }
+        };
+
+        // rem = n - q * d
+        let q_times_d = if ad.is_power_of_two() {
+            let k = ad.trailing_zeros();
+            let shifted = builder.ins().ishl_imm_s(q64, k as i64);
+            if d < 0 {
+                builder.ins().ineg(shifted)
+            } else {
+                shifted
+            }
+        } else {
+            let d_val = builder.ins().iconst(types::I64, d);
+            builder.ins().imul(q64, d_val)
+        };
+        let rem64 = builder.ins().isub(n, q_times_d);
+
+        if is_i32 {
+            Ok(builder.ins().ireduce(types::I32, rem64))
+        } else {
+            Ok(rem64)
+        }
     }
 
     fn resolve_array(
@@ -1163,13 +1374,19 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Div => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fdiv(l, r))
+                        } else if let Some(d) = get_constant_int(right) {
+                            self.emit_fast_signed_div(l, r, d, &operand_ty, builder)
                         } else {
                             Ok(builder.ins().sdiv(l, r))
                         }
                     }
                     BinaryOp::Mod => {
                         if operand_ty.is_integer() {
-                            Ok(builder.ins().srem(l, r))
+                            if let Some(d) = get_constant_int(right) {
+                                self.emit_fast_signed_rem(l, r, d, &operand_ty, builder)
+                            } else {
+                                Ok(builder.ins().srem(l, r))
+                            }
                         } else {
                             Ok(l)
                         }
