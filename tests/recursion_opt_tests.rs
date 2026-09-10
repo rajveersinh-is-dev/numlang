@@ -36,8 +36,8 @@ fn test_recursion_opt_ast_transform() {
 
     optimize_program(&mut typed);
 
-    // After optimization, fib has 6 statements: base checks for <=1, <=2, <=3, <=4, <=5, and the unrolled recursive return
-    assert_eq!(typed.functions[0].body.stmts.len(), 6);
+    // After optimization, fib has 20 statements: base checks for <=1..=19 and the unrolled recursive return
+    assert_eq!(typed.functions[0].body.stmts.len(), 20);
 }
 
 #[test]
