@@ -48,6 +48,19 @@ pub struct Cli {
     )]
     pub emit_ir: bool,
 
+    #[arg(
+        long = "emit-obj",
+        help = "Emit compiled native COFF object file (.obj)"
+    )]
+    pub emit_obj: Option<PathBuf>,
+
+    #[arg(
+        short = 'o',
+        long = "output",
+        help = "Compile and link into native standalone Windows executable (.exe)"
+    )]
+    pub output: Option<PathBuf>,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -123,6 +136,33 @@ fn main() -> Result<()> {
 
     if cli.emit_ir {
         print!("{}", numlang::ir::format_ir(&ir_program));
+        return Ok(());
+    }
+
+    if let Some(obj_path) = &cli.emit_obj {
+        let obj_bytes = numlang::codegen::compile_to_obj(&typed_program)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+        fs::write(obj_path, obj_bytes)
+            .into_diagnostic()
+            .map_err(|e| miette::miette!("Failed to write object file: {}", e))?;
+        println!("numlang: emitted object file: {}", obj_path.display());
+        return Ok(());
+    }
+
+    if let Some(out_exe) = &cli.output {
+        let obj_bytes = numlang::codegen::compile_to_obj(&typed_program)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+        let temp_dir = std::env::temp_dir();
+        let obj_file = temp_dir.join(format!("numlang_{}.obj", std::process::id()));
+        fs::write(&obj_file, obj_bytes)
+            .into_diagnostic()
+            .map_err(|e| miette::miette!("Failed to write temporary object file: {}", e))?;
+
+        numlang::codegen::link_executable(&obj_file, out_exe)
+            .map_err(|e| miette::miette!("Linker error: {}", e))?;
+
+        let _ = fs::remove_file(&obj_file);
+        println!("numlang: generated executable: {}", out_exe.display());
         return Ok(());
     }
 
