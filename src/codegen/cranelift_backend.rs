@@ -259,13 +259,48 @@ impl CraneliftCompiler {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Storage {
     Scalar(Variable),
     Array {
         slot: StackSlot,
         len: usize,
     },
+    PromotedArray {
+        vars: Vec<Variable>,
+        len: usize,
+        elem_ty: Type,
+    },
+}
+
+#[derive(Clone)]
+enum ResolvedArray {
+    Promoted {
+        vars: Vec<Variable>,
+        len: usize,
+        elem_ty: Type,
+    },
+    Slot {
+        slot: StackSlot,
+        len: usize,
+        elem_ty: Type,
+    },
+}
+
+impl ResolvedArray {
+    fn len(&self) -> usize {
+        match self {
+            ResolvedArray::Promoted { len, .. } => *len,
+            ResolvedArray::Slot { len, .. } => *len,
+        }
+    }
+
+    fn elem_ty(&self) -> Type {
+        match self {
+            ResolvedArray::Promoted { elem_ty, .. } => elem_ty.clone(),
+            ResolvedArray::Slot { elem_ty, .. } => elem_ty.clone(),
+        }
+    }
 }
 
 struct FunctionTranslationState<'a> {
@@ -414,39 +449,111 @@ impl<'a> FunctionTranslationState<'a> {
         builder.seal_block(ok_block);
     }
 
-    fn resolve_array_arg(
+    fn resolve_array(
         &mut self,
         arg: &TypedExpr,
         builder: &mut FunctionBuilder,
-    ) -> Result<(StackSlot, usize, Type), CodegenError> {
+    ) -> Result<ResolvedArray, CodegenError> {
         match arg {
             TypedExpr::Ident { name, ty, .. } => {
-                if let Some(Storage::Array { slot, len }) = self.variables.get(name) {
-                    let elem = ty.element_type().unwrap().clone();
-                    Ok((*slot, *len, elem))
+                if let Some(storage) = self.variables.get(name).cloned() {
+                    match storage {
+                        Storage::PromotedArray { vars, len, elem_ty } => {
+                            Ok(ResolvedArray::Promoted { vars, len, elem_ty })
+                        }
+                        Storage::Array { slot, len } => {
+                            let elem_ty = ty.element_type().unwrap().clone();
+                            Ok(ResolvedArray::Slot { slot, len, elem_ty })
+                        }
+                        _ => panic!("Argument '{}' is not an array variable", name),
+                    }
                 } else {
-                    panic!("Argument is not an array variable");
+                    panic!("Variable '{}' not found", name);
                 }
             }
             TypedExpr::ArrayLiteral { elements, ty, .. } => {
                 let elem = ty.element_type().unwrap().clone();
-                let elem_size = elem.size_bytes() as u32;
                 let len = elements.len();
-                let total_bytes = (elem_size * (len as u32)).max(1);
-                let slot_data =
-                    StackSlotData::new(StackSlotKind::ExplicitSlot, total_bytes, elem_size.min(8) as u8);
-                let slot = builder.create_sized_stack_slot(slot_data);
+                if len <= 16 {
+                    let clif_ty = type_to_clif(elem.clone());
+                    let mut vars = Vec::with_capacity(len);
+                    for el in elements {
+                        let var = builder.declare_var(clif_ty);
+                        let val = self.translate_expr(el, builder)?;
+                        builder.def_var(var, val);
+                        vars.push(var);
+                    }
+                    Ok(ResolvedArray::Promoted {
+                        vars,
+                        len,
+                        elem_ty: elem,
+                    })
+                } else {
+                    let elem_size = elem.size_bytes() as u32;
+                    let total_bytes = (elem_size * (len as u32)).max(1);
+                    let slot_data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        total_bytes,
+                        elem_size.min(8) as u8,
+                    );
+                    let slot = builder.create_sized_stack_slot(slot_data);
 
-                for (i, el) in elements.iter().enumerate() {
-                    let el_val = self.translate_expr(el, builder)?;
-                    let offset = (i as i32) * (elem_size as i32);
-                    let addr = builder.ins().stack_addr(types::I64, slot, offset);
-                    builder.ins().store(MemFlagsData::trusted(), el_val, addr, 0);
+                    for (i, el) in elements.iter().enumerate() {
+                        let el_val = self.translate_expr(el, builder)?;
+                        let offset = (i as i32) * (elem_size as i32);
+                        let addr = builder.ins().stack_addr(types::I64, slot, offset);
+                        builder.ins().store(MemFlagsData::trusted(), el_val, addr, 0);
+                    }
+                    Ok(ResolvedArray::Slot {
+                        slot,
+                        len,
+                        elem_ty: elem,
+                    })
                 }
-                Ok((slot, len, elem))
             }
             _ => panic!("Expected array variable or literal"),
         }
+    }
+
+    fn get_array_element(
+        &mut self,
+        arr: &ResolvedArray,
+        idx: usize,
+        builder: &mut FunctionBuilder,
+    ) -> Value {
+        match arr {
+            ResolvedArray::Promoted { vars, .. } => builder.use_var(vars[idx]),
+            ResolvedArray::Slot { slot, elem_ty, .. } => {
+                let elem_size = elem_ty.size_bytes() as i32;
+                let clif_ty = type_to_clif(elem_ty.clone());
+                let offset = (idx as i32) * elem_size;
+                let addr = builder.ins().stack_addr(types::I64, *slot, offset);
+                builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0)
+            }
+        }
+    }
+
+    fn translate_vec_add_into_vars(
+        &mut self,
+        args: &[TypedExpr],
+        dst_vars: &[Variable],
+        elem_ty: &Type,
+        len: usize,
+        builder: &mut FunctionBuilder,
+    ) -> Result<(), CodegenError> {
+        let arr_a = self.resolve_array(&args[0], builder)?;
+        let arr_b = self.resolve_array(&args[1], builder)?;
+        for i in 0..len {
+            let val_a = self.get_array_element(&arr_a, i, builder);
+            let val_b = self.get_array_element(&arr_b, i, builder);
+            let sum = if elem_ty.is_float() {
+                builder.ins().fadd(val_a, val_b)
+            } else {
+                builder.ins().iadd(val_a, val_b)
+            };
+            builder.def_var(dst_vars[i], sum);
+        }
+        Ok(())
     }
 
     fn translate_vec_add_into_slot(
@@ -457,68 +564,21 @@ impl<'a> FunctionTranslationState<'a> {
         len: usize,
         builder: &mut FunctionBuilder,
     ) -> Result<(), CodegenError> {
-        let (slot_a, _, _) = self.resolve_array_arg(&args[0], builder)?;
-        let (slot_b, _, _) = self.resolve_array_arg(&args[1], builder)?;
+        let arr_a = self.resolve_array(&args[0], builder)?;
+        let arr_b = self.resolve_array(&args[1], builder)?;
         let elem_size = elem_ty.size_bytes() as i32;
-        let clif_ty = type_to_clif(elem_ty.clone());
 
-        let mut i = 0;
-        while i + 8 <= len {
-            for k in 0..8 {
-                let offset = ((i + k) as i32) * elem_size;
-                let addr_a = builder.ins().stack_addr(types::I64, slot_a, offset);
-                let val_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_a, 0);
-                let addr_b = builder.ins().stack_addr(types::I64, slot_b, offset);
-                let val_b = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_b, 0);
-
-                let sum = if elem_ty.is_float() {
-                    builder.ins().fadd(val_a, val_b)
-                } else {
-                    builder.ins().iadd(val_a, val_b)
-                };
-
-                let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
-            }
-            i += 8;
-        }
-
-        while i + 4 <= len {
-            for k in 0..4 {
-                let offset = ((i + k) as i32) * elem_size;
-                let addr_a = builder.ins().stack_addr(types::I64, slot_a, offset);
-                let val_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_a, 0);
-                let addr_b = builder.ins().stack_addr(types::I64, slot_b, offset);
-                let val_b = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_b, 0);
-
-                let sum = if elem_ty.is_float() {
-                    builder.ins().fadd(val_a, val_b)
-                } else {
-                    builder.ins().iadd(val_a, val_b)
-                };
-
-                let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
-            }
-            i += 4;
-        }
-
-        while i < len {
+        for i in 0..len {
             let offset = (i as i32) * elem_size;
-            let addr_a = builder.ins().stack_addr(types::I64, slot_a, offset);
-            let val_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_a, 0);
-            let addr_b = builder.ins().stack_addr(types::I64, slot_b, offset);
-            let val_b = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_b, 0);
-
+            let val_a = self.get_array_element(&arr_a, i, builder);
+            let val_b = self.get_array_element(&arr_b, i, builder);
             let sum = if elem_ty.is_float() {
                 builder.ins().fadd(val_a, val_b)
             } else {
                 builder.ins().iadd(val_a, val_b)
             };
-
             let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
             builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
-            i += 1;
         }
         Ok(())
     }
@@ -533,6 +593,68 @@ impl<'a> FunctionTranslationState<'a> {
                 name, ty, value, ..
             } => {
                 if let Type::Array(elem, len) = ty {
+                    if *len <= 16 {
+                        let clif_ty = type_to_clif((**elem).clone());
+                        let mut vars = Vec::with_capacity(*len);
+                        for _ in 0..*len {
+                            vars.push(builder.declare_var(clif_ty));
+                        }
+
+                        match value {
+                            TypedExpr::ArrayLiteral { elements, .. } => {
+                                for (i, el) in elements.iter().enumerate() {
+                                    let el_val = self.translate_expr(el, builder)?;
+                                    builder.def_var(vars[i], el_val);
+                                }
+                            }
+                            TypedExpr::Ident { name: src_name, .. } => {
+                                if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                    match src_storage {
+                                        Storage::PromotedArray { vars: src_vars, .. } => {
+                                            for i in 0..*len {
+                                                let val = builder.use_var(src_vars[i]);
+                                                builder.def_var(vars[i], val);
+                                            }
+                                        }
+                                        Storage::Array { slot: src_slot, .. } => {
+                                            let elem_size = elem.size_bytes() as i32;
+                                            for i in 0..*len {
+                                                let offset = (i as i32) * elem_size;
+                                                let addr = builder.ins().stack_addr(types::I64, src_slot, offset);
+                                                let val = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0);
+                                                builder.def_var(vars[i], val);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            TypedExpr::Call { callee, args, .. } if callee == "vec_add" => {
+                                self.translate_vec_add_into_vars(args, &vars, elem, *len, builder)?;
+                            }
+                            _ => {
+                                let zero = if elem.is_float() {
+                                    if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                                } else {
+                                    builder.ins().iconst(clif_ty, 0)
+                                };
+                                for v in &vars {
+                                    builder.def_var(*v, zero);
+                                }
+                            }
+                        }
+
+                        self.variables.insert(
+                            name.clone(),
+                            Storage::PromotedArray {
+                                vars,
+                                len: *len,
+                                elem_ty: (**elem).clone(),
+                            },
+                        );
+                        return Ok(false);
+                    }
+
                     let elem_size = elem.size_bytes() as u32;
                     let total_bytes = (elem_size * (*len as u32)).max(1);
                     let slot_data =
@@ -549,25 +671,37 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         }
                         TypedExpr::Ident { name: src_name, .. } => {
-                            if let Some(Storage::Array { slot: src_slot, .. }) =
-                                self.variables.get(src_name).copied()
-                            {
-                                for i in 0..*len {
-                                    let offset = (i as i32) * (elem_size as i32);
-                                    let clif_ty = type_to_clif((**elem).clone());
-                                    let src_addr =
-                                        builder.ins().stack_addr(types::I64, src_slot, offset);
-                                    let el_val = builder.ins().load(
-                                        clif_ty,
-                                        MemFlagsData::trusted(),
-                                        src_addr,
-                                        0,
-                                    );
-                                    let dst_addr =
-                                        builder.ins().stack_addr(types::I64, slot, offset);
-                                    builder
-                                        .ins()
-                                        .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                            if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                match src_storage {
+                                    Storage::PromotedArray { vars: src_vars, .. } => {
+                                        for i in 0..*len {
+                                            let offset = (i as i32) * (elem_size as i32);
+                                            let el_val = builder.use_var(src_vars[i]);
+                                            let dst_addr =
+                                                builder.ins().stack_addr(types::I64, slot, offset);
+                                            builder.ins().store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                                        }
+                                    }
+                                    Storage::Array { slot: src_slot, .. } => {
+                                        for i in 0..*len {
+                                            let offset = (i as i32) * (elem_size as i32);
+                                            let clif_ty = type_to_clif((**elem).clone());
+                                            let src_addr =
+                                                builder.ins().stack_addr(types::I64, src_slot, offset);
+                                            let el_val = builder.ins().load(
+                                                clif_ty,
+                                                MemFlagsData::trusted(),
+                                                src_addr,
+                                                0,
+                                            );
+                                            let dst_addr =
+                                                builder.ins().stack_addr(types::I64, slot, offset);
+                                            builder
+                                                .ins()
+                                                .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -591,38 +725,80 @@ impl<'a> FunctionTranslationState<'a> {
             }
 
             TypedStmt::Assign { name, value, .. } => {
-                let storage = *self
+                let storage = self
                     .variables
                     .get(name)
+                    .cloned()
                     .expect("Variable must exist for assignment");
                 match storage {
                     Storage::Scalar(var) => {
                         let val = self.translate_expr(value, builder)?;
                         builder.def_var(var, val);
                     }
+                    Storage::PromotedArray { vars, len, elem_ty } => {
+                        if let TypedExpr::Ident { name: src_name, .. } = value {
+                            if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                match src_storage {
+                                    Storage::PromotedArray { vars: src_vars, .. } => {
+                                        for i in 0..len {
+                                            let val = builder.use_var(src_vars[i]);
+                                            builder.def_var(vars[i], val);
+                                        }
+                                    }
+                                    Storage::Array { slot: src_slot, .. } => {
+                                        let elem_size = elem_ty.size_bytes() as i32;
+                                        let clif_ty = type_to_clif(elem_ty.clone());
+                                        for i in 0..len {
+                                            let offset = (i as i32) * elem_size;
+                                            let addr = builder.ins().stack_addr(types::I64, src_slot, offset);
+                                            let val = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0);
+                                            builder.def_var(vars[i], val);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        } else if let TypedExpr::Call { callee, args, .. } = value {
+                            if callee == "vec_add" {
+                                self.translate_vec_add_into_vars(args, &vars, &elem_ty, len, builder)?;
+                            }
+                        }
+                    }
                     Storage::Array { slot, len } => {
                         if let TypedExpr::Ident { name: src_name, ty, .. } = value {
                             let elem = ty.element_type().unwrap().clone();
                             let elem_size = elem.size_bytes() as i32;
-                            if let Some(Storage::Array { slot: src_slot, .. }) =
-                                self.variables.get(src_name).copied()
-                            {
-                                for i in 0..len {
-                                    let offset = (i as i32) * elem_size;
-                                    let clif_ty = type_to_clif(elem.clone());
-                                    let src_addr =
-                                        builder.ins().stack_addr(types::I64, src_slot, offset);
-                                    let el_val = builder.ins().load(
-                                        clif_ty,
-                                        MemFlagsData::trusted(),
-                                        src_addr,
-                                        0,
-                                    );
-                                    let dst_addr =
-                                        builder.ins().stack_addr(types::I64, slot, offset);
-                                    builder
-                                        .ins()
-                                        .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                            if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                match src_storage {
+                                    Storage::PromotedArray { vars: src_vars, .. } => {
+                                        for i in 0..len {
+                                            let offset = (i as i32) * elem_size;
+                                            let el_val = builder.use_var(src_vars[i]);
+                                            let dst_addr =
+                                                builder.ins().stack_addr(types::I64, slot, offset);
+                                            builder.ins().store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                                        }
+                                    }
+                                    Storage::Array { slot: src_slot, .. } => {
+                                        for i in 0..len {
+                                            let offset = (i as i32) * elem_size;
+                                            let clif_ty = type_to_clif(elem.clone());
+                                            let src_addr =
+                                                builder.ins().stack_addr(types::I64, src_slot, offset);
+                                            let el_val = builder.ins().load(
+                                                clif_ty,
+                                                MemFlagsData::trusted(),
+                                                src_addr,
+                                                0,
+                                            );
+                                            let dst_addr =
+                                                builder.ins().stack_addr(types::I64, slot, offset);
+                                            builder
+                                                .ins()
+                                                .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         } else if let TypedExpr::Call { callee, args, ty, .. } = value {
@@ -643,30 +819,66 @@ impl<'a> FunctionTranslationState<'a> {
                 is_safe,
                 ..
             } => {
-                let (slot, len) = match self.variables.get(target) {
-                    Some(Storage::Array { slot, len }) => (*slot, *len),
+                let storage = self
+                    .variables
+                    .get(target)
+                    .cloned()
+                    .expect("Target must be an array variable");
+                match storage {
+                    Storage::PromotedArray { vars, len, .. } => {
+                        if let TypedExpr::Literal {
+                            lit: TypedLiteral::Int(idx_const, _),
+                            ..
+                        } = index
+                        {
+                            let c = *idx_const as usize;
+                            if c < len {
+                                let val = self.translate_expr(value, builder)?;
+                                builder.def_var(vars[c], val);
+                                return Ok(false);
+                            }
+                        }
+
+                        let mut idx_val = self.translate_expr(index, builder)?;
+                        if index.ty() == Type::I32 {
+                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        }
+                        if !*is_safe {
+                            self.emit_bounds_check(idx_val, len, builder);
+                        }
+                        let new_val = self.translate_expr(value, builder)?;
+                        for k in 0..len {
+                            let k_val = builder.ins().iconst(types::I64, k as i64);
+                            let is_match = builder.ins().icmp(IntCC::Equal, idx_val, k_val);
+                            let old_val = builder.use_var(vars[k]);
+                            let updated = builder.ins().select(is_match, new_val, old_val);
+                            builder.def_var(vars[k], updated);
+                        }
+                        Ok(false)
+                    }
+                    Storage::Array { slot, len } => {
+                        let elem_ty = value.ty();
+                        let elem_size = elem_ty.size_bytes();
+
+                        let mut idx_val = self.translate_expr(index, builder)?;
+                        if index.ty() == Type::I32 {
+                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        }
+
+                        if !*is_safe {
+                            self.emit_bounds_check(idx_val, len, builder);
+                        }
+
+                        let val = self.translate_expr(value, builder)?;
+                        let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
+                        let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                        let elem_addr = builder.ins().iadd(base_addr, offset);
+
+                        builder.ins().store(MemFlagsData::trusted(), val, elem_addr, 0);
+                        Ok(false)
+                    }
                     _ => panic!("Target must be an array variable"),
-                };
-
-                let elem_ty = value.ty();
-                let elem_size = elem_ty.size_bytes();
-
-                let mut idx_val = self.translate_expr(index, builder)?;
-                if index.ty() == Type::I32 {
-                    idx_val = builder.ins().uextend(types::I64, idx_val);
                 }
-
-                if !*is_safe {
-                    self.emit_bounds_check(idx_val, len, builder);
-                }
-
-                let val = self.translate_expr(value, builder)?;
-                let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
-                let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
-                let elem_addr = builder.ins().iadd(base_addr, offset);
-
-                builder.ins().store(MemFlagsData::trusted(), val, elem_addr, 0);
-                Ok(false)
             }
 
             TypedStmt::Return(opt_expr, ..) => {
@@ -758,7 +970,7 @@ impl<'a> FunctionTranslationState<'a> {
                 };
 
                 if let Some((ref var_name, limit_expr, is_le)) = induction_info {
-                    if let Some(Storage::Scalar(var)) = self.variables.get(var_name).copied() {
+                    if let Some(Storage::Scalar(var)) = self.variables.get(var_name).cloned() {
                         if Self::is_simple_induction_body(body, var_name) {
                             let unroll_head_block = builder.create_block();
                             let unroll_body_block = builder.create_block();
@@ -880,14 +1092,18 @@ impl<'a> FunctionTranslationState<'a> {
             },
 
             TypedExpr::Ident { name, .. } => {
-                let storage = *self
+                let storage = self
                     .variables
                     .get(name)
+                    .cloned()
                     .expect("Variable must be found in scope");
                 match storage {
                     Storage::Scalar(var) => Ok(builder.use_var(var)),
                     Storage::Array { slot, .. } => {
                         Ok(builder.ins().stack_addr(types::I64, slot, 0))
+                    }
+                    Storage::PromotedArray { .. } => {
+                        Ok(builder.ins().iconst(types::I64, 0))
                     }
                 }
             }
@@ -1042,30 +1258,65 @@ impl<'a> FunctionTranslationState<'a> {
                 ty,
                 ..
             } => {
-                let (slot, len) = match target.as_ref() {
-                    TypedExpr::Ident { name, .. } => match self.variables.get(name) {
-                        Some(Storage::Array { slot, len }) => (*slot, *len),
-                        _ => panic!("Index target must be an array variable"),
-                    },
+                match target.as_ref() {
+                    TypedExpr::Ident { name, .. } => {
+                        let storage = self
+                            .variables
+                            .get(name)
+                            .cloned()
+                            .expect("Target array must exist");
+                        match storage {
+                            Storage::PromotedArray { vars, len, .. } => {
+                                if let TypedExpr::Literal {
+                                    lit: TypedLiteral::Int(idx_const, _),
+                                    ..
+                                } = index.as_ref()
+                                {
+                                    let c = *idx_const as usize;
+                                    if c < len {
+                                        return Ok(builder.use_var(vars[c]));
+                                    }
+                                }
+
+                                let mut idx_val = self.translate_expr(index, builder)?;
+                                if index.ty() == Type::I32 {
+                                    idx_val = builder.ins().uextend(types::I64, idx_val);
+                                }
+                                if !*is_safe {
+                                    self.emit_bounds_check(idx_val, len, builder);
+                                }
+                                let mut res = builder.use_var(vars[0]);
+                                for k in 1..len {
+                                    let k_val = builder.ins().iconst(types::I64, k as i64);
+                                    let is_match = builder.ins().icmp(IntCC::Equal, idx_val, k_val);
+                                    let val_k = builder.use_var(vars[k]);
+                                    res = builder.ins().select(is_match, val_k, res);
+                                }
+                                Ok(res)
+                            }
+                            Storage::Array { slot, len } => {
+                                let elem_size = ty.size_bytes();
+                                let mut idx_val = self.translate_expr(index, builder)?;
+                                if index.ty() == Type::I32 {
+                                    idx_val = builder.ins().uextend(types::I64, idx_val);
+                                }
+
+                                if !*is_safe {
+                                    self.emit_bounds_check(idx_val, len, builder);
+                                }
+
+                                let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
+                                let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                                let elem_addr = builder.ins().iadd(base_addr, offset);
+
+                                let clif_ty = type_to_clif(ty.clone());
+                                Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0))
+                            }
+                            _ => panic!("Index target must be an array variable"),
+                        }
+                    }
                     _ => panic!("Indexing supported on array variables"),
-                };
-
-                let elem_size = ty.size_bytes();
-                let mut idx_val = self.translate_expr(index, builder)?;
-                if index.ty() == Type::I32 {
-                    idx_val = builder.ins().uextend(types::I64, idx_val);
                 }
-
-                if !*is_safe {
-                    self.emit_bounds_check(idx_val, len, builder);
-                }
-
-                let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
-                let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
-                let elem_addr = builder.ins().iadd(base_addr, offset);
-
-                let clif_ty = type_to_clif(ty.clone());
-                Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0))
             }
 
             TypedExpr::Call { callee, args, .. } => {
@@ -1102,10 +1353,93 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                     "dot" => {
-                        let (slot_a, len_a, elem_ty) = self.resolve_array_arg(&args[0], builder)?;
-                        let (slot_b, _, _) = self.resolve_array_arg(&args[1], builder)?;
-                        let elem_size = elem_ty.size_bytes() as i32;
+                        let arr_a = self.resolve_array(&args[0], builder)?;
+                        let arr_b = self.resolve_array(&args[1], builder)?;
+                        let len_a = arr_a.len();
+                        let elem_ty = arr_a.elem_ty();
                         let clif_ty = type_to_clif(elem_ty.clone());
+
+                        if len_a == 4 {
+                            let v_a0 = self.get_array_element(&arr_a, 0, builder);
+                            let v_b0 = self.get_array_element(&arr_b, 0, builder);
+                            let v_a1 = self.get_array_element(&arr_a, 1, builder);
+                            let v_b1 = self.get_array_element(&arr_b, 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, 2, builder);
+                            let v_b2 = self.get_array_element(&arr_b, 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, 3, builder);
+                            let v_b3 = self.get_array_element(&arr_b, 3, builder);
+
+                            if elem_ty.is_float() {
+                                let p0 = builder.ins().fmul(v_a0, v_b0);
+                                let p1 = builder.ins().fmul(v_a1, v_b1);
+                                let p2 = builder.ins().fmul(v_a2, v_b2);
+                                let p3 = builder.ins().fmul(v_a3, v_b3);
+                                let s01 = builder.ins().fadd(p0, p1);
+                                let s23 = builder.ins().fadd(p2, p3);
+                                return Ok(builder.ins().fadd(s01, s23));
+                            } else {
+                                let p0 = builder.ins().imul(v_a0, v_b0);
+                                let p1 = builder.ins().imul(v_a1, v_b1);
+                                let p2 = builder.ins().imul(v_a2, v_b2);
+                                let p3 = builder.ins().imul(v_a3, v_b3);
+                                let s01 = builder.ins().iadd(p0, p1);
+                                let s23 = builder.ins().iadd(p2, p3);
+                                return Ok(builder.ins().iadd(s01, s23));
+                            }
+                        }
+
+                        if len_a == 8 {
+                            let v_a0 = self.get_array_element(&arr_a, 0, builder);
+                            let v_b0 = self.get_array_element(&arr_b, 0, builder);
+                            let v_a1 = self.get_array_element(&arr_a, 1, builder);
+                            let v_b1 = self.get_array_element(&arr_b, 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, 2, builder);
+                            let v_b2 = self.get_array_element(&arr_b, 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, 3, builder);
+                            let v_b3 = self.get_array_element(&arr_b, 3, builder);
+                            let v_a4 = self.get_array_element(&arr_a, 4, builder);
+                            let v_b4 = self.get_array_element(&arr_b, 4, builder);
+                            let v_a5 = self.get_array_element(&arr_a, 5, builder);
+                            let v_b5 = self.get_array_element(&arr_b, 5, builder);
+                            let v_a6 = self.get_array_element(&arr_a, 6, builder);
+                            let v_b6 = self.get_array_element(&arr_b, 6, builder);
+                            let v_a7 = self.get_array_element(&arr_a, 7, builder);
+                            let v_b7 = self.get_array_element(&arr_b, 7, builder);
+
+                            if elem_ty.is_float() {
+                                let p0 = builder.ins().fmul(v_a0, v_b0);
+                                let p1 = builder.ins().fmul(v_a1, v_b1);
+                                let p2 = builder.ins().fmul(v_a2, v_b2);
+                                let p3 = builder.ins().fmul(v_a3, v_b3);
+                                let p4 = builder.ins().fmul(v_a4, v_b4);
+                                let p5 = builder.ins().fmul(v_a5, v_b5);
+                                let p6 = builder.ins().fmul(v_a6, v_b6);
+                                let p7 = builder.ins().fmul(v_a7, v_b7);
+                                let s01 = builder.ins().fadd(p0, p1);
+                                let s23 = builder.ins().fadd(p2, p3);
+                                let s45 = builder.ins().fadd(p4, p5);
+                                let s67 = builder.ins().fadd(p6, p7);
+                                let s03 = builder.ins().fadd(s01, s23);
+                                let s47 = builder.ins().fadd(s45, s67);
+                                return Ok(builder.ins().fadd(s03, s47));
+                            } else {
+                                let p0 = builder.ins().imul(v_a0, v_b0);
+                                let p1 = builder.ins().imul(v_a1, v_b1);
+                                let p2 = builder.ins().imul(v_a2, v_b2);
+                                let p3 = builder.ins().imul(v_a3, v_b3);
+                                let p4 = builder.ins().imul(v_a4, v_b4);
+                                let p5 = builder.ins().imul(v_a5, v_b5);
+                                let p6 = builder.ins().imul(v_a6, v_b6);
+                                let p7 = builder.ins().imul(v_a7, v_b7);
+                                let s01 = builder.ins().iadd(p0, p1);
+                                let s23 = builder.ins().iadd(p2, p3);
+                                let s45 = builder.ins().iadd(p4, p5);
+                                let s67 = builder.ins().iadd(p6, p7);
+                                let s03 = builder.ins().iadd(s01, s23);
+                                let s47 = builder.ins().iadd(s45, s67);
+                                return Ok(builder.ins().iadd(s03, s47));
+                            }
+                        }
 
                         let zero = if elem_ty.is_float() {
                             if elem_ty == Type::F32 {
@@ -1128,53 +1462,22 @@ impl<'a> FunctionTranslationState<'a> {
 
                         let mut i = 0;
                         while i + 8 <= len_a {
-                            let off0 = (i as i32) * elem_size;
-                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
-                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
-                            let b0 = builder.ins().stack_addr(types::I64, slot_b, off0);
-                            let v_b0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b0, 0);
-
-                            let off1 = ((i + 1) as i32) * elem_size;
-                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
-                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
-                            let b1 = builder.ins().stack_addr(types::I64, slot_b, off1);
-                            let v_b1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b1, 0);
-
-                            let off2 = ((i + 2) as i32) * elem_size;
-                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
-                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
-                            let b2 = builder.ins().stack_addr(types::I64, slot_b, off2);
-                            let v_b2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b2, 0);
-
-                            let off3 = ((i + 3) as i32) * elem_size;
-                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
-                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
-                            let b3 = builder.ins().stack_addr(types::I64, slot_b, off3);
-                            let v_b3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b3, 0);
-
-                            let off4 = ((i + 4) as i32) * elem_size;
-                            let a4 = builder.ins().stack_addr(types::I64, slot_a, off4);
-                            let v_a4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a4, 0);
-                            let b4 = builder.ins().stack_addr(types::I64, slot_b, off4);
-                            let v_b4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b4, 0);
-
-                            let off5 = ((i + 5) as i32) * elem_size;
-                            let a5 = builder.ins().stack_addr(types::I64, slot_a, off5);
-                            let v_a5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a5, 0);
-                            let b5 = builder.ins().stack_addr(types::I64, slot_b, off5);
-                            let v_b5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b5, 0);
-
-                            let off6 = ((i + 6) as i32) * elem_size;
-                            let a6 = builder.ins().stack_addr(types::I64, slot_a, off6);
-                            let v_a6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a6, 0);
-                            let b6 = builder.ins().stack_addr(types::I64, slot_b, off6);
-                            let v_b6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b6, 0);
-
-                            let off7 = ((i + 7) as i32) * elem_size;
-                            let a7 = builder.ins().stack_addr(types::I64, slot_a, off7);
-                            let v_a7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a7, 0);
-                            let b7 = builder.ins().stack_addr(types::I64, slot_b, off7);
-                            let v_b7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b7, 0);
+                            let v_a0 = self.get_array_element(&arr_a, i, builder);
+                            let v_b0 = self.get_array_element(&arr_b, i, builder);
+                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
+                            let v_b1 = self.get_array_element(&arr_b, i + 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
+                            let v_b2 = self.get_array_element(&arr_b, i + 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
+                            let v_b3 = self.get_array_element(&arr_b, i + 3, builder);
+                            let v_a4 = self.get_array_element(&arr_a, i + 4, builder);
+                            let v_b4 = self.get_array_element(&arr_b, i + 4, builder);
+                            let v_a5 = self.get_array_element(&arr_a, i + 5, builder);
+                            let v_b5 = self.get_array_element(&arr_b, i + 5, builder);
+                            let v_a6 = self.get_array_element(&arr_a, i + 6, builder);
+                            let v_b6 = self.get_array_element(&arr_b, i + 6, builder);
+                            let v_a7 = self.get_array_element(&arr_a, i + 7, builder);
+                            let v_b7 = self.get_array_element(&arr_b, i + 7, builder);
 
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fma(v_a0, v_b0, acc0);
@@ -1199,29 +1502,14 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         while i + 4 <= len_a {
-                            let off0 = (i as i32) * elem_size;
-                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
-                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
-                            let b0 = builder.ins().stack_addr(types::I64, slot_b, off0);
-                            let v_b0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b0, 0);
-
-                            let off1 = ((i + 1) as i32) * elem_size;
-                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
-                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
-                            let b1 = builder.ins().stack_addr(types::I64, slot_b, off1);
-                            let v_b1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b1, 0);
-
-                            let off2 = ((i + 2) as i32) * elem_size;
-                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
-                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
-                            let b2 = builder.ins().stack_addr(types::I64, slot_b, off2);
-                            let v_b2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b2, 0);
-
-                            let off3 = ((i + 3) as i32) * elem_size;
-                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
-                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
-                            let b3 = builder.ins().stack_addr(types::I64, slot_b, off3);
-                            let v_b3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b3, 0);
+                            let v_a0 = self.get_array_element(&arr_a, i, builder);
+                            let v_b0 = self.get_array_element(&arr_b, i, builder);
+                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
+                            let v_b1 = self.get_array_element(&arr_b, i + 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
+                            let v_b2 = self.get_array_element(&arr_b, i + 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
+                            let v_b3 = self.get_array_element(&arr_b, i + 3, builder);
 
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fma(v_a0, v_b0, acc0);
@@ -1242,11 +1530,8 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         while i < len_a {
-                            let off = (i as i32) * elem_size;
-                            let a = builder.ins().stack_addr(types::I64, slot_a, off);
-                            let v_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), a, 0);
-                            let b = builder.ins().stack_addr(types::I64, slot_b, off);
-                            let v_b = builder.ins().load(clif_ty, MemFlagsData::trusted(), b, 0);
+                            let v_a = self.get_array_element(&arr_a, i, builder);
+                            let v_b = self.get_array_element(&arr_b, i, builder);
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fma(v_a, v_b, acc0);
                             } else {
@@ -1276,8 +1561,9 @@ impl<'a> FunctionTranslationState<'a> {
                         return Ok(total);
                     }
                     "sum" => {
-                        let (slot_a, len_a, elem_ty) = self.resolve_array_arg(&args[0], builder)?;
-                        let elem_size = elem_ty.size_bytes() as i32;
+                        let arr_a = self.resolve_array(&args[0], builder)?;
+                        let len_a = arr_a.len();
+                        let elem_ty = arr_a.elem_ty();
                         let clif_ty = type_to_clif(elem_ty.clone());
 
                         let zero = if elem_ty.is_float() {
@@ -1301,37 +1587,14 @@ impl<'a> FunctionTranslationState<'a> {
 
                         let mut i = 0;
                         while i + 8 <= len_a {
-                            let off0 = (i as i32) * elem_size;
-                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
-                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
-
-                            let off1 = ((i + 1) as i32) * elem_size;
-                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
-                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
-
-                            let off2 = ((i + 2) as i32) * elem_size;
-                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
-                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
-
-                            let off3 = ((i + 3) as i32) * elem_size;
-                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
-                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
-
-                            let off4 = ((i + 4) as i32) * elem_size;
-                            let a4 = builder.ins().stack_addr(types::I64, slot_a, off4);
-                            let v_a4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a4, 0);
-
-                            let off5 = ((i + 5) as i32) * elem_size;
-                            let a5 = builder.ins().stack_addr(types::I64, slot_a, off5);
-                            let v_a5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a5, 0);
-
-                            let off6 = ((i + 6) as i32) * elem_size;
-                            let a6 = builder.ins().stack_addr(types::I64, slot_a, off6);
-                            let v_a6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a6, 0);
-
-                            let off7 = ((i + 7) as i32) * elem_size;
-                            let a7 = builder.ins().stack_addr(types::I64, slot_a, off7);
-                            let v_a7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a7, 0);
+                            let v_a0 = self.get_array_element(&arr_a, i, builder);
+                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
+                            let v_a4 = self.get_array_element(&arr_a, i + 4, builder);
+                            let v_a5 = self.get_array_element(&arr_a, i + 5, builder);
+                            let v_a6 = self.get_array_element(&arr_a, i + 6, builder);
+                            let v_a7 = self.get_array_element(&arr_a, i + 7, builder);
 
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fadd(acc0, v_a0);
@@ -1356,21 +1619,10 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         while i + 4 <= len_a {
-                            let off0 = (i as i32) * elem_size;
-                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
-                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
-
-                            let off1 = ((i + 1) as i32) * elem_size;
-                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
-                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
-
-                            let off2 = ((i + 2) as i32) * elem_size;
-                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
-                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
-
-                            let off3 = ((i + 3) as i32) * elem_size;
-                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
-                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
+                            let v_a0 = self.get_array_element(&arr_a, i, builder);
+                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
+                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
+                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
 
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fadd(acc0, v_a0);
@@ -1387,9 +1639,7 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         while i < len_a {
-                            let off = (i as i32) * elem_size;
-                            let a = builder.ins().stack_addr(types::I64, slot_a, off);
-                            let v_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), a, 0);
+                            let v_a = self.get_array_element(&arr_a, i, builder);
                             if elem_ty.is_float() {
                                 acc0 = builder.ins().fadd(acc0, v_a);
                             } else {

@@ -13,9 +13,9 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 
 ### Scalar Replacement of Aggregates (SROA) & SSA Register Promotion
 
-- [ ] **SROA-01**: Scalar Replacement of Aggregates (SROA) promotes small fixed array elements (`N <= 16`) into Cranelift SSA variables, eliminating stack memory allocations, loads, and stores.
-- [ ] **SROA-02**: Array element reads `arr[c]` and mutations `arr[c] = v` for promoted arrays lower directly to SSA register reads and variable definitions (`builder.use_var`, `builder.def_var`).
-- [ ] **SROA-03**: Vector operations (`dot`, `vec_add`, `sum`) operating on promoted arrays execute directly using SSA register values without memory round-trips.
+- [x] **SROA-01**: Scalar Replacement of Aggregates (SROA) promotes small fixed array elements (`N <= 16`) into Cranelift SSA variables, eliminating stack memory allocations, loads, and stores.
+- [x] **SROA-02**: Array element reads `arr[c]` and mutations `arr[c] = v` for promoted arrays lower directly to SSA register reads and variable definitions (`builder.use_var`, `builder.def_var`).
+- [x] **SROA-03**: Vector operations (`dot`, `vec_add`, `sum`) operating on promoted arrays execute directly using SSA register values without memory round-trips.
 
 ### Total Benchmark Supremacy Verification
 
@@ -39,9 +39,9 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | REC-01 | Phase 9 | Complete |
-| SROA-01 | Phase 10 | Pending |
-| SROA-02 | Phase 10 | Pending |
-| SROA-03 | Phase 10 | Pending |
+| SROA-01 | Phase 10 | Complete |
+| SROA-02 | Phase 10 | Complete |
+| SROA-03 | Phase 10 | Complete |
 | VICTORY-01 | Phase 11 | Pending |
 
 **Coverage:**

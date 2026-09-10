@@ -25,7 +25,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 ### Milestone v3.0: Total Rust Decimation
 
 - [x] **Phase 9: Recursive Call Optimization & Inlining Pass** - Slashing function call frame count by 50%+ via recursive call expansion. (completed 2026-09-10)
-- [ ] **Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion** - Promoting small fixed arrays to SSA registers, eliminating stack memory round-trips.
+- [x] **Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion** - Promoting small fixed arrays to SSA registers, eliminating stack memory round-trips. (completed 2026-09-10)
 - [ ] **Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit** - Verifying decisive speed advantages over Rust across all 4 workloads.
 
 ## Phase Details
@@ -58,42 +58,41 @@ Plans:
   4. Hardware SIMD dot product and matrix-vector multiplication runtimes drop significantly, beating Rust by >30%.
 
 Plans:
-
-- [ ] 10-01: Cranelift backend SROA variable declaration and element promotion for small arrays
-- [ ] 10-02: Register-promoted vector operations and matrix-vector loop optimization
-
-### Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit
-
-**Goal**: Run the full comparative benchmark suite against optimized Rust (`rustc -O`) and C (`cl.exe /O2`), verifying statistically significant speedups across all 4 benchmarks.
-**Depends on**: Phase 10
-**Requirements**: VICTORY-01
-**Success Criteria**:
-
-  1. `numlang` outperforms `rustc -O` on Recursive Fibonacci (`fib(35)`).
-  2. `numlang` maintains lead over `rustc -O` on Math Loop Accumulator (10M iters).
-  3. `numlang` decisively outperforms `rustc -O` on Hardware SIMD Dot Product (10M iters).
-  4. `numlang` outperforms `rustc -O` on Dense Matrix-Vector Multiplication (1M iters).
-  5. All 57+ unit and integration tests pass with 100% mathematical fidelity.
-
-Plans:
-
-- [ ] 11-01: Full benchmark execution, statistical verification against Rust, and milestone victory audit
-
-## Progress
-
-**Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
-
-| Phase | Plans Complete | Status | Completed |
-|---|---|---|---|
-| 1. Lexer, Parser & AST Diagnostics | 3/3 | Complete | 2026-09-10 |
-| 2. Semantic Analysis & Static Type Checker | 2/2 | Complete | 2026-09-10 |
-| 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete | 2026-09-10 |
-| 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
-| 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
-| 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
-| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
-| 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
-| 9. Recursive Call Optimization & Inlining Pass | 1/1 | Complete | 2026-09-10 |
-| 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 0/2 | Pending | |
-| 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 0/1 | Pending | |
+ 
+- [x] 10-01: Cranelift backend SROA variable declaration, element promotion, and register vector operations (completed 2026-09-10)
+ 
+ ### Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit
+ 
+ **Goal**: Run the full comparative benchmark suite against optimized Rust (`rustc -O`) and C (`cl.exe /O2`), verifying statistically significant speedups across all 4 benchmarks.
+ **Depends on**: Phase 10
+ **Requirements**: VICTORY-01
+ **Success Criteria**:
+ 
+   1. `numlang` outperforms `rustc -O` on Recursive Fibonacci (`fib(35)`).
+   2. `numlang` maintains lead over `rustc -O` on Math Loop Accumulator (10M iters).
+   3. `numlang` decisively outperforms `rustc -O` on Hardware SIMD Dot Product (10M iters).
+   4. `numlang` outperforms `rustc -O` on Dense Matrix-Vector Multiplication (1M iters).
+   5. All 57+ unit and integration tests pass with 100% mathematical fidelity.
+ 
+ Plans:
+ 
+ - [ ] 11-01: Full benchmark execution, statistical verification against Rust, and milestone victory audit
+ 
+ ## Progress
+ 
+ **Execution Order:**
+ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
+ 
+ | Phase | Plans Complete | Status | Completed |
+ |---|---|---|---|
+ | 1. Lexer, Parser & AST Diagnostics | 3/3 | Complete | 2026-09-10 |
+ | 2. Semantic Analysis & Static Type Checker | 2/2 | Complete | 2026-09-10 |
+ | 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete | 2026-09-10 |
+ | 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
+ | 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
+ | 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
+ | 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
+ | 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
+ | 9. Recursive Call Optimization & Inlining Pass | 1/1 | Complete | 2026-09-10 |
+ | 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 1/1 | Complete | 2026-09-10 |
+ | 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 0/1 | Pending | |
