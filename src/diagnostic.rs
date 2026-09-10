@@ -136,6 +136,31 @@ impl CompilerDiagnostic {
                 format!("expected `{}`, returned `{}`", expected, found),
                 "Ensure returned value matches the function's declared return type".to_string(),
             ),
+            crate::typecheck::TypeError::CannotIndexNonArray { found, .. } => (
+                format!("Cannot index non-array type `{}`", found),
+                "indexing requires array type `[T; N]`".to_string(),
+                "Only array types can be indexed with `[i]`".to_string(),
+            ),
+            crate::typecheck::TypeError::InvalidIndexType { found, .. } => (
+                format!("Array index must be an integer, found `{}`", found),
+                "invalid index type".to_string(),
+                "Array indices must be integer types: i64 or i32".to_string(),
+            ),
+            crate::typecheck::TypeError::EmptyArrayLiteral { .. } => (
+                "Array literal cannot be empty".to_string(),
+                "empty array literal".to_string(),
+                "Provide at least one element in the array literal".to_string(),
+            ),
+            crate::typecheck::TypeError::IndexOutOfBounds { index, len, .. } => (
+                format!("Array index {} out of bounds for array of length {}", index, len),
+                format!("index {} >= length {}", index, len),
+                "Ensure index is within 0 <= index < length".to_string(),
+            ),
+            crate::typecheck::TypeError::ArrayElementMismatch { expected, found, .. } => (
+                format!("Array element type mismatch: expected `{}`, found `{}`", expected, found),
+                format!("expected `{}`, found `{}`", expected, found),
+                "All elements in an array literal must share the exact same type".to_string(),
+            ),
         };
 
         CompilerDiagnostic::TypeError {

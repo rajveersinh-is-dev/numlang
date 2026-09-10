@@ -40,16 +40,29 @@ pub enum TypedExpr {
         ty: Type,
         span: Span,
     },
+    ArrayLiteral {
+        elements: Vec<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
+    Index {
+        target: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
 }
 
 impl TypedExpr {
     pub fn ty(&self) -> Type {
         match self {
-            TypedExpr::Literal { ty, .. } => *ty,
-            TypedExpr::Ident { ty, .. } => *ty,
-            TypedExpr::Unary { ty, .. } => *ty,
-            TypedExpr::Binary { ty, .. } => *ty,
-            TypedExpr::Call { ty, .. } => *ty,
+            TypedExpr::Literal { ty, .. } => ty.clone(),
+            TypedExpr::Ident { ty, .. } => ty.clone(),
+            TypedExpr::Unary { ty, .. } => ty.clone(),
+            TypedExpr::Binary { ty, .. } => ty.clone(),
+            TypedExpr::Call { ty, .. } => ty.clone(),
+            TypedExpr::ArrayLiteral { ty, .. } => ty.clone(),
+            TypedExpr::Index { ty, .. } => ty.clone(),
         }
     }
 
@@ -60,6 +73,8 @@ impl TypedExpr {
             TypedExpr::Unary { span, .. } => *span,
             TypedExpr::Binary { span, .. } => *span,
             TypedExpr::Call { span, .. } => *span,
+            TypedExpr::ArrayLiteral { span, .. } => *span,
+            TypedExpr::Index { span, .. } => *span,
         }
     }
 }
@@ -78,6 +93,12 @@ pub enum TypedStmt {
         value: TypedExpr,
         span: Span,
     },
+    IndexAssign {
+        target: String,
+        index: TypedExpr,
+        value: TypedExpr,
+        span: Span,
+    },
     Return(Option<TypedExpr>, Span),
     Expr(TypedExpr),
     If {
@@ -91,6 +112,20 @@ pub enum TypedStmt {
         body: TypedBlock,
         span: Span,
     },
+}
+
+impl TypedStmt {
+    pub fn span(&self) -> Span {
+        match self {
+            TypedStmt::Let { span, .. } => *span,
+            TypedStmt::Assign { span, .. } => *span,
+            TypedStmt::IndexAssign { span, .. } => *span,
+            TypedStmt::Return(_, span) => *span,
+            TypedStmt::Expr(e) => e.span(),
+            TypedStmt::If { span, .. } => *span,
+            TypedStmt::While { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

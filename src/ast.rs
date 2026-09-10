@@ -50,6 +50,15 @@ pub enum Expr {
         span: Span,
     },
     Group(Box<Expr>, Span),
+    ArrayLiteral {
+        elements: Vec<Expr>,
+        span: Span,
+    },
+    Index {
+        target: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -61,6 +70,8 @@ impl Expr {
             Expr::Binary { span, .. } => *span,
             Expr::Call { span, .. } => *span,
             Expr::Group(_, s) => *s,
+            Expr::ArrayLiteral { span, .. } => *span,
+            Expr::Index { span, .. } => *span,
         }
     }
 }
@@ -76,6 +87,12 @@ pub enum Stmt {
     },
     Assign {
         name: String,
+        value: Expr,
+        span: Span,
+    },
+    IndexAssign {
+        target: String,
+        index: Expr,
         value: Expr,
         span: Span,
     },
@@ -99,6 +116,7 @@ impl Stmt {
         match self {
             Stmt::Let { span, .. } => *span,
             Stmt::Assign { span, .. } => *span,
+            Stmt::IndexAssign { span, .. } => *span,
             Stmt::Return(_, span) => *span,
             Stmt::Expr(e) => e.span(),
             Stmt::If { span, .. } => *span,

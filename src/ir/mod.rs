@@ -116,6 +116,17 @@ pub enum Instruction {
     Return {
         val: Option<Operand>,
     },
+    IndexLoad {
+        dest: ValueId,
+        target: Operand,
+        index: Operand,
+        ty: Type,
+    },
+    IndexStore {
+        target: String,
+        index: Operand,
+        value: Operand,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +227,21 @@ pub fn format_ir(program: &IrProgram) -> String {
                         Some(op) => out.push_str(&format!("ret {}\n", op)),
                         None => out.push_str("ret\n"),
                     },
+                    Instruction::IndexLoad {
+                        dest,
+                        target,
+                        index,
+                        ty,
+                    } => {
+                        out.push_str(&format!("{} = {}.index {}, {}\n", dest, ty, target, index));
+                    }
+                    Instruction::IndexStore {
+                        target,
+                        index,
+                        value,
+                    } => {
+                        out.push_str(&format!("index_store {}[{}], {}\n", target, index, value));
+                    }
                 }
             }
         }

@@ -7,6 +7,23 @@ impl<'a> Parser<'a> {
         let mut lhs = self.parse_prefix()?;
 
         loop {
+            // Check for postfix indexing `[`
+            if self.check(&Token::LBracket) {
+                if min_bp > 15 {
+                    break;
+                }
+                self.advance(); // consume '['
+                let index = self.parse_expr(0)?;
+                let end_span = self.consume(&Token::RBracket, "']' after array index")?;
+                let span = lhs.span().merge(&end_span);
+                lhs = Expr::Index {
+                    target: Box::new(lhs),
+                    index: Box::new(index),
+                    span,
+                };
+                continue;
+            }
+
             let op = match self.peek() {
                 Some(op) => op.clone(),
                 None => break,
@@ -62,6 +79,26 @@ impl<'a> Parser<'a> {
             Token::False => {
                 self.advance();
                 Ok(Expr::Literal(Literal::Bool(false), token_spanned.span))
+            }
+            Token::LBracket => {
+                self.advance();
+                let mut elements = Vec::new();
+                if !self.check(&Token::RBracket) {
+                    loop {
+                        elements.push(self.parse_expr(0)?);
+                        if self.match_token(&Token::Comma) {
+                            if self.check(&Token::RBracket) {
+                                break;
+                            }
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                let end_span = self.consume(&Token::RBracket, "']' after array elements")?;
+                let span = token_spanned.span.merge(&end_span);
+                Ok(Expr::ArrayLiteral { elements, span })
             }
             Token::Ident(name) => {
                 self.advance();

@@ -123,7 +123,7 @@ impl IrLowerer {
             params.push(IrParam {
                 name: param.name.clone(),
                 val,
-                ty: param.ty,
+                ty: param.ty.clone(),
             });
         }
 
@@ -139,7 +139,7 @@ impl IrLowerer {
         IrFunction {
             name: func.name.clone(),
             params,
-            return_ty: func.return_ty,
+            return_ty: func.return_ty.clone(),
             blocks: self.blocks.clone(),
         }
     }
@@ -157,7 +157,7 @@ impl IrLowerer {
                 self.emit(Instruction::Assign {
                     dest,
                     operand: op,
-                    ty: *ty,
+                    ty: ty.clone(),
                 });
                 self.scopes.last_mut().unwrap().insert(name.clone(), dest);
             }
@@ -171,6 +171,21 @@ impl IrLowerer {
                     ty: value.ty(),
                 });
                 self.set_variable(name, dest);
+            }
+
+            TypedStmt::IndexAssign {
+                target,
+                index,
+                value,
+                ..
+            } => {
+                let idx_op = self.lower_expr(index);
+                let val_op = self.lower_expr(value);
+                self.emit(Instruction::IndexStore {
+                    target: target.clone(),
+                    index: idx_op,
+                    value: val_op,
+                });
             }
 
             TypedStmt::Return(opt_expr, ..) => {
@@ -188,11 +203,11 @@ impl IrLowerer {
                 else_branch,
                 ..
             } => {
-                let cond_op = self.lower_expr(condition);
                 let then_bb = self.new_block();
                 let else_bb = self.new_block();
                 let merge_bb = self.new_block();
 
+                let cond_op = self.lower_expr(condition);
                 let alt_target = if else_branch.is_some() {
                     else_bb
                 } else {
@@ -271,8 +286,8 @@ impl IrLowerer {
     fn lower_expr(&mut self, expr: &TypedExpr) -> Operand {
         match expr {
             TypedExpr::Literal { lit, ty, .. } => match lit {
-                TypedLiteral::Int(n, _) => Operand::IntConst(*n, *ty),
-                TypedLiteral::Float(f, _) => Operand::FloatConst(*f, *ty),
+                TypedLiteral::Int(n, _) => Operand::IntConst(*n, ty.clone()),
+                TypedLiteral::Float(f, _) => Operand::FloatConst(*f, ty.clone()),
                 TypedLiteral::Bool(b) => Operand::BoolConst(*b),
             },
 
@@ -293,7 +308,7 @@ impl IrLowerer {
                 self.emit(Instruction::Unary {
                     dest,
                     op: ir_op,
-                    ty: *ty,
+                    ty: ty.clone(),
                     operand: inner_op,
                 });
                 Operand::Value(dest)
@@ -326,9 +341,37 @@ impl IrLowerer {
                 self.emit(Instruction::Binary {
                     dest,
                     op: ir_op,
-                    ty: *ty,
+                    ty: ty.clone(),
                     left: l_op,
                     right: r_op,
+                });
+                Operand::Value(dest)
+            }
+
+            TypedExpr::ArrayLiteral { elements, ty, .. } => {
+                let dest = self.new_value();
+                let mut lowered_elements = Vec::new();
+                for el in elements {
+                    lowered_elements.push(self.lower_expr(el));
+                }
+                self.emit(Instruction::Call {
+                    dest: Some(dest),
+                    callee: "array_literal".to_string(),
+                    args: lowered_elements,
+                    return_ty: ty.clone(),
+                });
+                Operand::Value(dest)
+            }
+
+            TypedExpr::Index { target, index, ty, .. } => {
+                let target_op = self.lower_expr(target);
+                let idx_op = self.lower_expr(index);
+                let dest = self.new_value();
+                self.emit(Instruction::IndexLoad {
+                    dest,
+                    target: target_op,
+                    index: idx_op,
+                    ty: ty.clone(),
                 });
                 Operand::Value(dest)
             }
@@ -349,7 +392,7 @@ impl IrLowerer {
                         dest: None,
                         callee: callee.clone(),
                         args: lowered_args,
-                        return_ty: *ty,
+                        return_ty: ty.clone(),
                     });
                     Operand::BoolConst(false)
                 } else {
@@ -358,7 +401,7 @@ impl IrLowerer {
                         dest: Some(dest),
                         callee: callee.clone(),
                         args: lowered_args,
-                        return_ty: *ty,
+                        return_ty: ty.clone(),
                     });
                     Operand::Value(dest)
                 }

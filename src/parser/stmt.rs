@@ -44,27 +44,7 @@ impl<'a> Parser<'a> {
 
         let mut return_ty = None;
         if self.match_token(&Token::Arrow) {
-            match self.peek_token().cloned() {
-                Some(t) => match t.token {
-                    Token::Ident(ty_str) => {
-                        self.advance();
-                        return_ty = Some(ty_str);
-                    }
-                    _ => {
-                        return Err(ParseError::UnexpectedToken {
-                            found: t.token,
-                            expected: "return type identifier".to_string(),
-                            span: t.span,
-                        });
-                    }
-                },
-                None => {
-                    return Err(ParseError::UnexpectedEof {
-                        expected: "return type identifier".to_string(),
-                        span: self.previous_span(),
-                    });
-                }
-            }
+            return_ty = Some(self.parse_type()?);
         }
 
         let body = self.parse_block()?;
@@ -103,33 +83,12 @@ impl<'a> Parser<'a> {
         };
 
         self.consume(&Token::Colon, "':' after parameter name")?;
-
-        let (ty, ty_span) = match self.peek_token().cloned() {
-            Some(t) => match t.token {
-                Token::Ident(id) => {
-                    self.advance();
-                    (id, t.span)
-                }
-                _ => {
-                    return Err(ParseError::UnexpectedToken {
-                        found: t.token,
-                        expected: "type annotation".to_string(),
-                        span: t.span,
-                    });
-                }
-            },
-            None => {
-                return Err(ParseError::UnexpectedEof {
-                    expected: "type annotation".to_string(),
-                    span: self.previous_span(),
-                });
-            }
-        };
+        let ty = self.parse_type()?;
 
         Ok(Param {
             name,
             ty,
-            span: name_span.merge(&ty_span),
+            span: name_span,
         })
     }
 
@@ -181,27 +140,7 @@ impl<'a> Parser<'a> {
 
             let mut ty = None;
             if self.match_token(&Token::Colon) {
-                match self.peek_token().cloned() {
-                    Some(t) => match t.token {
-                        Token::Ident(id) => {
-                            self.advance();
-                            ty = Some(id);
-                        }
-                        _ => {
-                            return Err(ParseError::UnexpectedToken {
-                                found: t.token,
-                                expected: "type identifier".to_string(),
-                                span: t.span,
-                            });
-                        }
-                    },
-                    None => {
-                        return Err(ParseError::UnexpectedEof {
-                            expected: "type identifier".to_string(),
-                            span: self.previous_span(),
-                        });
-                    }
-                }
+                ty = Some(self.parse_type()?);
             }
 
             self.consume(&Token::Assign, "'=' in variable binding")?;
@@ -270,10 +209,107 @@ impl<'a> Parser<'a> {
             let semi_span = self.consume(&Token::Semi, "';' after assignment")?;
             let span = start_span.merge(&semi_span);
             Ok(Stmt::Assign { name, value, span })
+        } else if self.is_index_assignment() {
+            let id_token = self.advance().unwrap();
+            let name = match &id_token.token {
+                Token::Ident(id) => id.clone(),
+                _ => unreachable!(),
+            };
+            let start_span = id_token.span;
+            self.consume(&Token::LBracket, "'[' in array index assignment")?;
+            let index = self.parse_expr(0)?;
+            self.consume(&Token::RBracket, "']' in array index assignment")?;
+            self.consume(&Token::Assign, "'=' in array element assignment")?;
+            let value = self.parse_expr(0)?;
+            let semi_span = self.consume(&Token::Semi, "';' after assignment")?;
+            let span = start_span.merge(&semi_span);
+            Ok(Stmt::IndexAssign {
+                target: name,
+                index,
+                value,
+                span,
+            })
         } else {
             let expr = self.parse_expr(0)?;
             let _semi_span = self.consume(&Token::Semi, "';' after expression statement")?;
             Ok(Stmt::Expr(expr))
         }
+    }
+
+    pub fn parse_type(&mut self) -> Result<String, ParseError> {
+        match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    Ok(id)
+                }
+                Token::LBracket => {
+                    self.advance();
+                    let elem_ty = self.parse_type()?;
+                    self.consume(&Token::Semi, "';' in array type [T; N]")?;
+                    let len = match self.peek_token().cloned() {
+                        Some(t) => match t.token {
+                            Token::IntLiteral(n) => {
+                                self.advance();
+                                n
+                            }
+                            _ => {
+                                return Err(ParseError::UnexpectedToken {
+                                    found: t.token,
+                                    expected: "array length integer".to_string(),
+                                    span: t.span,
+                                });
+                            }
+                        },
+                        None => {
+                            return Err(ParseError::UnexpectedEof {
+                                expected: "array length integer".to_string(),
+                                span: self.previous_span(),
+                            });
+                        }
+                    };
+                    self.consume(&Token::RBracket, "']' after array type")?;
+                    Ok(format!("[{}; {}]", elem_ty, len))
+                }
+                _ => Err(ParseError::UnexpectedToken {
+                    found: t.token,
+                    expected: "type identifier or array type".to_string(),
+                    span: t.span,
+                }),
+            },
+            None => Err(ParseError::UnexpectedEof {
+                expected: "type identifier or array type".to_string(),
+                span: self.previous_span(),
+            }),
+        }
+    }
+
+    fn is_index_assignment(&self) -> bool {
+        if self.cursor >= self.tokens.len() {
+            return false;
+        }
+        if !matches!(self.tokens[self.cursor].token, Token::Ident(_)) {
+            return false;
+        }
+        if self.cursor + 1 >= self.tokens.len() || self.tokens[self.cursor + 1].token != Token::LBracket {
+            return false;
+        }
+        let mut depth = 0;
+        let mut i = self.cursor + 1;
+        while i < self.tokens.len() {
+            match self.tokens[i].token {
+                Token::LBracket => depth += 1,
+                Token::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1 < self.tokens.len() && self.tokens[i + 1].token == Token::Assign;
+                    }
+                }
+                Token::Semi => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 }
