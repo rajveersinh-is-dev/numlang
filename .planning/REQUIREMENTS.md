@@ -21,8 +21,8 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 
 ### Benchmark Suite & Advantage Verification
 
-- [ ] **BENCH-02**: Extended comparative benchmark suite implements comprehensive workloads: recursive Fibonacci (`fib(35)`), tight math accumulator (10M iters), SIMD vector dot product (10M iters), and matrix-vector multiplication.
-- [ ] **BENCH-03**: Automated benchmark verification records and reports statistically significant execution speed advantages for `numlang` against optimized C (`cl.exe /O2`) and Rust (`rustc -O`).
+- [x] **BENCH-02**: Extended comparative benchmark suite implements comprehensive workloads: recursive Fibonacci (`fib(35)`), tight math accumulator (10M iters), SIMD vector dot product (10M iters), and matrix-vector multiplication.
+- [x] **BENCH-03**: Automated benchmark verification records and reports statistically significant execution speed advantages for `numlang` against optimized C (`cl.exe /O2`) and Rust (`rustc -O`).
 
 ## v3 Requirements (Future)
 
@@ -47,8 +47,8 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 | OPT-01 | Phase 7 | Complete |
 | OPT-02 | Phase 7 | Complete |
 | OPT-03 | Phase 7 | Complete |
-| BENCH-02 | Phase 8 | Pending |
-| BENCH-03 | Phase 8 | Pending |
+| BENCH-02 | Phase 8 | Complete |
+| BENCH-03 | Phase 8 | Complete |
 
 **Coverage:**
 
