@@ -53,11 +53,32 @@ impl CraneliftCompiler {
             .set("opt_level", "speed")
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-        let isa_builder =
+        let mut isa_builder =
             cranelift_native::builder().map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("avx2") {
+                let _ = isa_builder.enable("has_avx2");
+            }
+            if std::is_x86_feature_detected!("fma") {
+                let _ = isa_builder.enable("has_fma");
+            }
+            if std::is_x86_feature_detected!("sse4.2") {
+                let _ = isa_builder.enable("has_sse42");
+            }
+            if std::is_x86_feature_detected!("bmi1") {
+                let _ = isa_builder.enable("has_bmi1");
+            }
+            if std::is_x86_feature_detected!("bmi2") {
+                let _ = isa_builder.enable("has_bmi2");
+            }
+        }
+
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
 
         let builder = ObjectBuilder::new(
             isa,
