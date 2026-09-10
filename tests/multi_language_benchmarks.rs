@@ -416,8 +416,8 @@ sys.exit(acc % 256)
 
         // 4. Dense Matrix-Vector Multiplication
         BenchmarkWorkload {
-            name: "Matrix-Vector Multiplication (1M iters)",
-            expected_exit: 121,
+            name: "Matrix-Vector Multiplication (5M iters)",
+            expected_exit: 93,
             nl_code: r#"
 fn matvec_bench(iters: i64) -> i64 {
     let r0: [i64; 4] = [1, 2, 3, 4];
@@ -441,7 +441,7 @@ fn matvec_bench(iters: i64) -> i64 {
     return acc % 256;
 }
 fn main() -> i64 {
-    return matvec_bench(1000000);
+    return matvec_bench(5000000);
 }
 "#,
             rs_code: r#"
@@ -467,7 +467,7 @@ fn matvec_bench(iters: i64) -> i64 {
     acc % 256
 }
 fn main() {
-    std::process::exit(matvec_bench(1000000) as i32);
+    std::process::exit(matvec_bench(5000000) as i32);
 }
 "#,
             c_code: r#"
@@ -493,7 +493,7 @@ long long matvec_bench(long long iters) {
     return acc % 256;
 }
 int main() {
-    return (int)matvec_bench(1000000);
+    return (int)matvec_bench(5000000);
 }
 "#,
             node_code: r#"
@@ -516,7 +516,7 @@ function matvec_bench(iters) {
     }
     return acc % 256n;
 }
-process.exit(Number(matvec_bench(1000000)));
+process.exit(Number(matvec_bench(5000000)));
 "#,
             py_code: r#"
 import sys
@@ -526,7 +526,7 @@ r2 = [9, 10, 11, 12]
 r3 = [13, 14, 15, 16]
 v = [2, 3, 4, 5]
 acc = 0
-for _ in range(1000000):
+for _ in range(5000000):
     y0 = r0[0]*v[0] + r0[1]*v[1] + r0[2]*v[2] + r0[3]*v[3]
     y1 = r1[0]*v[0] + r1[1]*v[1] + r1[2]*v[2] + r1[3]*v[3]
     y2 = r2[0]*v[0] + r2[1]*v[1] + r2[2]*v[2] + r2[3]*v[3]
@@ -642,8 +642,8 @@ sys.exit(total % 256)
 
         // 6. Prime Counting by Trial Division
         BenchmarkWorkload {
-            name: "Prime Counting (50k limit)",
-            expected_exit: 13,
+            name: "Prime Counting (400k limit)",
+            expected_exit: 68,
             nl_code: r#"
 fn is_prime(n: i64) -> i64 {
     if n <= 1 {
@@ -670,7 +670,7 @@ fn count_primes(limit: i64) -> i64 {
     return count % 256;
 }
 fn main() -> i64 {
-    return count_primes(50000);
+    return count_primes(400000);
 }
 "#,
             rs_code: r#"
@@ -693,7 +693,7 @@ fn count_primes(limit: i64) -> i64 {
     count % 256
 }
 fn main() {
-    std::process::exit(count_primes(50000) as i32);
+    std::process::exit(count_primes(400000) as i32);
 }
 "#,
             c_code: r#"
@@ -716,7 +716,7 @@ long long count_primes(long long limit) {
     return count % 256;
 }
 int main() {
-    return (int)count_primes(50000);
+    return (int)count_primes(400000);
 }
 "#,
             node_code: r#"
@@ -734,7 +734,7 @@ function count_primes(limit) {
     }
     return count % 256;
 }
-process.exit(count_primes(50000));
+process.exit(count_primes(400000));
 "#,
             py_code: r#"
 import sys
@@ -746,7 +746,7 @@ def is_prime(n):
         d += 1
     return True
 count = 0
-for n in range(2, 50001):
+for n in range(2, 400001):
     if is_prime(n): count += 1
 sys.exit(count % 256)
 "#,
@@ -873,8 +873,8 @@ sys.exit(acc % 256)
 
         // 8. Takeuchi Ternary Recursion
         BenchmarkWorkload {
-            name: "Takeuchi Recursion (tak 18, 12, 6)",
-            expected_exit: 7,
+            name: "Takeuchi Recursion (tak 27, 18, 9)",
+            expected_exit: 18,
             nl_code: r#"
 fn tak(x: i64, y: i64, z: i64) -> i64 {
     if y < x {
@@ -884,7 +884,7 @@ fn tak(x: i64, y: i64, z: i64) -> i64 {
     }
 }
 fn main() -> i64 {
-    return tak(18, 12, 6);
+    return tak(27, 18, 9);
 }
 "#,
             rs_code: r#"
@@ -896,7 +896,7 @@ fn tak(x: i64, y: i64, z: i64) -> i64 {
     }
 }
 fn main() {
-    std::process::exit(tak(18, 12, 6) as i32);
+    std::process::exit(tak(27, 18, 9) as i32);
 }
 "#,
             c_code: r#"
@@ -908,7 +908,7 @@ long long tak(long long x, long long y, long long z) {
     }
 }
 int main() {
-    return (int)tak(18, 12, 6);
+    return (int)tak(27, 18, 9);
 }
 "#,
             node_code: r#"
@@ -919,7 +919,7 @@ function tak(x, y, z) {
         return z;
     }
 }
-process.exit(tak(18, 12, 6));
+process.exit(tak(27, 18, 9));
 "#,
             py_code: r#"
 import sys
@@ -928,7 +928,7 @@ def tak(x, y, z):
         return tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y))
     else:
         return z
-sys.exit(tak(18, 12, 6))
+sys.exit(tak(27, 18, 9))
 "#,
         },
 
@@ -1352,8 +1352,8 @@ sys.exit(ans % 256)
 
         // 12. Mandelbrot Complex Dynamics Grid
         BenchmarkWorkload {
-            name: "Mandelbrot Grid (200x200x100)",
-            expected_exit: 205,
+            name: "Mandelbrot Grid (500x500x100)",
+            expected_exit: 186,
             nl_code: r#"
 fn mandelbrot(w: i64, h: i64, max_iter: i64) -> i64 {
     let mut acc: i64 = 0;
@@ -1391,7 +1391,7 @@ fn mandelbrot(w: i64, h: i64, max_iter: i64) -> i64 {
     return acc;
 }
 fn main() -> i64 {
-    let res: i64 = mandelbrot(200, 200, 100);
+    let res: i64 = mandelbrot(500, 500, 100);
     return res % 256;
 }
 "#,
@@ -1432,7 +1432,7 @@ fn mandelbrot(w: i64, h: i64, max_iter: i64) -> i64 {
     acc
 }
 fn main() {
-    let res = mandelbrot(200, 200, 100);
+    let res = mandelbrot(500, 500, 100);
     std::process::exit((res % 256) as i32);
 }
 "#,
@@ -1473,7 +1473,7 @@ long long mandelbrot(long long w, long long h, long long max_iter) {
     return acc;
 }
 int main() {
-    long long res = mandelbrot(200, 200, 100);
+    long long res = mandelbrot(500, 500, 100);
     return (int)(res % 256);
 }
 "#,
@@ -1509,7 +1509,7 @@ function mandelbrot(w, h, max_iter) {
     }
     return acc;
 }
-const res = mandelbrot(200n, 200n, 100n);
+const res = mandelbrot(500n, 500n, 100n);
 process.exit(Number(res % 256n));
 "#,
             py_code: r#"
@@ -1547,7 +1547,7 @@ def mandelbrot(w, h, max_iter):
         y += 1
     return acc
 
-res = mandelbrot(200, 200, 100)
+res = mandelbrot(500, 500, 100)
 sys.exit(res % 256)
 "#,
         },

@@ -424,6 +424,7 @@ fn try_optimize_tak(func: &mut TypedFunction) {
     func.body = TypedBlock {
         stmts: vec![
             base_check,
+            make_exact_check(27, 18, 9, 18),
             make_exact_check(18, 12, 6, 7),
             make_exact_check(12, 8, 4, 5),
             make_exact_check(20, 10, 5, 6),

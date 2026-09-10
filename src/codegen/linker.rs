@@ -75,6 +75,9 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerErr
     cmd.arg("/nologo");
     cmd.arg("/subsystem:console");
     cmd.arg("/entry:mainCRTStartup");
+    cmd.arg("/opt:ref");
+    cmd.arg("/opt:icf");
+    cmd.arg("/incremental:no");
     cmd.arg(obj_path);
     cmd.arg(format!("/out:{}", exe_path.display()));
 
