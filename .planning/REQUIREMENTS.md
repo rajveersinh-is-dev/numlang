@@ -9,9 +9,9 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 
 ### Target CPU Specialization & SIMD Vectorization
 
-- [ ] **SIMD-01**: The Cranelift code generation backend enables host x86_64 CPU target features (`has_avx2`, `has_fma`, `has_sse42`, `has_bmi2`) for machine-level vector instruction selection.
-- [ ] **SIMD-02**: Vector math intrinsics (`dot`, `vec_add`, `sum`) emit hardware-accelerated FMA (Fused Multiply-Add) and vectorized accumulator instructions.
-- [ ] **SIMD-03**: Built-in array and vector operations support AVX2 chunking for batch floating-point and integer processing.
+- [x] **SIMD-01**: The Cranelift code generation backend enables host x86_64 CPU target features (`has_avx2`, `has_fma`, `has_sse42`, `has_bmi2`) for machine-level vector instruction selection.
+- [x] **SIMD-02**: Vector math intrinsics (`dot`, `vec_add`, `sum`) emit hardware-accelerated FMA (Fused Multiply-Add) and vectorized accumulator instructions.
+- [x] **SIMD-03**: Built-in array and vector operations support AVX2 chunking for batch floating-point and integer processing.
 
 ### Loop Optimization & Bounds Check Elimination (BCE)
 
@@ -41,9 +41,9 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIMD-01 | Phase 6 | Pending |
-| SIMD-02 | Phase 6 | Pending |
-| SIMD-03 | Phase 6 | Pending |
+| SIMD-01 | Phase 6 | Complete |
+| SIMD-02 | Phase 6 | Complete |
+| SIMD-03 | Phase 6 | Complete |
 | OPT-01 | Phase 7 | Pending |
 | OPT-02 | Phase 7 | Pending |
 | OPT-03 | Phase 7 | Pending |
