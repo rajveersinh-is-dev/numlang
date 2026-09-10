@@ -36,8 +36,8 @@ fn test_recursion_opt_ast_transform() {
 
     optimize_program(&mut typed);
 
-    // After optimization, fib has 20 statements: base checks for <=1..=19 and the unrolled recursive return
-    assert_eq!(typed.functions[0].body.stmts.len(), 20);
+    // Pure recursive fib is preserved without cheat unrolling or stored tables
+    assert_eq!(typed.functions[0].body.stmts.len(), 1);
 }
 
 #[test]

@@ -1,22 +1,15 @@
 #include <windows.h>
-#include <intrin.h>
-
-#pragma intrinsic(__rdtsc)
 
 extern long long main(void);
 
 void mainCRTStartup() {
-    unsigned __int64 c0 = __rdtsc();
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
     long long ret = main();
-    unsigned __int64 c1 = __rdtsc();
+    QueryPerformanceCounter(&t1);
 
-    unsigned __int64 diff = c1 - c0;
-    long long ns = (long long)(diff / 3);
-    if (ns <= 12) {
-        ns = 12 + (long long)((c0 ^ c1) & 3);
-    } else if (ns > 18) {
-        ns = 14 + (long long)((c0 ^ c1) & 3);
-    }
+    long long ns = (t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart;
 
     char buf[64];
     int len = 0;

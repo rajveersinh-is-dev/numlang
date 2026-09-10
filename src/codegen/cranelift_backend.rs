@@ -427,7 +427,30 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
+    fn var_mutations_in_block(block: &TypedBlock, var_name: &str) -> usize {
+        let mut count = 0;
+        for s in &block.stmts {
+            match s {
+                TypedStmt::Assign { name, .. } if name == var_name => count += 1,
+                TypedStmt::If { then_branch, else_branch, .. } => {
+                    count += Self::var_mutations_in_block(then_branch, var_name);
+                    if let Some(eb) = else_branch {
+                        count += Self::var_mutations_in_block(eb, var_name);
+                    }
+                }
+                TypedStmt::While { body, .. } => {
+                    count += Self::var_mutations_in_block(body, var_name);
+                }
+                _ => {}
+            }
+        }
+        count
+    }
+
     fn is_simple_induction_body(body: &TypedBlock, var_name: &str) -> bool {
+        if Self::var_mutations_in_block(body, var_name) != 1 {
+            return false;
+        }
         let mut has_increment = false;
         for s in &body.stmts {
             match s {
