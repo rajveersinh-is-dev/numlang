@@ -41,6 +41,13 @@ pub struct Cli {
     )]
     pub emit_typed_ast: bool,
 
+    #[arg(
+        short = 'i',
+        long = "emit-ir",
+        help = "Emit Intermediate Representation (IR) text"
+    )]
+    pub emit_ir: bool,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -108,6 +115,14 @@ fn main() -> Result<()> {
             "numlang: type check passed. Verified {} function(s).",
             typed_program.functions.len()
         );
+        return Ok(());
+    }
+
+    // Intermediate Representation (IR) Lowering
+    let ir_program = numlang::ir::lower::lower_to_ir(&typed_program);
+
+    if cli.emit_ir {
+        print!("{}", numlang::ir::format_ir(&ir_program));
         return Ok(());
     }
 
