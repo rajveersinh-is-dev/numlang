@@ -530,6 +530,7 @@ impl<'a> FunctionTranslationState<'a> {
                 target,
                 index,
                 value,
+                is_safe,
                 ..
             } => {
                 let (slot, len) = match self.variables.get(target) {
@@ -545,7 +546,9 @@ impl<'a> FunctionTranslationState<'a> {
                     idx_val = builder.ins().uextend(types::I64, idx_val);
                 }
 
-                self.emit_bounds_check(idx_val, len, builder);
+                if !*is_safe {
+                    self.emit_bounds_check(idx_val, len, builder);
+                }
 
                 let val = self.translate_expr(value, builder)?;
                 let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
@@ -833,6 +836,7 @@ impl<'a> FunctionTranslationState<'a> {
             TypedExpr::Index {
                 target,
                 index,
+                is_safe,
                 ty,
                 ..
             } => {
@@ -850,7 +854,9 @@ impl<'a> FunctionTranslationState<'a> {
                     idx_val = builder.ins().uextend(types::I64, idx_val);
                 }
 
-                self.emit_bounds_check(idx_val, len, builder);
+                if !*is_safe {
+                    self.emit_bounds_check(idx_val, len, builder);
+                }
 
                 let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
                 let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
