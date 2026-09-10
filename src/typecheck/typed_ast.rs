@@ -48,6 +48,7 @@ pub enum TypedExpr {
     Index {
         target: Box<TypedExpr>,
         index: Box<TypedExpr>,
+        is_safe: bool,
         ty: Type,
         span: Span,
     },
@@ -97,6 +98,7 @@ pub enum TypedStmt {
         target: String,
         index: TypedExpr,
         value: TypedExpr,
+        is_safe: bool,
         span: Span,
     },
     Return(Option<TypedExpr>, Span),

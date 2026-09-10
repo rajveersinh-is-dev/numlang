@@ -137,9 +137,12 @@ impl TypeError {
     }
 }
 
+use std::collections::HashMap;
+
 pub struct TypeChecker {
     env: ScopeEnvironment,
     current_fn_return_ty: Type,
+    active_loop_bounds: HashMap<String, i64>,
 }
 
 impl Default for TypeChecker {
@@ -153,6 +156,7 @@ impl TypeChecker {
         Self {
             env: ScopeEnvironment::new(),
             current_fn_return_ty: Type::Void,
+            active_loop_bounds: HashMap::new(),
         }
     }
 
@@ -398,6 +402,7 @@ impl TypeChecker {
                     });
                 }
 
+                let mut is_safe = false;
                 if let TypedExpr::Literal {
                     lit: TypedLiteral::Int(n, _),
                     span: idx_span,
@@ -410,6 +415,13 @@ impl TypeChecker {
                             len,
                             span: *idx_span,
                         });
+                    }
+                    is_safe = true;
+                } else if let TypedExpr::Ident { name: idx_var, .. } = &typed_index {
+                    if let Some(&bound) = self.active_loop_bounds.get(idx_var) {
+                        if bound <= len as i64 {
+                            is_safe = true;
+                        }
                     }
                 }
 
@@ -426,6 +438,7 @@ impl TypeChecker {
                     target: target.clone(),
                     index: typed_index,
                     value: typed_value,
+                    is_safe,
                     span: *span,
                 })
             }
@@ -520,12 +533,38 @@ impl TypeChecker {
                     });
                 }
 
+                let loop_bound = match condition {
+                    Expr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) = (&**left, &**right) {
+                            Some((name.clone(), *n))
+                        } else {
+                            None
+                        }
+                    }
+                    Expr::Binary { op: BinaryOp::Le, left, right, .. } => {
+                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) = (&**left, &**right) {
+                            Some((name.clone(), *n + 1))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if let Some((ref var_name, bound)) = loop_bound {
+                    self.active_loop_bounds.insert(var_name.clone(), bound);
+                }
+
                 self.env.enter_scope();
                 let mut body_stmts = Vec::new();
                 for s in &body.stmts {
                     body_stmts.push(self.check_stmt(s)?);
                 }
                 self.env.exit_scope();
+
+                if let Some((ref var_name, _)) = loop_bound {
+                    self.active_loop_bounds.remove(var_name);
+                }
 
                 Ok(TypedStmt::While {
                     condition: typed_cond,
@@ -752,6 +791,7 @@ impl TypeChecker {
                     });
                 }
 
+                let mut is_safe = false;
                 if let TypedExpr::Literal {
                     lit: TypedLiteral::Int(n, _),
                     span: idx_span,
@@ -765,11 +805,19 @@ impl TypeChecker {
                             span: *idx_span,
                         });
                     }
+                    is_safe = true;
+                } else if let TypedExpr::Ident { name: idx_var, .. } = &typed_index {
+                    if let Some(&bound) = self.active_loop_bounds.get(idx_var) {
+                        if bound <= len as i64 {
+                            is_safe = true;
+                        }
+                    }
                 }
 
                 Ok(TypedExpr::Index {
                     target: Box::new(typed_target),
                     index: Box::new(typed_index),
+                    is_safe,
                     ty: elem_ty,
                     span: *span,
                 })
