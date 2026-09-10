@@ -1,46 +1,31 @@
-# Requirements: numlang
+﻿# Requirements: numlang
 
 **Defined:** 2026-09-10
-**Core Value:** Delivering high computational throughput and deterministic memory performance for mathematical algorithms with clean, modern syntax.
+**Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## v1 Requirements
+## Milestone v2.0 Requirements: Benchmark Supremacy
 
-Requirements for the initial functional compiler release.
+Requirements for the v2.0 performance-focused milestone targeting decisive benchmark victories.
 
-### Lexing & Parsing
+### Target CPU Specialization & SIMD Vectorization
 
-- [x] **LEX-01**: Lexer tokenizes numeric literals (`i32`, `i64`, `f32`, `f64`), identifiers, mathematical operators (`+`, `-`, `*`, `/`, `%`, `^`), and punctuation.
-- [x] **LEX-02**: Lexer tokenizes language keywords (`fn`, `let`, `return`, `if`, `else`, `while`, `for`).
-- [x] **LEX-03**: Pratt parser parses mathematical expressions with operator precedence and grouping.
-- [x] **LEX-04**: Parser constructs Abstract Syntax Tree (AST) representing function declarations, variable bindings, and control flow blocks.
+- [ ] **SIMD-01**: The Cranelift code generation backend enables host x86_64 CPU target features (`has_avx2`, `has_fma`, `has_sse42`, `has_bmi2`) for machine-level vector instruction selection.
+- [ ] **SIMD-02**: Vector math intrinsics (`dot`, `vec_add`, `sum`) emit hardware-accelerated FMA (Fused Multiply-Add) and vectorized accumulator instructions.
+- [ ] **SIMD-03**: Built-in array and vector operations support AVX2 chunking for batch floating-point and integer processing.
 
-### Semantic Analysis & Types
+### Loop Optimization & Bounds Check Elimination (BCE)
 
-- [x] **TYPE-01**: Type checker verifies static primitive numeric types (`i32`, `i64`, `f32`, `f64`) and prevents implicit lossy conversions.
-- [x] **TYPE-02**: Symbol table enforces variable scoping, immutability defaults, and function signature verification.
-- [x] **TYPE-03**: Diagnostic engine emits human-readable compiler errors with source line and column coordinates.
+- [ ] **OPT-01**: Static induction variable and range analysis determines loop bounds and variable monotonicity at compile time.
+- [ ] **OPT-02**: Bounds Check Elimination (BCE) eliminates runtime boundary check branches in loops when index variables are statically proven within `0 <= i < len`.
+- [ ] **OPT-03**: Loop unrolling optimization pass unrolls fixed-size array iterations and vector operations (4x/8x) to maximize instruction pipelining and eliminate branch penalties.
 
-### Code Generation & Backend
+### Benchmark Suite & Advantage Verification
 
-- [x] **CODEGEN-01**: AST is lowered to Intermediate Representation (LLVM IR / Cranelift) for arithmetic and variable assignments.
-- [x] **CODEGEN-02**: Control flow constructs (`if`/`else`, `while`, loops) and function calls are lowered to machine IR.
-- [x] **CODEGEN-03**: Compiler links and outputs native Windows x86_64 machine executables.
+- [ ] **BENCH-02**: Extended comparative benchmark suite implements comprehensive workloads: recursive Fibonacci (`fib(35)`), tight math accumulator (10M iters), SIMD vector dot product (10M iters), and matrix-vector multiplication.
+- [ ] **BENCH-03**: Automated benchmark verification records and reports statistically significant execution speed advantages for `numlang` against optimized C (`cl.exe /O2`) and Rust (`rustc -O`).
 
-### CLI & Standard Library
+## v3 Requirements (Future)
 
-- [x] **CLI-01**: CLI supports `numlang run <file.nl>` for direct compile-and-run execution.
-- [x] **CLI-02**: CLI supports `numlang build <file.nl> -o <binary>` for AOT standalone binary output.
-- [x] **CLI-03**: CLI supports diagnostic flags `--emit-tokens`, `--emit-ast`, and `--emit-ir`.
-- [x] **MATH-01**: Built-in 1D contiguous numeric array primitive with index boundary checking.
-- [x] **MATH-02**: Core math intrinsics and SIMD-friendly vector operations (element-wise add, dot product).
-
-### Benchmarks & Validation
-
-- [x] **BENCH-01**: Automated benchmark harness comparing mathematical kernel execution time against C (`clang -O3`) and Rust (`--release`).
-
-## v2 Requirements
-
-- **OPT-01**: Custom loop auto-vectorization pass for multi-dimensional matrix operations.
 - **PAR-01**: Multi-threaded work-stealing runtime for parallel map/reduce operations across arrays.
 - **GPU-01**: Backend code generation targeting SPIR-V / PTX for GPU kernel offloading.
 
@@ -48,37 +33,29 @@ Requirements for the initial functional compiler release.
 
 | Feature | Reason |
 |---------|--------|
-| Exponential speedups across all benchmarks | Bounded by CPU clock, instruction pipeline, and memory bandwidth physics. |
-| Garbage collection runtime | Excluded to preserve deterministic latency and zero runtime overhead. |
+| Arbitrary exponential speedup across non-parallelizable code | Physical CPU clock cycles, IPC limits, and cache bandwidth bound single-thread throughput. |
+| Garbage collection runtime | Excluded to guarantee predictable latency and zero-cost abstractions. |
 | Dynamic typing / reflection | Statically typed AOT compilation is chosen for maximum optimization capability. |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LEX-01 | Phase 1 | Complete |
-| LEX-02 | Phase 1 | Complete |
-| LEX-03 | Phase 1 | Complete |
-| LEX-04 | Phase 1 | Complete |
-| CLI-03 | Phase 1 | Complete |
-| TYPE-01 | Phase 2 | Complete |
-| TYPE-02 | Phase 2 | Complete |
-| TYPE-03 | Phase 2 | Complete |
-| CODEGEN-01 | Phase 3 | Complete |
-| CODEGEN-02 | Phase 3 | Complete |
-| CODEGEN-03 | Phase 3 | Complete |
-| CLI-01 | Phase 4 | Complete |
-| CLI-02 | Phase 4 | Complete |
-| MATH-01 | Phase 4 | Complete |
-| MATH-02 | Phase 4 | Complete |
-| BENCH-01 | Phase 5 | Complete |
+| SIMD-01 | Phase 6 | Pending |
+| SIMD-02 | Phase 6 | Pending |
+| SIMD-03 | Phase 6 | Pending |
+| OPT-01 | Phase 7 | Pending |
+| OPT-02 | Phase 7 | Pending |
+| OPT-03 | Phase 7 | Pending |
+| BENCH-02 | Phase 8 | Pending |
+| BENCH-03 | Phase 8 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 16 total
-- Mapped to phases: 16
+- v2 requirements: 8 total
+- Mapped to phases: 8
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-10*
-*Last updated: 2026-09-10 after initial definition*
+*Last updated: 2026-09-10 for milestone v2.0*
