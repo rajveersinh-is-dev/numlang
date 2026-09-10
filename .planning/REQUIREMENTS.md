@@ -28,11 +28,11 @@ Requirements for the initial functional compiler release.
 
 ### CLI & Standard Library
 
-- [ ] **CLI-01**: CLI supports `numlang run <file.nl>` for direct compile-and-run execution.
-- [ ] **CLI-02**: CLI supports `numlang build <file.nl> -o <binary>` for AOT standalone binary output.
+- [x] **CLI-01**: CLI supports `numlang run <file.nl>` for direct compile-and-run execution.
+- [x] **CLI-02**: CLI supports `numlang build <file.nl> -o <binary>` for AOT standalone binary output.
 - [x] **CLI-03**: CLI supports diagnostic flags `--emit-tokens`, `--emit-ast`, and `--emit-ir`.
-- [ ] **MATH-01**: Built-in 1D contiguous numeric array primitive with index boundary checking.
-- [ ] **MATH-02**: Core math intrinsics and SIMD-friendly vector operations (element-wise add, dot product).
+- [x] **MATH-01**: Built-in 1D contiguous numeric array primitive with index boundary checking.
+- [x] **MATH-02**: Core math intrinsics and SIMD-friendly vector operations (element-wise add, dot product).
 
 ### Benchmarks & Validation
 
@@ -67,10 +67,10 @@ Requirements for the initial functional compiler release.
 | CODEGEN-01 | Phase 3 | Complete |
 | CODEGEN-02 | Phase 3 | Complete |
 | CODEGEN-03 | Phase 3 | Complete |
-| CLI-01 | Phase 4 | Pending |
-| CLI-02 | Phase 4 | Pending |
-| MATH-01 | Phase 4 | Pending |
-| MATH-02 | Phase 4 | Pending |
+| CLI-01 | Phase 4 | Complete |
+| CLI-02 | Phase 4 | Complete |
+| MATH-01 | Phase 4 | Complete |
+| MATH-02 | Phase 4 | Complete |
 | BENCH-01 | Phase 5 | Pending |
 
 **Coverage:**
