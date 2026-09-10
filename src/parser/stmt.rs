@@ -1,1 +1,257 @@
-// Stmt parser module
+use crate::ast::{Block, Function, Param, Stmt};
+use crate::parser::{ParseError, Parser};
+use crate::token::Token;
+
+impl<'a> Parser<'a> {
+    pub fn parse_function(&mut self) -> Result<Function, ParseError> {
+        let fn_span = self.consume(&Token::Fn, "'fn' keyword")?;
+
+        let name = match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    id
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "function name".to_string(),
+                        span: t.span,
+                    });
+                }
+            },
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "function name".to_string(),
+                    span: fn_span,
+                });
+            }
+        };
+
+        self.consume(&Token::LParen, "'(' after function name")?;
+        let mut params = Vec::new();
+        if !self.check(&Token::RParen) {
+            loop {
+                params.push(self.parse_param()?);
+                if self.match_token(&Token::Comma) {
+                    continue;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.consume(&Token::RParen, "')' after parameters")?;
+
+        let mut return_ty = None;
+        if self.match_token(&Token::Arrow) {
+            match self.peek_token().cloned() {
+                Some(t) => match t.token {
+                    Token::Ident(ty_str) => {
+                        self.advance();
+                        return_ty = Some(ty_str);
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: t.token,
+                            expected: "return type identifier".to_string(),
+                            span: t.span,
+                        });
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "return type identifier".to_string(),
+                        span: self.previous_span(),
+                    });
+                }
+            }
+        }
+
+        let body = self.parse_block()?;
+        let span = fn_span.merge(&body.span);
+
+        Ok(Function {
+            name,
+            params,
+            return_ty,
+            body,
+            span,
+        })
+    }
+
+    pub fn parse_param(&mut self) -> Result<Param, ParseError> {
+        let (name, name_span) = match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    (id, t.span)
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "parameter name".to_string(),
+                        span: t.span,
+                    });
+                }
+            },
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "parameter name".to_string(),
+                    span: self.previous_span(),
+                });
+            }
+        };
+
+        self.consume(&Token::Colon, "':' after parameter name")?;
+
+        let (ty, ty_span) = match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    (id, t.span)
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "type annotation".to_string(),
+                        span: t.span,
+                    });
+                }
+            },
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "type annotation".to_string(),
+                    span: self.previous_span(),
+                });
+            }
+        };
+
+        Ok(Param {
+            name,
+            ty,
+            span: name_span.merge(&ty_span),
+        })
+    }
+
+    pub fn parse_block(&mut self) -> Result<Block, ParseError> {
+        let open_span = self.consume(&Token::LBrace, "'{' to begin block")?;
+        let mut stmts = Vec::new();
+
+        while !self.check(&Token::RBrace) && !self.is_at_end() {
+            stmts.push(self.parse_stmt()?);
+        }
+
+        let close_span = self.consume(&Token::RBrace, "'}' to close block")?;
+        Ok(Block {
+            stmts,
+            span: open_span.merge(&close_span),
+        })
+    }
+
+    pub fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
+        if self.check(&Token::Let) {
+            let let_span = self.advance().unwrap().span;
+            let (name, _) = match self.peek_token().cloned() {
+                Some(t) => match t.token {
+                    Token::Ident(id) => {
+                        self.advance();
+                        (id, t.span)
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: t.token,
+                            expected: "variable name".to_string(),
+                            span: t.span,
+                        });
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "variable name".to_string(),
+                        span: let_span,
+                    });
+                }
+            };
+
+            let mut ty = None;
+            if self.match_token(&Token::Colon) {
+                match self.peek_token().cloned() {
+                    Some(t) => match t.token {
+                        Token::Ident(id) => {
+                            self.advance();
+                            ty = Some(id);
+                        }
+                        _ => {
+                            return Err(ParseError::UnexpectedToken {
+                                found: t.token,
+                                expected: "type identifier".to_string(),
+                                span: t.span,
+                            });
+                        }
+                    },
+                    None => {
+                        return Err(ParseError::UnexpectedEof {
+                            expected: "type identifier".to_string(),
+                            span: self.previous_span(),
+                        });
+                    }
+                }
+            }
+
+            self.consume(&Token::Assign, "'=' in variable binding")?;
+            let value = self.parse_expr(0)?;
+            let semi_span = self.consume(&Token::Semi, "';' after variable binding")?;
+            let span = let_span.merge(&semi_span);
+
+            Ok(Stmt::Let {
+                name,
+                ty,
+                value,
+                span,
+            })
+        } else if self.check(&Token::Return) {
+            let ret_span = self.advance().unwrap().span;
+            let mut value = None;
+            if !self.check(&Token::Semi) {
+                value = Some(self.parse_expr(0)?);
+            }
+            let semi_span = self.consume(&Token::Semi, "';' after return statement")?;
+            let span = ret_span.merge(&semi_span);
+            Ok(Stmt::Return(value, span))
+        } else if self.check(&Token::If) {
+            let if_span = self.advance().unwrap().span;
+            let condition = self.parse_expr(0)?;
+            let then_branch = self.parse_block()?;
+
+            let mut else_branch = None;
+            let mut end_span = then_branch.span;
+            if self.match_token(&Token::Else) {
+                let else_block = self.parse_block()?;
+                end_span = else_block.span;
+                else_branch = Some(else_block);
+            }
+
+            let span = if_span.merge(&end_span);
+            Ok(Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            })
+        } else if self.check(&Token::While) {
+            let while_span = self.advance().unwrap().span;
+            let condition = self.parse_expr(0)?;
+            let body = self.parse_block()?;
+            let span = while_span.merge(&body.span);
+            Ok(Stmt::While {
+                condition,
+                body,
+                span,
+            })
+        } else {
+            let expr = self.parse_expr(0)?;
+            let _semi_span = self.consume(&Token::Semi, "';' after expression statement")?;
+            Ok(Stmt::Expr(expr))
+        }
+    }
+}
