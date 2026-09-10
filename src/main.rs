@@ -1,8 +1,9 @@
 use clap::Parser;
 use miette::{IntoDiagnostic, Result};
-use numlang::diagnostic::{format_ast, format_tokens, CompilerDiagnostic};
+use numlang::diagnostic::{format_ast, format_tokens, format_typed_ast, CompilerDiagnostic};
 use numlang::parser::parse;
 use numlang::token::tokenize;
+use numlang::typecheck::typecheck;
 use std::fs;
 use std::path::PathBuf;
 
@@ -26,6 +27,19 @@ pub struct Cli {
         help = "Emit parsed Abstract Syntax Tree representation"
     )]
     pub emit_ast: bool,
+
+    #[arg(
+        short = 'c',
+        long = "check",
+        help = "Type check the source program and report semantic errors"
+    )]
+    pub check: bool,
+
+    #[arg(
+        long = "emit-typed-ast",
+        help = "Emit type-checked Abstract Syntax Tree representation"
+    )]
+    pub emit_typed_ast: bool,
 
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
@@ -75,6 +89,31 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    println!("numlang: parsed {} function(s) successfully.", program.functions.len());
+    // Semantic Analysis & Type Checking
+    let typed_program = match typecheck(&program) {
+        Ok(tp) => tp,
+        Err(err) => {
+            let diag = CompilerDiagnostic::from_type_error(err, &filename, &source);
+            return Err(diag.into());
+        }
+    };
+
+    if cli.emit_typed_ast {
+        println!("{}", format_typed_ast(&typed_program));
+        return Ok(());
+    }
+
+    if cli.check {
+        println!(
+            "numlang: type check passed. Verified {} function(s).",
+            typed_program.functions.len()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "numlang: compiled and verified {} function(s) successfully.",
+        typed_program.functions.len()
+    );
     Ok(())
 }
