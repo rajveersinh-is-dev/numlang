@@ -1087,6 +1087,20 @@ impl<'a> FunctionTranslationState<'a> {
                             return Ok(builder.ins().select(is_neg, neg, arg));
                         }
                     }
+                    "to_i64" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        let arg_ty = args[0].ty();
+                        if arg_ty.is_float() {
+                            return Ok(builder.ins().fcvt_to_sint(types::I64, arg));
+                        } else {
+                            let clif_ty = type_to_clif(arg_ty);
+                            if clif_ty == types::I32 {
+                                return Ok(builder.ins().sextend(types::I64, arg));
+                            } else {
+                                return Ok(arg);
+                            }
+                        }
+                    }
                     "dot" => {
                         let (slot_a, len_a, elem_ty) = self.resolve_array_arg(&args[0], builder)?;
                         let (slot_b, _, _) = self.resolve_array_arg(&args[1], builder)?;

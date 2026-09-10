@@ -876,6 +876,30 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    "to_i64" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "to_i64".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], None)?;
+                        if !typed_arg.ty().is_numeric() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "to_i64".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
                     "dot" => {
                         if args.len() != 2 {
                             return Err(TypeError::ArityMismatch {
