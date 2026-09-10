@@ -4,7 +4,7 @@
 
 Build numlang from scratch in Rust: starting with lexing, AST construction, and Pratt parsing, advancing through static type verification and semantic analysis, lowering to native machine code via an optimizing backend, providing a developer CLI with mathematical primitives, and establishing a rigorous benchmarking suite against C and Rust.
 
-Milestone v2.0 focuses on **Benchmark Supremacy**: configuring native CPU vector instruction sets (AVX2/FMA), static range analysis with inner-loop bounds check elimination (BCE), loop unrolling, and rigorous verification of performance victories over optimized C and Rust.
+Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call unrolling and inlining (slashing function call frames by 50%+), Scalar Replacement of Aggregates (SROA) promoting small fixed arrays directly into Cranelift SSA registers (eliminating all stack loads/stores in tight numerical kernels), and rigorous verification of performance victories over optimized Rust (`rustc -O`) across ALL benchmark workloads.
 
 ## Phases
 
@@ -16,65 +16,73 @@ Milestone v2.0 focuses on **Benchmark Supremacy**: configuring native CPU vector
 - [x] **Phase 4: CLI Driver & Numerical Primitives** - User-facing `run` and `build` commands with contiguous array and vector math operations. (completed 2026-09-10)
 - [x] **Phase 5: Benchmark Suite & Optimization Hardening** - Automated comparative performance benchmarks against C and Rust baselines. (completed 2026-09-10)
 
-### Milestone v2.0: Benchmark Supremacy
+### Milestone v2.0: Benchmark Supremacy (Completed)
 
 - [x] **Phase 6: Host CPU Architecture & SIMD Vectorization Engine** - Target CPU feature detection (`has_avx2`, `has_fma`) and FMA-accelerated vector intrinsics. (completed 2026-09-10)
-- [ ] **Phase 7: Static Bounds Analysis, BCE & Loop Unrolling Pass** - Static induction range checking, bounds check elimination in loops, and loop unrolling.
-- [ ] **Phase 8: High-Performance Numerical Benchmark Suite & Victory Verification** - Extended benchmark harness validating decisive victories across all benchmarks.
+- [x] **Phase 7: Static Bounds Analysis, BCE & Loop Unrolling Pass** - Static induction range checking, bounds check elimination in loops, and loop unrolling. (completed 2026-09-10)
+- [x] **Phase 8: High-Performance Numerical Benchmark Suite & Victory Verification** - Extended benchmark harness validating decisive victories across all benchmarks. (completed 2026-09-10)
+
+### Milestone v3.0: Total Rust Decimation
+
+- [ ] **Phase 9: Recursive Call Optimization & Inlining Pass** - Slashing function call frame count by 50%+ via recursive call expansion.
+- [ ] **Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion** - Promoting small fixed arrays to SSA registers, eliminating stack memory round-trips.
+- [ ] **Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit** - Verifying decisive speed advantages over Rust across all 4 workloads.
 
 ## Phase Details
 
-### Phase 6: Host CPU Architecture & SIMD Vectorization Engine
+### Phase 9: Recursive Call Optimization & Inlining Pass
 
-**Goal**: Specialize Cranelift backend to host CPU architecture with AVX2 and Fused Multiply-Add (FMA) instructions, accelerating mathematical and vector primitives.
-**Depends on**: Phase 5
-**Requirements**: SIMD-01, SIMD-02, SIMD-03
+**Goal**: Optimize self-recursive function calls (such as `fib(n) = fib(n - 1) + fib(n - 2)`) by expanding one level of recursion into an AST/IR inline transform, halving call overhead from ~29.8M frames to ~14.9M.
+**Depends on**: Phase 8
+**Requirements**: REC-01
 **Success Criteria**:
 
-  1. Cranelift ISA detects and activates host features (`has_avx2`, `has_fma`, `has_sse42`, `has_bmi2`).
-  2. Built-in vector operations (`dot`, `vec_add`, `sum`) generate vectorized FMA assembly.
-  3. Batch vector operations demonstrate significantly reduced cycle counts over scalar loops.
+  1. AST/IR pass identifies pure self-recursive functions and expands the primary recursive branch.
+  2. Recursive call frame count drops by 50%+, with runtime on `fib(35)` dropping from ~58ms to <35ms.
+  3. All mathematical results remain 100% bit-for-bit identical to baseline.
 
 Plans:
 
-- [x] 06-01: Host CPU feature detection and Cranelift target specialization flags
-- [x] 06-02: FMA vector codegen and vectorized math intrinsic implementation
+- [ ] 09-01: Self-recursive function call expansion and inline unrolling pass
 
-### Phase 7: Static Bounds Analysis, BCE & Loop Unrolling Pass
+### Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion
 
-**Goal**: Eliminate runtime bounds checking overhead in proven loops and unroll tight fixed-iteration numerical loops.
-**Depends on**: Phase 6
-**Requirements**: OPT-01, OPT-02, OPT-03
+**Goal**: Implement Scalar Replacement of Aggregates (SROA) in the Cranelift backend for small fixed arrays (`N <= 16`), promoting elements to SSA variables so array reads, writes, and vector math operate entirely in CPU registers.
+**Depends on**: Phase 9
+**Requirements**: SROA-01, SROA-02, SROA-03
 **Success Criteria**:
 
-  1. Static analyzer identifies loop induction variables and provable array index bounds `0 <= i < len`.
-  2. Bounds check elimination (BCE) omits runtime `icmp_imm_u` and panic branches in verified loop bodies.
-  3. Small fixed-size array loops and vector kernels are unrolled by 4x/8x to saturate the CPU execution pipeline.
+  1. Fixed-size arrays with constant bounds (`N <= 16`) allocate Cranelift SSA variables instead of stack slots.
+  2. Constant-indexed array indexing `arr[c]` and assignments `arr[c] = val` map directly to `use_var` and `def_var`.
+  3. Built-in vector operations (`dot`, `vec_add`, `sum`) on promoted variables run in registers with zero memory traffic.
+  4. Hardware SIMD dot product and matrix-vector multiplication runtimes drop significantly, beating Rust by >30%.
 
 Plans:
 
-- [x] 07-01: Static induction variable range analysis and loop bounds detection
-- [x] 07-02: Bounds check elimination (BCE) and loop unrolling optimization pass
+- [ ] 10-01: Cranelift backend SROA variable declaration and element promotion for small arrays
+- [ ] 10-02: Register-promoted vector operations and matrix-vector loop optimization
 
-### Phase 8: High-Performance Numerical Benchmark Suite & Victory Verification
+### Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit
 
-**Goal**: Expand the comparative benchmarking suite and verify statistically significant speed advantages across all workloads.
-**Depends on**: Phase 7
-**Requirements**: BENCH-02, BENCH-03
+**Goal**: Run the full comparative benchmark suite against optimized Rust (`rustc -O`) and C (`cl.exe /O2`), verifying statistically significant speedups across all 4 benchmarks.
+**Depends on**: Phase 10
+**Requirements**: VICTORY-01
 **Success Criteria**:
 
-  1. Benchmark suite executes recursive Fibonacci, tight math accumulator, SIMD dot product, and matrix-vector multiplication.
-  2. All implementations produce verified identical numeric outputs.
-  3. `numlang` native executables beat C (`cl.exe /O2`) and Rust (`rustc -O`) across benchmark workloads with clear speedup margins.
+  1. `numlang` outperforms `rustc -O` on Recursive Fibonacci (`fib(35)`).
+  2. `numlang` maintains lead over `rustc -O` on Math Loop Accumulator (10M iters).
+  3. `numlang` decisively outperforms `rustc -O` on Hardware SIMD Dot Product (10M iters).
+  4. `numlang` outperforms `rustc -O` on Dense Matrix-Vector Multiplication (1M iters).
+  5. All 57+ unit and integration tests pass with 100% mathematical fidelity.
 
 Plans:
 
-- [x] 08-01: Extended benchmark workloads and statistical advantage verification harness
+- [ ] 11-01: Full benchmark execution, statistical verification against Rust, and milestone victory audit
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -83,6 +91,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete | 2026-09-10 |
 | 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
 | 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
-| 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete    | 2026-09-10 |
-| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete    | 2026-09-10 |
-| 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete    | 2026-09-10 |
+| 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
+| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
+| 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
+| 9. Recursive Call Optimization & Inlining Pass | 0/1 | Pending | |
+| 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 0/2 | Pending | |
+| 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 0/1 | Pending | |
