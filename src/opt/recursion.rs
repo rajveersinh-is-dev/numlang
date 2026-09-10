@@ -106,14 +106,15 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
         return;
     }
 
-    // Transform function body to 3-step unrolled recurrence:
-    // F(n) = 3 * F(n - 3) + 2 * F(n - 4)
+    // Transform function body to 5-step unrolled recurrence:
+    // F(n) = 8 * F(n - 5) + 5 * F(n - 6)
     // with base cases:
     // if n <= 1 { return n; }
     // if n <= 2 { return 1; }
     // if n <= 3 { return 2; }
     // if n <= 4 { return 3; }
-    // return 3 * F(n - 3) + 2 * F(n - 4);
+    // if n <= 5 { return 5; }
+    // return 8 * F(n - 5) + 5 * F(n - 6);
     let span = func.span;
     let ty = func.return_ty.clone();
 
@@ -152,11 +153,11 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
     };
 
     // Construct recursive calls:
-    // arg1 = n - 3
+    // arg1 = n - 5
     let arg1 = TypedExpr::Binary {
         op: BinaryOp::Sub,
         left: Box::new(make_ident()),
-        right: Box::new(make_lit(3)),
+        right: Box::new(make_lit(5)),
         ty: ty.clone(),
         span,
     };
@@ -166,20 +167,20 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
         ty: ty.clone(),
         span,
     };
-    // term1 = 3 * F(n - 3)
+    // term1 = 8 * F(n - 5)
     let term1 = TypedExpr::Binary {
         op: BinaryOp::Mul,
-        left: Box::new(make_lit(3)),
+        left: Box::new(make_lit(8)),
         right: Box::new(call1),
         ty: ty.clone(),
         span,
     };
 
-    // arg2 = n - 4
+    // arg2 = n - 6
     let arg2 = TypedExpr::Binary {
         op: BinaryOp::Sub,
         left: Box::new(make_ident()),
-        right: Box::new(make_lit(4)),
+        right: Box::new(make_lit(6)),
         ty: ty.clone(),
         span,
     };
@@ -189,10 +190,10 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
         ty: ty.clone(),
         span,
     };
-    // term2 = 2 * F(n - 4)
+    // term2 = 5 * F(n - 6)
     let term2 = TypedExpr::Binary {
         op: BinaryOp::Mul,
-        left: Box::new(make_lit(2)),
+        left: Box::new(make_lit(5)),
         right: Box::new(call2),
         ty: ty.clone(),
         span,
@@ -212,6 +213,7 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
         make_base_check(2, make_lit(1)),
         make_base_check(3, make_lit(2)),
         make_base_check(4, make_lit(3)),
+        make_base_check(5, make_lit(5)),
         TypedStmt::Return(Some(final_expr), span),
     ];
 
