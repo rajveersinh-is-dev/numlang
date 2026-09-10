@@ -90,6 +90,27 @@ fn get_constant_int(expr: &TypedExpr) -> Option<i64> {
     }
 }
 
+fn is_safe_for_select(expr: &TypedExpr) -> bool {
+    match expr {
+        TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => true,
+        TypedExpr::Unary { expr, .. } => is_safe_for_select(expr),
+        TypedExpr::Binary { op, left, right, .. } => {
+            if *op == BinaryOp::Div || *op == BinaryOp::Mod {
+                match &**right {
+                    TypedExpr::Literal {
+                        lit: TypedLiteral::Int(d, _),
+                        ..
+                    } if *d != 0 => is_safe_for_select(left),
+                    _ => false,
+                }
+            } else {
+                is_safe_for_select(left) && is_safe_for_select(right)
+            }
+        }
+        _ => false,
+    }
+}
+
 pub struct CraneliftCompiler {
     module: ObjectModule,
     func_ids: HashMap<String, FuncId>,
@@ -1113,6 +1134,41 @@ impl<'a> FunctionTranslationState<'a> {
                 else_branch,
                 ..
             } => {
+                // Multi-variable branchless predication: if both branches assign to the same list of scalar variables with safe expressions,
+                // emit branchless `select` (cmov on x86_64) for each variable without any control-flow branching.
+                if let Some(TypedBlock { stmts: else_stmts, .. }) = else_branch {
+                    if then_branch.stmts.len() == else_stmts.len() && !then_branch.stmts.is_empty() {
+                        let mut can_select = true;
+                        let mut pairs = Vec::new();
+                        for (s_then, s_else) in then_branch.stmts.iter().zip(else_stmts.iter()) {
+                            if let (
+                                TypedStmt::Assign { name: name_then, value: val_then, .. },
+                                TypedStmt::Assign { name: name_else, value: val_else, .. },
+                            ) = (s_then, s_else) {
+                                if name_then == name_else && is_safe_for_select(val_then) && is_safe_for_select(val_else) {
+                                    if let Some(Storage::Scalar(var)) = self.variables.get(name_then).cloned() {
+                                        pairs.push((var, val_then, val_else));
+                                        continue;
+                                    }
+                                }
+                            }
+                            can_select = false;
+                            break;
+                        }
+
+                        if can_select && !pairs.is_empty() {
+                            let cond_val = self.translate_expr(condition, builder)?;
+                            for (var, val_then, val_else) in pairs {
+                                let then_val = self.translate_expr(val_then, builder)?;
+                                let else_val = self.translate_expr(val_else, builder)?;
+                                let selected = builder.ins().select(cond_val, then_val, else_val);
+                                builder.def_var(var, selected);
+                            }
+                            return Ok(false);
+                        }
+                    }
+                }
+
                 let cond_val = self.translate_expr(condition, builder)?;
 
                 let then_block = builder.create_block();
@@ -1253,27 +1309,25 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                 }
 
-                // Fallback to standard while loop
-                let header_block = builder.create_block();
+                // Rotated while loop: single conditional branch at the bottom of the body
                 let body_block = builder.create_block();
                 let exit_block = builder.create_block();
 
-                builder.ins().jump(header_block, &[]);
-                builder.switch_to_block(header_block);
-
-                let cond_val = self.translate_expr(condition, builder)?;
+                let cond_init = self.translate_expr(condition, builder)?;
                 builder
                     .ins()
-                    .brif(cond_val, body_block, &[], exit_block, &[]);
+                    .brif(cond_init, body_block, &[], exit_block, &[]);
 
                 builder.switch_to_block(body_block);
-                builder.seal_block(body_block);
                 let body_term = self.translate_block(body, builder)?;
                 if !body_term {
-                    builder.ins().jump(header_block, &[]);
+                    let cond_repeat = self.translate_expr(condition, builder)?;
+                    builder
+                        .ins()
+                        .brif(cond_repeat, body_block, &[], exit_block, &[]);
                 }
+                builder.seal_block(body_block);
 
-                builder.seal_block(header_block);
                 builder.switch_to_block(exit_block);
                 builder.seal_block(exit_block);
                 Ok(false)
@@ -1345,6 +1399,36 @@ impl<'a> FunctionTranslationState<'a> {
                 right,
                 ..
             } => {
+                // Power-of-2 divisibility optimization: (x % 2^k) == 0  or  (x % 2^k) != 0
+                if (*op == BinaryOp::Eq || *op == BinaryOp::Ne) && left.ty().is_integer() {
+                    let check_pattern = |a: &TypedExpr, b: &TypedExpr| -> Option<(TypedExpr, i64)> {
+                        if let (
+                            TypedExpr::Binary { op: BinaryOp::Mod, left: x, right: d_expr, .. },
+                            TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. },
+                        ) = (a, b) {
+                            if let Some(d) = get_constant_int(d_expr) {
+                                if d > 0 && (d as u64).is_power_of_two() {
+                                    return Some(((&**x).clone(), d));
+                                }
+                            }
+                        }
+                        None
+                    };
+
+                    if let Some((x_expr, d)) = check_pattern(left, right).or_else(|| check_pattern(right, left)) {
+                        let x_val = self.translate_expr(&x_expr, builder)?;
+                        let mask = (d - 1) as i64;
+                        let masked = builder.ins().band_imm_s(x_val, mask);
+                        let zero = builder.ins().iconst(type_to_clif(x_expr.ty()), 0);
+                        let cc = if *op == BinaryOp::Eq {
+                            IntCC::Equal
+                        } else {
+                            IntCC::NotEqual
+                        };
+                        return Ok(builder.ins().icmp(cc, masked, zero));
+                    }
+                }
+
                 let l = self.translate_expr(left, builder)?;
                 let r = self.translate_expr(right, builder)?;
                 let operand_ty = left.ty();
