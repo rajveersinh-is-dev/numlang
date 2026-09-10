@@ -276,19 +276,109 @@ struct FunctionTranslationState<'a> {
 }
 
 impl<'a> FunctionTranslationState<'a> {
+    fn get_small_constant_loop_info<'b>(condition: &'b TypedExpr) -> Option<(&'b str, usize)> {
+        match condition {
+            TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(n, _), .. }) = (&**left, &**right) {
+                    if *n > 0 && *n <= 16 {
+                        return Some((name.as_str(), *n as usize));
+                    }
+                }
+                None
+            }
+            TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
+                if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(n, _), .. }) = (&**left, &**right) {
+                    let limit = *n + 1;
+                    if limit > 0 && limit <= 16 {
+                        return Some((name.as_str(), limit as usize));
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn is_var_initialized_to_zero(stmt: &TypedStmt, var_name: &str) -> bool {
+        match stmt {
+            TypedStmt::Let { name, value, .. } | TypedStmt::Assign { name, value, .. } => {
+                if name == var_name {
+                    if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = value {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn is_simple_induction_body(body: &TypedBlock, var_name: &str) -> bool {
+        let mut has_increment = false;
+        for s in &body.stmts {
+            match s {
+                TypedStmt::While { .. } | TypedStmt::Return(..) => return false,
+                TypedStmt::Assign { name, value, .. } if name == var_name => {
+                    match value {
+                        TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
+                            let is_plus_one = match (&**left, &**right) {
+                                (TypedExpr::Ident { name: l, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) => l == var_name,
+                                (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: r, .. }) => r == var_name,
+                                _ => false,
+                            };
+                            if is_plus_one && !has_increment {
+                                has_increment = true;
+                            } else {
+                                return false;
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                _ => {}
+            }
+        }
+        has_increment
+    }
+
     fn translate_block(
         &mut self,
         block: &TypedBlock,
         builder: &mut FunctionBuilder,
     ) -> Result<bool, CodegenError> {
         let mut terminated = false;
-        for stmt in &block.stmts {
+        let num_stmts = block.stmts.len();
+        let mut i = 0;
+        while i < num_stmts {
             if terminated {
                 break;
             }
+            let stmt = &block.stmts[i];
+
+            // Full loop unrolling for small fixed iteration loops
+            if let TypedStmt::While { condition, body, .. } = stmt {
+                if i > 0 {
+                    if let Some((var_name, limit)) = Self::get_small_constant_loop_info(condition) {
+                        if Self::is_var_initialized_to_zero(&block.stmts[i - 1], var_name)
+                            && Self::is_simple_induction_body(body, var_name)
+                        {
+                            for _ in 0..limit {
+                                if self.translate_block(body, builder)? {
+                                    terminated = true;
+                                    break;
+                                }
+                            }
+                            i += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             if self.translate_stmt(stmt, builder)? {
                 terminated = true;
             }
+            i += 1;
         }
         Ok(terminated)
     }
@@ -373,6 +463,26 @@ impl<'a> FunctionTranslationState<'a> {
         let clif_ty = type_to_clif(elem_ty.clone());
 
         let mut i = 0;
+        while i + 8 <= len {
+            for k in 0..8 {
+                let offset = ((i + k) as i32) * elem_size;
+                let addr_a = builder.ins().stack_addr(types::I64, slot_a, offset);
+                let val_a = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_a, 0);
+                let addr_b = builder.ins().stack_addr(types::I64, slot_b, offset);
+                let val_b = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr_b, 0);
+
+                let sum = if elem_ty.is_float() {
+                    builder.ins().fadd(val_a, val_b)
+                } else {
+                    builder.ins().iadd(val_a, val_b)
+                };
+
+                let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
+            }
+            i += 8;
+        }
+
         while i + 4 <= len {
             for k in 0..4 {
                 let offset = ((i + k) as i32) * elem_size;
@@ -629,6 +739,98 @@ impl<'a> FunctionTranslationState<'a> {
                 body,
                 ..
             } => {
+                let induction_info = match condition {
+                    TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                        if let TypedExpr::Ident { name, .. } = &**left {
+                            Some((name.clone(), &**right, false))
+                        } else {
+                            None
+                        }
+                    }
+                    TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
+                        if let TypedExpr::Ident { name, .. } = &**left {
+                            Some((name.clone(), &**right, true))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
+                if let Some((ref var_name, limit_expr, is_le)) = induction_info {
+                    if let Some(Storage::Scalar(var)) = self.variables.get(var_name).copied() {
+                        if Self::is_simple_induction_body(body, var_name) {
+                            let unroll_head_block = builder.create_block();
+                            let unroll_body_block = builder.create_block();
+                            let cleanup_head_block = builder.create_block();
+                            let cleanup_body_block = builder.create_block();
+                            let exit_block = builder.create_block();
+
+                            builder.ins().jump(unroll_head_block, &[]);
+
+                            // Unrolled loop header: test if at least 4 iterations remain
+                            builder.switch_to_block(unroll_head_block);
+                            let cur_val = builder.use_var(var);
+                            let var_ty = builder.func.dfg.value_type(cur_val);
+                            let cur_plus_3 = builder.ins().iadd_imm_s(cur_val, 3);
+                            let mut limit_val = self.translate_expr(limit_expr, builder)?;
+                            let limit_clif_ty = builder.func.dfg.value_type(limit_val);
+                            if var_ty == types::I64 && limit_clif_ty == types::I32 {
+                                limit_val = builder.ins().sextend(types::I64, limit_val);
+                            } else if var_ty == types::I32 && limit_clif_ty == types::I64 {
+                                limit_val = builder.ins().ireduce(types::I32, limit_val);
+                            }
+
+                            let can_unroll = if is_le {
+                                builder.ins().icmp(IntCC::SignedLessThanOrEqual, cur_plus_3, limit_val)
+                            } else {
+                                builder.ins().icmp(IntCC::SignedLessThan, cur_plus_3, limit_val)
+                            };
+                            builder.ins().brif(can_unroll, unroll_body_block, &[], cleanup_head_block, &[]);
+
+                            // Unrolled body (4 iterations straight-line)
+                            builder.switch_to_block(unroll_body_block);
+                            builder.seal_block(unroll_body_block);
+                            for _ in 0..4 {
+                                self.translate_block(body, builder)?;
+                            }
+                            builder.ins().jump(unroll_head_block, &[]);
+                            builder.seal_block(unroll_head_block);
+
+                            // Cleanup loop header
+                            builder.switch_to_block(cleanup_head_block);
+                            let cur_val_cleanup = builder.use_var(var);
+                            let mut limit_val_cleanup = self.translate_expr(limit_expr, builder)?;
+                            let limit_clif_ty_cleanup = builder.func.dfg.value_type(limit_val_cleanup);
+                            if var_ty == types::I64 && limit_clif_ty_cleanup == types::I32 {
+                                limit_val_cleanup = builder.ins().sextend(types::I64, limit_val_cleanup);
+                            } else if var_ty == types::I32 && limit_clif_ty_cleanup == types::I64 {
+                                limit_val_cleanup = builder.ins().ireduce(types::I32, limit_val_cleanup);
+                            }
+
+                            let has_more = if is_le {
+                                builder.ins().icmp(IntCC::SignedLessThanOrEqual, cur_val_cleanup, limit_val_cleanup)
+                            } else {
+                                builder.ins().icmp(IntCC::SignedLessThan, cur_val_cleanup, limit_val_cleanup)
+                            };
+                            builder.ins().brif(has_more, cleanup_body_block, &[], exit_block, &[]);
+
+                            // Cleanup body (1 iteration)
+                            builder.switch_to_block(cleanup_body_block);
+                            builder.seal_block(cleanup_body_block);
+                            self.translate_block(body, builder)?;
+                            builder.ins().jump(cleanup_head_block, &[]);
+                            builder.seal_block(cleanup_head_block);
+
+                            // Exit block
+                            builder.switch_to_block(exit_block);
+                            builder.seal_block(exit_block);
+                            return Ok(false);
+                        }
+                    }
+                }
+
+                // Fallback to standard while loop
                 let header_block = builder.create_block();
                 let body_block = builder.create_block();
                 let exit_block = builder.create_block();
@@ -905,8 +1107,83 @@ impl<'a> FunctionTranslationState<'a> {
                         let mut acc1 = zero;
                         let mut acc2 = zero;
                         let mut acc3 = zero;
+                        let mut acc4 = zero;
+                        let mut acc5 = zero;
+                        let mut acc6 = zero;
+                        let mut acc7 = zero;
 
                         let mut i = 0;
+                        while i + 8 <= len_a {
+                            let off0 = (i as i32) * elem_size;
+                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
+                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
+                            let b0 = builder.ins().stack_addr(types::I64, slot_b, off0);
+                            let v_b0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b0, 0);
+
+                            let off1 = ((i + 1) as i32) * elem_size;
+                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
+                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
+                            let b1 = builder.ins().stack_addr(types::I64, slot_b, off1);
+                            let v_b1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b1, 0);
+
+                            let off2 = ((i + 2) as i32) * elem_size;
+                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
+                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
+                            let b2 = builder.ins().stack_addr(types::I64, slot_b, off2);
+                            let v_b2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b2, 0);
+
+                            let off3 = ((i + 3) as i32) * elem_size;
+                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
+                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
+                            let b3 = builder.ins().stack_addr(types::I64, slot_b, off3);
+                            let v_b3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b3, 0);
+
+                            let off4 = ((i + 4) as i32) * elem_size;
+                            let a4 = builder.ins().stack_addr(types::I64, slot_a, off4);
+                            let v_a4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a4, 0);
+                            let b4 = builder.ins().stack_addr(types::I64, slot_b, off4);
+                            let v_b4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b4, 0);
+
+                            let off5 = ((i + 5) as i32) * elem_size;
+                            let a5 = builder.ins().stack_addr(types::I64, slot_a, off5);
+                            let v_a5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a5, 0);
+                            let b5 = builder.ins().stack_addr(types::I64, slot_b, off5);
+                            let v_b5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b5, 0);
+
+                            let off6 = ((i + 6) as i32) * elem_size;
+                            let a6 = builder.ins().stack_addr(types::I64, slot_a, off6);
+                            let v_a6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a6, 0);
+                            let b6 = builder.ins().stack_addr(types::I64, slot_b, off6);
+                            let v_b6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b6, 0);
+
+                            let off7 = ((i + 7) as i32) * elem_size;
+                            let a7 = builder.ins().stack_addr(types::I64, slot_a, off7);
+                            let v_a7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a7, 0);
+                            let b7 = builder.ins().stack_addr(types::I64, slot_b, off7);
+                            let v_b7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), b7, 0);
+
+                            if elem_ty.is_float() {
+                                acc0 = builder.ins().fma(v_a0, v_b0, acc0);
+                                acc1 = builder.ins().fma(v_a1, v_b1, acc1);
+                                acc2 = builder.ins().fma(v_a2, v_b2, acc2);
+                                acc3 = builder.ins().fma(v_a3, v_b3, acc3);
+                                acc4 = builder.ins().fma(v_a4, v_b4, acc4);
+                                acc5 = builder.ins().fma(v_a5, v_b5, acc5);
+                                acc6 = builder.ins().fma(v_a6, v_b6, acc6);
+                                acc7 = builder.ins().fma(v_a7, v_b7, acc7);
+                            } else {
+                                let p0 = builder.ins().imul(v_a0, v_b0); acc0 = builder.ins().iadd(acc0, p0);
+                                let p1 = builder.ins().imul(v_a1, v_b1); acc1 = builder.ins().iadd(acc1, p1);
+                                let p2 = builder.ins().imul(v_a2, v_b2); acc2 = builder.ins().iadd(acc2, p2);
+                                let p3 = builder.ins().imul(v_a3, v_b3); acc3 = builder.ins().iadd(acc3, p3);
+                                let p4 = builder.ins().imul(v_a4, v_b4); acc4 = builder.ins().iadd(acc4, p4);
+                                let p5 = builder.ins().imul(v_a5, v_b5); acc5 = builder.ins().iadd(acc5, p5);
+                                let p6 = builder.ins().imul(v_a6, v_b6); acc6 = builder.ins().iadd(acc6, p6);
+                                let p7 = builder.ins().imul(v_a7, v_b7); acc7 = builder.ins().iadd(acc7, p7);
+                            }
+                            i += 8;
+                        }
+
                         while i + 4 <= len_a {
                             let off0 = (i as i32) * elem_size;
                             let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
@@ -968,11 +1245,19 @@ impl<'a> FunctionTranslationState<'a> {
                         let total = if elem_ty.is_float() {
                             let s01 = builder.ins().fadd(acc0, acc1);
                             let s23 = builder.ins().fadd(acc2, acc3);
-                            builder.ins().fadd(s01, s23)
+                            let s45 = builder.ins().fadd(acc4, acc5);
+                            let s67 = builder.ins().fadd(acc6, acc7);
+                            let s03 = builder.ins().fadd(s01, s23);
+                            let s47 = builder.ins().fadd(s45, s67);
+                            builder.ins().fadd(s03, s47)
                         } else {
                             let s01 = builder.ins().iadd(acc0, acc1);
                             let s23 = builder.ins().iadd(acc2, acc3);
-                            builder.ins().iadd(s01, s23)
+                            let s45 = builder.ins().iadd(acc4, acc5);
+                            let s67 = builder.ins().iadd(acc6, acc7);
+                            let s03 = builder.ins().iadd(s01, s23);
+                            let s47 = builder.ins().iadd(s45, s67);
+                            builder.ins().iadd(s03, s47)
                         };
                         return Ok(total);
                     }
@@ -995,8 +1280,67 @@ impl<'a> FunctionTranslationState<'a> {
                         let mut acc1 = zero;
                         let mut acc2 = zero;
                         let mut acc3 = zero;
+                        let mut acc4 = zero;
+                        let mut acc5 = zero;
+                        let mut acc6 = zero;
+                        let mut acc7 = zero;
 
                         let mut i = 0;
+                        while i + 8 <= len_a {
+                            let off0 = (i as i32) * elem_size;
+                            let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
+                            let v_a0 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a0, 0);
+
+                            let off1 = ((i + 1) as i32) * elem_size;
+                            let a1 = builder.ins().stack_addr(types::I64, slot_a, off1);
+                            let v_a1 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a1, 0);
+
+                            let off2 = ((i + 2) as i32) * elem_size;
+                            let a2 = builder.ins().stack_addr(types::I64, slot_a, off2);
+                            let v_a2 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a2, 0);
+
+                            let off3 = ((i + 3) as i32) * elem_size;
+                            let a3 = builder.ins().stack_addr(types::I64, slot_a, off3);
+                            let v_a3 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a3, 0);
+
+                            let off4 = ((i + 4) as i32) * elem_size;
+                            let a4 = builder.ins().stack_addr(types::I64, slot_a, off4);
+                            let v_a4 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a4, 0);
+
+                            let off5 = ((i + 5) as i32) * elem_size;
+                            let a5 = builder.ins().stack_addr(types::I64, slot_a, off5);
+                            let v_a5 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a5, 0);
+
+                            let off6 = ((i + 6) as i32) * elem_size;
+                            let a6 = builder.ins().stack_addr(types::I64, slot_a, off6);
+                            let v_a6 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a6, 0);
+
+                            let off7 = ((i + 7) as i32) * elem_size;
+                            let a7 = builder.ins().stack_addr(types::I64, slot_a, off7);
+                            let v_a7 = builder.ins().load(clif_ty, MemFlagsData::trusted(), a7, 0);
+
+                            if elem_ty.is_float() {
+                                acc0 = builder.ins().fadd(acc0, v_a0);
+                                acc1 = builder.ins().fadd(acc1, v_a1);
+                                acc2 = builder.ins().fadd(acc2, v_a2);
+                                acc3 = builder.ins().fadd(acc3, v_a3);
+                                acc4 = builder.ins().fadd(acc4, v_a4);
+                                acc5 = builder.ins().fadd(acc5, v_a5);
+                                acc6 = builder.ins().fadd(acc6, v_a6);
+                                acc7 = builder.ins().fadd(acc7, v_a7);
+                            } else {
+                                acc0 = builder.ins().iadd(acc0, v_a0);
+                                acc1 = builder.ins().iadd(acc1, v_a1);
+                                acc2 = builder.ins().iadd(acc2, v_a2);
+                                acc3 = builder.ins().iadd(acc3, v_a3);
+                                acc4 = builder.ins().iadd(acc4, v_a4);
+                                acc5 = builder.ins().iadd(acc5, v_a5);
+                                acc6 = builder.ins().iadd(acc6, v_a6);
+                                acc7 = builder.ins().iadd(acc7, v_a7);
+                            }
+                            i += 8;
+                        }
+
                         while i + 4 <= len_a {
                             let off0 = (i as i32) * elem_size;
                             let a0 = builder.ins().stack_addr(types::I64, slot_a, off0);
@@ -1043,11 +1387,19 @@ impl<'a> FunctionTranslationState<'a> {
                         let total = if elem_ty.is_float() {
                             let s01 = builder.ins().fadd(acc0, acc1);
                             let s23 = builder.ins().fadd(acc2, acc3);
-                            builder.ins().fadd(s01, s23)
+                            let s45 = builder.ins().fadd(acc4, acc5);
+                            let s67 = builder.ins().fadd(acc6, acc7);
+                            let s03 = builder.ins().fadd(s01, s23);
+                            let s47 = builder.ins().fadd(s45, s67);
+                            builder.ins().fadd(s03, s47)
                         } else {
                             let s01 = builder.ins().iadd(acc0, acc1);
                             let s23 = builder.ins().iadd(acc2, acc3);
-                            builder.ins().iadd(s01, s23)
+                            let s45 = builder.ins().iadd(acc4, acc5);
+                            let s67 = builder.ins().iadd(acc6, acc7);
+                            let s03 = builder.ins().iadd(s01, s23);
+                            let s47 = builder.ins().iadd(s45, s67);
+                            builder.ins().iadd(s03, s47)
                         };
                         return Ok(total);
                     }
