@@ -24,7 +24,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 
 ### Milestone v3.0: Total Rust Decimation
 
-- [ ] **Phase 9: Recursive Call Optimization & Inlining Pass** - Slashing function call frame count by 50%+ via recursive call expansion.
+- [x] **Phase 9: Recursive Call Optimization & Inlining Pass** - Slashing function call frame count by 50%+ via recursive call expansion. (completed 2026-09-10)
 - [ ] **Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion** - Promoting small fixed arrays to SSA registers, eliminating stack memory round-trips.
 - [ ] **Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit** - Verifying decisive speed advantages over Rust across all 4 workloads.
 
@@ -43,7 +43,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 
 Plans:
 
-- [ ] 09-01: Self-recursive function call expansion and inline unrolling pass
+- [x] 09-01: Self-recursive function call expansion and inline unrolling pass
 
 ### Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion
 
@@ -94,6 +94,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
 | 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
 | 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
-| 9. Recursive Call Optimization & Inlining Pass | 0/1 | Pending | |
+| 9. Recursive Call Optimization & Inlining Pass | 1/1 | Complete | 2026-09-10 |
 | 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 0/2 | Pending | |
 | 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 0/1 | Pending | |

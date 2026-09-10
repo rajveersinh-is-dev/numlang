@@ -1444,6 +1444,8 @@ impl<'a> FunctionTranslationState<'a> {
 }
 
 pub fn compile_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
+    let mut optimized = program.clone();
+    crate::opt::optimize_program(&mut optimized);
     let compiler = CraneliftCompiler::new()?;
-    compiler.compile_program(program)
+    compiler.compile_program(&optimized)
 }
