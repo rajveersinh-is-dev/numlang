@@ -1868,6 +1868,1060 @@ res = monte_carlo_pi(5000000)
 sys.exit(res % 256)
 "#,
         },
+
+        // 15. Binary Search Kernel
+        BenchmarkWorkload {
+            name: "Binary Search Kernel (2M iters)",
+            expected_exit: 227,
+            nl_code: r#"
+fn bsearch_kernel(iters: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut state: i64 = 123456789;
+    let mut i: i64 = 0;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let target: i64 = state % 7168;
+        let mut low: i64 = 0;
+        let mut high: i64 = 1023;
+        let mut idx: i64 = 0 - 1;
+        while low <= high {
+            let mid: i64 = (low + high) / 2;
+            let val: i64 = mid * 7 + 3;
+            if val == target {
+                idx = mid;
+                low = high + 1;
+            } else {
+                if val < target {
+                    low = mid + 1;
+                } else {
+                    high = mid - 1;
+                }
+            }
+        }
+        total = (total + idx + 1) % 1000000007;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i64 {
+    let res: i64 = bsearch_kernel(2000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn bsearch_kernel(iters: i64) -> i64 {
+    let mut total = 0i64;
+    let mut state = 123456789i64;
+    let mut i = 0i64;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let target = state % 7168;
+        let mut low = 0i64;
+        let mut high = 1023i64;
+        let mut idx = -1i64;
+        while low <= high {
+            let mid = (low + high) / 2;
+            let val = mid * 7 + 3;
+            if val == target {
+                idx = mid;
+                break;
+            } else if val < target {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        total = (total + idx + 1) % 1000000007;
+        i += 1;
+    }
+    total
+}
+
+fn main() {
+    let res = bsearch_kernel(2000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long bsearch_kernel(long long iters) {
+    long long total = 0;
+    long long state = 123456789;
+    for (long long i = 0; i < iters; i++) {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        long long target = state % 7168;
+        long long low = 0;
+        long long high = 1023;
+        long long idx = -1;
+        while (low <= high) {
+            long long mid = (low + high) / 2;
+            long long val = mid * 7 + 3;
+            if (val == target) {
+                idx = mid;
+                break;
+            } else if (val < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        total = (total + idx + 1) % 1000000007;
+    }
+    return total;
+}
+
+int main() {
+    long long res = bsearch_kernel(2000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function bsearch_kernel(iters) {
+    let total = 0n;
+    let state = 123456789n;
+    for (let i = 0n; i < iters; i++) {
+        state = (state * 1664525n + 1013904223n) % 4294967296n;
+        const target = state % 7168n;
+        let low = 0n;
+        let high = 1023n;
+        let idx = -1n;
+        while (low <= high) {
+            const mid = (low + high) / 2n;
+            const val = mid * 7n + 3n;
+            if (val === target) {
+                idx = mid;
+                break;
+            } else if (val < target) {
+                low = mid + 1n;
+            } else {
+                high = mid - 1n;
+            }
+        }
+        total = (total + idx + 1n) % 1000000007n;
+    }
+    return total;
+}
+
+const res = bsearch_kernel(2000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def bsearch_kernel(iters):
+    total = 0
+    state = 123456789
+    for _ in range(iters):
+        state = (state * 1664525 + 1013904223) % 4294967296
+        target = state % 7168
+        low = 0
+        high = 1023
+        idx = -1
+        while low <= high:
+            mid = (low + high) // 2
+            val = mid * 7 + 3
+            if val == target:
+                idx = mid
+                break
+            elif val < target:
+                low = mid + 1
+            else:
+                high = mid - 1
+        total = (total + idx + 1) % 1000000007
+    return total
+
+res = bsearch_kernel(2000000)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 16. Rule 110 Cellular Automaton
+        BenchmarkWorkload {
+            name: "Rule 110 Automaton (50K steps)",
+            expected_exit: 38,
+            nl_code: r#"
+fn rule110_steps(steps: i64) -> i64 {
+    let mut cells: [i64; 64] = [
+        1, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    ];
+    let mut s: i64 = 0;
+    while s < steps {
+        let mut next_cells: [i64; 64] = [
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0
+        ];
+        let mut k: i64 = 0;
+        while k < 64 {
+            let left_idx: i64 = (k + 63) % 64;
+            let right_idx: i64 = (k + 1) % 64;
+            let l: i64 = cells[left_idx];
+            let c: i64 = cells[k];
+            let r: i64 = cells[right_idx];
+            let mut v: i64 = 0;
+            if c == 1 {
+                if l == 1 {
+                    if r == 1 {
+                        v = 0;
+                    } else {
+                        v = 1;
+                    }
+                } else {
+                    v = 1;
+                }
+            } else {
+                if r == 1 {
+                    v = 1;
+                } else {
+                    v = 0;
+                }
+            }
+            next_cells[k] = v;
+            k = k + 1;
+        }
+        cells = next_cells;
+        s = s + 1;
+    }
+    let mut count: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 64 {
+        count = count + cells[j];
+        j = j + 1;
+    }
+    return count;
+}
+
+fn main() -> i64 {
+    let res: i64 = rule110_steps(50000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn rule110_steps(steps: i64) -> i64 {
+    let mut state: u64 = 1;
+    let mut s = 0i64;
+    while s < steps {
+        let left = (state << 1) | (state >> 63);
+        let right = (state >> 1) | (state << 63);
+        state = (state | right) ^ (left & state & right);
+        s += 1;
+    }
+    state.count_ones() as i64
+}
+
+fn main() {
+    let res = rule110_steps(50000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long rule110_steps(long long steps) {
+    unsigned long long state = 1;
+    for (long long s = 0; s < steps; s++) {
+        unsigned long long left = (state << 1) | (state >> 63);
+        unsigned long long right = (state >> 1) | (state << 63);
+        state = (state | right) ^ (left & state & right);
+    }
+    long long count = 0;
+    while (state > 0) {
+        count += (state & 1);
+        state >>= 1;
+    }
+    return count;
+}
+
+int main() {
+    long long res = rule110_steps(50000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function rule110_steps(steps) {
+    let state = 1n;
+    const mask = 0xFFFFFFFFFFFFFFFFn;
+    for (let s = 0n; s < steps; s++) {
+        const left = ((state << 1n) | (state >> 63n)) & mask;
+        const right = ((state >> 1n) | (state << 63n)) & mask;
+        state = ((state | right) ^ (left & state & right)) & mask;
+    }
+    let count = 0n;
+    while (state > 0n) {
+        count += (state & 1n);
+        state >>= 1n;
+    }
+    return Number(count);
+}
+
+const res = rule110_steps(50000n);
+process.exit(Number(res % 256));
+"#,
+            py_code: r#"
+import sys
+def rule110_steps(steps):
+    state = 1
+    for _ in range(steps):
+        left = ((state << 1) | (state >> 63)) & 0xFFFFFFFFFFFFFFFF
+        right = ((state >> 1) | (state << 63)) & 0xFFFFFFFFFFFFFFFF
+        state = ((state | right) ^ (left & state & right)) & 0xFFFFFFFFFFFFFFFF
+    return bin(state).count('1')
+
+res = rule110_steps(50000)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 17. Fast 4x4 Matrix Exponentiation
+        BenchmarkWorkload {
+            name: "Matrix Exponentiation (1M power)",
+            expected_exit: 166,
+            nl_code: r#"
+fn mat4_pow(power: i64) -> i64 {
+    let mut m: [i64; 16] = [
+        1, 1, 1, 1,
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0
+    ];
+    let mut r: [i64; 16] = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    ];
+    let mut p: i64 = power;
+    while p > 0 {
+        if p % 2 == 1 {
+            let mut next_r: [i64; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let mut i: i64 = 0;
+            while i < 4 {
+                let mut j: i64 = 0;
+                while j < 4 {
+                    let mut sum: i64 = 0;
+                    let mut k: i64 = 0;
+                    while k < 4 {
+                        sum = (sum + r[i * 4 + k] * m[k * 4 + j]) % 1000000007;
+                        k = k + 1;
+                    }
+                    next_r[i * 4 + j] = sum;
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            r = next_r;
+        }
+        let mut next_m: [i64; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut i2: i64 = 0;
+        while i2 < 4 {
+            let mut j2: i64 = 0;
+            while j2 < 4 {
+                let mut sum2: i64 = 0;
+                let mut k2: i64 = 0;
+                while k2 < 4 {
+                    sum2 = (sum2 + m[i2 * 4 + k2] * m[k2 * 4 + j2]) % 1000000007;
+                    k2 = k2 + 1;
+                }
+                next_m[i2 * 4 + j2] = sum2;
+                j2 = j2 + 1;
+            }
+            i2 = i2 + 1;
+        }
+        m = next_m;
+        p = p / 2;
+    }
+    return r[0] + r[5] + r[10] + r[15];
+}
+
+fn main() -> i64 {
+    let res: i64 = mat4_pow(1000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn mat4_pow(power: i64) -> i64 {
+    const MOD: i64 = 1000000007;
+    let mut m = [
+        1i64, 1, 1, 1,
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+    ];
+    let mut r = [
+        1i64, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    ];
+    let mul = |a: &[i64; 16], b: &[i64; 16]| -> [i64; 16] {
+        let mut c = [0i64; 16];
+        for i in 0..4 {
+            for j in 0..4 {
+                let mut s = 0i64;
+                for k in 0..4 {
+                    s = (s + a[i * 4 + k] * b[k * 4 + j]) % MOD;
+                }
+                c[i * 4 + j] = s;
+            }
+        }
+        c
+    };
+    let mut p = power;
+    while p > 0 {
+        if p % 2 == 1 {
+            r = mul(&r, &m);
+        }
+        m = mul(&m, &m);
+        p /= 2;
+    }
+    r[0] + r[5] + r[10] + r[15]
+}
+
+fn main() {
+    let res = mat4_pow(1000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+#define MOD 1000000007LL
+
+void mul4(const long long a[16], const long long b[16], long long c[16]) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            long long s = 0;
+            for (int k = 0; k < 4; k++) {
+                s = (s + a[i * 4 + k] * b[k * 4 + j]) % MOD;
+            }
+            c[i * 4 + j] = s;
+        }
+    }
+}
+
+long long mat4_pow(long long power) {
+    long long m[16] = {
+        1, 1, 1, 1,
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0
+    };
+    long long r[16] = {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    };
+    long long temp[16];
+    long long p = power;
+    while (p > 0) {
+        if (p % 2 == 1) {
+            mul4(r, m, temp);
+            for (int i = 0; i < 16; i++) r[i] = temp[i];
+        }
+        mul4(m, m, temp);
+        for (int i = 0; i < 16; i++) m[i] = temp[i];
+        p /= 2;
+    }
+    return r[0] + r[5] + r[10] + r[15];
+}
+
+int main() {
+    long long res = mat4_pow(1000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function mat4_pow(power) {
+    const MOD = 1000000007n;
+    let M = [
+        1n, 1n, 1n, 1n,
+        1n, 0n, 0n, 0n,
+        0n, 1n, 0n, 0n,
+        0n, 0n, 1n, 0n
+    ];
+    let R = [
+        1n, 0n, 0n, 0n,
+        0n, 1n, 0n, 0n,
+        0n, 0n, 1n, 0n,
+        0n, 0n, 0n, 1n
+    ];
+    function mul(A, B) {
+        const C = new Array(16).fill(0n);
+        for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+                let s = 0n;
+                for (let k = 0; k < 4; k++) {
+                    s = (s + A[i * 4 + k] * B[k * 4 + j]) % MOD;
+                }
+                C[i * 4 + j] = s;
+            }
+        }
+        return C;
+    }
+    let p = power;
+    while (p > 0n) {
+        if (p % 2n === 1n) {
+            R = mul(R, M);
+        }
+        M = mul(M, M);
+        p = p / 2n;
+    }
+    return R[0] + R[5] + R[10] + R[15];
+}
+
+const res = mat4_pow(1000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def mat4_pow(power):
+    MOD = 1000000007
+    M = [
+        [1, 1, 1, 1],
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0]
+    ]
+    R = [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+    ]
+    def mul(A, B):
+        C = [[0]*4 for _ in range(4)]
+        for r in range(4):
+            for c in range(4):
+                s = 0
+                for k in range(4):
+                    s = (s + A[r][k] * B[k][c]) % MOD
+                C[r][c] = s
+        return C
+    p = power
+    while p > 0:
+        if p % 2 == 1:
+            R = mul(R, M)
+        M = mul(M, M)
+        p //= 2
+    return R[0][0] + R[1][1] + R[2][2] + R[3][3]
+
+res = mat4_pow(1000000)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 18. Binary GCD Stein's Algorithm
+        BenchmarkWorkload {
+            name: "Binary GCD Stein (5M pairs)",
+            expected_exit: 122,
+            nl_code: r#"
+fn stein_gcd(u_in: i64, v_in: i64) -> i64 {
+    let mut u: i64 = u_in;
+    let mut v: i64 = v_in;
+    if u == 0 { return v; }
+    if v == 0 { return u; }
+    let mut shift: i64 = 0;
+    while (u % 2 + v % 2) == 0 {
+        u = u / 2;
+        v = v / 2;
+        shift = shift + 1;
+    }
+    while u % 2 == 0 {
+        u = u / 2;
+    }
+    while v != 0 {
+        while v % 2 == 0 {
+            v = v / 2;
+        }
+        if u > v {
+            let temp: i64 = u;
+            u = v;
+            v = temp;
+        }
+        v = v - u;
+    }
+    let mut k: i64 = 0;
+    while k < shift {
+        u = u * 2;
+        k = k + 1;
+    }
+    return u;
+}
+
+fn stein_gcd_bench(iters: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut state_u: i64 = 123456789;
+    let mut state_v: i64 = 987654321;
+    let mut i: i64 = 0;
+    while i < iters {
+        state_u = (state_u * 1664525 + 1013904223) % 4294967296;
+        state_v = (state_v * 1664525 + 1013904223) % 4294967296;
+        let u: i64 = (state_u % 1000000) + 1;
+        let v: i64 = (state_v % 1000000) + 1;
+        let g: i64 = stein_gcd(u, v);
+        total = (total + g) % 1000000007;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i64 {
+    let res: i64 = stein_gcd_bench(5000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn stein_gcd(mut u: i64, mut v: i64) -> i64 {
+    if u == 0 { return v; }
+    if v == 0 { return u; }
+    let mut shift = 0;
+    while ((u | v) & 1) == 0 {
+        u >>= 1;
+        v >>= 1;
+        shift += 1;
+    }
+    while (u & 1) == 0 {
+        u >>= 1;
+    }
+    while v != 0 {
+        while (v & 1) == 0 {
+            v >>= 1;
+        }
+        if u > v {
+            std::mem::swap(&mut u, &mut v);
+        }
+        v -= u;
+    }
+    u << shift
+}
+
+fn stein_gcd_bench(iters: i64) -> i64 {
+    let mut total = 0i64;
+    let mut state_u = 123456789i64;
+    let mut state_v = 987654321i64;
+    let mut i = 0i64;
+    while i < iters {
+        state_u = (state_u * 1664525 + 1013904223) % 4294967296;
+        state_v = (state_v * 1664525 + 1013904223) % 4294967296;
+        let u = (state_u % 1000000) + 1;
+        let v = (state_v % 1000000) + 1;
+        total = (total + stein_gcd(u, v)) % 1000000007;
+        i += 1;
+    }
+    total
+}
+
+fn main() {
+    let res = stein_gcd_bench(5000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long stein_gcd(long long u, long long v) {
+    if (u == 0) return v;
+    if (v == 0) return u;
+    int shift = 0;
+    while (((u | v) & 1) == 0) {
+        u >>= 1;
+        v >>= 1;
+        shift++;
+    }
+    while ((u & 1) == 0) {
+        u >>= 1;
+    }
+    while (v != 0) {
+        while ((v & 1) == 0) {
+            v >>= 1;
+        }
+        if (u > v) {
+            long long t = u; u = v; v = t;
+        }
+        v -= u;
+    }
+    return u << shift;
+}
+
+long long stein_gcd_bench(long long iters) {
+    long long total = 0;
+    long long state_u = 123456789;
+    long long state_v = 987654321;
+    for (long long i = 0; i < iters; i++) {
+        state_u = (state_u * 1664525 + 1013904223) % 4294967296;
+        state_v = (state_v * 1664525 + 1013904223) % 4294967296;
+        long long u = (state_u % 1000000) + 1;
+        long long v = (state_v % 1000000) + 1;
+        total = (total + stein_gcd(u, v)) % 1000000007;
+    }
+    return total;
+}
+
+int main() {
+    long long res = stein_gcd_bench(5000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function stein_gcd(u_in, v_in) {
+    let u = u_in;
+    let v = v_in;
+    if (u === 0n) return v;
+    if (v === 0n) return u;
+    let shift = 0n;
+    while (((u | v) & 1n) === 0n) {
+        u >>= 1n;
+        v >>= 1n;
+        shift++;
+    }
+    while ((u & 1n) === 0n) {
+        u >>= 1n;
+    }
+    while (v !== 0n) {
+        while ((v & 1n) === 0n) {
+            v >>= 1n;
+        }
+        if (u > v) {
+            const t = u; u = v; v = t;
+        }
+        v -= u;
+    }
+    return u << shift;
+}
+
+function stein_gcd_bench(iters) {
+    let total = 0n;
+    let state_u = 123456789n;
+    let state_v = 987654321n;
+    for (let i = 0n; i < iters; i++) {
+        state_u = (state_u * 1664525n + 1013904223n) % 4294967296n;
+        state_v = (state_v * 1664525n + 1013904223n) % 4294967296n;
+        const u = (state_u % 1000000n) + 1n;
+        const v = (state_v % 1000000n) + 1n;
+        total = (total + stein_gcd(u, v)) % 1000000007n;
+    }
+    return total;
+}
+
+const res = stein_gcd_bench(5000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def stein_gcd(u, v):
+    if u == 0: return v
+    if v == 0: return u
+    shift = 0
+    while ((u | v) & 1) == 0:
+        u >>= 1
+        v >>= 1
+        shift += 1
+    while (u & 1) == 0:
+        u >>= 1
+    while v != 0:
+        while (v & 1) == 0:
+            v >>= 1
+        if u > v:
+            u, v = v, u
+        v -= u
+    return u << shift
+
+def stein_gcd_bench(iters):
+    total = 0
+    state_u = 123456789
+    state_v = 987654321
+    for _ in range(iters):
+        state_u = (state_u * 1664525 + 1013904223) % 4294967296
+        state_v = (state_v * 1664525 + 1013904223) % 4294967296
+        u = (state_u % 1000000) + 1
+        v = (state_v % 1000000) + 1
+        total = (total + stein_gcd(u, v)) % 1000000007
+    return total
+
+res = stein_gcd_bench(5000000)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 19. 8-Point Discrete Cosine Transform
+        BenchmarkWorkload {
+            name: "Discrete Cosine Transform (2M iters)",
+            expected_exit: 186,
+            nl_code: r#"
+fn dct_bench(iters: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut i: i64 = 0;
+    while i < iters {
+        let x0: i64 = (i * 3 + 1) % 100;
+        let x1: i64 = (i * 7 + 2) % 100;
+        let x2: i64 = (i * 11 + 3) % 100;
+        let x3: i64 = (i * 13 + 4) % 100;
+        let x4: i64 = (i * 17 + 5) % 100;
+        let x5: i64 = (i * 19 + 6) % 100;
+        let x6: i64 = (i * 23 + 7) % 100;
+        let x7: i64 = (i * 29 + 8) % 100;
+        let big_x0: i64 = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7;
+        let big_x1: i64 = (x0 - x7) * 9 + (x1 - x6) * 7 + (x2 - x5) * 5 + (x3 - x4) * 3;
+        acc = (acc + big_x0 * 13 + big_x1) % 1000000007;
+        i = i + 1;
+    }
+    return acc;
+}
+
+fn main() -> i64 {
+    let res: i64 = dct_bench(2000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn dct_bench(iters: i64) -> i64 {
+    let mut acc = 0i64;
+    let mut i = 0i64;
+    while i < iters {
+        let x0 = (i * 3 + 1) % 100;
+        let x1 = (i * 7 + 2) % 100;
+        let x2 = (i * 11 + 3) % 100;
+        let x3 = (i * 13 + 4) % 100;
+        let x4 = (i * 17 + 5) % 100;
+        let x5 = (i * 19 + 6) % 100;
+        let x6 = (i * 23 + 7) % 100;
+        let x7 = (i * 29 + 8) % 100;
+        let big_x0 = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7;
+        let big_x1 = (x0 - x7) * 9 + (x1 - x6) * 7 + (x2 - x5) * 5 + (x3 - x4) * 3;
+        acc = (acc + big_x0 * 13 + big_x1) % 1000000007;
+        i += 1;
+    }
+    acc
+}
+
+fn main() {
+    let res = dct_bench(2000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long dct_bench(long long iters) {
+    long long acc = 0;
+    for (long long i = 0; i < iters; i++) {
+        long long x0 = (i * 3 + 1) % 100;
+        long long x1 = (i * 7 + 2) % 100;
+        long long x2 = (i * 11 + 3) % 100;
+        long long x3 = (i * 13 + 4) % 100;
+        long long x4 = (i * 17 + 5) % 100;
+        long long x5 = (i * 19 + 6) % 100;
+        long long x6 = (i * 23 + 7) % 100;
+        long long x7 = (i * 29 + 8) % 100;
+        long long big_x0 = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7;
+        long long big_x1 = (x0 - x7) * 9 + (x1 - x6) * 7 + (x2 - x5) * 5 + (x3 - x4) * 3;
+        acc = (acc + big_x0 * 13 + big_x1) % 1000000007;
+    }
+    return acc;
+}
+
+int main() {
+    long long res = dct_bench(2000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function dct_bench(iters) {
+    let acc = 0n;
+    for (let i = 0n; i < iters; i++) {
+        const x0 = (i * 3n + 1n) % 100n;
+        const x1 = (i * 7n + 2n) % 100n;
+        const x2 = (i * 11n + 3n) % 100n;
+        const x3 = (i * 13n + 4n) % 100n;
+        const x4 = (i * 17n + 5n) % 100n;
+        const x5 = (i * 19n + 6n) % 100n;
+        const x6 = (i * 23n + 7n) % 100n;
+        const x7 = (i * 29n + 8n) % 100n;
+        const big_x0 = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7;
+        const big_x1 = (x0 - x7) * 9n + (x1 - x6) * 7n + (x2 - x5) * 5n + (x3 - x4) * 3n;
+        acc = (acc + big_x0 * 13n + big_x1) % 1000000007n;
+    }
+    return acc;
+}
+
+const res = dct_bench(2000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def dct_bench(iters):
+    acc = 0
+    for i in range(iters):
+        x0 = (i * 3 + 1) % 100
+        x1 = (i * 7 + 2) % 100
+        x2 = (i * 11 + 3) % 100
+        x3 = (i * 13 + 4) % 100
+        x4 = (i * 17 + 5) % 100
+        x5 = (i * 19 + 6) % 100
+        x6 = (i * 23 + 7) % 100
+        x7 = (i * 29 + 8) % 100
+        big_x0 = x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7
+        big_x1 = (x0 - x7) * 9 + (x1 - x6) * 7 + (x2 - x5) * 5 + (x3 - x4) * 3
+        acc = (acc + big_x0 * 13 + big_x1) % 1000000007
+    return acc
+
+res = dct_bench(2000000)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 20. Integer Square Root Newton-Raphson
+        BenchmarkWorkload {
+            name: "Newton Integer Sqrt (5M iters)",
+            expected_exit: 160,
+            nl_code: r#"
+fn isqrt_newton(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    let mut x: i64 = n;
+    let mut y: i64 = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+
+fn isqrt_bench(iters: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut state: i64 = 123456789;
+    let mut i: i64 = 0;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let n: i64 = (state % 10000000) + 1;
+        let root: i64 = isqrt_newton(n);
+        total = (total + root) % 1000000007;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i64 {
+    let res: i64 = isqrt_bench(5000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn isqrt_newton(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
+}
+
+fn isqrt_bench(iters: i64) -> i64 {
+    let mut total = 0i64;
+    let mut state = 123456789i64;
+    let mut i = 0i64;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let n = (state % 10000000) + 1;
+        total = (total + isqrt_newton(n)) % 1000000007;
+        i += 1;
+    }
+    total
+}
+
+fn main() {
+    let res = isqrt_bench(5000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long isqrt_newton(long long n) {
+    if (n <= 1) return n;
+    long long x = n;
+    long long y = (x + 1) / 2;
+    while (y < x) {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+
+long long isqrt_bench(long long iters) {
+    long long total = 0;
+    long long state = 123456789;
+    for (long long i = 0; i < iters; i++) {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        long long n = (state % 10000000) + 1;
+        total = (total + isqrt_newton(n)) % 1000000007;
+    }
+    return total;
+}
+
+int main() {
+    long long res = isqrt_bench(5000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function isqrt_newton(n) {
+    if (n <= 1n) return n;
+    let x = n;
+    let y = (x + 1n) / 2n;
+    while (y < x) {
+        x = y;
+        y = (x + n / x) / 2n;
+    }
+    return x;
+}
+
+function isqrt_bench(iters) {
+    let total = 0n;
+    let state = 123456789n;
+    for (let i = 0n; i < iters; i++) {
+        state = (state * 1664525n + 1013904223n) % 4294967296n;
+        const n = (state % 10000000n) + 1n;
+        total = (total + isqrt_newton(n)) % 1000000007n;
+    }
+    return total;
+}
+
+const res = isqrt_bench(5000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def isqrt_newton(n):
+    if n <= 1:
+        return n
+    x = n
+    y = (x + 1) // 2
+    while y < x:
+        x = y
+        y = (x + n // x) // 2
+    return x
+
+def isqrt_bench(iters):
+    total = 0
+    state = 123456789
+    for _ in range(iters):
+        state = (state * 1664525 + 1013904223) % 4294967296
+        n = (state % 10000000) + 1
+        total = (total + isqrt_newton(n)) % 1000000007
+    return total
+
+res = isqrt_bench(5000000)
+sys.exit(res % 256)
+"#,
+        },
     ];
 
     let fmt_duration = |d: Duration| -> String {
@@ -1954,7 +3008,7 @@ sys.exit(res % 256)
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
         fs::write(&py_file, wrap_py(w.py_code)).unwrap();
-        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") { 1 } else { 2 };
+        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") || w.name.contains("Binary Search") || w.name.contains("Rule 110") || w.name.contains("Matrix") || w.name.contains("Binary GCD") || w.name.contains("Cosine") || w.name.contains("Integer Sqrt") { 1 } else { 2 };
         let (py_comp_min, py_comp_avg, py_wall_min, _py_wall_avg, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
         let speedup = py_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(
