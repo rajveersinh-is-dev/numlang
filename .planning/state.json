@@ -1,7 +1,7 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "v2.0",
+  "milestone": "v2.0 — Benchmark Supremacy",
   "phases": [
     {
       "number": "1",
@@ -27,12 +27,27 @@
       "number": "5",
       "name": "Benchmark Suite & Optimization Hardening",
       "status": "complete"
+    },
+    {
+      "number": "6",
+      "name": "Host CPU Architecture & SIMD Vectorization Engine",
+      "status": "complete"
+    },
+    {
+      "number": "7",
+      "name": "Static Bounds Analysis, BCE & Loop Unrolling Pass",
+      "status": "pending"
+    },
+    {
+      "number": "8",
+      "name": "High-Performance Numerical Benchmark Suite & Victory Verification",
+      "status": "pending"
     }
   ],
   "next": {
-    "command": "/gsd-discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd-progress",
+    "label": "Show progress",
+    "reason": "Unsure of state — showing progress"
   },
-  "updated_at": "2026-09-10T07:11:59.038Z"
+  "updated_at": "2026-09-10T07:17:32.405Z"
 }
