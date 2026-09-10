@@ -151,6 +151,12 @@ impl<'a> Parser<'a> {
     pub fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         if self.check(&Token::Let) {
             let let_span = self.advance().unwrap().span;
+            let is_mutable = if self.check(&Token::Mut) {
+                self.advance();
+                true
+            } else {
+                false
+            };
             let (name, _) = match self.peek_token().cloned() {
                 Some(t) => match t.token {
                     Token::Ident(id) => {
@@ -205,6 +211,7 @@ impl<'a> Parser<'a> {
 
             Ok(Stmt::Let {
                 name,
+                is_mutable,
                 ty,
                 value,
                 span,
@@ -248,6 +255,21 @@ impl<'a> Parser<'a> {
                 body,
                 span,
             })
+        } else if self.cursor + 1 < self.tokens.len()
+            && matches!(self.tokens[self.cursor].token, Token::Ident(_))
+            && self.tokens[self.cursor + 1].token == Token::Assign
+        {
+            let id_token = self.advance().unwrap();
+            let name = match &id_token.token {
+                Token::Ident(id) => id.clone(),
+                _ => unreachable!(),
+            };
+            let start_span = id_token.span;
+            self.consume(&Token::Assign, "'=' in assignment")?;
+            let value = self.parse_expr(0)?;
+            let semi_span = self.consume(&Token::Semi, "';' after assignment")?;
+            let span = start_span.merge(&semi_span);
+            Ok(Stmt::Assign { name, value, span })
         } else {
             let expr = self.parse_expr(0)?;
             let _semi_span = self.consume(&Token::Semi, "';' after expression statement")?;

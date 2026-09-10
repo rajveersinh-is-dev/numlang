@@ -69,7 +69,13 @@ impl Expr {
 pub enum Stmt {
     Let {
         name: String,
+        is_mutable: bool,
         ty: Option<String>,
+        value: Expr,
+        span: Span,
+    },
+    Assign {
+        name: String,
         value: Expr,
         span: Span,
     },
@@ -86,6 +92,19 @@ pub enum Stmt {
         body: Block,
         span: Span,
     },
+}
+
+impl Stmt {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Let { span, .. } => *span,
+            Stmt::Assign { span, .. } => *span,
+            Stmt::Return(_, span) => *span,
+            Stmt::Expr(e) => e.span(),
+            Stmt::If { span, .. } => *span,
+            Stmt::While { span, .. } => *span,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

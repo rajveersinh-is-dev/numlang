@@ -10,6 +10,8 @@ pub enum Token {
     Fn,
     #[token("let")]
     Let,
+    #[token("mut")]
+    Mut,
     #[token("return")]
     Return,
     #[token("if")]
