@@ -26,13 +26,13 @@
     {
       "number": "5",
       "name": "Benchmark Suite & Optimization Hardening",
-      "status": "pending"
+      "status": "complete"
     }
   ],
   "next": {
-    "command": "/gsd-progress --next",
-    "label": "Advance to the next step (plan phase 5)",
-    "reason": "Phase 5 of 5 — needs a plan"
+    "command": "/gsd-new-milestone",
+    "label": "Start a new milestone",
+    "reason": "All phases complete — start a new milestone"
   },
-  "updated_at": "2026-09-10T06:31:42.122Z"
+  "updated_at": "2026-09-10T06:36:26.390Z"
 }

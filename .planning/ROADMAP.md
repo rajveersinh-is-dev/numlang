@@ -10,7 +10,7 @@ Build numlang from scratch in Rust: starting with lexing, AST construction, and 
 - [x] **Phase 2: Semantic Analysis & Static Type Checker** - Symbol tables, scope resolution, strict numeric type validation, and error reporting. (completed 2026-09-10)
 - [x] **Phase 3: Code Generation & Native Compilation Pipeline** - IR lowering and native Windows x86_64 machine code generation. (completed 2026-09-10)
 - [x] **Phase 4: CLI Driver & Numerical Primitives** - User-facing `run` and `build` commands with contiguous array and vector math operations. (completed 2026-09-10)
-- [ ] **Phase 5: Benchmark Suite & Optimization Hardening** - Automated comparative performance benchmarks against C and Rust baselines.
+- [x] **Phase 5: Benchmark Suite & Optimization Hardening** - Automated comparative performance benchmarks against C and Rust baselines. (completed 2026-09-10)
 
 ## Phase Details
 
@@ -101,7 +101,7 @@ Plans:
 
 Plans:
 
-- [ ] 05-01: Comparative benchmark suite (dot product, matrix multiply, fibonacci/recursion)
+- [x] 05-01: Comparative benchmark suite (dot product, matrix multiply, fibonacci/recursion)
 
 ## Progress
 
@@ -114,4 +114,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Semantic Analysis & Static Type Checker | 2/2 | Complete    | 2026-09-10 |
 | 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete    | 2026-09-10 |
 | 4. CLI Driver & Numerical Primitives | 2/2 | Complete    | 2026-09-10 |
-| 5. Benchmark Suite & Optimization Hardening | 0/1 | Not started | - |
+| 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete    | 2026-09-10 |

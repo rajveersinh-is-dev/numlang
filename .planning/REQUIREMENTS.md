@@ -36,7 +36,7 @@ Requirements for the initial functional compiler release.
 
 ### Benchmarks & Validation
 
-- [ ] **BENCH-01**: Automated benchmark harness comparing mathematical kernel execution time against C (`clang -O3`) and Rust (`--release`).
+- [x] **BENCH-01**: Automated benchmark harness comparing mathematical kernel execution time against C (`clang -O3`) and Rust (`--release`).
 
 ## v2 Requirements
 
@@ -71,7 +71,7 @@ Requirements for the initial functional compiler release.
 | CLI-02 | Phase 4 | Complete |
 | MATH-01 | Phase 4 | Complete |
 | MATH-02 | Phase 4 | Complete |
-| BENCH-01 | Phase 5 | Pending |
+| BENCH-01 | Phase 5 | Complete |
 
 **Coverage:**
 
