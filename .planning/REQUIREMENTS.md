@@ -22,9 +22,9 @@ Requirements for the initial functional compiler release.
 
 ### Code Generation & Backend
 
-- [ ] **CODEGEN-01**: AST is lowered to Intermediate Representation (LLVM IR / Cranelift) for arithmetic and variable assignments.
-- [ ] **CODEGEN-02**: Control flow constructs (`if`/`else`, `while`, loops) and function calls are lowered to machine IR.
-- [ ] **CODEGEN-03**: Compiler links and outputs native Windows x86_64 machine executables.
+- [x] **CODEGEN-01**: AST is lowered to Intermediate Representation (LLVM IR / Cranelift) for arithmetic and variable assignments.
+- [x] **CODEGEN-02**: Control flow constructs (`if`/`else`, `while`, loops) and function calls are lowered to machine IR.
+- [x] **CODEGEN-03**: Compiler links and outputs native Windows x86_64 machine executables.
 
 ### CLI & Standard Library
 
@@ -64,9 +64,9 @@ Requirements for the initial functional compiler release.
 | TYPE-01 | Phase 2 | Complete |
 | TYPE-02 | Phase 2 | Complete |
 | TYPE-03 | Phase 2 | Complete |
-| CODEGEN-01 | Phase 3 | Pending |
-| CODEGEN-02 | Phase 3 | Pending |
-| CODEGEN-03 | Phase 3 | Pending |
+| CODEGEN-01 | Phase 3 | Complete |
+| CODEGEN-02 | Phase 3 | Complete |
+| CODEGEN-03 | Phase 3 | Complete |
 | CLI-01 | Phase 4 | Pending |
 | CLI-02 | Phase 4 | Pending |
 | MATH-01 | Phase 4 | Pending |

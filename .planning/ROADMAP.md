@@ -8,7 +8,7 @@ Build numlang from scratch in Rust: starting with lexing, AST construction, and 
 
 - [x] **Phase 1: Lexer, Parser & AST Diagnostics** - Tokenizer, Pratt expression parser, and AST definition with diagnostic inspection. (completed 2026-09-10)
 - [x] **Phase 2: Semantic Analysis & Static Type Checker** - Symbol tables, scope resolution, strict numeric type validation, and error reporting. (completed 2026-09-10)
-- [ ] **Phase 3: Code Generation & Native Compilation Pipeline** - IR lowering and native Windows x86_64 machine code generation.
+- [x] **Phase 3: Code Generation & Native Compilation Pipeline** - IR lowering and native Windows x86_64 machine code generation. (completed 2026-09-10)
 - [ ] **Phase 4: CLI Driver & Numerical Primitives** - User-facing `run` and `build` commands with contiguous array and vector math operations.
 - [ ] **Phase 5: Benchmark Suite & Optimization Hardening** - Automated comparative performance benchmarks against C and Rust baselines.
 
@@ -66,8 +66,8 @@ Plans:
 
 Plans:
 
-- [ ] 03-01: Backend IR lowering for arithmetic and functions
-- [ ] 03-02: Control flow lowering and native object emission/linking
+- [x] 03-01: Backend IR lowering for arithmetic and functions
+- [x] 03-02: Control flow lowering and native object emission/linking
 
 ### Phase 4: CLI Driver & Numerical Primitives
 
@@ -112,6 +112,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Lexer, Parser & AST Diagnostics | 3/3 | Complete    | 2026-09-10 |
 | 2. Semantic Analysis & Static Type Checker | 2/2 | Complete    | 2026-09-10 |
-| 3. Code Generation & Native Compilation Pipeline | 0/2 | Not started | - |
+| 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete    | 2026-09-10 |
 | 4. CLI Driver & Numerical Primitives | 0/2 | Not started | - |
 | 5. Benchmark Suite & Optimization Hardening | 0/1 | Not started | - |
