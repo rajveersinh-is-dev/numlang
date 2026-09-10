@@ -81,6 +81,37 @@ pub enum TypeError {
         found: Type,
         span: Span,
     },
+
+    #[error("Cannot index non-array type '{found}'")]
+    CannotIndexNonArray {
+        found: Type,
+        span: Span,
+    },
+
+    #[error("Array index must be an integer, found '{found}'")]
+    InvalidIndexType {
+        found: Type,
+        span: Span,
+    },
+
+    #[error("Array literal cannot be empty")]
+    EmptyArrayLiteral {
+        span: Span,
+    },
+
+    #[error("Array index {index} out of bounds for array of length {len}")]
+    IndexOutOfBounds {
+        index: i64,
+        len: usize,
+        span: Span,
+    },
+
+    #[error("Array element type mismatch: expected {expected}, found {found}")]
+    ArrayElementMismatch {
+        expected: Type,
+        found: Type,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -97,6 +128,11 @@ impl TypeError {
             TypeError::ArityMismatch { span, .. } => *span,
             TypeError::UnknownType { span, .. } => *span,
             TypeError::InvalidReturn { span, .. } => *span,
+            TypeError::CannotIndexNonArray { span, .. } => *span,
+            TypeError::InvalidIndexType { span, .. } => *span,
+            TypeError::EmptyArrayLiteral { span, .. } => *span,
+            TypeError::IndexOutOfBounds { span, .. } => *span,
+            TypeError::ArrayElementMismatch { span, .. } => *span,
         }
     }
 }
@@ -176,15 +212,15 @@ impl TypeChecker {
             .cloned()
             .expect("Function must exist in scope");
 
-        self.current_fn_return_ty = sig.return_ty;
+        self.current_fn_return_ty = sig.return_ty.clone();
         self.env.enter_scope();
 
         let mut typed_params = Vec::new();
         for (i, param) in func.params.iter().enumerate() {
-            let pty = sig.param_types[i];
+            let pty = sig.param_types[i].clone();
             let sym = Symbol {
                 name: param.name.clone(),
-                ty: pty,
+                ty: pty.clone(),
                 is_mutable: false,
                 span: param.span,
             };
@@ -239,7 +275,7 @@ impl TypeChecker {
                     None
                 };
 
-                let typed_value = self.check_expr(value, declared_ty)?;
+                let typed_value = self.check_expr(value, declared_ty.clone())?;
                 let final_ty = match declared_ty {
                     Some(dt) => {
                         if typed_value.ty() != dt {
@@ -266,7 +302,7 @@ impl TypeChecker {
 
                 let sym = Symbol {
                     name: name.clone(),
-                    ty: final_ty,
+                    ty: final_ty.clone(),
                     is_mutable: *is_mutable,
                     span: *span,
                 };
@@ -305,7 +341,7 @@ impl TypeChecker {
                     });
                 }
 
-                let typed_value = self.check_expr(value, Some(sym.ty))?;
+                let typed_value = self.check_expr(value, Some(sym.ty.clone()))?;
                 if typed_value.ty() != sym.ty {
                     return Err(TypeError::TypeMismatch {
                         expected: sym.ty,
@@ -321,12 +357,86 @@ impl TypeChecker {
                 })
             }
 
+            Stmt::IndexAssign {
+                target,
+                index,
+                value,
+                span,
+            } => {
+                let sym = match self.env.lookup_variable(target) {
+                    Some(s) => s.clone(),
+                    None => {
+                        return Err(TypeError::UndeclaredVariable {
+                            name: target.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                if !sym.is_mutable {
+                    return Err(TypeError::CannotMutateImmutable {
+                        name: target.clone(),
+                        span: *span,
+                    });
+                }
+
+                let (elem_ty, len) = match &sym.ty {
+                    Type::Array(elem, len) => ((**elem).clone(), *len),
+                    _ => {
+                        return Err(TypeError::CannotIndexNonArray {
+                            found: sym.ty.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                let typed_index = self.check_expr(index, Some(Type::I64))?;
+                if !typed_index.ty().is_integer() {
+                    return Err(TypeError::InvalidIndexType {
+                        found: typed_index.ty(),
+                        span: typed_index.span(),
+                    });
+                }
+
+                if let TypedExpr::Literal {
+                    lit: TypedLiteral::Int(n, _),
+                    span: idx_span,
+                    ..
+                } = &typed_index
+                {
+                    if *n < 0 || (*n as usize) >= len {
+                        return Err(TypeError::IndexOutOfBounds {
+                            index: *n,
+                            len,
+                            span: *idx_span,
+                        });
+                    }
+                }
+
+                let typed_value = self.check_expr(value, Some(elem_ty.clone()))?;
+                if typed_value.ty() != elem_ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: elem_ty,
+                        found: typed_value.ty(),
+                        span: typed_value.span(),
+                    });
+                }
+
+                Ok(TypedStmt::IndexAssign {
+                    target: target.clone(),
+                    index: typed_index,
+                    value: typed_value,
+                    span: *span,
+                })
+            }
+
             Stmt::Return(opt_expr, span) => match opt_expr {
                 Some(expr) => {
-                    let typed_expr = self.check_expr(expr, Some(self.current_fn_return_ty))?;
+                    let typed_expr =
+                        self.check_expr(expr, Some(self.current_fn_return_ty.clone()))?;
                     if typed_expr.ty() != self.current_fn_return_ty {
                         return Err(TypeError::InvalidReturn {
-                            expected: self.current_fn_return_ty,
+                            expected: self.current_fn_return_ty.clone(),
                             found: typed_expr.ty(),
                             span: *span,
                         });
@@ -336,7 +446,7 @@ impl TypeChecker {
                 None => {
                     if self.current_fn_return_ty != Type::Void {
                         return Err(TypeError::InvalidReturn {
-                            expected: self.current_fn_return_ty,
+                            expected: self.current_fn_return_ty.clone(),
                             found: Type::Void,
                             span: *span,
                         });
@@ -442,7 +552,7 @@ impl TypeChecker {
                         _ => Type::I64,
                     };
                     Ok(TypedExpr::Literal {
-                        lit: TypedLiteral::Int(*n, ty),
+                        lit: TypedLiteral::Int(*n, ty.clone()),
                         ty,
                         span: *span,
                     })
@@ -453,7 +563,7 @@ impl TypeChecker {
                         _ => Type::F64,
                     };
                     Ok(TypedExpr::Literal {
-                        lit: TypedLiteral::Float(*f, ty),
+                        lit: TypedLiteral::Float(*f, ty.clone()),
                         ty,
                         span: *span,
                     })
@@ -475,7 +585,7 @@ impl TypeChecker {
                     })?;
                 Ok(TypedExpr::Ident {
                     name: name.clone(),
-                    ty: sym.ty,
+                    ty: sym.ty.clone(),
                     span: *span,
                 })
             }
@@ -590,7 +700,264 @@ impl TypeChecker {
                 }
             }
 
+            Expr::ArrayLiteral { elements, span } => {
+                if elements.is_empty() {
+                    return Err(TypeError::EmptyArrayLiteral { span: *span });
+                }
+                let expected_elem_hint = match &expected_hint {
+                    Some(Type::Array(elem, _)) => Some((**elem).clone()),
+                    _ => None,
+                };
+                let first_typed = self.check_expr(&elements[0], expected_elem_hint)?;
+                let elem_ty = first_typed.ty();
+                let mut typed_elements = vec![first_typed];
+                for el in &elements[1..] {
+                    let typed_el = self.check_expr(el, Some(elem_ty.clone()))?;
+                    if typed_el.ty() != elem_ty {
+                        return Err(TypeError::ArrayElementMismatch {
+                            expected: elem_ty.clone(),
+                            found: typed_el.ty(),
+                            span: typed_el.span(),
+                        });
+                    }
+                    typed_elements.push(typed_el);
+                }
+                let len = typed_elements.len();
+                let arr_ty = Type::Array(Box::new(elem_ty), len);
+                Ok(TypedExpr::ArrayLiteral {
+                    elements: typed_elements,
+                    ty: arr_ty,
+                    span: *span,
+                })
+            }
+
+            Expr::Index { target, index, span } => {
+                let typed_target = self.check_expr(target, None)?;
+                let target_ty = typed_target.ty();
+                let (elem_ty, len) = match &target_ty {
+                    Type::Array(elem, len) => ((**elem).clone(), *len),
+                    _ => {
+                        return Err(TypeError::CannotIndexNonArray {
+                            found: target_ty,
+                            span: target.span(),
+                        });
+                    }
+                };
+
+                let typed_index = self.check_expr(index, Some(Type::I64))?;
+                if !typed_index.ty().is_integer() {
+                    return Err(TypeError::InvalidIndexType {
+                        found: typed_index.ty(),
+                        span: typed_index.span(),
+                    });
+                }
+
+                if let TypedExpr::Literal {
+                    lit: TypedLiteral::Int(n, _),
+                    span: idx_span,
+                    ..
+                } = &typed_index
+                {
+                    if *n < 0 || (*n as usize) >= len {
+                        return Err(TypeError::IndexOutOfBounds {
+                            index: *n,
+                            len,
+                            span: *idx_span,
+                        });
+                    }
+                }
+
+                Ok(TypedExpr::Index {
+                    target: Box::new(typed_target),
+                    index: Box::new(typed_index),
+                    ty: elem_ty,
+                    span: *span,
+                })
+            }
+
             Expr::Call { callee, args, span } => {
+                // Built-in intrinsics
+                match callee.as_str() {
+                    "sqrt" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "sqrt".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::F64))?;
+                        if !typed_arg.ty().is_float() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        let ty = typed_arg.ty();
+                        return Ok(TypedExpr::Call {
+                            callee: "sqrt".to_string(),
+                            args: vec![typed_arg],
+                            ty,
+                            span: *span,
+                        });
+                    }
+                    "abs" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "abs".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], expected_hint)?;
+                        if !typed_arg.ty().is_numeric() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        let ty = typed_arg.ty();
+                        return Ok(TypedExpr::Call {
+                            callee: "abs".to_string(),
+                            args: vec![typed_arg],
+                            ty,
+                            span: *span,
+                        });
+                    }
+                    "dot" => {
+                        if args.len() != 2 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "dot".to_string(),
+                                expected: 2,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let a = self.check_expr(&args[0], None)?;
+                        let b = self.check_expr(&args[1], Some(a.ty()))?;
+                        let (elem_ty_a, len_a) = match a.ty() {
+                            Type::Array(elem, len) => (*elem, len),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                });
+                            }
+                        };
+                        let (elem_ty_b, len_b) = match b.ty() {
+                            Type::Array(elem, len) => (*elem, len),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                });
+                            }
+                        };
+                        if elem_ty_a != elem_ty_b || len_a != len_b {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::Array(Box::new(elem_ty_a.clone()), len_a),
+                                found: b.ty(),
+                                span: b.span(),
+                            });
+                        }
+                        if !elem_ty_a.is_numeric() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: elem_ty_a,
+                                span: a.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "dot".to_string(),
+                            args: vec![a, b],
+                            ty: elem_ty_a,
+                            span: *span,
+                        });
+                    }
+                    "vec_add" => {
+                        if args.len() != 2 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "vec_add".to_string(),
+                                expected: 2,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let a = self.check_expr(&args[0], None)?;
+                        let b = self.check_expr(&args[1], Some(a.ty()))?;
+                        let (elem_ty_a, len_a) = match a.ty() {
+                            Type::Array(elem, len) => (*elem, len),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                });
+                            }
+                        };
+                        let (elem_ty_b, len_b) = match b.ty() {
+                            Type::Array(elem, len) => (*elem, len),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                });
+                            }
+                        };
+                        if elem_ty_a != elem_ty_b || len_a != len_b {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::Array(Box::new(elem_ty_a.clone()), len_a),
+                                found: b.ty(),
+                                span: b.span(),
+                            });
+                        }
+                        let res_ty = Type::Array(Box::new(elem_ty_a), len_a);
+                        return Ok(TypedExpr::Call {
+                            callee: "vec_add".to_string(),
+                            args: vec![a, b],
+                            ty: res_ty,
+                            span: *span,
+                        });
+                    }
+                    "sum" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "sum".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let a = self.check_expr(&args[0], None)?;
+                        let elem_ty = match a.ty() {
+                            Type::Array(elem, _) => *elem,
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                });
+                            }
+                        };
+                        if !elem_ty.is_numeric() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: elem_ty,
+                                span: a.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "sum".to_string(),
+                            args: vec![a],
+                            ty: elem_ty,
+                            span: *span,
+                        });
+                    }
+                    _ => {}
+                }
+
                 let sig = self
                     .env
                     .lookup_function(callee)
@@ -610,11 +977,11 @@ impl TypeChecker {
                 }
 
                 let mut typed_args = Vec::new();
-                for (arg, &param_ty) in args.iter().zip(&sig.param_types) {
-                    let typed_arg = self.check_expr(arg, Some(param_ty))?;
-                    if typed_arg.ty() != param_ty {
+                for (arg, param_ty) in args.iter().zip(&sig.param_types) {
+                    let typed_arg = self.check_expr(arg, Some(param_ty.clone()))?;
+                    if typed_arg.ty() != *param_ty {
                         return Err(TypeError::TypeMismatch {
-                            expected: param_ty,
+                            expected: param_ty.clone(),
                             found: typed_arg.ty(),
                             span: typed_arg.span(),
                         });
