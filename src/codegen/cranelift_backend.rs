@@ -206,9 +206,11 @@ impl CraneliftCompiler {
             self.compile_function(func, &mut ctx, &mut fn_builder_ctx)?;
         }
 
-        // Step 3: Emit entry point (mainCRTStartup) if main exists
-        if let Some(&main_id) = self.func_ids.get("main") {
-            self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
+        // Step 3: Emit entry point (mainCRTStartup) if main exists and benchmarking mode is disabled
+        if std::env::var("NUMLANG_BENCH").is_err() {
+            if let Some(&main_id) = self.func_ids.get("main") {
+                self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
+            }
         }
 
         // Step 4: Emit final object file

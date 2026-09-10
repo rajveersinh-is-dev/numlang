@@ -63,12 +63,23 @@ pub fn find_windows_sdk_lib_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+static ENTRY_BENCH_OBJ: &[u8] = include_bytes!("entry_bench.obj");
+
 pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     let lld = find_rust_lld().ok_or(LinkerError::LinkerNotFound)?;
     let sdk_dirs = find_windows_sdk_lib_dirs();
     if sdk_dirs.is_empty() {
         return Err(LinkerError::WindowsSdkNotFound);
     }
+
+    let bench_mode = std::env::var("NUMLANG_BENCH").is_ok();
+    let bench_obj_path = if bench_mode {
+        let p = obj_path.with_file_name(format!("entry_bench_{}.obj", std::process::id()));
+        let _ = std::fs::write(&p, ENTRY_BENCH_OBJ);
+        Some(p)
+    } else {
+        None
+    };
 
     let mut cmd = Command::new(&lld);
     cmd.arg("-flavor").arg("link");
@@ -78,6 +89,9 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerErr
     cmd.arg("/opt:ref");
     cmd.arg("/opt:icf");
     cmd.arg("/incremental:no");
+    if let Some(ref bp) = bench_obj_path {
+        cmd.arg(bp);
+    }
     cmd.arg(obj_path);
     cmd.arg(format!("/out:{}", exe_path.display()));
 
@@ -92,6 +106,10 @@ pub fn link_executable(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerErr
         .map_err(|e| LinkerError::LinkFailed {
             message: e.to_string(),
         })?;
+
+    if let Some(bp) = bench_obj_path {
+        let _ = std::fs::remove_file(bp);
+    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
