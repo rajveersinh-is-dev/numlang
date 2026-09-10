@@ -9,10 +9,10 @@ Requirements for the initial functional compiler release.
 
 ### Lexing & Parsing
 
-- [ ] **LEX-01**: Lexer tokenizes numeric literals (`i32`, `i64`, `f32`, `f64`), identifiers, mathematical operators (`+`, `-`, `*`, `/`, `%`, `^`), and punctuation.
-- [ ] **LEX-02**: Lexer tokenizes language keywords (`fn`, `let`, `return`, `if`, `else`, `while`, `for`).
-- [ ] **LEX-03**: Pratt parser parses mathematical expressions with operator precedence and grouping.
-- [ ] **LEX-04**: Parser constructs Abstract Syntax Tree (AST) representing function declarations, variable bindings, and control flow blocks.
+- [x] **LEX-01**: Lexer tokenizes numeric literals (`i32`, `i64`, `f32`, `f64`), identifiers, mathematical operators (`+`, `-`, `*`, `/`, `%`, `^`), and punctuation.
+- [x] **LEX-02**: Lexer tokenizes language keywords (`fn`, `let`, `return`, `if`, `else`, `while`, `for`).
+- [x] **LEX-03**: Pratt parser parses mathematical expressions with operator precedence and grouping.
+- [x] **LEX-04**: Parser constructs Abstract Syntax Tree (AST) representing function declarations, variable bindings, and control flow blocks.
 
 ### Semantic Analysis & Types
 
@@ -30,7 +30,7 @@ Requirements for the initial functional compiler release.
 
 - [ ] **CLI-01**: CLI supports `numlang run <file.nl>` for direct compile-and-run execution.
 - [ ] **CLI-02**: CLI supports `numlang build <file.nl> -o <binary>` for AOT standalone binary output.
-- [ ] **CLI-03**: CLI supports diagnostic flags `--emit-tokens`, `--emit-ast`, and `--emit-ir`.
+- [x] **CLI-03**: CLI supports diagnostic flags `--emit-tokens`, `--emit-ast`, and `--emit-ir`.
 - [ ] **MATH-01**: Built-in 1D contiguous numeric array primitive with index boundary checking.
 - [ ] **MATH-02**: Core math intrinsics and SIMD-friendly vector operations (element-wise add, dot product).
 
@@ -56,11 +56,11 @@ Requirements for the initial functional compiler release.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LEX-01 | Phase 1 | Pending |
-| LEX-02 | Phase 1 | Pending |
-| LEX-03 | Phase 1 | Pending |
-| LEX-04 | Phase 1 | Pending |
-| CLI-03 | Phase 1 | Pending |
+| LEX-01 | Phase 1 | Complete |
+| LEX-02 | Phase 1 | Complete |
+| LEX-03 | Phase 1 | Complete |
+| LEX-04 | Phase 1 | Complete |
+| CLI-03 | Phase 1 | Complete |
 | TYPE-01 | Phase 2 | Pending |
 | TYPE-02 | Phase 2 | Pending |
 | TYPE-03 | Phase 2 | Pending |
@@ -74,6 +74,7 @@ Requirements for the initial functional compiler release.
 | BENCH-01 | Phase 5 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 16 total
 - Mapped to phases: 16
 - Unmapped: 0 ✓
