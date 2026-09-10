@@ -16,9 +16,9 @@ Requirements for the initial functional compiler release.
 
 ### Semantic Analysis & Types
 
-- [ ] **TYPE-01**: Type checker verifies static primitive numeric types (`i32`, `i64`, `f32`, `f64`) and prevents implicit lossy conversions.
-- [ ] **TYPE-02**: Symbol table enforces variable scoping, immutability defaults, and function signature verification.
-- [ ] **TYPE-03**: Diagnostic engine emits human-readable compiler errors with source line and column coordinates.
+- [x] **TYPE-01**: Type checker verifies static primitive numeric types (`i32`, `i64`, `f32`, `f64`) and prevents implicit lossy conversions.
+- [x] **TYPE-02**: Symbol table enforces variable scoping, immutability defaults, and function signature verification.
+- [x] **TYPE-03**: Diagnostic engine emits human-readable compiler errors with source line and column coordinates.
 
 ### Code Generation & Backend
 
@@ -61,9 +61,9 @@ Requirements for the initial functional compiler release.
 | LEX-03 | Phase 1 | Complete |
 | LEX-04 | Phase 1 | Complete |
 | CLI-03 | Phase 1 | Complete |
-| TYPE-01 | Phase 2 | Pending |
-| TYPE-02 | Phase 2 | Pending |
-| TYPE-03 | Phase 2 | Pending |
+| TYPE-01 | Phase 2 | Complete |
+| TYPE-02 | Phase 2 | Complete |
+| TYPE-03 | Phase 2 | Complete |
 | CODEGEN-01 | Phase 3 | Pending |
 | CODEGEN-02 | Phase 3 | Pending |
 | CODEGEN-03 | Phase 3 | Pending |

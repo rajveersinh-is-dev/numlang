@@ -1,0 +1,38 @@
+{
+  "contract": "1.0.0",
+  "flavor": "core",
+  "milestone": null,
+  "phases": [
+    {
+      "number": "1",
+      "name": "Lexer, Parser & AST Diagnostics",
+      "status": "complete"
+    },
+    {
+      "number": "2",
+      "name": "Semantic Analysis & Static Type Checker",
+      "status": "complete"
+    },
+    {
+      "number": "3",
+      "name": "Code Generation & Native Compilation Pipeline",
+      "status": "pending"
+    },
+    {
+      "number": "4",
+      "name": "CLI Driver & Numerical Primitives",
+      "status": "pending"
+    },
+    {
+      "number": "5",
+      "name": "Benchmark Suite & Optimization Hardening",
+      "status": "pending"
+    }
+  ],
+  "next": {
+    "command": "/gsd-progress --next",
+    "label": "Advance to the next step (plan phase 3)",
+    "reason": "Phase 3 of 5 — needs a plan"
+  },
+  "updated_at": "2026-09-10T06:07:29.222Z"
+}
