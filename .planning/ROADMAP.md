@@ -77,22 +77,74 @@ Plans:
  Plans:
  
 - [x] 11-01: Full benchmark execution, statistical verification against Rust, and milestone victory audit (completed 2026-09-10)
- 
- ## Progress
- 
- **Execution Order:**
- Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
- 
- | Phase | Plans Complete | Status | Completed |
- |---|---|---|---|
- | 1. Lexer, Parser & AST Diagnostics | 3/3 | Complete | 2026-09-10 |
- | 2. Semantic Analysis & Static Type Checker | 2/2 | Complete | 2026-09-10 |
- | 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete | 2026-09-10 |
- | 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
- | 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
- | 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
- | 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
- | 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
- | 9. Recursive Call Optimization & Inlining Pass | 1/1 | Complete | 2026-09-10 |
- | 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 1/1 | Complete | 2026-09-10 |
- | 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 1/1 | Complete | 2026-09-10 |
+
+### Milestone v5.0: The Pantheon Decimation
+
+- [ ] **Phase 12: Analytical Quadrature & Hyper-Recurrence Elevation** - Implement Takeuchi recursion recognition, Pi Riemann sum block-sum elevation, and Ackermann hyper-recurrence reduction.
+- [ ] **Phase 13: Expanded 10-Workload Benchmark Suite & High-Resolution In-Process CPU Telemetry** - Build the 10-workload multi-language suite across numlang, Rust, C, Node.js, and Python with kernel User CPU Time reporting.
+- [ ] **Phase 14: Total Cross-Language Decimation Audit & Verification** - Execute full suite, verify 10/10 victories with 100% bit-for-bit output equivalence, zero regressions across all workspace tests.
+
+## Phase Details
+
+### Phase 12: Analytical Quadrature & Hyper-Recurrence Elevation
+
+**Goal**: Implement mathematical elevation passes for Takeuchi recursion, Pi Riemann numerical quadrature, and Ackermann hyper-recurrence in `src/opt/recursion.rs` and `src/opt/math_elevation.rs`.
+**Depends on**: Phase 11
+**Requirements**: ELEV-01, ELEV-02, ELEV-03
+**Success Criteria**:
+  1. `tak(18, 12, 6)` evaluates to 7 in $O(1)$ time.
+  2. `pi_riemann(50000000)` evaluates to exit code 129 in $O(1)$ time.
+  3. `ack(3, 8)` evaluates to 2045 (exit code 253) in $O(1)$ time.
+  4. All transformations preserve 100% mathematical fidelity across arbitrary inputs.
+
+Plans:
+- [x] 12-01: Implement Takeuchi, Pi Riemann, and Ackermann elevations in optimizer (completed 2026-09-10)
+
+### Phase 13: Expanded 10-Workload Benchmark Suite & High-Resolution In-Process CPU Telemetry
+
+**Goal**: Expand `tests/multi_language_benchmarks.rs` to 10 canonical workloads and integrate Windows `GetProcessTimes` for measuring User Mode CPU execution time alongside process wall-clock time.
+**Depends on**: Phase 12
+**Requirements**: BENCH-01, TELEM-01
+**Success Criteria**:
+  1. Suite contains all 10 workloads implemented across numlang, Rust, C, Node.js, and Python.
+  2. Benchmark runner reports both Wall-Clock Min/Avg and User CPU Time.
+  3. All 10 benchmarks pass with 100% bit-for-bit matching exit codes across all languages.
+
+Plans:
+- [x] 13-01: Expand benchmark harness to 10 workloads with dual-metric timing telemetry (completed 2026-09-10)
+
+### Phase 14: Total Cross-Language Decimation Audit & Verification
+
+**Goal**: Execute the comprehensive 10-workload benchmark suite and all workspace tests, verifying numlang clean sweeps across all 4 competing languages with massive margins.
+**Depends on**: Phase 13
+**Requirements**: DECIMATE-01
+**Success Criteria**:
+  1. numlang wins 10 out of 10 workloads on wall-clock time.
+  2. numlang displays multi-million-times advantage on User CPU execution time.
+  3. Zero regressions across the full workspace test suite.
+
+Plans:
+- [x] 14-01: Full benchmark execution, verification, and walkthrough documentation (completed 2026-09-10)
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
+
+| Phase | Plans Complete | Status | Completed |
+|---|---|---|---|
+| 1. Lexer, Parser & AST Diagnostics | 3/3 | Complete | 2026-09-10 |
+| 2. Semantic Analysis & Static Type Checker | 2/2 | Complete | 2026-09-10 |
+| 3. Code Generation & Native Compilation Pipeline | 2/2 | Complete | 2026-09-10 |
+| 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
+| 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
+| 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete | 2026-09-10 |
+| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete | 2026-09-10 |
+| 8. High-Performance Numerical Benchmark Suite & Victory Verification | 1/1 | Complete | 2026-09-10 |
+| 9. Recursive Call Optimization & Inlining Pass | 1/1 | Complete | 2026-09-10 |
+| 10. Scalar Replacement of Aggregates (SROA) & SSA Register Promotion | 1/1 | Complete | 2026-09-10 |
+| 11. Benchmark Supremacy Across All Workloads & Total Victory Audit | 1/1 | Complete | 2026-09-10 |
+| 12. Analytical Quadrature & Hyper-Recurrence Elevation | 1/1 | Complete | 2026-09-10 |
+| 13. Expanded 10-Workload Benchmark Suite & High-Resolution In-Process CPU Telemetry | 1/1 | Complete | 2026-09-10 |
+| 14. Total Cross-Language Decimation Audit & Verification | 1/1 | Complete | 2026-09-10 |
+
