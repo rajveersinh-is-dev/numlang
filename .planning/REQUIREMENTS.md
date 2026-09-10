@@ -9,7 +9,7 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 
 ### Recursive Call Optimization
 
-- [ ] **REC-01**: Recursive call unrolling optimization pass expands self-recursive calls by depth 1-2 (`fib(n-1) -> fib(n-2) + fib(n-3)`), eliminating 50%+ of recursive call frames and overhead.
+- [x] **REC-01**: Recursive call unrolling optimization pass expands self-recursive calls by depth 1-2 (`fib(n-1) -> fib(n-2) + fib(n-3)`), eliminating 50%+ of recursive call frames and overhead.
 
 ### Scalar Replacement of Aggregates (SROA) & SSA Register Promotion
 
@@ -38,7 +38,7 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REC-01 | Phase 9 | Pending |
+| REC-01 | Phase 9 | Complete |
 | SROA-01 | Phase 10 | Pending |
 | SROA-02 | Phase 10 | Pending |
 | SROA-03 | Phase 10 | Pending |
