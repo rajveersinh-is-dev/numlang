@@ -1,4 +1,4 @@
-﻿# Roadmap: numlang
+# Roadmap: numlang
 
 ## Overview
 
@@ -53,8 +53,8 @@ Plans:
 
 Plans:
 
-- [ ] 07-01: Static induction variable range analysis and loop bounds detection
-- [ ] 07-02: Bounds check elimination (BCE) and loop unrolling optimization pass
+- [x] 07-01: Static induction variable range analysis and loop bounds detection
+- [x] 07-02: Bounds check elimination (BCE) and loop unrolling optimization pass
 
 ### Phase 8: High-Performance Numerical Benchmark Suite & Victory Verification
 
@@ -84,5 +84,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. CLI Driver & Numerical Primitives | 2/2 | Complete | 2026-09-10 |
 | 5. Benchmark Suite & Optimization Hardening | 1/1 | Complete | 2026-09-10 |
 | 6. Host CPU Architecture & SIMD Vectorization Engine | 2/2 | Complete    | 2026-09-10 |
-| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 0/2 | Not started | - |
+| 7. Static Bounds Analysis, BCE & Loop Unrolling Pass | 2/2 | Complete    | 2026-09-10 |
 | 8. High-Performance Numerical Benchmark Suite & Victory Verification | 0/1 | Not started | - |
