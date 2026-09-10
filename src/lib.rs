@@ -5,3 +5,4 @@ pub mod parser;
 pub mod diagnostic;
 pub mod typecheck;
 pub mod ir;
+pub mod codegen;
