@@ -22,7 +22,7 @@ Build numlang from scratch in Rust: starting with lexing, AST construction, and 
   1. Lexer accurately emits tokens for arithmetic, types, variables, and keywords with line/column spans.
   2. Pratt parser correctly resolves mathematical operator precedence and associativity without ambiguity.
   3. CLI flags `--emit-tokens` and `--emit-ast` print clean, inspectable representation of source code.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
 - [ ] 01-01: Cargo project setup, AST definitions, and token/lexer implementation
