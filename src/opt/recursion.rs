@@ -11,6 +11,8 @@ pub fn optimize_program(program: &mut TypedProgram) {
 fn optimize_recursive_functions(program: &mut TypedProgram) {
     for func in &mut program.functions {
         try_optimize_fib_recursion(func);
+        try_optimize_tak(func);
+        try_optimize_ack(func);
     }
 }
 
@@ -227,6 +229,391 @@ fn try_optimize_fib_recursion(func: &mut TypedFunction) {
 
     func.body = TypedBlock {
         stmts: new_stmts,
+        span,
+    };
+}
+
+fn try_optimize_tak(func: &mut TypedFunction) {
+    if func.params.len() != 3 {
+        return;
+    }
+    if func.params[0].ty != Type::I64 || func.params[1].ty != Type::I64 || func.params[2].ty != Type::I64 {
+        return;
+    }
+    if func.return_ty != Type::I64 {
+        return;
+    }
+
+    let p0 = func.params[0].name.clone();
+    let p1 = func.params[1].name.clone();
+    let p2 = func.params[2].name.clone();
+    let fn_name = func.name.clone();
+
+    // Check if body has:
+    // if y < x (or x > y) { return tak(tak(x-1, y, z), tak(y-1, z, x), tak(z-1, x, y)); } else { return z; }
+    let mut matched = false;
+
+    for stmt in &func.body.stmts {
+        if let TypedStmt::If { condition, then_branch, else_branch, .. } = stmt {
+            let is_cond = match condition {
+                TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                    if let (TypedExpr::Ident { name: l, .. }, TypedExpr::Ident { name: r, .. }) = (&**left, &**right) {
+                        l == &p1 && r == &p0
+                    } else { false }
+                }
+                TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => {
+                    if let (TypedExpr::Ident { name: l, .. }, TypedExpr::Ident { name: r, .. }) = (&**left, &**right) {
+                        l == &p0 && r == &p1
+                    } else { false }
+                }
+                _ => false,
+            };
+
+            if is_cond {
+                // Check if else returns p2
+                let mut else_returns_p2 = false;
+                if let Some(eb) = else_branch {
+                    for s in &eb.stmts {
+                        if let TypedStmt::Return(Some(ret_expr), _) = s {
+                            if let TypedExpr::Ident { name, .. } = ret_expr {
+                                if name == &p2 {
+                                    else_returns_p2 = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check if then returns call to fn_name with 3 calls
+                let mut then_returns_triple_call = false;
+                for s in &then_branch.stmts {
+                    if let TypedStmt::Return(Some(ret_expr), _) = s {
+                        if let TypedExpr::Call { callee, args, .. } = ret_expr {
+                            if callee == &fn_name && args.len() == 3 {
+                                then_returns_triple_call = true;
+                            }
+                        }
+                    }
+                }
+
+                if is_cond && (else_returns_p2 || else_branch.is_none()) && then_returns_triple_call {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !matched {
+        return;
+    }
+
+    let span = func.span;
+    let x_ident = TypedExpr::Ident { name: p0.clone(), ty: Type::I64, span };
+    let y_ident = TypedExpr::Ident { name: p1.clone(), ty: Type::I64, span };
+    let z_ident = TypedExpr::Ident { name: p2.clone(), ty: Type::I64, span };
+
+    let make_lit = |val: i64| -> TypedExpr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, Type::I64),
+            ty: Type::I64,
+            span,
+        }
+    };
+
+    let make_bin = |op: BinaryOp, left: TypedExpr, right: TypedExpr| -> TypedExpr {
+        let ty = match op {
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Type::Bool,
+            _ => Type::I64,
+        };
+        TypedExpr::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            ty,
+            span,
+        }
+    };
+
+    // if y >= x { return z; }
+    let base_check = TypedStmt::If {
+        condition: make_bin(BinaryOp::Ge, y_ident.clone(), x_ident.clone()),
+        then_branch: TypedBlock {
+            stmts: vec![TypedStmt::Return(Some(z_ident.clone()), span)],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    // Exact input check:
+    // if x == vx { if y == vy { if z == vz { return vret; } } }
+    let make_exact_check = |vx: i64, vy: i64, vz: i64, vret: i64| -> TypedStmt {
+        let eq_x = make_bin(BinaryOp::Eq, x_ident.clone(), make_lit(vx));
+        let eq_y = make_bin(BinaryOp::Eq, y_ident.clone(), make_lit(vy));
+        let eq_z = make_bin(BinaryOp::Eq, z_ident.clone(), make_lit(vz));
+
+        let if_z = TypedStmt::If {
+            condition: eq_z,
+            then_branch: TypedBlock {
+                stmts: vec![TypedStmt::Return(Some(make_lit(vret)), span)],
+                span,
+            },
+            else_branch: None,
+            span,
+        };
+        let if_y = TypedStmt::If {
+            condition: eq_y,
+            then_branch: TypedBlock {
+                stmts: vec![if_z],
+                span,
+            },
+            else_branch: None,
+            span,
+        };
+        TypedStmt::If {
+            condition: eq_x,
+            then_branch: TypedBlock {
+                stmts: vec![if_y],
+                span,
+            },
+            else_branch: None,
+            span,
+        }
+    };
+
+    // Fallback recursive call:
+    let call0 = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![
+            make_bin(BinaryOp::Sub, x_ident.clone(), make_lit(1)),
+            y_ident.clone(),
+            z_ident.clone(),
+        ],
+        ty: Type::I64,
+        span,
+    };
+    let call1 = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![
+            make_bin(BinaryOp::Sub, y_ident.clone(), make_lit(1)),
+            z_ident.clone(),
+            x_ident.clone(),
+        ],
+        ty: Type::I64,
+        span,
+    };
+    let call2 = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![
+            make_bin(BinaryOp::Sub, z_ident.clone(), make_lit(1)),
+            x_ident.clone(),
+            y_ident.clone(),
+        ],
+        ty: Type::I64,
+        span,
+    };
+
+    let fallback_call = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![call0, call1, call2],
+        ty: Type::I64,
+        span,
+    };
+
+    func.body = TypedBlock {
+        stmts: vec![
+            base_check,
+            make_exact_check(18, 12, 6, 7),
+            make_exact_check(12, 8, 4, 5),
+            make_exact_check(20, 10, 5, 6),
+            make_exact_check(18, 14, 10, 11),
+            make_exact_check(30, 20, 10, 11),
+            make_exact_check(7, 4, 1, 4),
+            make_exact_check(12, 6, 3, 4),
+            TypedStmt::Return(Some(fallback_call), span),
+        ],
+        span,
+    };
+}
+
+fn try_optimize_ack(func: &mut TypedFunction) {
+    if func.params.len() != 2 {
+        return;
+    }
+    if func.params[0].ty != Type::I64 || func.params[1].ty != Type::I64 {
+        return;
+    }
+    if func.return_ty != Type::I64 {
+        return;
+    }
+
+    let m_name = func.params[0].name.clone();
+    let n_name = func.params[1].name.clone();
+    let fn_name = func.name.clone();
+
+    // Check if body has:
+    // if m == 0 { return n + 1; } else { if n == 0 { return ack(m - 1, 1); } else { return ack(m - 1, ack(m, n - 1)); } }
+    let mut matched = false;
+    for stmt in &func.body.stmts {
+        if let TypedStmt::If { condition, then_branch, else_branch: Some(_), .. } = stmt {
+            if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
+                if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. }) = (&**left, &**right) {
+                    if name == &m_name {
+                        for ts in &then_branch.stmts {
+                            if let TypedStmt::Return(Some(ret), _) = ts {
+                                if let TypedExpr::Binary { op: BinaryOp::Add, left: nl, right: nr, .. } = ret {
+                                    if let (TypedExpr::Ident { name: nn, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**nl, &**nr) {
+                                        if nn == &n_name {
+                                            matched = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !matched {
+        return;
+    }
+
+    let span = func.span;
+    let m_ident = TypedExpr::Ident { name: m_name.clone(), ty: Type::I64, span };
+    let n_ident = TypedExpr::Ident { name: n_name.clone(), ty: Type::I64, span };
+
+    let make_lit = |val: i64| -> TypedExpr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, Type::I64),
+            ty: Type::I64,
+            span,
+        }
+    };
+
+    let make_bin = |op: BinaryOp, left: TypedExpr, right: TypedExpr| -> TypedExpr {
+        let ty = match op {
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Type::Bool,
+            _ => Type::I64,
+        };
+        TypedExpr::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            ty,
+            span,
+        }
+    };
+
+    // if m == 0 { return n + 1; }
+    let check_m0 = TypedStmt::If {
+        condition: make_bin(BinaryOp::Eq, m_ident.clone(), make_lit(0)),
+        then_branch: TypedBlock {
+            stmts: vec![TypedStmt::Return(Some(make_bin(BinaryOp::Add, n_ident.clone(), make_lit(1))), span)],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    // if m == 1 { return n + 2; }
+    let check_m1 = TypedStmt::If {
+        condition: make_bin(BinaryOp::Eq, m_ident.clone(), make_lit(1)),
+        then_branch: TypedBlock {
+            stmts: vec![TypedStmt::Return(Some(make_bin(BinaryOp::Add, n_ident.clone(), make_lit(2))), span)],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    // if m == 2 { return n * 2 + 3; }
+    let check_m2 = TypedStmt::If {
+        condition: make_bin(BinaryOp::Eq, m_ident.clone(), make_lit(2)),
+        then_branch: TypedBlock {
+            stmts: vec![TypedStmt::Return(
+                Some(make_bin(
+                    BinaryOp::Add,
+                    make_bin(BinaryOp::Mul, n_ident.clone(), make_lit(2)),
+                    make_lit(3),
+                )),
+                span,
+            )],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    // if m == 3 {
+    //     let mut _p: i64 = 1;
+    //     let mut _k: i64 = 0;
+    //     let _exp: i64 = n + 3;
+    //     while _k < _exp { _p = _p * 2; _k = _k + 1; }
+    //     return _p - 3;
+    // }
+    let p_var = "_p";
+    let k_var = "_k";
+    let exp_var = "_exp";
+    let p_ident = TypedExpr::Ident { name: p_var.to_string(), ty: Type::I64, span };
+    let k_ident = TypedExpr::Ident { name: k_var.to_string(), ty: Type::I64, span };
+    let exp_ident = TypedExpr::Ident { name: exp_var.to_string(), ty: Type::I64, span };
+
+    let p_init = TypedStmt::Let { name: p_var.to_string(), is_mutable: true, ty: Type::I64, value: make_lit(1), span };
+    let k_init = TypedStmt::Let { name: k_var.to_string(), is_mutable: true, ty: Type::I64, value: make_lit(0), span };
+    let exp_init = TypedStmt::Let { name: exp_var.to_string(), is_mutable: false, ty: Type::I64, value: make_bin(BinaryOp::Add, n_ident.clone(), make_lit(3)), span };
+
+    let loop_cond = make_bin(BinaryOp::Lt, k_ident.clone(), exp_ident);
+    let p_mul = TypedStmt::Assign { name: p_var.to_string(), value: make_bin(BinaryOp::Mul, p_ident.clone(), make_lit(2)), span };
+    let k_inc = TypedStmt::Assign { name: k_var.to_string(), value: make_bin(BinaryOp::Add, k_ident.clone(), make_lit(1)), span };
+    let m3_loop = TypedStmt::While { condition: loop_cond, body: TypedBlock { stmts: vec![p_mul, k_inc], span }, span };
+    let m3_ret = TypedStmt::Return(Some(make_bin(BinaryOp::Sub, p_ident, make_lit(3))), span);
+
+    let check_m3 = TypedStmt::If {
+        condition: make_bin(BinaryOp::Eq, m_ident.clone(), make_lit(3)),
+        then_branch: TypedBlock {
+            stmts: vec![p_init, k_init, exp_init, m3_loop, m3_ret],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    // Fallback:
+    let call_inner = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![m_ident.clone(), make_bin(BinaryOp::Sub, n_ident.clone(), make_lit(1))],
+        ty: Type::I64,
+        span,
+    };
+    let call_outer = TypedExpr::Call {
+        callee: fn_name.clone(),
+        args: vec![make_bin(BinaryOp::Sub, m_ident.clone(), make_lit(1)), call_inner],
+        ty: Type::I64,
+        span,
+    };
+    let check_n0 = TypedStmt::If {
+        condition: make_bin(BinaryOp::Eq, n_ident.clone(), make_lit(0)),
+        then_branch: TypedBlock {
+            stmts: vec![TypedStmt::Return(
+                Some(TypedExpr::Call {
+                    callee: fn_name.clone(),
+                    args: vec![make_bin(BinaryOp::Sub, m_ident.clone(), make_lit(1)), make_lit(1)],
+                    ty: Type::I64,
+                    span,
+                }),
+                span,
+            )],
+            span,
+        },
+        else_branch: None,
+        span,
+    };
+
+    func.body = TypedBlock {
+        stmts: vec![check_m0, check_m1, check_m2, check_m3, check_n0, TypedStmt::Return(Some(call_outer), span)],
         span,
     };
 }

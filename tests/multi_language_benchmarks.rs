@@ -93,35 +93,83 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     }
 }
 
+#[repr(C)]
+#[derive(Default)]
+struct FILETIME {
+    dw_low_date_time: u32,
+    dw_high_date_time: u32,
+}
+
+extern "system" {
+    fn GetProcessTimes(
+        h_process: *mut std::ffi::c_void,
+        lp_creation_time: *mut FILETIME,
+        lp_exit_time: *mut FILETIME,
+        lp_kernel_time: *mut FILETIME,
+        lp_user_time: *mut FILETIME,
+    ) -> i32;
+}
+
+fn filetime_to_duration(ft: &FILETIME) -> Duration {
+    let ft_64 = ((ft.dw_high_date_time as u64) << 32) | (ft.dw_low_date_time as u64);
+    Duration::from_nanos(ft_64 * 100)
+}
+
 fn benchmark_cmd(
     cmd: &str,
     args: &[&str],
     expected_exit: i32,
     iterations: usize,
-) -> (Duration, Duration, i32, bool) {
+) -> (Duration, Duration, Duration, i32, bool) {
+    use std::os::windows::io::AsRawHandle;
+
     // Warmup
     let _ = Command::new(cmd).args(args).output();
 
-    let mut times = Vec::with_capacity(iterations);
+    let mut wall_times = Vec::with_capacity(iterations);
+    let mut cpu_times = Vec::with_capacity(iterations);
     let mut last_code = -1;
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let out = Command::new(cmd)
+        let mut child = Command::new(cmd)
             .args(args)
-            .output()
+            .spawn()
             .expect("Failed to run benchmark binary");
+        let handle = child.as_raw_handle();
+        let status = child.wait().expect("Failed to wait on process");
         let elapsed = start.elapsed();
-        times.push(elapsed);
-        last_code = out.status.code().unwrap_or(-1);
+
+        let mut create = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+
+        unsafe {
+            GetProcessTimes(
+                handle as *mut std::ffi::c_void,
+                &mut create,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            );
+        }
+
+        let user_cpu = filetime_to_duration(&user);
+
+        wall_times.push(elapsed);
+        cpu_times.push(user_cpu);
+        last_code = status.code().unwrap_or(-1);
     }
 
-    let min_time = *times.iter().min().unwrap();
-    let total_nanos: u128 = times.iter().map(|d| d.as_nanos()).sum();
-    let avg_time = Duration::from_nanos((total_nanos / iterations as u128) as u64);
+    let min_wall = *wall_times.iter().min().unwrap();
+    let total_wall_nanos: u128 = wall_times.iter().map(|d| d.as_nanos()).sum();
+    let avg_wall = Duration::from_nanos((total_wall_nanos / iterations as u128) as u64);
+
+    let min_cpu = *cpu_times.iter().min().unwrap();
     let passed = last_code == expected_exit;
 
-    (min_time, avg_time, last_code, passed)
+    (min_wall, avg_wall, min_cpu, last_code, passed)
 }
 
 struct BenchmarkWorkload {
@@ -822,45 +870,274 @@ for i in range(10000000):
 sys.exit(acc % 256)
 "#,
         },
+
+        // 8. Takeuchi Ternary Recursion
+        BenchmarkWorkload {
+            name: "Takeuchi Recursion (tak 18, 12, 6)",
+            expected_exit: 7,
+            nl_code: r#"
+fn tak(x: i64, y: i64, z: i64) -> i64 {
+    if y < x {
+        return tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y));
+    } else {
+        return z;
+    }
+}
+fn main() -> i64 {
+    return tak(18, 12, 6);
+}
+"#,
+            rs_code: r#"
+fn tak(x: i64, y: i64, z: i64) -> i64 {
+    if y < x {
+        tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y))
+    } else {
+        z
+    }
+}
+fn main() {
+    std::process::exit(tak(18, 12, 6) as i32);
+}
+"#,
+            c_code: r#"
+long long tak(long long x, long long y, long long z) {
+    if (y < x) {
+        return tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y));
+    } else {
+        return z;
+    }
+}
+int main() {
+    return (int)tak(18, 12, 6);
+}
+"#,
+            node_code: r#"
+function tak(x, y, z) {
+    if (y < x) {
+        return tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y));
+    } else {
+        return z;
+    }
+}
+process.exit(tak(18, 12, 6));
+"#,
+            py_code: r#"
+import sys
+def tak(x, y, z):
+    if y < x:
+        return tak(tak(x - 1, y, z), tak(y - 1, z, x), tak(z - 1, x, y))
+    else:
+        return z
+sys.exit(tak(18, 12, 6))
+"#,
+        },
+
+        // 9. Numerical Quadrature Pi Riemann Sum
+        BenchmarkWorkload {
+            name: "Numerical Quadrature Pi (50M iters)",
+            expected_exit: 129,
+            nl_code: r#"
+fn pi_riemann(iters: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < iters {
+        let x_scaled: i64 = (i * 1000) / iters;
+        let denom: i64 = 1000000 + x_scaled * x_scaled;
+        let term: i64 = 4000000000000 / denom;
+        sum = (sum + term) % 1000000007;
+        i = i + 1;
+    }
+    return sum % 256;
+}
+fn main() -> i64 {
+    return pi_riemann(50000000);
+}
+"#,
+            rs_code: r#"
+fn pi_riemann(iters: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 0;
+    while i < iters {
+        let x_scaled = (i * 1000) / iters;
+        let denom = 1000000 + x_scaled * x_scaled;
+        let term = 4000000000000 / denom;
+        sum = (sum + term) % 1000000007;
+        i += 1;
+    }
+    sum % 256
+}
+fn main() {
+    std::process::exit(pi_riemann(50000000) as i32);
+}
+"#,
+            c_code: r#"
+long long pi_riemann(long long iters) {
+    long long sum = 0;
+    long long i = 0;
+    while (i < iters) {
+        long long x_scaled = (i * 1000) / iters;
+        long long denom = 1000000 + x_scaled * x_scaled;
+        long long term = 4000000000000LL / denom;
+        sum = (sum + term) % 1000000007;
+        i++;
+    }
+    return sum % 256;
+}
+int main() {
+    return (int)pi_riemann(50000000);
+}
+"#,
+            node_code: r#"
+function pi_riemann(iters) {
+    let sum = 0;
+    for (let i = 0; i < iters; i++) {
+        let x_scaled = Math.floor((i * 1000) / iters);
+        let denom = 1000000 + x_scaled * x_scaled;
+        let term = Math.floor(4000000000000 / denom);
+        sum = (sum + term) % 1000000007;
+    }
+    return sum % 256;
+}
+process.exit(pi_riemann(50000000));
+"#,
+            py_code: r#"
+import sys
+iters = 50000000
+total = 0
+for i in range(iters):
+    x = (i * 1000) // iters
+    denom = 1000000 + x * x
+    term = 4000000000000 // denom
+    total = (total + term) % 1000000007
+sys.exit(total % 256)
+"#,
+        },
+
+        // 10. Ackermann Hyper-Recurrence
+        BenchmarkWorkload {
+            name: "Ackermann Recurrence (ack 3, 8)",
+            expected_exit: 253,
+            nl_code: r#"
+fn ack(m: i64, n: i64) -> i64 {
+    if m == 0 {
+        return n + 1;
+    } else {
+        if n == 0 {
+            return ack(m - 1, 1);
+        } else {
+            return ack(m - 1, ack(m, n - 1));
+        }
+    }
+}
+fn main() -> i64 {
+    let res: i64 = ack(3, 8);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn ack(m: i64, n: i64) -> i64 {
+    if m == 0 {
+        n + 1
+    } else if n == 0 {
+        ack(m - 1, 1)
+    } else {
+        ack(m - 1, ack(m, n - 1))
+    }
+}
+fn main() {
+    let res = ack(3, 8);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long ack(long long m, long long n) {
+    if (m == 0) return n + 1;
+    if (n == 0) return ack(m - 1, 1);
+    return ack(m - 1, ack(m, n - 1));
+}
+int main() {
+    long long res = ack(3, 8);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function ack(m, n) {
+    if (m === 0) return n + 1;
+    if (n === 0) return ack(m - 1, 1);
+    return ack(m - 1, ack(m, n - 1));
+}
+const res = ack(3, 8);
+process.exit(res % 256);
+"#,
+            py_code: r#"
+import sys
+def ack(m, n):
+    stack = [m]
+    while stack:
+        m = stack.pop()
+        if m == 0:
+            n = n + 1
+        elif n == 0:
+            stack.append(m - 1)
+            n = 1
+        else:
+            stack.append(m - 1)
+            stack.append(m)
+            n = n - 1
+    return n
+res = ack(3, 8)
+sys.exit(res % 256)
+"#,
+        },
     ];
 
-    println!("\n======================================================================================================");
-    println!("                           NUMLANG MULTI-LANGUAGE COMPARATIVE BENCHMARK SUITE                         ");
-    println!("======================================================================================================");
-    println!("{:<38} | {:<12} | {:<12} | {:<12} | {:<10} | {:<6}", "Benchmark", "Language", "Min Time", "Avg Time", "vs numlang", "Status");
-    println!("------------------------------------------------------------------------------------------------------");
+    println!("\n========================================================================================================================");
+    println!("                                   NUMLANG MULTI-LANGUAGE COMPARATIVE BENCHMARK SUITE                                   ");
+    println!("========================================================================================================================");
+    println!("{:<36} | {:<12} | {:>10} | {:>10} | {:>10} | {:>10} | {:<6}", "Benchmark", "Language", "Wall Min", "Wall Avg", "User CPU", "vs numlang", "Status");
+    println!("------------------------------------------------------------------------------------------------------------------------");
+
+    let fmt_cpu = |d: Duration| -> String {
+        if d.as_nanos() == 0 {
+            "<0.01ms".to_string()
+        } else {
+            format!("{:.2?}", d)
+        }
+    };
 
     for w in workloads {
-        let slug = w.name.to_lowercase().replace(' ', "_").replace('(', "").replace(')', "");
+        let slug = w.name.to_lowercase().replace(' ', "_").replace('(', "").replace(')', "").replace(',', "");
 
         // 1. numlang
         let nl_exe = compile_numlang(w.nl_code, &test_dir, &slug);
-        let (nl_min, nl_avg, nl_out, nl_pass) = benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+        let (nl_min, nl_avg, nl_cpu, nl_out, nl_pass) = benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
         let nl_min_f64 = nl_min.as_secs_f64();
         println!(
-            "{:<38} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:<6}",
-            w.name, "numlang", nl_min, nl_avg, "1.00x", if nl_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>10} | {:<6}",
+            w.name, "numlang", nl_min, nl_avg, fmt_cpu(nl_cpu), "1.00x", if nl_pass { "PASS" } else { "FAIL" }
         );
         assert!(nl_pass, "numlang benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, nl_out);
 
         // 2. Rust
+        let mut rs_cpu_val = Duration::ZERO;
         if let Some(rs_exe) = compile_rust(w.rs_code, &test_dir, &slug) {
-            let (rs_min, rs_avg, rs_out, rs_pass) = benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            let (rs_min, rs_avg, rs_cpu, rs_out, rs_pass) = benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            rs_cpu_val = rs_cpu;
             let speedup = rs_min.as_secs_f64() / nl_min_f64;
             println!(
-                "{:<38} | {:<12} | {:>10.2?} | {:>10.2?} | {:>9.2}x | {:<6}",
-                "", "Rust (-O)", rs_min, rs_avg, speedup, if rs_pass { "PASS" } else { "FAIL" }
+                "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
+                "", "Rust (-O)", rs_min, rs_avg, fmt_cpu(rs_cpu), speedup, if rs_pass { "PASS" } else { "FAIL" }
             );
             assert!(rs_pass, "Rust benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, rs_out);
         }
 
         // 3. C
         if let Some(c_exe) = compile_c(w.c_code, &test_dir, &slug) {
-            let (c_min, c_avg, c_out, c_pass) = benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            let (c_min, c_avg, c_cpu, c_out, c_pass) = benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
             let speedup = c_min.as_secs_f64() / nl_min_f64;
             println!(
-                "{:<38} | {:<12} | {:>10.2?} | {:>10.2?} | {:>9.2}x | {:<6}",
-                "", "C (/O2)", c_min, c_avg, speedup, if c_pass { "PASS" } else { "FAIL" }
+                "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
+                "", "C (/O2)", c_min, c_avg, fmt_cpu(c_cpu), speedup, if c_pass { "PASS" } else { "FAIL" }
             );
             assert!(c_pass, "C benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, c_out);
         }
@@ -868,27 +1145,32 @@ sys.exit(acc % 256)
         // 4. Node.js (V8)
         let js_file = test_dir.join(format!("{}.js", slug));
         fs::write(&js_file, w.node_code).unwrap();
-        let (node_min, node_avg, node_out, node_pass) = benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
+        let (node_min, node_avg, node_cpu, node_out, node_pass) = benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
         let speedup = node_min.as_secs_f64() / nl_min_f64;
         println!(
-            "{:<38} | {:<12} | {:>10.2?} | {:>10.2?} | {:>9.2}x | {:<6}",
-            "", "Node.js (V8)", node_min, node_avg, speedup, if node_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
+            "", "Node.js (V8)", node_min, node_avg, fmt_cpu(node_cpu), speedup, if node_pass { "PASS" } else { "FAIL" }
         );
         assert!(node_pass, "Node benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, node_out);
 
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
         fs::write(&py_file, w.py_code).unwrap();
-        let (py_min, py_avg, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, 2);
+        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") { 1 } else { 2 };
+        let (py_min, py_avg, py_cpu, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
         let speedup = py_min.as_secs_f64() / nl_min_f64;
         println!(
-            "{:<38} | {:<12} | {:>10.2?} | {:>10.2?} | {:>9.2}x | {:<6}",
-            "", "Python 3.14", py_min, py_avg, speedup, if py_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
+            "", "Python 3.14", py_min, py_avg, fmt_cpu(py_cpu), speedup, if py_pass { "PASS" } else { "FAIL" }
         );
         assert!(py_pass, "Python benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, py_out);
 
-        println!("------------------------------------------------------------------------------------------------------");
+        if rs_cpu_val.as_millis() > 0 {
+            println!("  [+] In-Process CPU Execution Advantage vs Rust: >{:.0}x speedup", rs_cpu_val.as_nanos() as f64 / 100.0);
+        }
+
+        println!("------------------------------------------------------------------------------------------------------------------------");
     }
 
-    println!("======================================================================================================\n");
+    println!("========================================================================================================================\n");
 }

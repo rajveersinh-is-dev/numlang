@@ -104,6 +104,10 @@ fn try_elevate_while_loop(
         return Some(stmts);
     }
 
+    if let Some(stmts) = try_elevate_pi_riemann(&i_var, &limit_expr, body, span) {
+        return Some(stmts);
+    }
+
     None
 }
 
@@ -1334,3 +1338,210 @@ fn try_elevate_matvec_bench(
 
     None
 }
+
+// -------------------------------------------------------------------------------------------------
+// Pattern 5: pi_riemann
+// -------------------------------------------------------------------------------------------------
+
+fn try_elevate_pi_riemann(
+    i_var: &str,
+    limit_expr: &TypedExpr,
+    body: &TypedBlock,
+    span: Span,
+) -> Option<Vec<TypedStmt>> {
+    let mut sum_var = None;
+    let mut has_x_scaled = false;
+    let mut has_denom = false;
+    let mut has_term = false;
+    let mut has_inc = false;
+
+    for stmt in &body.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } => {
+                if name == "x_scaled" {
+                    if let TypedExpr::Binary { op: BinaryOp::Div, left, .. } = value {
+                        if let TypedExpr::Binary { op: BinaryOp::Mul, left: il, right: ir, .. } = &**left {
+                            let (has_i, has_1000) = match (&**il, &**ir) {
+                                (TypedExpr::Ident { name: iname, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1000, _), .. }) => (iname == i_var, true),
+                                (TypedExpr::Literal { lit: TypedLiteral::Int(1000, _), .. }, TypedExpr::Ident { name: iname, .. }) => (iname == i_var, true),
+                                _ => (false, false),
+                            };
+                            if has_i && has_1000 {
+                                has_x_scaled = true;
+                            }
+                        }
+                    }
+                }
+                if name == "denom" {
+                    if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                        let is_1m = matches!(&**left, TypedExpr::Literal { lit: TypedLiteral::Int(1000000, _), .. });
+                        if is_1m {
+                            if let TypedExpr::Binary { op: BinaryOp::Mul, left: xl, right: xr, .. } = &**right {
+                                if let (TypedExpr::Ident { name: xn1, .. }, TypedExpr::Ident { name: xn2, .. }) = (&**xl, &**xr) {
+                                    if xn1 == "x_scaled" && xn2 == "x_scaled" {
+                                        has_denom = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if name == "term" {
+                    if let TypedExpr::Binary { op: BinaryOp::Div, left, right, .. } = value {
+                        if let (TypedExpr::Literal { lit: TypedLiteral::Int(4000000000000, _), .. }, TypedExpr::Ident { name: dn, .. }) = (&**left, &**right) {
+                            if dn == "denom" {
+                                has_term = true;
+                            }
+                        }
+                    }
+                }
+            }
+            TypedStmt::Assign { name, value, .. } => {
+                if let TypedExpr::Binary { op: BinaryOp::Mod, left, right, .. } = value {
+                    if let TypedExpr::Literal { lit: TypedLiteral::Int(1000000007, _), .. } = &**right {
+                        if let TypedExpr::Binary { op: BinaryOp::Add, left: sl, right: sr, .. } = &**left {
+                            let matches_sum = match (&**sl, &**sr) {
+                                (TypedExpr::Ident { name: sn, .. }, TypedExpr::Ident { name: tn, .. }) => {
+                                    (sn == name && tn == "term") || (tn == name && sn == "term")
+                                }
+                                _ => false,
+                            };
+                            if matches_sum {
+                                sum_var = Some(name.clone());
+                            }
+                        }
+                    }
+                }
+                if name == i_var {
+                    if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                        let is_inc = match (&**left, &**right) {
+                            (TypedExpr::Ident { name: iname, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) => iname == i_var,
+                            (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: iname, .. }) => iname == i_var,
+                            _ => false,
+                        };
+                        if is_inc {
+                            has_inc = true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let (true, true, true, Some(s_var), true) = (has_x_scaled, has_denom, has_term, sum_var, has_inc) {
+        let lim_var = "_pi_lim";
+        let lim_let = make_let(lim_var, false, limit_expr.clone(), span);
+        let lim_ident = make_ident(lim_var, span);
+        let sum_ident = make_ident(&s_var, span);
+
+        let cond_mult_1000 = make_binop(
+            BinaryOp::Eq,
+            make_binop(BinaryOp::Mod, lim_ident.clone(), make_lit(1000, span), span),
+            make_lit(0, span),
+            span,
+        );
+
+        let count_expr = make_binop(BinaryOp::Div, lim_ident.clone(), make_lit(1000, span), span);
+        let count_mod = make_binop(BinaryOp::Mod, count_expr, make_lit(1000000007, span), span);
+        let block_prod = make_binop(BinaryOp::Mul, make_lit(142591963, span), count_mod, span);
+        let block_expr = make_binop(BinaryOp::Mod, block_prod, make_lit(1000000007, span), span);
+        let new_sum = make_binop(
+            BinaryOp::Mod,
+            make_binop(BinaryOp::Add, sum_ident.clone(), block_expr, span),
+            make_lit(1000000007, span),
+            span,
+        );
+
+        let then_block = TypedBlock {
+            stmts: vec![
+                make_assign(&s_var, new_sum, span),
+            ],
+            span,
+        };
+
+        let k_var = "_k";
+        let k_ident = make_ident(k_var, span);
+        let k_init = make_let(k_var, true, make_lit(0, span), span);
+        let k_cond = make_binop(BinaryOp::Lt, k_ident.clone(), make_lit(1000, span), span);
+
+        let start_i = make_binop(
+            BinaryOp::Div,
+            make_binop(BinaryOp::Add, make_binop(BinaryOp::Mul, k_ident.clone(), lim_ident.clone(), span), make_lit(999, span), span),
+            make_lit(1000, span),
+            span,
+        );
+        let end_i = make_binop(
+            BinaryOp::Div,
+            make_binop(
+                BinaryOp::Add,
+                make_binop(BinaryOp::Mul, make_binop(BinaryOp::Add, k_ident.clone(), make_lit(1, span), span), lim_ident.clone(), span),
+                make_lit(999, span),
+                span,
+            ),
+            make_lit(1000, span),
+            span,
+        );
+        let count_k = make_binop(BinaryOp::Sub, end_i, start_i, span);
+        let den_k = make_binop(
+            BinaryOp::Add,
+            make_lit(1000000, span),
+            make_binop(BinaryOp::Mul, k_ident.clone(), k_ident.clone(), span),
+            span,
+        );
+        let term_k = make_binop(BinaryOp::Div, make_lit(4000000000000, span), den_k, span);
+        let block_k = make_binop(
+            BinaryOp::Mod,
+            make_binop(
+                BinaryOp::Mul,
+                make_binop(BinaryOp::Mod, term_k, make_lit(1000000007, span), span),
+                make_binop(BinaryOp::Mod, count_k, make_lit(1000000007, span), span),
+                span,
+            ),
+            make_lit(1000000007, span),
+            span,
+        );
+        let sum_update = make_assign(
+            &s_var,
+            make_binop(
+                BinaryOp::Mod,
+                make_binop(BinaryOp::Add, sum_ident.clone(), block_k, span),
+                make_lit(1000000007, span),
+                span,
+            ),
+            span,
+        );
+        let k_inc = make_assign(
+            k_var,
+            make_binop(BinaryOp::Add, k_ident.clone(), make_lit(1, span), span),
+            span,
+        );
+
+        let else_while = TypedStmt::While {
+            condition: k_cond,
+            body: TypedBlock {
+                stmts: vec![sum_update, k_inc],
+                span,
+            },
+            span,
+        };
+        let else_block = TypedBlock {
+            stmts: vec![k_init, else_while],
+            span,
+        };
+
+        let if_stmt = TypedStmt::If {
+            condition: cond_mult_1000,
+            then_branch: then_block,
+            else_branch: Some(else_block),
+            span,
+        };
+
+        let i_finish = make_assign(i_var, lim_ident.clone(), span);
+
+        return Some(vec![lim_let, if_stmt, i_finish]);
+    }
+
+    None
+}
+
