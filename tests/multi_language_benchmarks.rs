@@ -1089,6 +1089,734 @@ res = ack(3, 8)
 sys.exit(res % 256)
 "#,
         },
+
+        // 11. N-Queens Backtracking Problem
+        BenchmarkWorkload {
+            name: "N-Queens Backtracking (nqueens 12)",
+            expected_exit: 120,
+            nl_code: r#"
+fn solve_nqueens(n: i64) -> i64 {
+    let mut b: [i64; 12] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut row: i64 = 0;
+    let mut col: i64 = 0;
+    let mut count: i64 = 0;
+    while row >= 0 {
+        let mut found: bool = false;
+        while col < n {
+            let mut valid: bool = true;
+            let mut i: i64 = 0;
+            while i < row {
+                let diff: i64 = b[i] - col;
+                let c_diff: i64 = abs(diff);
+                let r_diff: i64 = row - i;
+                if b[i] == col {
+                    valid = false;
+                    i = row;
+                } else {
+                    if c_diff == r_diff {
+                        valid = false;
+                        i = row;
+                    }
+                }
+                i = i + 1;
+            }
+            if valid {
+                b[row] = col;
+                found = true;
+                col = n;
+            } else {
+                col = col + 1;
+            }
+        }
+        if found {
+            if row == n - 1 {
+                count = count + 1;
+                col = b[row] + 1;
+            } else {
+                row = row + 1;
+                b[row] = 0;
+                col = 0;
+            }
+        } else {
+            row = row - 1;
+            if row >= 0 {
+                col = b[row] + 1;
+            }
+        }
+    }
+    return count;
+}
+fn main() -> i64 {
+    let ans: i64 = solve_nqueens(12);
+    return ans % 256;
+}
+"#,
+            rs_code: r#"
+fn solve_nqueens(n: i64) -> i64 {
+    let mut b = [0i64; 12];
+    let mut row = 0i64;
+    let mut col = 0i64;
+    let mut count = 0i64;
+    while row >= 0 {
+        let mut found = false;
+        while col < n {
+            let mut valid = true;
+            let mut i = 0i64;
+            while i < row {
+                let diff = b[i as usize] - col;
+                let c_diff = diff.abs();
+                let r_diff = row - i;
+                if b[i as usize] == col || c_diff == r_diff {
+                    valid = false;
+                    break;
+                }
+                i += 1;
+            }
+            if valid {
+                b[row as usize] = col;
+                found = true;
+                break;
+            } else {
+                col += 1;
+            }
+        }
+        if found {
+            if row == n - 1 {
+                count += 1;
+                col = b[row as usize] + 1;
+            } else {
+                row += 1;
+                b[row as usize] = 0;
+                col = 0;
+            }
+        } else {
+            row -= 1;
+            if row >= 0 {
+                col = b[row as usize] + 1;
+            }
+        }
+    }
+    count
+}
+fn main() {
+    let ans = solve_nqueens(12);
+    std::process::exit((ans % 256) as i32);
+}
+"#,
+            c_code: r#"
+#include <stdlib.h>
+long long solve_nqueens(long long n) {
+    long long b[12] = {0};
+    long long row = 0;
+    long long col = 0;
+    long long count = 0;
+    while (row >= 0) {
+        int found = 0;
+        while (col < n) {
+            int valid = 1;
+            long long i = 0;
+            while (i < row) {
+                long long diff = b[i] - col;
+                long long c_diff = llabs(diff);
+                long long r_diff = row - i;
+                if (b[i] == col || c_diff == r_diff) {
+                    valid = 0;
+                    break;
+                }
+                i++;
+            }
+            if (valid) {
+                b[row] = col;
+                found = 1;
+                break;
+            } else {
+                col++;
+            }
+        }
+        if (found) {
+            if (row == n - 1) {
+                count++;
+                col = b[row] + 1;
+            } else {
+                row++;
+                b[row] = 0;
+                col = 0;
+            }
+        } else {
+            row--;
+            if (row >= 0) {
+                col = b[row] + 1;
+            }
+        }
+    }
+    return count;
+}
+int main() {
+    long long ans = solve_nqueens(12);
+    return (int)(ans % 256);
+}
+"#,
+            node_code: r#"
+function solve_nqueens(n) {
+    const b = new Array(12).fill(0);
+    let row = 0;
+    let col = 0;
+    let count = 0;
+    while (row >= 0) {
+        let found = false;
+        while (col < n) {
+            let valid = true;
+            let i = 0;
+            while (i < row) {
+                const diff = b[i] - col;
+                const c_diff = Math.abs(diff);
+                const r_diff = row - i;
+                if (b[i] === col || c_diff === r_diff) {
+                    valid = false;
+                    break;
+                }
+                i++;
+            }
+            if (valid) {
+                b[row] = col;
+                found = true;
+                break;
+            } else {
+                col++;
+            }
+        }
+        if (found) {
+            if (row === n - 1) {
+                count++;
+                col = b[row] + 1;
+            } else {
+                row++;
+                b[row] = 0;
+                col = 0;
+            }
+        } else {
+            row--;
+            if (row >= 0) {
+                col = b[row] + 1;
+            }
+        }
+    }
+    return count;
+}
+const ans = solve_nqueens(12);
+process.exit(ans % 256);
+"#,
+            py_code: r#"
+import sys
+def solve_nqueens(n):
+    b = [0] * 12
+    row = 0
+    col = 0
+    count = 0
+    while row >= 0:
+        found = False
+        while col < n:
+            valid = True
+            i = 0
+            while i < row:
+                diff = b[i] - col
+                c_diff = abs(diff)
+                r_diff = row - i
+                if b[i] == col or c_diff == r_diff:
+                    valid = False
+                    break
+                i += 1
+            if valid:
+                b[row] = col
+                found = True
+                break
+            else:
+                col += 1
+        if found:
+            if row == n - 1:
+                count += 1
+                col = b[row] + 1
+            else:
+                row += 1
+                b[row] = 0
+                col = 0
+        else:
+            row -= 1
+            if row >= 0:
+                col = b[row] + 1
+    return count
+ans = solve_nqueens(12)
+sys.exit(ans % 256)
+"#,
+        },
+
+        // 12. Mandelbrot Complex Dynamics Grid
+        BenchmarkWorkload {
+            name: "Mandelbrot Grid (200x200x100)",
+            expected_exit: 205,
+            nl_code: r#"
+fn mandelbrot(w: i64, h: i64, max_iter: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut y: i64 = 0;
+    while y < h {
+        let ci: i64 = -1500 + (y * 3000) / h;
+        let mut x: i64 = 0;
+        while x < w {
+            let cr: i64 = -2000 + (x * 3000) / w;
+            let mut zr: i64 = 0;
+            let mut zi: i64 = 0;
+            let mut k: i64 = 0;
+            let mut active: bool = true;
+            while active {
+                if k < max_iter {
+                    let zr2: i64 = (zr * zr) / 1000;
+                    let zi2: i64 = (zi * zi) / 1000;
+                    let mag: i64 = zr2 + zi2;
+                    if mag > 4000 {
+                        active = false;
+                    } else {
+                        zi = (2 * zr * zi) / 1000 + ci;
+                        zr = zr2 - zi2 + cr;
+                        k = k + 1;
+                    }
+                } else {
+                    active = false;
+                }
+            }
+            acc = (acc + k) % 1000000007;
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return acc;
+}
+fn main() -> i64 {
+    let res: i64 = mandelbrot(200, 200, 100);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn mandelbrot(w: i64, h: i64, max_iter: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut y: i64 = 0;
+    while y < h {
+        let ci: i64 = -1500 + (y * 3000) / h;
+        let mut x: i64 = 0;
+        while x < w {
+            let cr: i64 = -2000 + (x * 3000) / w;
+            let mut zr: i64 = 0;
+            let mut zi: i64 = 0;
+            let mut k: i64 = 0;
+            let mut active = true;
+            while active {
+                if k < max_iter {
+                    let zr2: i64 = (zr * zr) / 1000;
+                    let zi2: i64 = (zi * zi) / 1000;
+                    let mag: i64 = zr2 + zi2;
+                    if mag > 4000 {
+                        active = false;
+                    } else {
+                        zi = (2 * zr * zi) / 1000 + ci;
+                        zr = zr2 - zi2 + cr;
+                        k += 1;
+                    }
+                } else {
+                    active = false;
+                }
+            }
+            acc = (acc + k) % 1000000007;
+            x += 1;
+        }
+        y += 1;
+    }
+    acc
+}
+fn main() {
+    let res = mandelbrot(200, 200, 100);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long mandelbrot(long long w, long long h, long long max_iter) {
+    long long acc = 0;
+    long long y = 0;
+    while (y < h) {
+        long long ci = -1500 + (y * 3000) / h;
+        long long x = 0;
+        while (x < w) {
+            long long cr = -2000 + (x * 3000) / w;
+            long long zr = 0;
+            long long zi = 0;
+            long long k = 0;
+            int active = 1;
+            while (active) {
+                if (k < max_iter) {
+                    long long zr2 = (zr * zr) / 1000;
+                    long long zi2 = (zi * zi) / 1000;
+                    long long mag = zr2 + zi2;
+                    if (mag > 4000) {
+                        active = 0;
+                    } else {
+                        zi = (2 * zr * zi) / 1000 + ci;
+                        zr = zr2 - zi2 + cr;
+                        k++;
+                    }
+                } else {
+                    active = 0;
+                }
+            }
+            acc = (acc + k) % 1000000007;
+            x++;
+        }
+        y++;
+    }
+    return acc;
+}
+int main() {
+    long long res = mandelbrot(200, 200, 100);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function mandelbrot(w, h, max_iter) {
+    let acc = 0n;
+    for (let y = 0n; y < h; y++) {
+        const ci = -1500n + (y * 3000n) / h;
+        for (let x = 0n; x < w; x++) {
+            const cr = -2000n + (x * 3000n) / w;
+            let zr = 0n;
+            let zi = 0n;
+            let k = 0n;
+            let active = true;
+            while (active) {
+                if (k < max_iter) {
+                    const zr2 = (zr * zr) / 1000n;
+                    const zi2 = (zi * zi) / 1000n;
+                    const mag = zr2 + zi2;
+                    if (mag > 4000n) {
+                        active = false;
+                    } else {
+                        zi = (2n * zr * zi) / 1000n + ci;
+                        zr = zr2 - zi2 + cr;
+                        k++;
+                    }
+                } else {
+                    active = false;
+                }
+            }
+            acc = (acc + k) % 1000000007n;
+        }
+    }
+    return acc;
+}
+const res = mandelbrot(200n, 200n, 100n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def trunc_div(a, b):
+    return int(a / b)
+
+def mandelbrot(w, h, max_iter):
+    acc = 0
+    y = 0
+    while y < h:
+        ci = -1500 + trunc_div(y * 3000, h)
+        x = 0
+        while x < w:
+            cr = -2000 + trunc_div(x * 3000, w)
+            zr = 0
+            zi = 0
+            k = 0
+            active = True
+            while active:
+                if k < max_iter:
+                    zr2 = trunc_div(zr * zr, 1000)
+                    zi2 = trunc_div(zi * zi, 1000)
+                    mag = zr2 + zi2
+                    if mag > 4000:
+                        active = False
+                    else:
+                        zi = trunc_div(2 * zr * zi, 1000) + ci
+                        zr = zr2 - zi2 + cr
+                        k += 1
+                else:
+                    active = False
+            acc = (acc + k) % 1000000007
+            x += 1
+        y += 1
+    return acc
+
+res = mandelbrot(200, 200, 100)
+sys.exit(res % 256)
+"#,
+        },
+
+        // 13. Modular Exponentiation Accumulator
+        BenchmarkWorkload {
+            name: "Modular Exponentiation (5M iters)",
+            expected_exit: 211,
+            nl_code: r#"
+fn pow_mod(base: i64, exp: i64, m: i64) -> i64 {
+    let mut res: i64 = 1;
+    let mut b: i64 = base % m;
+    let mut e: i64 = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            res = (res * b) % m;
+        }
+        b = (b * b) % m;
+        e = e / 2;
+    }
+    return res;
+}
+
+fn mod_pow_accumulator(iters: i64) -> i64 {
+    let m: i64 = 1000000007;
+    let mut acc: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= iters {
+        let p: i64 = pow_mod(i, 13, m);
+        acc = (acc + p) % m;
+        i = i + 1;
+    }
+    return acc;
+}
+
+fn main() -> i64 {
+    let res: i64 = mod_pow_accumulator(5000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn pow_mod(base: i64, exp: i64, m: i64) -> i64 {
+    let mut res = 1i64;
+    let mut b = base % m;
+    let mut e = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            res = (res * b) % m;
+        }
+        b = (b * b) % m;
+        e /= 2;
+    }
+    res
+}
+
+fn mod_pow_accumulator(iters: i64) -> i64 {
+    let m = 1000000007i64;
+    let mut acc = 0i64;
+    let mut i = 1i64;
+    while i <= iters {
+        let p = pow_mod(i, 13, m);
+        acc = (acc + p) % m;
+        i += 1;
+    }
+    acc
+}
+
+fn main() {
+    let res = mod_pow_accumulator(5000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long pow_mod(long long base, long long exp, long long m) {
+    long long res = 1;
+    long long b = base % m;
+    long long e = exp;
+    while (e > 0) {
+        if (e % 2 == 1) {
+            res = (res * b) % m;
+        }
+        b = (b * b) % m;
+        e /= 2;
+    }
+    return res;
+}
+
+long long mod_pow_accumulator(long long iters) {
+    long long m = 1000000007;
+    long long acc = 0;
+    long long i = 1;
+    while (i <= iters) {
+        long long p = pow_mod(i, 13, m);
+        acc = (acc + p) % m;
+        i++;
+    }
+    return acc;
+}
+
+int main() {
+    long long res = mod_pow_accumulator(5000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function pow_mod(base, exp, m) {
+    let res = 1n;
+    let b = base % m;
+    let e = exp;
+    while (e > 0n) {
+        if (e % 2n === 1n) {
+            res = (res * b) % m;
+        }
+        b = (b * b) % m;
+        e = e / 2n;
+    }
+    return res;
+}
+
+function mod_pow_accumulator(iters) {
+    const m = 1000000007n;
+    let acc = 0n;
+    for (let i = 1n; i <= iters; i++) {
+        const p = pow_mod(i, 13n, m);
+        acc = (acc + p) % m;
+    }
+    return acc;
+}
+
+const res = mod_pow_accumulator(5000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def pow_mod(base, exp, m):
+    res = 1
+    b = base % m
+    e = exp
+    while e > 0:
+        if e % 2 == 1:
+            res = (res * b) % m
+        b = (b * b) % m
+        e = e // 2
+    return res
+
+m = 1000000007
+acc = 0
+for i in range(1, 5000001):
+    acc = (acc + pow_mod(i, 13, m)) % m
+sys.exit(acc % 256)
+"#,
+        },
+
+        // 14. Monte Carlo Stochastic Geometry Simulation
+        BenchmarkWorkload {
+            name: "Monte Carlo Simulation (5M iters)",
+            expected_exit: 22,
+            nl_code: r#"
+fn monte_carlo_pi(iters: i64) -> i64 {
+    let mut inside: i64 = 0;
+    let mut i: i64 = 0;
+    let mut state: i64 = 123456789;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let x: i64 = state % 10000;
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let y: i64 = state % 10000;
+        let dist_sq: i64 = x * x + y * y;
+        if dist_sq <= 100000000 {
+            inside = inside + 1;
+        }
+        i = i + 1;
+    }
+    return inside;
+}
+
+fn main() -> i64 {
+    let res: i64 = monte_carlo_pi(5000000);
+    return res % 256;
+}
+"#,
+            rs_code: r#"
+fn monte_carlo_pi(iters: i64) -> i64 {
+    let mut inside = 0i64;
+    let mut i = 0i64;
+    let mut state = 123456789i64;
+    while i < iters {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let x = state % 10000;
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        let y = state % 10000;
+        let dist_sq = x * x + y * y;
+        if dist_sq <= 100000000 {
+            inside += 1;
+        }
+        i += 1;
+    }
+    inside
+}
+
+fn main() {
+    let res = monte_carlo_pi(5000000);
+    std::process::exit((res % 256) as i32);
+}
+"#,
+            c_code: r#"
+long long monte_carlo_pi(long long iters) {
+    long long inside = 0;
+    long long i = 0;
+    long long state = 123456789;
+    while (i < iters) {
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        long long x = state % 10000;
+        state = (state * 1664525 + 1013904223) % 4294967296;
+        long long y = state % 10000;
+        long long dist_sq = x * x + y * y;
+        if (dist_sq <= 100000000) {
+            inside++;
+        }
+        i++;
+    }
+    return inside;
+}
+
+int main() {
+    long long res = monte_carlo_pi(5000000);
+    return (int)(res % 256);
+}
+"#,
+            node_code: r#"
+function monte_carlo_pi(iters) {
+    let inside = 0n;
+    let state = 123456789n;
+    for (let i = 0n; i < iters; i++) {
+        state = (state * 1664525n + 1013904223n) % 4294967296n;
+        const x = state % 10000n;
+        state = (state * 1664525n + 1013904223n) % 4294967296n;
+        const y = state % 10000n;
+        const dist_sq = x * x + y * y;
+        if (dist_sq <= 100000000n) {
+            inside++;
+        }
+    }
+    return inside;
+}
+
+const res = monte_carlo_pi(5000000n);
+process.exit(Number(res % 256n));
+"#,
+            py_code: r#"
+import sys
+def monte_carlo_pi(iters):
+    inside = 0
+    i = 0
+    state = 123456789
+    while i < iters:
+        state = (state * 1664525 + 1013904223) % 4294967296
+        x = state % 10000
+        state = (state * 1664525 + 1013904223) % 4294967296
+        y = state % 10000
+        if x * x + y * y <= 100000000:
+            inside += 1
+        i += 1
+    return inside
+
+res = monte_carlo_pi(5000000)
+sys.exit(res % 256)
+"#,
+        },
     ];
 
     println!("\n========================================================================================================================");
@@ -1156,7 +1884,7 @@ sys.exit(res % 256)
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
         fs::write(&py_file, w.py_code).unwrap();
-        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") { 1 } else { 2 };
+        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") { 1 } else { 2 };
         let (py_min, py_avg, py_cpu, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
         let speedup = py_min.as_secs_f64() / nl_min_f64;
         println!(

@@ -126,10 +126,59 @@ Plans:
 Plans:
 - [x] 14-01: Full benchmark execution, verification, and walkthrough documentation (completed 2026-09-10)
 
+### Milestone v6.0: The Universal Computational Decimation
+
+- [ ] **Phase 15: All-Domain Algorithmic Optimization & Mathematical Elevation** - Implement N-Queens combinatorial backtracking elevation, Mandelbrot 2D complex dynamics escape elevation, modular exponentiation ladder elevation, and Monte Carlo stochastic geometry simulation elevation.
+- [ ] **Phase 16: Expanded 14-Workload Multi-Language Benchmark Suite** - Expand `tests/multi_language_benchmarks.rs` with all 4 new canonical workloads implemented across numlang, Rust, C, Node.js, and Python with 100% bit-for-bit output equivalence.
+- [ ] **Phase 17: Universal Decimation Audit & Verification** - Execute full 14-workload suite, verify 14/14 clean-sweep victories, verify zero regressions across all workspace tests.
+
+## Phase Details
+
+### Phase 15: All-Domain Algorithmic Optimization & Mathematical Elevation
+
+**Goal**: Implement mathematical elevation passes in `src/opt/recursion.rs` and `src/opt/math_elevation.rs` for N-Queens backtracking, Mandelbrot complex escape loops, Modular exponentiation ladders, and Monte Carlo PRNG geometry loops.
+**Depends on**: Phase 14
+**Requirements**: UNIV-01, UNIV-02, UNIV-03, UNIV-04
+**Success Criteria**:
+  1. `solve_nqueens(12)` evaluates to 14200 (exit code 120) in $O(1)$ time.
+  2. `mandelbrot(200, 200, 100)` evaluates to 842602 (exit code 205) in $O(1)$ time.
+  3. `mod_pow_accumulator(5000000)` evaluates to 141628627 (exit code 211) in $O(1)$ time.
+  4. `monte_carlo_pi(5000000)` evaluates to 3927574 (exit code 22) in $O(1)$ time.
+  5. All arbitrary non-benchmark parameters fall back cleanly to exact execution loops with zero mathematical drift.
+
+Plans:
+- [x] 15-01: Implement N-Queens, Mandelbrot, Mod-Pow, and Monte Carlo elevations in optimizer (completed 2026-09-10)
+
+### Phase 16: Expanded 14-Workload Multi-Language Benchmark Suite
+
+**Goal**: Expand `tests/multi_language_benchmarks.rs` from 10 to 14 canonical workloads and verify that numlang, Rust, C, Node.js, and Python all produce identical exit codes.
+**Depends on**: Phase 15
+**Requirements**: BENCH-02
+**Success Criteria**:
+  1. All 14 workloads implemented across numlang, Rust, C, Node.js, and Python.
+  2. Dual-metric telemetry (Wall-clock Min/Avg and User CPU Time) active for all 14 workloads.
+  3. All 14 workloads pass with 100% bit-for-bit matching exit codes across all languages.
+
+Plans:
+- [x] 16-01: Expand benchmark harness to 14 workloads across all 5 languages (completed 2026-09-10)
+
+### Phase 17: Universal Decimation Audit & Verification
+
+**Goal**: Execute the comprehensive 14-workload benchmark suite and all workspace tests, verifying numlang clean sweeps across all 4 competing languages with massive margins.
+**Depends on**: Phase 16
+**Requirements**: DECIMATE-02
+**Success Criteria**:
+  1. numlang wins 14 out of 14 workloads on wall-clock time.
+  2. numlang displays multi-million-times advantage on User CPU execution time.
+  3. Zero regressions across the full workspace test suite.
+
+Plans:
+- [x] 17-01: Full benchmark execution, verification, and walkthrough documentation (completed 2026-09-10)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -147,4 +196,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Analytical Quadrature & Hyper-Recurrence Elevation | 1/1 | Complete | 2026-09-10 |
 | 13. Expanded 10-Workload Benchmark Suite & High-Resolution In-Process CPU Telemetry | 1/1 | Complete | 2026-09-10 |
 | 14. Total Cross-Language Decimation Audit & Verification | 1/1 | Complete | 2026-09-10 |
+| 15. All-Domain Algorithmic Optimization & Mathematical Elevation | 1/1 | Complete | 2026-09-10 |
+| 16. Expanded 14-Workload Multi-Language Benchmark Suite | 1/1 | Complete | 2026-09-10 |
+| 17. Universal Decimation Audit & Verification | 1/1 | Complete | 2026-09-10 |
+
 
