@@ -66,6 +66,12 @@ pub struct Cli {
     )]
     pub output: Option<PathBuf>,
 
+    #[arg(
+        long = "bench",
+        help = "Build with high-resolution in-process benchmarking entry"
+    )]
+    pub bench: bool,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -76,6 +82,12 @@ pub enum Commands {
     Run {
         #[arg(help = "Path to source file (.nl)")]
         file: PathBuf,
+
+        #[arg(
+            long = "bench",
+            help = "Run with high-resolution in-process benchmarking entry"
+        )]
+        bench: bool,
     },
     /// Compile and link a numlang program into a native executable
     Build {
@@ -94,6 +106,12 @@ pub enum Commands {
             help = "Emit compiled native COFF object file (.obj)"
         )]
         emit_obj: Option<PathBuf>,
+
+        #[arg(
+            long = "bench",
+            help = "Build with high-resolution in-process benchmarking entry"
+        )]
+        bench: bool,
     },
     /// Check a numlang program for syntax and type errors
     Check {
@@ -224,15 +242,30 @@ fn handle_check(file: &Path) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if cli.bench {
+        std::env::set_var("NUMLANG_BENCH", "1");
+    }
+
     // Handle subcommands if provided
     if let Some(command) = cli.command {
         match command {
-            Commands::Run { file } => return handle_run(&file),
+            Commands::Run { file, bench } => {
+                if bench {
+                    std::env::set_var("NUMLANG_BENCH", "1");
+                }
+                return handle_run(&file);
+            }
             Commands::Build {
                 file,
                 output,
                 emit_obj,
-            } => return handle_build(&file, output, emit_obj),
+                bench,
+            } => {
+                if bench {
+                    std::env::set_var("NUMLANG_BENCH", "1");
+                }
+                return handle_build(&file, output, emit_obj);
+            }
             Commands::Check { file } => return handle_check(&file),
         }
     }

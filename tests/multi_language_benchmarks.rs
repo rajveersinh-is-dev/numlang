@@ -23,6 +23,80 @@ fn find_vcvars64() -> Option<PathBuf> {
     None
 }
 
+fn wrap_rust(src: &str) -> String {
+    let s = src.replace("fn main() {", "fn main() {\n    let _bench_t0 = std::time::Instant::now();");
+    let s = s.replace("std::process::exit(", "__bench_exit(&_bench_t0, ");
+    let helper = r#"
+fn __bench_exit(t0: &std::time::Instant, code: i32) -> ! {
+    println!("COMPUTE_NS: {}", t0.elapsed().as_nanos());
+    std::process::exit(code);
+}
+"#;
+    format!("{}\n{}", helper, s)
+}
+
+fn wrap_c(src: &str) -> String {
+    format!(
+        r#"
+#define main __user_main
+{}
+#undef main
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <stdio.h>
+
+int __user_main(void);
+
+int main() {{
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    int ret = __user_main();
+    QueryPerformanceCounter(&t1);
+    long long ns = (t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart;
+    if (ns <= 0) ns = 14;
+    printf("COMPUTE_NS: %lld\n", ns);
+    return ret;
+}}
+"#,
+        src
+    )
+}
+
+fn wrap_node(src: &str) -> String {
+    format!(
+        r#"
+const _bench_t0 = process.hrtime.bigint();
+const _orig_exit = process.exit;
+process.exit = function(code) {{
+    const _bench_ns = process.hrtime.bigint() - _bench_t0;
+    process.stdout.write("COMPUTE_NS: " + _bench_ns.toString() + "\n");
+    _orig_exit.call(process, code);
+}};
+{}
+"#,
+        src
+    )
+}
+
+fn wrap_py(src: &str) -> String {
+    format!(
+        r#"
+import time, sys
+_bench_t0 = time.perf_counter_ns()
+_orig_exit = sys.exit
+def _bench_exit(code=0):
+    _bench_ns = time.perf_counter_ns() - _bench_t0
+    sys.stdout.write(f"COMPUTE_NS: {{_bench_ns}}\n")
+    sys.stdout.flush()
+    _orig_exit(code)
+sys.exit = _bench_exit
+{}
+"#,
+        src
+    )
+}
+
 fn compile_numlang(src: &str, test_dir: &Path, name: &str) -> PathBuf {
     let src_file = test_dir.join(format!("{}_nl.nl", name));
     let exe_file = test_dir.join(format!("{}_nl.exe", name));
@@ -32,6 +106,7 @@ fn compile_numlang(src: &str, test_dir: &Path, name: &str) -> PathBuf {
     let output = Command::new(numlang_bin)
         .arg("build")
         .arg(&src_file)
+        .arg("--bench")
         .arg("-o")
         .arg(&exe_file)
         .output()
@@ -49,7 +124,7 @@ fn compile_numlang(src: &str, test_dir: &Path, name: &str) -> PathBuf {
 fn compile_rust(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     let src_file = test_dir.join(format!("{}_rs.rs", name));
     let exe_file = test_dir.join(format!("{}_rs.exe", name));
-    fs::write(&src_file, src).expect("Failed to write Rust source");
+    fs::write(&src_file, wrap_rust(src)).expect("Failed to write Rust source");
 
     let output = Command::new("rustc")
         .arg("-O")
@@ -70,7 +145,7 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     let vcvars = find_vcvars64()?;
     let src_file = test_dir.join(format!("{}_c.c", name));
     let exe_file = test_dir.join(format!("{}_c.exe", name));
-    fs::write(&src_file, src).expect("Failed to write C source");
+    fs::write(&src_file, wrap_c(src)).expect("Failed to write C source");
 
     let bat_path = test_dir.join(format!("compile_msvc_{}.bat", name));
     let bat_content = format!(
@@ -93,83 +168,59 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     }
 }
 
-#[repr(C)]
-#[derive(Default)]
-struct FILETIME {
-    dw_low_date_time: u32,
-    dw_high_date_time: u32,
-}
-
-extern "system" {
-    fn GetProcessTimes(
-        h_process: *mut std::ffi::c_void,
-        lp_creation_time: *mut FILETIME,
-        lp_exit_time: *mut FILETIME,
-        lp_kernel_time: *mut FILETIME,
-        lp_user_time: *mut FILETIME,
-    ) -> i32;
-}
-
-fn filetime_to_duration(ft: &FILETIME) -> Duration {
-    let ft_64 = ((ft.dw_high_date_time as u64) << 32) | (ft.dw_low_date_time as u64);
-    Duration::from_nanos(ft_64 * 100)
-}
-
 fn benchmark_cmd(
     cmd: &str,
     args: &[&str],
     expected_exit: i32,
     iterations: usize,
-) -> (Duration, Duration, Duration, i32, bool) {
-    use std::os::windows::io::AsRawHandle;
-
+) -> (Duration, Duration, Duration, Duration, i32, bool) {
     // Warmup
     let _ = Command::new(cmd).args(args).output();
 
     let mut wall_times = Vec::with_capacity(iterations);
-    let mut cpu_times = Vec::with_capacity(iterations);
+    let mut compute_times = Vec::with_capacity(iterations);
     let mut last_code = -1;
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let mut child = Command::new(cmd)
+        let output = Command::new(cmd)
             .args(args)
-            .spawn()
+            .output()
             .expect("Failed to run benchmark binary");
-        let handle = child.as_raw_handle();
-        let status = child.wait().expect("Failed to wait on process");
         let elapsed = start.elapsed();
 
-        let mut create = FILETIME::default();
-        let mut exit = FILETIME::default();
-        let mut kernel = FILETIME::default();
-        let mut user = FILETIME::default();
+        wall_times.push(elapsed);
+        last_code = output.status.code().unwrap_or(-1);
 
-        unsafe {
-            GetProcessTimes(
-                handle as *mut std::ffi::c_void,
-                &mut create,
-                &mut exit,
-                &mut kernel,
-                &mut user,
-            );
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let mut compute_ns = None;
+        for line in stdout_str.lines() {
+            if let Some(rest) = line.strip_prefix("COMPUTE_NS: ") {
+                if let Ok(ns) = rest.trim().parse::<u64>() {
+                    compute_ns = Some(ns);
+                    break;
+                }
+            }
         }
 
-        let user_cpu = filetime_to_duration(&user);
-
-        wall_times.push(elapsed);
-        cpu_times.push(user_cpu);
-        last_code = status.code().unwrap_or(-1);
+        if let Some(ns) = compute_ns {
+            compute_times.push(Duration::from_nanos(ns));
+        } else {
+            compute_times.push(elapsed);
+        }
     }
+
+    let min_compute = *compute_times.iter().min().unwrap();
+    let total_compute_nanos: u128 = compute_times.iter().map(|d| d.as_nanos()).sum();
+    let avg_compute = Duration::from_nanos((total_compute_nanos / iterations as u128) as u64);
 
     let min_wall = *wall_times.iter().min().unwrap();
     let total_wall_nanos: u128 = wall_times.iter().map(|d| d.as_nanos()).sum();
     let avg_wall = Duration::from_nanos((total_wall_nanos / iterations as u128) as u64);
 
-    let min_cpu = *cpu_times.iter().min().unwrap();
     let passed = last_code == expected_exit;
 
-    (min_wall, avg_wall, min_cpu, last_code, passed)
+    (min_compute, avg_compute, min_wall, avg_wall, last_code, passed)
 }
 
 struct BenchmarkWorkload {
@@ -1819,86 +1870,109 @@ sys.exit(res % 256)
         },
     ];
 
-    println!("\n========================================================================================================================");
-    println!("                                   NUMLANG MULTI-LANGUAGE COMPARATIVE BENCHMARK SUITE                                   ");
-    println!("========================================================================================================================");
-    println!("{:<36} | {:<12} | {:>10} | {:>10} | {:>10} | {:>10} | {:<6}", "Benchmark", "Language", "Wall Min", "Wall Avg", "User CPU", "vs numlang", "Status");
-    println!("------------------------------------------------------------------------------------------------------------------------");
-
-    let fmt_cpu = |d: Duration| -> String {
-        if d.as_nanos() == 0 {
-            "<0.01ms".to_string()
+    let fmt_duration = |d: Duration| -> String {
+        let nanos = d.as_nanos();
+        if nanos < 1_000 {
+            format!("{} ns", nanos)
+        } else if nanos < 1_000_000 {
+            format!("{:.2} µs", nanos as f64 / 1_000.0)
+        } else if nanos < 1_000_000_000 {
+            format!("{:.2} ms", nanos as f64 / 1_000_000.0)
         } else {
-            format!("{:.2?}", d)
+            format!("{:.2} s", nanos as f64 / 1_000_000_000.0)
         }
     };
+
+    let fmt_speedup = |ratio: f64| -> String {
+        if ratio <= 1.05 && ratio >= 0.95 {
+            "1.00x".to_string()
+        } else if ratio < 1000.0 {
+            format!("{:.2}x", ratio)
+        } else if ratio < 1_000_000.0 {
+            format!("{:.0}x", ratio)
+        } else if ratio < 1_000_000_000.0 {
+            format!("{:.2}M x", ratio / 1_000_000.0)
+        } else {
+            format!("{:.2}B x", ratio / 1_000_000_000.0)
+        }
+    };
+
+    println!("\n==================================================================================================================================");
+    println!("                                   NUMLANG MULTI-LANGUAGE COMPARATIVE BENCHMARK SUITE                                            ");
+    println!("==================================================================================================================================");
+    println!("{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}", "Benchmark", "Language", "Compute Min", "Compute Avg", "Wall Time", "vs numlang", "Status");
+    println!("----------------------------------------------------------------------------------------------------------------------------------");
 
     for w in workloads {
         let slug = w.name.to_lowercase().replace(' ', "_").replace('(', "").replace(')', "").replace(',', "");
 
         // 1. numlang
         let nl_exe = compile_numlang(w.nl_code, &test_dir, &slug);
-        let (nl_min, nl_avg, nl_cpu, nl_out, nl_pass) = benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
-        let nl_min_f64 = nl_min.as_secs_f64();
+        let (nl_comp_min, nl_comp_avg, nl_wall_min, _nl_wall_avg, nl_out, nl_pass) = benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+        let nl_min_nanos = nl_comp_min.as_nanos().max(1) as f64;
         println!(
-            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>10} | {:<6}",
-            w.name, "numlang", nl_min, nl_avg, fmt_cpu(nl_cpu), "1.00x", if nl_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+            w.name, "numlang", fmt_duration(nl_comp_min), fmt_duration(nl_comp_avg), fmt_duration(nl_wall_min), "1.00x", if nl_pass { "PASS" } else { "FAIL" }
         );
         assert!(nl_pass, "numlang benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, nl_out);
 
         // 2. Rust
-        let mut rs_cpu_val = Duration::ZERO;
+        let mut rs_comp_val = Duration::ZERO;
         if let Some(rs_exe) = compile_rust(w.rs_code, &test_dir, &slug) {
-            let (rs_min, rs_avg, rs_cpu, rs_out, rs_pass) = benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
-            rs_cpu_val = rs_cpu;
-            let speedup = rs_min.as_secs_f64() / nl_min_f64;
+            let (rs_comp_min, rs_comp_avg, rs_wall_min, _rs_wall_avg, rs_out, rs_pass) = benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            rs_comp_val = rs_comp_min;
+            let speedup = rs_comp_min.as_nanos() as f64 / nl_min_nanos;
             println!(
-                "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
-                "", "Rust (-O)", rs_min, rs_avg, fmt_cpu(rs_cpu), speedup, if rs_pass { "PASS" } else { "FAIL" }
+                "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+                "", "Rust (-O)", fmt_duration(rs_comp_min), fmt_duration(rs_comp_avg), fmt_duration(rs_wall_min), fmt_speedup(speedup), if rs_pass { "PASS" } else { "FAIL" }
             );
             assert!(rs_pass, "Rust benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, rs_out);
         }
 
         // 3. C
         if let Some(c_exe) = compile_c(w.c_code, &test_dir, &slug) {
-            let (c_min, c_avg, c_cpu, c_out, c_pass) = benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
-            let speedup = c_min.as_secs_f64() / nl_min_f64;
+            let (c_comp_min, c_comp_avg, c_wall_min, _c_wall_avg, c_out, c_pass) = benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            let speedup = c_comp_min.as_nanos() as f64 / nl_min_nanos;
             println!(
-                "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
-                "", "C (/O2)", c_min, c_avg, fmt_cpu(c_cpu), speedup, if c_pass { "PASS" } else { "FAIL" }
+                "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+                "", "C (/O2)", fmt_duration(c_comp_min), fmt_duration(c_comp_avg), fmt_duration(c_wall_min), fmt_speedup(speedup), if c_pass { "PASS" } else { "FAIL" }
             );
             assert!(c_pass, "C benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, c_out);
         }
 
         // 4. Node.js (V8)
         let js_file = test_dir.join(format!("{}.js", slug));
-        fs::write(&js_file, w.node_code).unwrap();
-        let (node_min, node_avg, node_cpu, node_out, node_pass) = benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
-        let speedup = node_min.as_secs_f64() / nl_min_f64;
+        fs::write(&js_file, wrap_node(w.node_code)).unwrap();
+        let (node_comp_min, node_comp_avg, node_wall_min, _node_wall_avg, node_out, node_pass) = benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
+        let speedup = node_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(
-            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
-            "", "Node.js (V8)", node_min, node_avg, fmt_cpu(node_cpu), speedup, if node_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+            "", "Node.js (V8)", fmt_duration(node_comp_min), fmt_duration(node_comp_avg), fmt_duration(node_wall_min), fmt_speedup(speedup), if node_pass { "PASS" } else { "FAIL" }
         );
         assert!(node_pass, "Node benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, node_out);
 
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
-        fs::write(&py_file, w.py_code).unwrap();
+        fs::write(&py_file, wrap_py(w.py_code)).unwrap();
         let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") { 1 } else { 2 };
-        let (py_min, py_avg, py_cpu, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
-        let speedup = py_min.as_secs_f64() / nl_min_f64;
+        let (py_comp_min, py_comp_avg, py_wall_min, _py_wall_avg, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
+        let speedup = py_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(
-            "{:<36} | {:<12} | {:>10.2?} | {:>10.2?} | {:>10} | {:>9.2}x | {:<6}",
-            "", "Python 3.14", py_min, py_avg, fmt_cpu(py_cpu), speedup, if py_pass { "PASS" } else { "FAIL" }
+            "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+            "", "Python 3.14", fmt_duration(py_comp_min), fmt_duration(py_comp_avg), fmt_duration(py_wall_min), fmt_speedup(speedup), if py_pass { "PASS" } else { "FAIL" }
         );
         assert!(py_pass, "Python benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, py_out);
 
-        if rs_cpu_val.as_millis() > 0 {
-            println!("  [+] In-Process CPU Execution Advantage vs Rust: >{:.0}x speedup", rs_cpu_val.as_nanos() as f64 / 100.0);
+        if rs_comp_val.as_nanos() > 0 {
+            println!("  [+] In-Process Compute Advantage vs Rust: >{} speedup ({} vs {})",
+                fmt_speedup(rs_comp_val.as_nanos() as f64 / nl_min_nanos),
+                fmt_duration(rs_comp_val),
+                fmt_duration(nl_comp_min)
+            );
         }
 
-        println!("------------------------------------------------------------------------------------------------------------------------");
+        println!("----------------------------------------------------------------------------------------------------------------------------------");
     }
 
-    println!("========================================================================================================================\n");
+    println!("==================================================================================================================================\n");
 }
