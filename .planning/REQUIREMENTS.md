@@ -1,4 +1,4 @@
-﻿# Requirements: numlang
+# Requirements: numlang
 
 **Defined:** 2026-09-10
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
@@ -15,9 +15,9 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 
 ### Loop Optimization & Bounds Check Elimination (BCE)
 
-- [ ] **OPT-01**: Static induction variable and range analysis determines loop bounds and variable monotonicity at compile time.
-- [ ] **OPT-02**: Bounds Check Elimination (BCE) eliminates runtime boundary check branches in loops when index variables are statically proven within `0 <= i < len`.
-- [ ] **OPT-03**: Loop unrolling optimization pass unrolls fixed-size array iterations and vector operations (4x/8x) to maximize instruction pipelining and eliminate branch penalties.
+- [x] **OPT-01**: Static induction variable and range analysis determines loop bounds and variable monotonicity at compile time.
+- [x] **OPT-02**: Bounds Check Elimination (BCE) eliminates runtime boundary check branches in loops when index variables are statically proven within `0 <= i < len`.
+- [x] **OPT-03**: Loop unrolling optimization pass unrolls fixed-size array iterations and vector operations (4x/8x) to maximize instruction pipelining and eliminate branch penalties.
 
 ### Benchmark Suite & Advantage Verification
 
@@ -44,9 +44,9 @@ Requirements for the v2.0 performance-focused milestone targeting decisive bench
 | SIMD-01 | Phase 6 | Complete |
 | SIMD-02 | Phase 6 | Complete |
 | SIMD-03 | Phase 6 | Complete |
-| OPT-01 | Phase 7 | Pending |
-| OPT-02 | Phase 7 | Pending |
-| OPT-03 | Phase 7 | Pending |
+| OPT-01 | Phase 7 | Complete |
+| OPT-02 | Phase 7 | Complete |
+| OPT-03 | Phase 7 | Complete |
 | BENCH-02 | Phase 8 | Pending |
 | BENCH-03 | Phase 8 | Pending |
 
