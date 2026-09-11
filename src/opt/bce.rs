@@ -401,13 +401,29 @@ fn refine_condition(condition: &TypedExpr, ctx: &mut BceContext, is_then: bool) 
             right,
             ..
         } => {
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
             if is_then {
-                if let TypedExpr::Ident { name: var, .. } = &**left {
-                    if let Some(limit_range) = eval_range(right, ctx) {
-                        let upper = limit_range.max - 1;
-                        let lower = ctx.var_ranges.get(var).map(|r| r.min).unwrap_or(0);
-                        ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                    }
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let upper = r_range.max - 1;
+                    let lower = ctx.var_ranges.get(l_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let lower = l_range.min + 1;
+                    let upper = ctx.var_ranges.get(r_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
+                }
+            } else {
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let lower = r_range.min;
+                    let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let upper = l_range.max;
+                    let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
                 }
             }
         }
@@ -417,13 +433,29 @@ fn refine_condition(condition: &TypedExpr, ctx: &mut BceContext, is_then: bool) 
             right,
             ..
         } => {
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
             if is_then {
-                if let TypedExpr::Ident { name: var, .. } = &**left {
-                    if let Some(limit_range) = eval_range(right, ctx) {
-                        let upper = limit_range.max;
-                        let lower = ctx.var_ranges.get(var).map(|r| r.min).unwrap_or(0);
-                        ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                    }
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let upper = r_range.max;
+                    let lower = ctx.var_ranges.get(l_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let lower = l_range.min;
+                    let upper = ctx.var_ranges.get(r_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
+                }
+            } else {
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let lower = r_range.min + 1;
+                    let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let upper = l_range.max - 1;
+                    let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
                 }
             }
         }
@@ -433,13 +465,39 @@ fn refine_condition(condition: &TypedExpr, ctx: &mut BceContext, is_then: bool) 
             right,
             ..
         } => {
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
             if is_then {
-                if let TypedExpr::Ident { name: var, .. } = &**left {
-                    if let Some(min_range) = eval_range(right, ctx) {
-                        let lower = min_range.min;
-                        let upper = ctx.var_ranges.get(var).map(|r| r.max).unwrap_or(i64::MAX);
-                        ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                    }
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let lower = r_range.min;
+                    let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let upper = l_range.max;
+                    let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
+                }
+            }
+        }
+        TypedExpr::Binary {
+            op: BinaryOp::Gt,
+            left,
+            right,
+            ..
+        } => {
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
+            if is_then {
+                if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                    let lower = r_range.min + 1;
+                    let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                    ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+                }
+                if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                    let upper = l_range.max - 1;
+                    let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0);
+                    ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
                 }
             }
         }
@@ -455,12 +513,17 @@ fn refine_loop_condition(condition: &TypedExpr, ctx: &mut BceContext) {
             right,
             ..
         } => {
-            if let TypedExpr::Ident { name: var, .. } = &**left {
-                if let Some(limit_range) = eval_range(right, ctx) {
-                    let upper = limit_range.max - 1;
-                    let lower = ctx.var_ranges.get(var).map(|r| r.min).unwrap_or(0).max(0);
-                    ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                }
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
+            if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                let upper = r_range.max - 1;
+                let lower = ctx.var_ranges.get(l_var).map(|r| r.min).unwrap_or(0).max(0);
+                ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+            }
+            if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                let lower = (l_range.min + 1).max(0);
+                let upper = ctx.var_ranges.get(r_var).map(|r| r.max).unwrap_or(i64::MAX);
+                ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
             }
         }
 
@@ -470,12 +533,17 @@ fn refine_loop_condition(condition: &TypedExpr, ctx: &mut BceContext) {
             right,
             ..
         } => {
-            if let TypedExpr::Ident { name: var, .. } = &**left {
-                if let Some(limit_range) = eval_range(right, ctx) {
-                    let upper = limit_range.max;
-                    let lower = ctx.var_ranges.get(var).map(|r| r.min).unwrap_or(0).max(0);
-                    ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                }
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
+            if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                let upper = r_range.max;
+                let lower = ctx.var_ranges.get(l_var).map(|r| r.min).unwrap_or(0).max(0);
+                ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+            }
+            if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                let lower = l_range.min.max(0);
+                let upper = ctx.var_ranges.get(r_var).map(|r| r.max).unwrap_or(i64::MAX);
+                ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
             }
         }
 
@@ -485,12 +553,37 @@ fn refine_loop_condition(condition: &TypedExpr, ctx: &mut BceContext) {
             right,
             ..
         } => {
-            if let TypedExpr::Ident { name: var, .. } = &**right {
-                if let Some(limit_range) = eval_range(left, ctx) {
-                    let upper = limit_range.max - 1;
-                    let lower = ctx.var_ranges.get(var).map(|r| r.min).unwrap_or(0).max(0);
-                    ctx.var_ranges.insert(var.clone(), ValueRange::new(lower, upper));
-                }
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
+            if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                let upper = l_range.max - 1;
+                let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0).max(0);
+                ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
+            }
+            if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                let lower = (r_range.min + 1).max(0);
+                let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
+            }
+        }
+
+        TypedExpr::Binary {
+            op: BinaryOp::Ge,
+            left,
+            right,
+            ..
+        } => {
+            let left_r = eval_range(left, ctx);
+            let right_r = eval_range(right, ctx);
+            if let (TypedExpr::Ident { name: r_var, .. }, Some(l_range)) = (&**right, left_r) {
+                let upper = l_range.max;
+                let lower = ctx.var_ranges.get(r_var).map(|r| r.min).unwrap_or(0).max(0);
+                ctx.var_ranges.insert(r_var.clone(), ValueRange::new(lower, upper));
+            }
+            if let (TypedExpr::Ident { name: l_var, .. }, Some(r_range)) = (&**left, right_r) {
+                let lower = r_range.min.max(0);
+                let upper = ctx.var_ranges.get(l_var).map(|r| r.max).unwrap_or(i64::MAX);
+                ctx.var_ranges.insert(l_var.clone(), ValueRange::new(lower, upper));
             }
         }
 

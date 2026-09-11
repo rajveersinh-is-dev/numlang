@@ -1768,20 +1768,28 @@ impl<'a> FunctionTranslationState<'a> {
                 let body_block = builder.create_block();
                 let exit_block = builder.create_block();
 
-                let cond_init = self.translate_expr(condition, builder)?;
-                builder
-                    .ins()
-                    .brif(cond_init, body_block, &[], exit_block, &[]);
+                if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                    builder.ins().jump(body_block, &[]);
+                } else {
+                    let cond_init = self.translate_expr(condition, builder)?;
+                    builder
+                        .ins()
+                        .brif(cond_init, body_block, &[], exit_block, &[]);
+                }
 
                 builder.switch_to_block(body_block);
                 self.loop_exit_blocks.push(exit_block);
                 let body_term = self.translate_block(body, builder)?;
                 self.loop_exit_blocks.pop();
                 if !body_term {
-                    let cond_repeat = self.translate_expr(condition, builder)?;
-                    builder
-                        .ins()
-                        .brif(cond_repeat, body_block, &[], exit_block, &[]);
+                    if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                        builder.ins().jump(body_block, &[]);
+                    } else {
+                        let cond_repeat = self.translate_expr(condition, builder)?;
+                        builder
+                            .ins()
+                            .brif(cond_repeat, body_block, &[], exit_block, &[]);
+                    }
                 }
                 builder.seal_block(body_block);
 

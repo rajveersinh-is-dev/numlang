@@ -39,7 +39,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 
 - [x] **Phase 25: Dynamic SROA Elimination & Contiguous Indexing** - Restrict SROA to statically indexed arrays, keeping dynamic arrays on stack to eliminate CMOV select trees. (completed 2026-09-11)
 - [x] **Phase 26: High-Throughput Modulo & Division Strength Reduction** - Single-cycle power-of-two modulo (`band_imm`) and strength reduction for loop-invariant divisors. (completed 2026-09-11)
-- [ ] **Phase 27: While Loop Lowering Optimization & Dynamic BCE** - Rotated while loop optimization and binary search midpoint range analysis in BCE.
+- [x] **Phase 27: While Loop Lowering Optimization & Dynamic BCE** - Rotated while loop optimization and binary search midpoint range analysis in BCE. (completed 2026-09-11)
 - [ ] **Phase 28: Total 20-Workload Benchmark Supremacy Verification** - Full comparative benchmark verification against Rust (-O) and C (/O2) with hardware QPC timers.
 
 ## Phase Details
@@ -385,7 +385,7 @@ Phases execute in numeric order: 1 → 2 → ... → 24 → 25 → 26 → 27 →
 | 24. 20-Workload Comparative Benchmark Audit | 1/1 | Complete | 2026-09-11 |
 | 25. Dynamic SROA Elimination & Contiguous Indexing | 1/1 | Complete | 2026-09-11 |
 | 26. High-Throughput Modulo & Division Strength Reduction | 1/1 | Complete | 2026-09-11 |
-| 27. While Loop Lowering Optimization & Dynamic BCE | 0/1 | Planned | — |
+| 27. While Loop Lowering Optimization & Dynamic BCE | 1/1 | Complete | 2026-09-11 |
 | 28. Total 20-Workload Benchmark Supremacy Verification | 0/1 | Planned | — |
 
 
