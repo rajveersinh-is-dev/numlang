@@ -49,6 +49,7 @@ fn expand_dots_in_block(block: &mut TypedBlock) {
                 expand_dot_calls(value);
             }
             TypedStmt::Return(Some(expr), _) => expand_dot_calls(expr),
+            TypedStmt::Break(_) => {}
             TypedStmt::Expr(expr) => expand_dot_calls(expr),
             TypedStmt::If {
                 condition,
@@ -214,6 +215,7 @@ fn propagate_in_block(
             TypedStmt::Return(Some(expr), _) => {
                 propagate_array_elements(expr, array_literals, mutated_indices, dynamic_mutated);
             }
+            TypedStmt::Break(_) => {}
             TypedStmt::Expr(expr) => {
                 propagate_array_elements(expr, array_literals, mutated_indices, dynamic_mutated);
             }
@@ -297,6 +299,7 @@ fn fold_in_block(block: &mut TypedBlock) {
                 fold_constants(value);
             }
             TypedStmt::Return(Some(expr), _) => fold_constants(expr),
+            TypedStmt::Break(_) => {}
             TypedStmt::Expr(expr) => fold_constants(expr),
             TypedStmt::If {
                 condition,

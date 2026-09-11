@@ -317,6 +317,7 @@ impl CraneliftCompiler {
             func_ids: &self.func_ids,
             exit_process_id: self.exit_process_id,
             variables,
+            loop_exit_blocks: Vec::new(),
         };
 
         let terminated = state.translate_block(&func.body, &mut builder)?;
@@ -387,6 +388,7 @@ struct FunctionTranslationState<'a> {
     func_ids: &'a HashMap<String, FuncId>,
     exit_process_id: FuncId,
     variables: HashMap<String, Storage>,
+    loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -454,7 +456,7 @@ impl<'a> FunctionTranslationState<'a> {
         let mut has_increment = false;
         for s in &body.stmts {
             match s {
-                TypedStmt::While { .. } | TypedStmt::Return(..) => return false,
+                TypedStmt::While { .. } | TypedStmt::Return(..) | TypedStmt::Break(..) | TypedStmt::If { .. } => return false,
                 TypedStmt::Assign { name, value, .. } if name == var_name => {
                     match value {
                         TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
@@ -1148,6 +1150,15 @@ impl<'a> FunctionTranslationState<'a> {
                 Ok(true)
             }
 
+            TypedStmt::Break(..) => {
+                let exit_block = *self
+                    .loop_exit_blocks
+                    .last()
+                    .expect("type checker guarantees break is inside a loop");
+                builder.ins().jump(exit_block, &[]);
+                Ok(true)
+            }
+
             TypedStmt::Expr(expr) => {
                 let _ = self.translate_expr(expr, builder)?;
                 Ok(false)
@@ -1344,7 +1355,9 @@ impl<'a> FunctionTranslationState<'a> {
                     .brif(cond_init, body_block, &[], exit_block, &[]);
 
                 builder.switch_to_block(body_block);
+                self.loop_exit_blocks.push(exit_block);
                 let body_term = self.translate_block(body, builder)?;
+                self.loop_exit_blocks.pop();
                 if !body_term {
                     let cond_repeat = self.translate_expr(condition, builder)?;
                     builder

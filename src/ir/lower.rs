@@ -11,6 +11,7 @@ pub struct IrLowerer {
     blocks: Vec<BasicBlock>,
     current_block: BlockId,
     scopes: Vec<HashMap<String, ValueId>>,
+    loop_exit_blocks: Vec<BlockId>,
 }
 
 impl Default for IrLowerer {
@@ -27,6 +28,7 @@ impl IrLowerer {
             blocks: Vec::new(),
             current_block: BlockId(0),
             scopes: vec![HashMap::new()],
+            loop_exit_blocks: Vec::new(),
         }
     }
 
@@ -112,6 +114,7 @@ impl IrLowerer {
         self.next_block = 0;
         self.blocks.clear();
         self.scopes = vec![HashMap::new()];
+        self.loop_exit_blocks.clear();
 
         let entry_bb = self.new_block();
         self.switch_to_block(entry_bb);
@@ -193,6 +196,14 @@ impl IrLowerer {
                 self.emit(Instruction::Return { val });
             }
 
+            TypedStmt::Break(..) => {
+                let exit = *self
+                    .loop_exit_blocks
+                    .last()
+                    .expect("type checker guarantees break is inside a loop");
+                self.emit(Instruction::Branch { target: exit });
+            }
+
             TypedStmt::Expr(expr) => {
                 self.lower_expr(expr);
             }
@@ -270,9 +281,11 @@ impl IrLowerer {
                 // Body block
                 self.switch_to_block(body_bb);
                 self.enter_scope();
+                self.loop_exit_blocks.push(exit_bb);
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
+                self.loop_exit_blocks.pop();
                 self.exit_scope();
                 if !self.current_block_terminated() {
                     self.emit(Instruction::Branch { target: cond_bb });
