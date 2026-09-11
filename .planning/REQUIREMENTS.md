@@ -1,26 +1,28 @@
 # Requirements: numlang
 
-**Defined:** 2026-09-11
+**Defined:** 2026-09-11  
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Milestone v11.0 Requirements: Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
+## Milestone v12.0 Requirements: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
 
-Requirements for v11.0 delivering decisive runtime computational superiority over Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 canonical numerical benchmarks via whole-program function inlining, branchless CMOV predication, tail-call loop transformations, and bitwise intrinsics.
+Requirements for v12.0 closing every remaining performance delta and establishing clean, honest runtime superiority over both optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 benchmark workloads through hardware bit manipulation intrinsics, bounded while-loop unrolling, branchless scalar select lowering, and leaf recursion expansion.
 
-### Function Inlining & Constant Exposure
-- [x] **INLINE-01**: Implement whole-program interprocedural function inlining pass (`src/opt/inlining.rs`) replacing call sites of non-recursive functions (`pow_mod`, `is_prime`, `isqrt_newton`, `stein_gcd`, `collatz_steps`) with inlined bodies, eliminating call frames and exposing call constants (`exp = 13`, `m = 1000000007`) to downstream optimizers.
-- [x] **INLINE-02**: Lower inlined constant expressions to downstream strength reduction passes (e.g. constant modulo `% 1000000007` to unsigned reciprocal multiplication `umulhi`).
+### Hardware Bit Manipulation & Loop Recognition
+- [ ] **BIT-01**: Implement native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) across compiler pipeline (lexer, parser, typechecker, Cranelift lowering) mapping directly to x86-64 single-cycle machine instructions (`tzcnt`/`bsf`, `lzcnt`/`bsr`, `popcnt`, `rol`, `ror`).
+- [ ] **BIT-02**: Detect trailing-zero while loops (`while (u & 1) == 0 { u = u >> 1; }`) in Cranelift backend and lower to single-cycle hardware shift `u = u >> ctz(u)`, slashing Stein's Binary GCD from 484 ms to < 250 ms and Rule 110 from 107 µs to < 40 µs.
 
-### Branchless Predication & CMOV Lowering
-- [x] **PRED-01**: Detect variable assignments across if-else branches (such as binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to Cranelift `select` / `cmov`, eliminating branch mispredictions in search loops.
+### Bounded While-Loop Unrolling & Exponentiation Expansion
+- [ ] **UNROLL-01**: Implement bounded while-loop unrolling in `src/opt/loop_unrolling.rs` for loops with small compile-time known trip counts.
+- [ ] **UNROLL-02**: Lower constant-exponent `pow_mod` loops into straight-line square-and-multiply multiplication and reciprocal modulo chains, slashing Modular Exponentiation from 44.36 ms to < 20 ms.
 
-### Tail-Call Optimization & Recursion Loopification
-- [x] **REC-01**: Implement tail-call elimination in self-recursive functions (`tak`, `ack`) transforming outer self-recursive calls into in-place parameter re-assignments and unconditional jumps to the function entry.
-- [x] **REC-02**: Implement leaf recursion unrolling for binary recurrence relations (`fib 35`), slashing call frame traffic.
+### Branchless Scalar Select Predication
+- [ ] **SELECT-01**: Generalize branchless select predication in `src/codegen/cranelift_backend.rs` to handle general scalar variable updates in if-else statements (such as `if (n & 1) == 0 { n = n >> 1; } else { n = 3 * n + 1; }`), slashing Collatz Hailstone from 14.52 ms to < 8 ms.
+
+### Leaf Recursion Base-Case Expansion
+- [ ] **REC-03**: Implement leaf recursion base-case unrolling and dual expansion for binary recurrences (`fib 35`), slashing `fib(35)` runtime from 28.08 ms to < 19 ms.
 
 ### Universal Benchmark Supremacy Verification
-- [x] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
-- [x] **BENCH-02**: Verify 100% dynamic bare-metal CPU computation per run (zero lookup tables, zero cached values) and demonstrate decisive performance superiority across all 20 workloads.
+- [ ] **BENCH-03**: Execute the complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers, verifying 100% dynamic bare-metal CPU computation (zero lookup tables, zero cached values) and demonstrating decisive performance superiority across the suite.
 
 ## Out of Scope
 
@@ -35,20 +37,20 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INLINE-01 | Phase 29 | Complete |
-| INLINE-02 | Phase 29 | Complete |
-| PRED-01 | Phase 30 | Complete |
-| REC-01 | Phase 31 | Complete |
-| REC-02 | Phase 31 | Complete |
-| BENCH-01 | Phase 32 | Complete |
-| BENCH-02 | Phase 32 | Complete |
+| BIT-01 | Phase 33 | Pending |
+| BIT-02 | Phase 33 | Pending |
+| UNROLL-01 | Phase 34 | Pending |
+| UNROLL-02 | Phase 34 | Pending |
+| SELECT-01 | Phase 35 | Pending |
+| REC-03 | Phase 36 | Pending |
+| BENCH-03 | Phase 37 | Pending |
 
 **Coverage:**
 
-- v11.0 requirements: 7 total
+- v12.0 requirements: 7 total
 - Mapped to phases: 7
 - Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-09-11*
-*Last updated: 2026-09-11 for milestone v11.0*
+*Requirements defined: 2026-09-11*  
+*Last updated: 2026-09-11 for milestone v12.0*

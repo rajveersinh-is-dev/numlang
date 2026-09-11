@@ -49,6 +49,14 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling** - Transform tail calls in `tak` and `ack` to loops and unroll leaf recursion in `fib`. (completed 2026-09-11)
 - [x] **Phase 32: Total 20-Workload Benchmark Supremacy Verification** - Full comparative verification against Rust (-O) and C (/O2) with hardware QPC timers. (completed 2026-09-11)
 
+### Milestone v12.0: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
+
+- [ ] **Phase 33: Hardware Bit-Manipulation Intrinsics & Loop Recognition** - Add `ctz`, `clz`, `popcnt`, `rotl`, `rotr` intrinsics and eliminate trailing-zero while loops.
+- [ ] **Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion** - Unroll bounded while loops with known trip counts and expand constant exponentiation in `pow_mod`.
+- [ ] **Phase 35: Branchless Scalar Select Predication for Complex Control Flow** - Generalize branchless CMOV select predication for scalar if-else assignments (Collatz).
+- [ ] **Phase 36: Leaf Recursion Base-Case Unrolling & Dual Expansion** - Unroll base case recursion in binary recurrence trees (`fib 35`).
+- [ ] **Phase 37: Universal 20-Workload Benchmark Decimation Audit** - Execute full 20-workload comparative benchmark suite with hardware QPC timers.
+
 ## Phase Details
 
 ### Phase 9: Recursive Call Optimization & Inlining Pass
@@ -413,10 +421,74 @@ Plans:
 Plans:
 - [x] 32-01: Full 20-workload comparative benchmark verification and victory report (completed 2026-09-11)
 
+### Phase 33: Hardware Bit-Manipulation Intrinsics & Loop Recognition
+
+**Goal**: Implement native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and recognize trailing-zero loops (`while (u & 1) == 0 { u = u >> 1; }`) in Cranelift backend, lowering directly to x86-64 single-cycle machine instructions (`tzcnt`/`bsf`, `popcnt`), slashing Stein's Binary GCD and Rule 110.
+**Depends on**: Phase 32
+**Requirements**: BIT-01, BIT-02
+**Success Criteria**:
+  1. Lexer, parser, typechecker, and Cranelift backend support `ctz`, `clz`, `popcnt`, `rotl`, `rotr`.
+  2. Trailing-zero loops lower to `tzcnt` shift in Stein's GCD kernel.
+  3. Stein's Binary GCD runtime drops from 484 ms to < 250 ms, decisively outperforming Rust (457 ms).
+  4. Rule 110 runtime drops from 107 µs to < 40 µs.
+
+Plans:
+- [ ] 33-01: Hardware bit-manipulation intrinsics and trailing-zero loop recognition
+
+### Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion
+
+**Goal**: Implement bounded while-loop unrolling for loops with compile-time known trip counts and expand constant exponentiation in `pow_mod` into straight-line square-and-multiply chains.
+**Depends on**: Phase 33
+**Requirements**: UNROLL-01, UNROLL-02
+**Success Criteria**:
+  1. Static analysis detects bounded while loops with constant trip count <= 16 and unrolls them.
+  2. `pow_mod` with constant exponent (e.g. `exp = 13`) expands into straight-line multiply/mod chains.
+  3. Modular Exponentiation runtime drops from 44.36 ms to < 20 ms, beating Rust (24.57 ms).
+
+Plans:
+- [ ] 34-01: Bounded while-loop unrolling and constant exponentiation expansion
+
+### Phase 35: Branchless Scalar Select Predication for Complex Control Flow
+
+**Goal**: Generalize branchless CMOV select predication in Cranelift backend for scalar variable updates in general if-else statements, targeting Collatz Hailstone step.
+**Depends on**: Phase 34
+**Requirements**: SELECT-01
+**Success Criteria**:
+  1. `if (n & 1) == 0 { n = n >> 1; } else { n = 3 * n + 1; }` compiles directly to branchless select/cmov.
+  2. Collatz Hailstone runtime drops from 14.52 ms to < 8 ms, decisively beating Rust (9.78 ms).
+
+Plans:
+- [ ] 35-01: Generalized branchless scalar select predication
+
+### Phase 36: Leaf Recursion Base-Case Unrolling & Dual Expansion
+
+**Goal**: Implement leaf recursion base-case unrolling and dual expansion for binary recurrences (`fib 35`).
+**Depends on**: Phase 35
+**Requirements**: REC-03
+**Success Criteria**:
+  1. Lower base-case recursive leaves (`if n <= 3 { ... }`) in Cranelift backend lowering.
+  2. Recursive Fibonacci runtime drops from 28.08 ms to < 19 ms, beating Rust (21.91 ms).
+
+Plans:
+- [ ] 36-01: Leaf recursion base-case unrolling and dual expansion
+
+### Phase 37: Universal 20-Workload Benchmark Decimation Audit
+
+**Goal**: Execute the complete 20-workload comparative benchmark suite with in-process hardware QPC timers, validating 100% computed runtime values and decisive bare-metal superiority over Rust (-O) and C (/O2).
+**Depends on**: Phase 36
+**Requirements**: BENCH-03
+**Success Criteria**:
+  1. All 20 workloads pass with 100% bit-for-bit mathematical correctness.
+  2. Zero lookup tables, zero cached answers, zero cheats verified across all test runs.
+  3. Decisive speedups over Rust (-O) and C (/O2) documented across the suite.
+
+Plans:
+- [ ] 37-01: Full 20-workload comparative benchmark verification and victory report
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 28 → 29 → 30 → 31 → 32
+Phases execute in numeric order: 1 → 2 → ... → 32 → 33 → 34 → 35 → 36 → 37
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -452,3 +524,8 @@ Phases execute in numeric order: 1 → 2 → ... → 28 → 29 → 30 → 31 →
 | 30. Branchless Select Predication & CMOV Lowering | 1/1 | Complete | 2026-09-11 |
 | 31. Tail-Call Loop Transformation & Leaf Recursion Unrolling | 1/1 | Complete | 2026-09-11 |
 | 32. Total 20-Workload Benchmark Supremacy Verification | 1/1 | Complete | 2026-09-11 |
+| 33. Hardware Bit-Manipulation Intrinsics & Loop Recognition | 0/1 | Planned | — |
+| 34. Bounded While-Loop Unrolling & Exponentiation Expansion | 0/1 | Planned | — |
+| 35. Branchless Scalar Select Predication for Complex Control Flow | 0/1 | Planned | — |
+| 36. Leaf Recursion Base-Case Unrolling & Dual Expansion | 0/1 | Planned | — |
+| 37. Universal 20-Workload Benchmark Decimation Audit | 0/1 | Planned | — |
