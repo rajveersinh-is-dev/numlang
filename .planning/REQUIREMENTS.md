@@ -1,28 +1,31 @@
 # Requirements: numlang
 
-**Defined:** 2026-09-10
+**Defined:** 2026-09-11
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Milestone v9.0 Requirements: Pure Runtime Numerical Optimization & Benchmark Supremacy
+## Milestone v10.0 Requirements: Compiler Hardening & Universal Benchmark Supremacy
 
-Requirements for the v9.0 milestone delivering genuine, honest bare-metal computational supremacy over Rust (`rustc -O`) and C (`MSVC cl /O2`) across 20 standard numerical workloads with 100% runtime execution and zero lookup tables.
+Requirements for the v10.0 milestone delivering genuine bare-metal computational supremacy over Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 standard numerical workloads by eliminating backend code generation bottlenecks, SROA dynamic indexing degradation, hardware division stalls, and loop overhead.
 
-### Integer Bitwise Operators
+### SROA Optimization & Contiguous Indexing
 
-- [ ] **BIT-01**: Lexer and parser support for bitwise operators (`&`, `|`, `^`, `<<`, `>>`) with standard operator precedence.
-- [ ] **BIT-02**: Semantic typechecking and Cranelift lowering for bitwise binary expressions on integer types (`i64`, `i32`).
+- [ ] **SROA-01**: Restrict SROA register promotion to purely statically indexed arrays; dynamically indexed arrays remain contiguous stack slots (`Storage::Array`).
+- [ ] **SROA-02**: Eliminate `O(len)` CMOV select trees on dynamic array reads and writes, lowering dynamic lookups to single-cycle indexed memory operations (`mov rax, [rsp + rdi*8]`), accelerating N-Queens and search loops.
 
-### Induction Bounds Check Elimination (BCE)
+### High-Throughput Modulo & Division Strength Reduction
 
-- [ ] **BCE-01**: Loop induction bounds analysis proving that array indices bounded by loop conditions (`0 <= i < N`) are safe, omitting runtime `emit_bounds_check` branches and panic blocks.
+- [ ] **DIV-01**: Non-negative / unsigned fast path for power-of-two modulo: lower `x % (1 << k)` to single-cycle `band_imm` (`x & ((1 << k) - 1)`), eliminating 6-8 instruction sign-bias arithmetic in RNG and Monte Carlo simulation.
+- [ ] **DIV-02**: Loop-invariant divisor strength reduction: detect invariant divisors in loops and optimize lowering to reciprocal multiplication or fast unsigned paths.
 
-### Hardware SIMD Array Vectorization
+### Loop Optimization & Dynamic BCE
 
-- [ ] **SIMD-01**: AVX2 256-bit SIMD lowering for parallel array loops and sweeps (e.g. cellular automaton updates, vector arithmetic).
+- [ ] **LOOP-01**: While loop code generation optimization: eliminate condition re-evaluation overhead and prune dead merge blocks in Cranelift lowering.
+- [ ] **LOOP-02**: Expand BCE (`src/opt/bce.rs`) interval range analysis to handle binary search midpoint formulas `mid = (low + high) / 2` when `0 <= low <= high < len`, marking `arr[mid]` as `is_safe = true` and eliminating bounds checks.
 
-### Genuine Benchmark Supremacy Verification
+### Universal Benchmark Supremacy Verification
 
-- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) with hardware timers, validating 100% dynamic computation per run with zero pre-loaded tables or hardcoded answers.
+- [ ] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
+- [ ] **BENCH-02**: Verify 100% computed runtime values (0 lookup tables, 0 precomputed answer injections, 0 cached values) and document decisive performance superiority across all 20 workloads.
 
 ## Future Requirements
 
@@ -42,18 +45,21 @@ Requirements for the v9.0 milestone delivering genuine, honest bare-metal comput
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BIT-01 | Phase 21 | Pending |
-| BIT-02 | Phase 21 | Pending |
-| BCE-01 | Phase 22 | Pending |
-| SIMD-01 | Phase 23 | Pending |
-| BENCH-01 | Phase 24 | Pending |
+| SROA-01 | Phase 25 | Pending |
+| SROA-02 | Phase 25 | Pending |
+| DIV-01 | Phase 26 | Pending |
+| DIV-02 | Phase 26 | Pending |
+| LOOP-01 | Phase 27 | Pending |
+| LOOP-02 | Phase 27 | Pending |
+| BENCH-01 | Phase 28 | Pending |
+| BENCH-02 | Phase 28 | Pending |
 
 **Coverage:**
 
-- v9.0 requirements: 5 total
-- Mapped to phases: 5
+- v10.0 requirements: 8 total
+- Mapped to phases: 8
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-11*
-*Last updated: 2026-09-11 for milestone v9.0*
+*Last updated: 2026-09-11 for milestone v10.0*
