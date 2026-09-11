@@ -7,10 +7,10 @@ last_updated: "2026-09-11T17:00:00.000Z"
 last_activity: 2026-09-11
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -24,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-09-11)
 
 ## Current Position
 
-Phase: Phase 25: Dynamic SROA Elimination & Contiguous Indexing
+Phase: Phase 26: High-Throughput Modulo & Division Strength Reduction
 Plan: Ready to plan
-Status: Ready to plan Phase 25
-Last activity: 2026-09-11 — Initialized Milestone v10.0 roadmap (Phases 25-28)
+Status: Phase 25 Complete; Ready for Phase 26
+Last activity: 2026-09-11 — Completed Phase 25 (Dynamic SROA Elimination & Contiguous Indexing; N-Queens 180.79ms -> 113.45ms)
 
 ## Accumulated Context
 
@@ -42,6 +42,7 @@ Last activity: 2026-09-11 — Initialized Milestone v10.0 roadmap (Phases 25-28)
 - [v9.0 Phase 23]: Harmonized Rule 110 benchmark to algorithmic parity with C and Rust using native bitwise operations and popcount.
 - [v9.0 Phase 24]: Completed 20-workload comparative benchmark audit against Rust (-O) and C (/O2) with high-resolution in-process QPC telemetry. Confirmed 0 lookup tables, 0 precomputed answer injections, and 100% pure bare-metal runtime execution.
 - [v9.0]: ZERO PRECOMPUTED/LOOKUP TABLES OR HARDCODED ANSWER INJECTIONS. Every computation runs 100% dynamically on the CPU per run.
+- [v10.0 Phase 25]: SROA promotion restricted to purely statically-indexed arrays. Dynamically-indexed arrays stay in contiguous stack slots (`Storage::Array`), eliminating the catastrophic O(len) CMOV select tree cascade and cutting N-Queens dynamic computation runtime by 37.2% (180.79ms down to 113.45ms).
 
 ### Pending Todos
 
