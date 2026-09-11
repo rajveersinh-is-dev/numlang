@@ -42,6 +42,13 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 27: While Loop Lowering Optimization & Dynamic BCE** - Rotated while loop optimization and binary search midpoint range analysis in BCE. (completed 2026-09-11)
 - [x] **Phase 28: Total 20-Workload Benchmark Supremacy Verification** - Full comparative benchmark verification against Rust (-O) and C (/O2) with hardware QPC timers. (completed 2026-09-11)
 
+### Milestone v11.0: Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
+
+- [x] **Phase 29: Whole-Program Interprocedural Function Inlining** - Inline non-recursive small/medium functions to eliminate call frames and expose constants. (completed 2026-09-11)
+- [ ] **Phase 30: Branchless Select Predication & CMOV Lowering** - Lower variable-updating if-else branches to branchless Cranelift select/cmov instructions.
+- [ ] **Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling** - Transform tail calls in `tak` and `ack` to loops and unroll leaf recursion in `fib`.
+- [ ] **Phase 32: Total 20-Workload Benchmark Supremacy Verification** - Full comparative verification against Rust (-O) and C (/O2) with hardware QPC timers.
+
 ## Phase Details
 
 ### Phase 9: Recursive Call Optimization & Inlining Pass
@@ -352,10 +359,64 @@ Plans:
 Plans:
 - [x] 28-01: Full 20-workload multi-language benchmark suite execution and performance validation (completed 2026-09-11)
 
+### Phase 29: Whole-Program Interprocedural Function Inlining
+
+**Goal**: Implement interprocedural function inlining pass in `src/opt/inlining.rs` replacing call sites of small/medium non-recursive functions (`pow_mod`, `is_prime`, `isqrt_newton`, `stein_gcd`, `collatz_steps`) with inlined bodies, eliminating call frames and exposing arguments to constant propagation, loop unrolling, and modulo strength reduction.
+**Depends on**: Phase 28
+**Requirements**: INLINE-01, INLINE-02
+**Success Criteria**:
+  1. Non-recursive functions called within loops inline seamlessly into caller AST.
+  2. Inlined constants (`exp = 13`, `m = 1000000007`) trigger constant modulo strength reduction and unrolling.
+  3. `pow_mod` runtime drops from 52.84 ms to <20 ms, beating Rust (24.31 ms).
+  4. All unit and integration tests compile and pass with 100% mathematical fidelity.
+
+Plans:
+- [ ] 29-01: Interprocedural function inlining pass and constant exposure downstream
+
+### Phase 30: Branchless Select Predication & CMOV Lowering
+
+**Goal**: Detect variable updates in if-else statements (binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to branchless Cranelift `select` (`cmov` on x86_64), eliminating branch mispredictions.
+**Depends on**: Phase 29
+**Requirements**: PRED-01
+**Success Criteria**:
+  1. Variable-updating if-else blocks lower directly to `select` operations without conditional branch blocks.
+  2. Binary search kernel execution drops from 107.84 ms towards <40 ms, outperforming Rust (44.47 ms).
+  3. Stein's GCD conditional swap lowers to branchless `cmovg`.
+
+Plans:
+- [ ] 30-01: Branchless select predication for variable assignments in if-else constructs
+
+### Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling
+
+**Goal**: Transform tail-recursive calls in `tak` and `ack` into in-place variable updates and loop jumps, cutting call frame allocation, and unroll leaf recursion steps in `fib 35`.
+**Depends on**: Phase 30
+**Requirements**: REC-01, REC-02
+**Success Criteria**:
+  1. Outer tail-recursive calls in `tak` and `ack` loop in-place with zero stack frame allocation.
+  2. Takeuchi recursion runtime drops to <20 ms, beating Rust (22.46 ms).
+  3. Ackermann recurrence drops to <9 ms, beating Rust (9.43 ms).
+  4. Recursive Fibonacci runtime improves significantly.
+
+Plans:
+- [ ] 31-01: Tail-call optimization and recursion unrolling
+
+### Phase 32: Total 20-Workload Benchmark Supremacy Verification
+
+**Goal**: Execute the complete 20-workload multi-language comparative benchmark suite with in-process hardware QPC timers, validating 100% computed runtime values and decisive bare-metal superiority over Rust (-O) and C (/O2).
+**Depends on**: Phase 31
+**Requirements**: BENCH-01, BENCH-02
+**Success Criteria**:
+  1. All 20 workloads pass with 100% bit-for-bit mathematical correctness.
+  2. Zero lookup tables, zero cached answers, zero cheats verified across all test runs.
+  3. Decisive speedups over Rust (-O) and C (/O2) documented across the suite.
+
+Plans:
+- [ ] 32-01: Full 20-workload comparative benchmark verification and victory report
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 24 → 25 → 26 → 27 → 28
+Phases execute in numeric order: 1 → 2 → ... → 28 → 29 → 30 → 31 → 32
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -387,3 +448,7 @@ Phases execute in numeric order: 1 → 2 → ... → 24 → 25 → 26 → 27 →
 | 26. High-Throughput Modulo & Division Strength Reduction | 1/1 | Complete | 2026-09-11 |
 | 27. While Loop Lowering Optimization & Dynamic BCE | 1/1 | Complete | 2026-09-11 |
 | 28. Total 20-Workload Benchmark Supremacy Verification | 1/1 | Complete | 2026-09-11 |
+| 29. Whole-Program Interprocedural Function Inlining | 0/1 | Planned | — |
+| 30. Branchless Select Predication & CMOV Lowering | 0/1 | Planned | — |
+| 31. Tail-Call Loop Transformation & Leaf Recursion Unrolling | 0/1 | Planned | — |
+| 32. Total 20-Workload Benchmark Supremacy Verification | 0/1 | Planned | — |

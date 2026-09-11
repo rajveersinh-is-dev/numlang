@@ -8,15 +8,15 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current Milestone: v10.0 Compiler Hardening & Universal Benchmark Supremacy
+## Current Milestone: v11.0 Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
 
-**Goal:** Eliminate compiler code generation bottlenecks (SROA dynamic degradation, hardware division stalls, loop overhead) and implement advanced bare-metal optimizations to achieve decisive, honest runtime supremacy over Rust across all 20 canonical numerical benchmarks.
+**Goal:** Implement interprocedural function inlining, branchless CMOV predication, tail-call loop transformations, and bitwise rotate intrinsics to decisively outperform Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 canonical numerical benchmarks, with 100% dynamic bare-metal CPU computation per run and zero stored values.
 
 **Target features:**
-- **Dynamic SROA Elimination & Contiguous Indexing**: Restrict SROA register promotion to purely statically indexed arrays, keeping dynamic arrays on stack for single-cycle indexed loads/stores (`mov [rsp + rdi*8]`), eliminating the massive CMOV select tree in N-Queens and dynamic search loops.
-- **High-Throughput Division & Modulo Lowering**: Optimize non-constant and power-of-two modulo operations, fast unsigned division paths, and loop-invariant modulus reduction (Barrett / reciprocal multiplication).
-- **While Loop Optimization & Dynamic BCE**: Clean loop rotation without condition re-evaluation overhead, and expand BCE interval analysis to binary search midpoint formulas `(low + high) / 2`.
-- **Universal 20-Workload Benchmark Supremacy Verification**: Rigorous 20-workload multi-language benchmark suite running against Rust (-O) and C (/O2) with hardware QPC timers, 100% computed values, and zero lookup tables.
+- **Whole-Program Interprocedural Function Inlining**: Inline small/medium functions (`pow_mod`, `is_prime`, `isqrt_newton`, `stein_gcd`) into call sites, eliminating millions of call frames and exposing call arguments (`exp = 13`, `m = 1000000007`) to constant propagation, loop unrolling, and modulo strength reduction.
+- **Branchless Select Predication & CMOV Lowering**: Lower variable-updating if-else constructs (e.g. binary search `low/high` updates, conditional swaps) to Cranelift `select` / `cmov`, eliminating branch mispredictions in search kernels.
+- **Tail-Call Loop Transformation & Leaf Recursion Unrolling**: Transform tail-recursive calls in `tak` and `ack` into in-place variable updates and loop jumps, cutting call stack traffic by millions of frames.
+- **Total 20-Workload Benchmark Supremacy Verification**: Comprehensive multi-language benchmark suite execution validating speedups across all 20 workloads with hardware QPC timers and bit-for-bit output equivalence.
 
 ## Requirements
 
@@ -41,13 +41,17 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] Static induction bounds check elimination (BCE) pass with interval range analysis (v9.0)
 - [x] 16-byte SIMD vector array copying and SIMD vector arithmetic lowering (v9.0)
 - [x] 20-workload comparative benchmark audit against Rust (-O) and C (/O2) with zero stored values (v9.0)
+- [x] Dynamic SROA elimination and contiguous stack slot indexing for dynamically indexed arrays (v10.0)
+- [x] High-throughput Granlund-Montgomery modulo and division strength reduction (v10.0)
+- [x] While loop lowering optimization and dynamic BCE interval analysis for binary search midpoints (v10.0)
+- [x] 20-workload benchmark supremacy verification with in-process hardware QPC telemetry (v10.0)
 
-### Active (Milestone v10.0)
+### Active (Milestone v11.0)
 
-- [ ] **SROA-01**: Dynamic SROA elimination: detect arrays indexed by non-constant expressions and preserve them as contiguous stack slots for 1-cycle memory operations instead of CMOV select trees.
-- [ ] **DIV-01**: Fast unsigned division and power-of-two non-negative modulo strength reduction (`band_imm`), bypassing multi-cycle hardware `idiv`/`srem` stalls.
-- [ ] **LOOP-01**: While-loop code generation optimization and BCE expansion for binary search midpoint expressions `(low + high) / 2`.
-- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) demonstrating across-the-board performance gains with 100% honest dynamic computation.
+- [ ] **INLINE-01**: Interprocedural function inlining pass replacing call sites of small/medium non-recursive functions with inlined bodies, exposing constant arguments and eliminating millions of call frames.
+- [ ] **PRED-01**: Branchless select predication for variable assignments in if-else statements (e.g. binary search interval updates, conditional swaps), lowering to `cmov` instructions.
+- [ ] **REC-01**: Tail-call loop optimization and leaf recursion unrolling for self-recursive functions (`tak`, `ack`, `fib`), eliminating recursive frame allocation.
+- [ ] **BENCH-01**: Universal 20-workload benchmark verification against Rust (-O) and C (/O2) demonstrating superior throughput across all kernels with 100% computed values.
 
 ### Out of Scope
 

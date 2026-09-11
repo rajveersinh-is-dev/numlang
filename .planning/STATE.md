@@ -1,16 +1,16 @@
 ---
 gsd_state_version: "1.0"
-milestone: v10.0
-milestone_name: Compiler Hardening & Universal Benchmark Supremacy
-status: complete
-last_updated: "2026-09-11T18:30:00.000Z"
+milestone: v11.0
+milestone_name: Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
+status: in_progress
+last_updated: "2026-09-11T19:15:00.000Z"
 last_activity: 2026-09-11
 progress:
   total_phases: 4
-  completed_phases: 4
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 4
-  percent: 100
+  completed_plans: 1
+  percent: 25
 ---
 
 # Project State
@@ -20,18 +20,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-11)
 
 **Core value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
-**Current focus:** Milestone v10.0 — Compiler Hardening & Universal Benchmark Supremacy.
+**Current focus:** Milestone v11.0 — Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads.
 
 ## Current Position
 
-Phase: Phase 28: Total 20-Workload Benchmark Supremacy Verification
-Plan: Complete (Plan 28-01)
-Status: Milestone v10.0 Complete (4/4 phases, 100%)
-Last activity: 2026-09-11 — Completed Phase 28 (Full 20-workload multi-language comparative benchmark suite executed with hardware QPC timers; verified bit-for-bit output correctness and 100% computed values)
+Phase: Phase 30: Branchless Select Predication & CMOV Lowering
+Plan: Ready to plan (Plan 30-01)
+Status: In progress
+Last activity: 2026-09-11 — Completed Phase 29: Whole-Program Interprocedural Function Inlining with A-normal call lifting and multi-return normalization.
 
 ## Accumulated Context
 
 ### Decisions
+
+- [v11.0 Phase 29]: Implemented whole-program interprocedural function inlining pass (`src/opt/inlining.rs`) with A-normal call lifting and multi-return normalization (`normalize_function_returns`). Eliminates function call frames and exposes argument constants to downstream strength reduction. Verified on `pow_mod` (31.8% speedup), `isqrt_newton` (5M call frames eliminated), and `is_prime` (400k call frames eliminated).
 
 - [v9.0 Phase 21]: Implemented native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) across the entire compiler pipeline.
 - [v9.0 Phase 21]: Exponentiation token remapped from `^` to `**` (right-associative), with `^` dedicated to bitwise XOR conforming to C/Rust/Python syntax conventions.

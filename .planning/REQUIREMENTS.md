@@ -3,34 +3,24 @@
 **Defined:** 2026-09-11
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Milestone v10.0 Requirements: Compiler Hardening & Universal Benchmark Supremacy
+## Milestone v11.0 Requirements: Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
 
-Requirements for the v10.0 milestone delivering genuine bare-metal computational supremacy over Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 standard numerical workloads by eliminating backend code generation bottlenecks, SROA dynamic indexing degradation, hardware division stalls, and loop overhead.
+Requirements for v11.0 delivering decisive runtime computational superiority over Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 canonical numerical benchmarks via whole-program function inlining, branchless CMOV predication, tail-call loop transformations, and bitwise intrinsics.
 
-### SROA Optimization & Contiguous Indexing
+### Function Inlining & Constant Exposure
+- [x] **INLINE-01**: Implement whole-program interprocedural function inlining pass (`src/opt/inlining.rs`) replacing call sites of non-recursive functions (`pow_mod`, `is_prime`, `isqrt_newton`, `stein_gcd`, `collatz_steps`) with inlined bodies, eliminating call frames and exposing call constants (`exp = 13`, `m = 1000000007`) to downstream optimizers.
+- [x] **INLINE-02**: Lower inlined constant expressions to downstream strength reduction passes (e.g. constant modulo `% 1000000007` to unsigned reciprocal multiplication `umulhi`).
 
-- [x] **SROA-01**: Restrict SROA register promotion to purely statically indexed arrays; dynamically indexed arrays remain contiguous stack slots (`Storage::Array`).
-- [x] **SROA-02**: Eliminate `O(len)` CMOV select trees on dynamic array reads and writes, lowering dynamic lookups to single-cycle indexed memory operations (`mov rax, [rsp + rdi*8]`), accelerating N-Queens and search loops.
+### Branchless Predication & CMOV Lowering
+- [ ] **PRED-01**: Detect variable assignments across if-else branches (such as binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to Cranelift `select` / `cmov`, eliminating branch mispredictions in search loops.
 
-### High-Throughput Modulo & Division Strength Reduction
-
-- [x] **DIV-01**: Non-negative / unsigned fast path for power-of-two modulo: lower `x % (1 << k)` to single-cycle `band_imm` (`x & ((1 << k) - 1)`), eliminating 6-8 instruction sign-bias arithmetic in RNG and Monte Carlo simulation.
-- [x] **DIV-02**: Loop-invariant divisor strength reduction: detect invariant divisors in loops and optimize lowering to reciprocal multiplication or fast unsigned paths.
-
-### Loop Optimization & Dynamic BCE
-
-- [x] **LOOP-01**: While loop code generation optimization: eliminate condition re-evaluation overhead and prune dead merge blocks in Cranelift lowering.
-- [x] **LOOP-02**: Expand BCE (`src/opt/bce.rs`) interval range analysis to handle binary search midpoint formulas `mid = (low + high) / 2` when `0 <= low <= high < len`, marking `arr[mid]` as `is_safe = true` and eliminating bounds checks.
+### Tail-Call Optimization & Recursion Loopification
+- [ ] **REC-01**: Implement tail-call elimination in self-recursive functions (`tak`, `ack`) transforming outer self-recursive calls into in-place parameter re-assignments and unconditional jumps to the function entry.
+- [ ] **REC-02**: Implement leaf recursion unrolling for binary recurrence relations (`fib 35`), slashing call frame traffic.
 
 ### Universal Benchmark Supremacy Verification
-
-- [x] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
-- [x] **BENCH-02**: Verify 100% computed runtime values (0 lookup tables, 0 precomputed answer injections, 0 cached values) and document decisive performance superiority across all 20 workloads.
-
-## Future Requirements
-
-- **PAR-01**: Multi-threaded work-stealing runtime for parallel map/reduce operations across arrays.
-- **GPU-01**: Backend code generation targeting SPIR-V / PTX for GPU kernel offloading.
+- [ ] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
+- [ ] **BENCH-02**: Verify 100% dynamic bare-metal CPU computation per run (zero lookup tables, zero cached values) and demonstrate decisive performance superiority across all 20 workloads.
 
 ## Out of Scope
 
@@ -45,21 +35,20 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SROA-01 | Phase 25 | Complete |
-| SROA-02 | Phase 25 | Complete |
-| DIV-01 | Phase 26 | Complete |
-| DIV-02 | Phase 26 | Complete |
-| LOOP-01 | Phase 27 | Complete |
-| LOOP-02 | Phase 27 | Complete |
-| BENCH-01 | Phase 28 | Complete |
-| BENCH-02 | Phase 28 | Complete |
+| INLINE-01 | Phase 29 | Complete |
+| INLINE-02 | Phase 29 | Complete |
+| PRED-01 | Phase 30 | Pending |
+| REC-01 | Phase 31 | Pending |
+| REC-02 | Phase 31 | Pending |
+| BENCH-01 | Phase 32 | Pending |
+| BENCH-02 | Phase 32 | Pending |
 
 **Coverage:**
 
-- v10.0 requirements: 8 total
-- Mapped to phases: 8
+- v11.0 requirements: 7 total
+- Mapped to phases: 7
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-11*
-*Last updated: 2026-09-11 for milestone v10.0*
+*Last updated: 2026-09-11 for milestone v11.0*
