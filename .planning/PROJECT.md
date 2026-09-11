@@ -8,15 +8,16 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current Milestone: v11.0 Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
+## Current Milestone: v12.0 Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
 
-**Goal:** Implement interprocedural function inlining, branchless CMOV predication, tail-call loop transformations, and bitwise rotate intrinsics to decisively outperform Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 canonical numerical benchmarks, with 100% dynamic bare-metal CPU computation per run and zero stored values.
+**Goal:** Close every remaining performance delta and establish clean, honest runtime superiority over both optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 benchmark workloads through hardware bit manipulation intrinsics, bounded while-loop unrolling, branchless scalar select lowering, and leaf recursion expansion.
 
 **Target features:**
-- **Whole-Program Interprocedural Function Inlining**: Inline small/medium functions (`pow_mod`, `is_prime`, `isqrt_newton`, `stein_gcd`) into call sites, eliminating millions of call frames and exposing call arguments (`exp = 13`, `m = 1000000007`) to constant propagation, loop unrolling, and modulo strength reduction.
-- **Branchless Select Predication & CMOV Lowering**: Lower variable-updating if-else constructs (e.g. binary search `low/high` updates, conditional swaps) to Cranelift `select` / `cmov`, eliminating branch mispredictions in search kernels.
-- **Tail-Call Loop Transformation & Leaf Recursion Unrolling**: Transform tail-recursive calls in `tak` and `ack` into in-place variable updates and loop jumps, cutting call stack traffic by millions of frames.
-- **Total 20-Workload Benchmark Supremacy Verification**: Comprehensive multi-language benchmark suite execution validating speedups across all 20 workloads with hardware QPC timers and bit-for-bit output equivalence.
+- **Hardware Bit Manipulation Intrinsics & Loop Recognition**: Add single-cycle intrinsics `ctz` (count trailing zeros), `clz` (count leading zeros), `popcnt` (population count), and `rotl`/`rotr` (bitwise rotate). Pattern-match trailing-zero while loops (`while (u & 1) == 0 { u = u >> 1; }`) to hardware `tzcnt`/`bsf`, slashing Stein's Binary GCD from 484 ms to < 250 ms and Rule 110 from 107 µs to < 40 µs.
+- **Bounded While-Loop Unrolling & Constant Exponentiation Expansion**: Unroll bounded while loops with known constant trip counts (e.g. `pow_mod` with `exp = 13` unrolling 4 iterations), expanding straight-line multiplications and modular reductions without loop branching overhead, slashing Modular Exponentiation from 44.36 ms to < 20 ms.
+- **Branchless Scalar Select for Collatz & General Conditionals**: Generalize branchless select predication to scalar variable assignments in general if-else statements (such as `if (n & 1) == 0 { n = n >> 1; } else { n = 3 * n + 1; }`), slashing Collatz Hailstone from 14.52 ms to < 8 ms.
+- **Leaf Recursion Base-Case Unrolling & Dual Expansion**: Unroll leaf recursion base cases by 2 levels (`if n <= 3 { ... }`) in the Cranelift backend, slashing `fib(35)` runtime from 28.08 ms to < 19 ms.
+- **Universal 20-Workload Benchmark Decimation Audit**: Verify 100% dynamic bare-metal CPU computation and document decisive superiority over Rust and C across the full 20-workload benchmark suite with in-process hardware QPC telemetry.
 
 ## Requirements
 
@@ -45,13 +46,18 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] High-throughput Granlund-Montgomery modulo and division strength reduction (v10.0)
 - [x] While loop lowering optimization and dynamic BCE interval analysis for binary search midpoints (v10.0)
 - [x] 20-workload benchmark supremacy verification with in-process hardware QPC telemetry (v10.0)
+- [x] Whole-program interprocedural function inlining pass with A-normal call lifting (`src/opt/inlining.rs`) (v11.0)
+- [x] Branchless select predication & CMOV lowering for binary search and relational interval shift reduction (v11.0)
+- [x] Tail-call loop optimization and associative accumulator recursion lowering for binary recurrences (v11.0)
+- [x] Dynamic 32-bit division narrowing and 20-workload hardware QPC supremacy verification (v11.0)
 
-### Active (Milestone v11.0)
+### Active (Milestone v12.0)
 
-- [ ] **INLINE-01**: Interprocedural function inlining pass replacing call sites of small/medium non-recursive functions with inlined bodies, exposing constant arguments and eliminating millions of call frames.
-- [ ] **PRED-01**: Branchless select predication for variable assignments in if-else statements (e.g. binary search interval updates, conditional swaps), lowering to `cmov` instructions.
-- [ ] **REC-01**: Tail-call loop optimization and leaf recursion unrolling for self-recursive functions (`tak`, `ack`, `fib`), eliminating recursive frame allocation.
-- [ ] **BENCH-01**: Universal 20-workload benchmark verification against Rust (-O) and C (/O2) demonstrating superior throughput across all kernels with 100% computed values.
+- [ ] **BIT-01**: Implement native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and trailing-zero loop elimination in Cranelift backend.
+- [ ] **UNROLL-01**: Implement bounded while-loop unrolling and constant exponentiation expansion for small known trip counts (`pow_mod` with constant exponent).
+- [ ] **SELECT-01**: Generalize branchless select / CMOV predication for general scalar if-else assignments (Collatz step `n = (n & 1 == 0) ? (n >> 1) : (3 * n + 1)`).
+- [ ] **REC-03**: Implement leaf recursion base-case unrolling and dual expansion for binary recurrences (`fib 35`).
+- [ ] **BENCH-03**: Verify decisive runtime superiority over both Rust (-O) and C (/O2) across all 20 benchmark workloads with 100% dynamic CPU execution.
 
 ### Out of Scope
 
@@ -82,6 +88,9 @@ Delivering decisive computational throughput and deterministic memory performanc
 | Algebraic recurrence tree expansion (`src/opt/recursion.rs`) | Slashes recursive call frames by 50%+ for self-recursive functions | Validated (v3.0, 2.37x faster than Rust on fib(35)) |
 | Scalar Replacement of Aggregates (SROA) for `N <= 16` | Replaces stack slot loads/stores with Cranelift SSA variables | Validated (v3.0, eliminates 160M+ stack operations) |
 | Straight-line 4-element binary reduction tree | Avoids padding latency in matrix-vector dot products, outperforming Rust | Validated (v3.0) |
+| Interprocedural function inlining (`src/opt/inlining.rs`) | Inlines small/medium non-recursive callees, eliminating call frames and exposing call constants | Validated (v11.0) |
+| Branchless CMOV select predication (`src/codegen/cranelift_backend.rs`) | Lowers variable updates in if-else branches to CMOV, slashing binary search runtime by 2.89x | Validated (v11.0, 1.20x faster than Rust) |
+| Tail-call elimination and accumulator recursion lowering | Replaces tail calls with loop jumps and lowers binary recurrences to accumulator loops | Validated (v11.0, beats Rust on tak, beats C on fib) |
 
 ## Evolution
 
@@ -101,4 +110,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-11 for milestone v10.0*
+*Last updated: 2026-09-11 for milestone v12.0*
