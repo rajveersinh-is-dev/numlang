@@ -162,3 +162,79 @@ fn test_compiled_bce_loop_execution() {
     // sum of (0 + 2 + 4 + 6 + 8 + 10 + 12 + 14) = 56
     assert_eq!(run_output.status.code(), Some(56));
 }
+
+#[test]
+fn test_bce_modulo_and_bitand_safety() {
+    let src = r#"
+        fn main() -> i64 {
+            let mut arr: [i64; 64] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let mut k: i64 = 0;
+            while k < 64 {
+                let left_idx: i64 = (k + 63) % 64;
+                let right_idx: i64 = (k + 1) % 64;
+                arr[left_idx] = arr[left_idx] + 1;
+                arr[right_idx] = arr[right_idx] + 1;
+                let mask_idx: i64 = k & 63;
+                arr[mask_idx] = arr[mask_idx] + 1;
+                k = k + 1;
+            }
+            return arr[0];
+        }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let mut typed = typecheck(&ast).unwrap();
+    numlang::opt::bce::optimize_program(&mut typed);
+
+    // Verify all index accesses inside the loop are marked is_safe
+    let func = &typed.functions[0];
+    if let TypedStmt::While { body, .. } = &func.body.stmts[2] {
+        // stmt 2: arr[left_idx] = ...
+        if let TypedStmt::IndexAssign { is_safe, .. } = &body.stmts[2] {
+            assert!(is_safe, "Modulo index (k + 63) % 64 must be proven safe");
+        }
+        // stmt 3: arr[right_idx] = ...
+        if let TypedStmt::IndexAssign { is_safe, .. } = &body.stmts[3] {
+            assert!(is_safe, "Modulo index (k + 1) % 64 must be proven safe");
+        }
+        // stmt 5: arr[mask_idx] = ...
+        if let TypedStmt::IndexAssign { is_safe, .. } = &body.stmts[5] {
+            assert!(is_safe, "BitAnd index k & 63 must be proven safe");
+        }
+    }
+}
+
+#[test]
+fn test_bce_multi_variable_affine_safety() {
+    let src = r#"
+        fn main() -> i64 {
+            let mut diag: [i64; 32] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let mut r: i64 = 0;
+            while r < 12 {
+                let mut c: i64 = 0;
+                while c < 12 {
+                    diag[r + c] = 1;
+                    c = c + 1;
+                }
+                r = r + 1;
+            }
+            return diag[0];
+        }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let mut typed = typecheck(&ast).unwrap();
+    numlang::opt::bce::optimize_program(&mut typed);
+
+    let func = &typed.functions[0];
+    if let TypedStmt::While { body: outer_body, .. } = &func.body.stmts[2] {
+        if let TypedStmt::While { body: inner_body, .. } = &outer_body.stmts[1] {
+            if let TypedStmt::IndexAssign { is_safe, .. } = &inner_body.stmts[0] {
+                assert!(is_safe, "Affine index r + c (< 24 on len 32) must be proven safe");
+            }
+        }
+    }
+}
+
