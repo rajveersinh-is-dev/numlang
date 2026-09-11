@@ -8,15 +8,15 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current Milestone: v9.0 Pure Runtime Numerical Optimization & Benchmark Supremacy
+## Current Milestone: v10.0 Compiler Hardening & Universal Benchmark Supremacy
 
-**Goal:** Achieve maximum legitimate bare-metal execution speed over Rust (-O) and C (/O2) across standard numerical benchmarks, with 100% runtime computation (zero lookup tables, zero stored constants) and complete benchmark honesty.
+**Goal:** Eliminate compiler code generation bottlenecks (SROA dynamic degradation, hardware division stalls, loop overhead) and implement advanced bare-metal optimizations to achieve decisive, honest runtime supremacy over Rust across all 20 canonical numerical benchmarks.
 
 **Target features:**
-- **Integer Bitwise Operators**: Native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) in tokenizer, parser, typechecker, and Cranelift backend to eliminate high-overhead modulo/division workarounds in bit-heavy kernels (e.g. Stein's GCD, Rule 110, bit manipulations).
-- **Induction Bounds Check Elimination (BCE)**: Statically prove that array accesses inside induction loops (`0 <= i < N`) are within bounds, eliminating redundant branch checks and panic blocks from tight loops like N-Queens and Rule 110.
-- **Hardware SIMD Vectorization Engine**: Extend array unrolling and SSA promotion with AVX2 vector instructions for multi-element array operations.
-- **Honest Comparative Multi-Language Benchmark Suite**: Continuously track numlang, Rust (-O), and C (/O2) across all 20 workloads with real hardware timers, verifying identical mathematical outputs and zero stored values.
+- **Dynamic SROA Elimination & Contiguous Indexing**: Restrict SROA register promotion to purely statically indexed arrays, keeping dynamic arrays on stack for single-cycle indexed loads/stores (`mov [rsp + rdi*8]`), eliminating the massive CMOV select tree in N-Queens and dynamic search loops.
+- **High-Throughput Division & Modulo Lowering**: Optimize non-constant and power-of-two modulo operations, fast unsigned division paths, and loop-invariant modulus reduction (Barrett / reciprocal multiplication).
+- **While Loop Optimization & Dynamic BCE**: Clean loop rotation without condition re-evaluation overhead, and expand BCE interval analysis to binary search midpoint formulas `(low + high) / 2`.
+- **Universal 20-Workload Benchmark Supremacy Verification**: Rigorous 20-workload multi-language benchmark suite running against Rust (-O) and C (/O2) with hardware QPC timers, 100% computed values, and zero lookup tables.
 
 ## Requirements
 
@@ -37,14 +37,17 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] Multi-variable branchless SSA predication (`select` / `cmov`) eliminating branch mispredictions (v4.0)
 - [x] Real-time high-resolution performance counters in `--bench` mode using Windows `QueryPerformanceCounter` (v8.0)
 - [x] Expansion to 20 canonical numerical workloads with multi-language wrappers (v9.0)
+- [x] Native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) and `**` exponentiation (v9.0)
+- [x] Static induction bounds check elimination (BCE) pass with interval range analysis (v9.0)
+- [x] 16-byte SIMD vector array copying and SIMD vector arithmetic lowering (v9.0)
+- [x] 20-workload comparative benchmark audit against Rust (-O) and C (/O2) with zero stored values (v9.0)
 
-### Active (Milestone v9.0)
+### Active (Milestone v10.0)
 
-- [ ] **BIT-01**: Lexer and parser support for bitwise operators (`&`, `|`, `^`, `<<`, `>>`).
-- [ ] **BIT-02**: Typechecking and Cranelift lowering for bitwise binary expressions on integer types (`i64`, `i32`).
-- [ ] **BCE-01**: Loop induction bounds analysis proving that array indices bounded by the loop condition are safe, omitting runtime `emit_bounds_check` traps.
-- [ ] **SIMD-01**: AVX2 256-bit SIMD lowering for parallel array loops (e.g. cellular automaton updates, vector arithmetic).
-- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) with hardware timers, 100% computed per run with zero pre-loaded tables.
+- [ ] **SROA-01**: Dynamic SROA elimination: detect arrays indexed by non-constant expressions and preserve them as contiguous stack slots for 1-cycle memory operations instead of CMOV select trees.
+- [ ] **DIV-01**: Fast unsigned division and power-of-two non-negative modulo strength reduction (`band_imm`), bypassing multi-cycle hardware `idiv`/`srem` stalls.
+- [ ] **LOOP-01**: While-loop code generation optimization and BCE expansion for binary search midpoint expressions `(low + high) / 2`.
+- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) demonstrating across-the-board performance gains with 100% honest dynamic computation.
 
 ### Out of Scope
 
@@ -94,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-10 for milestone v2.0*
+*Last updated: 2026-09-11 for milestone v10.0*
