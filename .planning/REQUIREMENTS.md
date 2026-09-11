@@ -15,8 +15,8 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 - [x] **PRED-01**: Detect variable assignments across if-else branches (such as binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to Cranelift `select` / `cmov`, eliminating branch mispredictions in search loops.
 
 ### Tail-Call Optimization & Recursion Loopification
-- [ ] **REC-01**: Implement tail-call elimination in self-recursive functions (`tak`, `ack`) transforming outer self-recursive calls into in-place parameter re-assignments and unconditional jumps to the function entry.
-- [ ] **REC-02**: Implement leaf recursion unrolling for binary recurrence relations (`fib 35`), slashing call frame traffic.
+- [x] **REC-01**: Implement tail-call elimination in self-recursive functions (`tak`, `ack`) transforming outer self-recursive calls into in-place parameter re-assignments and unconditional jumps to the function entry.
+- [x] **REC-02**: Implement leaf recursion unrolling for binary recurrence relations (`fib 35`), slashing call frame traffic.
 
 ### Universal Benchmark Supremacy Verification
 - [ ] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
@@ -38,8 +38,8 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 | INLINE-01 | Phase 29 | Complete |
 | INLINE-02 | Phase 29 | Complete |
 | PRED-01 | Phase 30 | Complete |
-| REC-01 | Phase 31 | Pending |
-| REC-02 | Phase 31 | Pending |
+| REC-01 | Phase 31 | Complete |
+| REC-02 | Phase 31 | Complete |
 | BENCH-01 | Phase 32 | Pending |
 | BENCH-02 | Phase 32 | Pending |
 
