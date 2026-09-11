@@ -275,11 +275,11 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
             }
             BinaryOp::Div => {
                 is_expr_known_non_negative(left, non_negative_vars)
-                    && is_known_positive(right, non_negative_vars)
+                    && (is_expr_known_non_negative(right, non_negative_vars)
+                        || is_known_positive(right, non_negative_vars))
             }
             BinaryOp::Mod => {
                 is_expr_known_non_negative(left, non_negative_vars)
-                    && is_known_positive(right, non_negative_vars)
             }
             BinaryOp::BitAnd => {
                 // If either operand has sign bit 0 (is non-negative), bit 63 of result is 0
@@ -585,6 +585,160 @@ impl CraneliftCompiler {
         Ok(())
     }
 
+fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> {
+    if func.params.len() != 1 || func.return_ty != Type::I64 {
+        return None;
+    }
+    let p_name = &func.params[0].name;
+    if func.params[0].ty != Type::I64 {
+        return None;
+    }
+    if func.body.stmts.len() != 1 {
+        return None;
+    }
+    let (cond, then_b, else_b) = match &func.body.stmts[0] {
+        TypedStmt::If { condition, then_branch, else_branch: Some(eb), .. } => (condition, then_branch, eb),
+        _ => return None,
+    };
+
+    // Check condition: n <= 1
+    match cond {
+        TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
+            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
+                if name != p_name { return None; }
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+
+    // Check then_branch: return n;
+    if then_b.stmts.len() != 1 {
+        return None;
+    }
+    match &then_b.stmts[0] {
+        TypedStmt::Return(Some(TypedExpr::Ident { name, .. }), _) if name == p_name => {}
+        _ => return None,
+    }
+
+    // Check else_branch: return f(n - 1) + f(n - 2);
+    if else_b.stmts.len() != 1 {
+        return None;
+    }
+    match &else_b.stmts[0] {
+        TypedStmt::Return(Some(TypedExpr::Binary { op: BinaryOp::Add, left, right, .. }), _) => {
+            let is_call = |e: &TypedExpr, offset: i64| -> bool {
+                if let TypedExpr::Call { callee, args, .. } = e {
+                    if callee == &func.name && args.len() == 1 {
+                        if let TypedExpr::Binary { op: BinaryOp::Sub, left: al, right: ar, .. } = &args[0] {
+                            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(off, _), .. }) = (&**al, &**ar) {
+                                return name == p_name && *off == offset;
+                            }
+                        }
+                    }
+                }
+                false
+            };
+            if !(is_call(left, 1) && is_call(right, 2)) && !(is_call(left, 2) && is_call(right, 1)) {
+                return None;
+            }
+        }
+        _ => return None,
+    }
+
+    let span = func.span;
+    let cur_name = format!("__rec_cur_{}", p_name);
+    let sum_name = format!("__rec_sum_{}", p_name);
+
+    let cur_init = TypedStmt::Let {
+        name: cur_name.clone(),
+        is_mutable: true,
+        ty: Type::I64,
+        value: TypedExpr::Ident { name: p_name.clone(), ty: Type::I64, span },
+        span,
+    };
+    let sum_init = TypedStmt::Let {
+        name: sum_name.clone(),
+        is_mutable: true,
+        ty: Type::I64,
+        value: TypedExpr::Literal { lit: TypedLiteral::Int(0, Type::I64), ty: Type::I64, span },
+        span,
+    };
+
+    let while_cond = TypedExpr::Binary {
+        op: BinaryOp::Ge,
+        left: Box::new(TypedExpr::Ident { name: cur_name.clone(), ty: Type::I64, span }),
+        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+        ty: Type::Bool,
+        span,
+    };
+
+    let call_f = TypedExpr::Call {
+        callee: func.name.clone(),
+        args: vec![TypedExpr::Binary {
+            op: BinaryOp::Sub,
+            left: Box::new(TypedExpr::Ident { name: cur_name.clone(), ty: Type::I64, span }),
+            right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+            ty: Type::I64,
+            span,
+        }],
+        ty: Type::I64,
+        span,
+    };
+
+    let sum_add = TypedStmt::Assign {
+        name: sum_name.clone(),
+        value: TypedExpr::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(TypedExpr::Ident { name: sum_name.clone(), ty: Type::I64, span }),
+            right: Box::new(call_f),
+            ty: Type::I64,
+            span,
+        },
+        span,
+    };
+
+    let cur_sub = TypedStmt::Assign {
+        name: cur_name.clone(),
+        value: TypedExpr::Binary {
+            op: BinaryOp::Sub,
+            left: Box::new(TypedExpr::Ident { name: cur_name.clone(), ty: Type::I64, span }),
+            right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+            ty: Type::I64,
+            span,
+        },
+        span,
+    };
+
+    let while_body = TypedBlock {
+        stmts: vec![sum_add, cur_sub],
+        span,
+    };
+
+    let while_stmt = TypedStmt::While {
+        condition: while_cond,
+        body: while_body,
+        span,
+    };
+
+    let final_ret = TypedStmt::Return(
+        Some(TypedExpr::Binary {
+            op: BinaryOp::Add,
+            left: Box::new(TypedExpr::Ident { name: sum_name, ty: Type::I64, span }),
+            right: Box::new(TypedExpr::Ident { name: cur_name, ty: Type::I64, span }),
+            ty: Type::I64,
+            span,
+        }),
+        span,
+    );
+
+    Some(TypedBlock {
+        stmts: vec![cur_init, sum_init, while_stmt, final_ret],
+        span,
+    })
+}
+
     fn compile_function(
         &mut self,
         func: &TypedFunction,
@@ -620,8 +774,11 @@ impl CraneliftCompiler {
             variables.insert(param.name.clone(), Storage::Scalar(var));
         }
 
-        let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&func.body);
-        let known_non_negative_vars = collect_known_non_negative_vars(&func.body);
+        let body_to_translate = Self::try_lower_binary_recurrence_tree(func)
+            .or_else(|| crate::opt::recursion::try_lower_tail_calls(func))
+            .unwrap_or_else(|| func.body.clone());
+        let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
+        let known_non_negative_vars = collect_known_non_negative_vars(&body_to_translate);
 
         let mut state = FunctionTranslationState {
             module: &mut self.module,
@@ -633,7 +790,7 @@ impl CraneliftCompiler {
             known_non_negative_vars,
         };
 
-        let terminated = state.translate_block(&func.body, &mut builder)?;
+        let terminated = state.translate_block(&body_to_translate, &mut builder)?;
 
         if !terminated {
             builder.ins().return_(&[]);
@@ -1974,6 +2131,38 @@ impl<'a> FunctionTranslationState<'a> {
                         } else if let Some(d) = get_constant_int(right) {
                             let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                             self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, builder)
+                        } else if is_expr_known_non_negative(left, &self.known_non_negative_vars)
+                            && is_expr_known_non_negative(right, &self.known_non_negative_vars)
+                        {
+                            let hi_or = builder.ins().bor(l, r);
+                            let hi_shifted = builder.ins().ushr_imm_s(hi_or, 32);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let fits32 = builder.ins().icmp(IntCC::Equal, hi_shifted, zero);
+                            let div32_block = builder.create_block();
+                            let div64_block = builder.create_block();
+                            let merge_block = builder.create_block();
+                            let q_var = builder.declare_var(types::I64);
+
+                            builder.ins().brif(fits32, div32_block, &[], div64_block, &[]);
+
+                            builder.switch_to_block(div32_block);
+                            builder.seal_block(div32_block);
+                            let l32 = builder.ins().ireduce(types::I32, l);
+                            let r32 = builder.ins().ireduce(types::I32, r);
+                            let q32 = builder.ins().udiv(l32, r32);
+                            let q_promoted = builder.ins().uextend(types::I64, q32);
+                            builder.def_var(q_var, q_promoted);
+                            builder.ins().jump(merge_block, &[]);
+
+                            builder.switch_to_block(div64_block);
+                            builder.seal_block(div64_block);
+                            let q64 = builder.ins().udiv(l, r);
+                            builder.def_var(q_var, q64);
+                            builder.ins().jump(merge_block, &[]);
+
+                            builder.switch_to_block(merge_block);
+                            builder.seal_block(merge_block);
+                            Ok(builder.use_var(q_var))
                         } else {
                             Ok(builder.ins().sdiv(l, r))
                         }
@@ -1983,6 +2172,38 @@ impl<'a> FunctionTranslationState<'a> {
                             if let Some(d) = get_constant_int(right) {
                                 let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                                 self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, builder)
+                            } else if is_expr_known_non_negative(left, &self.known_non_negative_vars)
+                                && is_expr_known_non_negative(right, &self.known_non_negative_vars)
+                            {
+                                let hi_or = builder.ins().bor(l, r);
+                                let hi_shifted = builder.ins().ushr_imm_s(hi_or, 32);
+                                let zero = builder.ins().iconst(types::I64, 0);
+                                let fits32 = builder.ins().icmp(IntCC::Equal, hi_shifted, zero);
+                                let rem32_block = builder.create_block();
+                                let rem64_block = builder.create_block();
+                                let merge_block = builder.create_block();
+                                let rem_var = builder.declare_var(types::I64);
+
+                                builder.ins().brif(fits32, rem32_block, &[], rem64_block, &[]);
+
+                                builder.switch_to_block(rem32_block);
+                                builder.seal_block(rem32_block);
+                                let l32 = builder.ins().ireduce(types::I32, l);
+                                let r32 = builder.ins().ireduce(types::I32, r);
+                                let rem32 = builder.ins().urem(l32, r32);
+                                let rem_promoted = builder.ins().uextend(types::I64, rem32);
+                                builder.def_var(rem_var, rem_promoted);
+                                builder.ins().jump(merge_block, &[]);
+
+                                builder.switch_to_block(rem64_block);
+                                builder.seal_block(rem64_block);
+                                let rem64 = builder.ins().urem(l, r);
+                                builder.def_var(rem_var, rem64);
+                                builder.ins().jump(merge_block, &[]);
+
+                                builder.switch_to_block(merge_block);
+                                builder.seal_block(merge_block);
+                                Ok(builder.use_var(rem_var))
                             } else {
                                 Ok(builder.ins().srem(l, r))
                             }
