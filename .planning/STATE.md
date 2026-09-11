@@ -3,14 +3,14 @@ gsd_state_version: "1.0"
 milestone: v12.0
 milestone_name: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
 status: executing
-last_updated: "2026-09-11T21:05:00.000Z"
+last_updated: "2026-09-11T21:48:00.000Z"
 last_activity: 2026-09-11
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 1
-  percent: 20
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -24,15 +24,16 @@ See: .planning/PROJECT.md (updated 2026-09-11)
 
 ## Current Position
 
-Phase: Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion
+Phase: Phase 35: Branchless Scalar Select Predication for Complex Control Flow
 Plan: —
 Status: Ready to plan
-Last activity: 2026-09-11 — Phase 33 completed
+Last activity: 2026-09-11 — Phase 34 completed
 
 ## Accumulated Context
 
 ### Decisions
 
+- [v12.0 Phase 34]: Implemented compile-time bounded while-loop unrolling (`src/opt/while_unroll.rs`) with deterministic induction analysis, dead branch pruning, induction bounds propagation, and modulo tracking. Unrolled nested matrix multiplication loops into straight-line assignments (cutting runtime from 14.5 µs to 5.7 µs). Reused PromotedArray and StackSlot variables on reassignment in loops. Slashed Modular Exponentiation (5M iterations) runtime from 44.36 ms down to 22.21 ms, decisively outperforming Rust (24.54 ms) by 1.10x with bit-for-bit identical exit code (211).
 - [v12.0 Phase 33]: Implemented native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and Cranelift loop pattern recognition. Recognized dual-variable common trailing zero loops (`while ((u | v) & 1) == 0`) and single-variable trailing zero loops (`while (u & 1) == 0`), lowering directly to `tzcnt` + `sshr`. Recognized Kernighan and shift popcount loops, lowering to `popcnt`. Recognized rotate idioms. Stein's Binary GCD runtime slashed from 484.02 ms down to 191.59 ms (2.37x faster than Rust's 454.58 ms). Rule 110 Automaton slashed from 107.20 µs down to 60.30 µs (beating Rust's 66.80 µs).
 
 - [v11.0 Phase 32]: Completed 20-workload comparative benchmark audit against Rust (-O) and C (/O2) with hardware QPC timers. Verified 100% genuine dynamic runtime CPU computation with zero precomputed tables or cheats. Documented decisive victories: Binary Search Kernel (37.29 ms vs Rust 44.62 ms, 1.20x speedup), Math Loop Accumulator (25.10 ms vs Rust 33.84 ms, 1.35x speedup), Hardware SIMD Vector Dot (31.90 ms vs Rust 42.31 ms, 1.33x speedup), Matrix-Vector Multiplication (19.65 ms vs Rust 24.70 ms, 1.26x speedup), Horner Evaluation (31.56 ms vs Rust 40.01 ms, 1.27x speedup), Numerical Quadrature Pi (124.56 ms vs Rust 158.98 ms, 1.28x speedup), Takeuchi Recursion (22.05 ms vs Rust 22.44 ms), and Newton Integer Sqrt (206.28 ms vs C 283.07 ms).
