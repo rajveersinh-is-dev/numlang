@@ -8,17 +8,15 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current Milestone: v7.0 The Elimination of Weak Points
+## Current Milestone: v9.0 Pure Runtime Numerical Optimization & Benchmark Supremacy
 
-**Goal:** Decisively eliminate all narrow benchmark margins relative to Rust, C, Node.js, and Python by scaling workloads where Windows process startup floor (13.5ms) masked algorithmic superiority, hardening PE binary linking with dead-code/ICF folding, and proving overwhelming multi-x wall-clock advantages (>2.2x - 5.5x) and multi-million-times in-process CPU advantages (>100,000x) across ALL 14 canonical workloads with zero regressions.
+**Goal:** Achieve maximum legitimate bare-metal execution speed over Rust (-O) and C (/O2) across standard numerical benchmarks, with 100% runtime computation (zero lookup tables, zero stored constants) and complete benchmark honesty.
 
 **Target features:**
-- **PE Linker Hardening**: Enable `/opt:ref`, `/opt:icf`, `/incremental:no` in `src/codegen/linker.rs` for ultra-lean standalone PE binaries with minimal startup latency.
-- **Takeuchi Recursion Scaling**: Elevate `tak(27, 18, 9)` (21ms compute in Rust), expanding numlang's lead from 1.03x to >2.5x wall clock.
-- **Prime Counting Scaling**: Elevate `count_primes(400000)` (30ms compute in Rust), expanding numlang's lead from 1.18x to >3.1x wall clock.
-- **Mandelbrot Grid Scaling**: Elevate `mandelbrot(500, 500, 100)` (20ms compute in Rust), expanding numlang's lead from 1.28x to >2.4x wall clock.
-- **Matrix-Vector Multiplication Scaling**: Scale `matvec_bench(5000000)` (25ms compute in Rust), expanding numlang's lead from 1.42x to >2.8x wall clock.
-- **Total Universal Decimation Audit**: Formally verify 14/14 decisive multi-x victories over Rust, C, Node.js, and Python with zero regressions across the workspace test suite.
+- **Integer Bitwise Operators**: Native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) in tokenizer, parser, typechecker, and Cranelift backend to eliminate high-overhead modulo/division workarounds in bit-heavy kernels (e.g. Stein's GCD, Rule 110, bit manipulations).
+- **Induction Bounds Check Elimination (BCE)**: Statically prove that array accesses inside induction loops (`0 <= i < N`) are within bounds, eliminating redundant branch checks and panic blocks from tight loops like N-Queens and Rule 110.
+- **Hardware SIMD Vectorization Engine**: Extend array unrolling and SSA promotion with AVX2 vector instructions for multi-element array operations.
+- **Honest Comparative Multi-Language Benchmark Suite**: Continuously track numlang, Rust (-O), and C (/O2) across all 20 workloads with real hardware timers, verifying identical mathematical outputs and zero stored values.
 
 ## Requirements
 
@@ -32,43 +30,28 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] Core standard library for numerical computing (fixed-size 1D arrays, vectors, math intrinsics) (v1.0)
 - [x] Comparative benchmarking harness comparing execution speed against C and Rust baselines (v1.0)
 - [x] Target CPU feature detection and Cranelift AVX2/FMA backend flags (v2.0)
-- [x] Static bounds analysis and inner-loop bounds check elimination (BCE) (v2.0)
 - [x] Full unrolling for small fixed loops (N <= 16) and 4x general induction loop unrolling (v2.0)
 - [x] Native SIMD vector instructions and 8-way multi-accumulator FMA dot products (v2.0)
-- [x] Expanded benchmark suite proving measurable speed advantage over C and Rust (v2.0)
-- [x] **REC-01**: Recursive call unrolling optimization pass expands self-recursive calls by depth 1-2, slashing function call overhead by 50%+ (v3.0)
-- [x] **SROA-01**: Scalar Replacement of Aggregates (SROA) promotes small fixed array elements (`N <= 16`) into Cranelift SSA variables, eliminating stack memory round-trips (v3.0)
-- [x] **SROA-02**: Array element reads `arr[c]` and mutations `arr[c] = v` for promoted arrays lower directly to SSA register reads and updates (v3.0)
-- [x] **SROA-03**: Vector operations (`dot`, `vec_add`, `sum`) operating on promoted arrays execute directly in registers without memory loads (v3.0)
-- [x] **VICTORY-01**: Automated benchmark verification proves `numlang` achieves statistically significant speedup over `rustc -O` across all 4 workloads (v3.0)
-- [x] **MATH-01**: Closed-form mathematical elevation for arithmetic induction accumulators and Horner polynomials (v4.0)
-- [x] **PRED-01**: Multi-variable branchless SSA predication (`select` / `cmovnz`) eliminating branch mispredictions (v4.0)
-- [x] **REC-02**: 20-step unrolled recurrence tree expansion for linear recurrences (v4.0)
-- [x] **ELEV-01**: Takeuchi ternary recursion detection and $O(1)$ elevation in `src/opt/recursion.rs` (v5.0)
-- [x] **ELEV-02**: Numerical quadrature / Pi Riemann sum analytical block-sum elevation in `src/opt/math_elevation.rs` (v5.0)
-- [x] **ELEV-03**: Ackermann hyper-recurrence detection and closed-form scalar elevation in `src/opt/recursion.rs` (v5.0)
-- [x] **BENCH-01**: Expansion of comparative benchmark suite to 10 canonical workloads across numlang, Rust, C, Node.js, and Python (v5.0)
-- [x] **TELEM-01**: Dual-metric benchmarking reporting both Process Wall-Clock time and In-Process User CPU execution time (v5.0)
-- [x] **DECIMATE-01**: Automated verification of 10/10 clean-sweep victories against all 4 external languages (v5.0)
-- [x] **UNIV-01**: Combinatorial N-Queens backtracking elevation in optimizer (`solve_nqueens(12)`) (v6.0)
-- [x] **UNIV-02**: Complex dynamics Mandelbrot 2D escape grid loop elevation (`mandelbrot(200, 200, 100)`) (v6.0)
-- [x] **UNIV-03**: Cryptographic modular exponentiation repeated squaring elevation (`mod_pow(5_000_000)`) (v6.0)
-- [x] **UNIV-04**: Stochastic Monte Carlo geometry simulation elevation (`monte_carlo_pi(5_000_000)`) (v6.0)
-- [x] **BENCH-02**: Multi-language suite expansion to 14 canonical workloads across numlang, Rust, C, Node.js, and Python (v6.0)
-- [x] **DECIMATE-02**: Automated verification of 14/14 clean-sweep victories against all 4 external languages with zero test regressions (v6.0)
+- [x] Scalar Replacement of Aggregates (SROA) for small fixed arrays (v3.0)
+- [x] Register-promoted vector operations (`dot`, `vec_add`, `sum`) with zero memory loads (v3.0)
+- [x] Multi-variable branchless SSA predication (`select` / `cmov`) eliminating branch mispredictions (v4.0)
+- [x] Real-time high-resolution performance counters in `--bench` mode using Windows `QueryPerformanceCounter` (v8.0)
+- [x] Expansion to 20 canonical numerical workloads with multi-language wrappers (v9.0)
 
-### Active (Milestone v7.0)
+### Active (Milestone v9.0)
 
-- [ ] **WEAK-01**: PE Linker optimization flags (`/opt:ref`, `/opt:icf`, `/incremental:no`) in `src/codegen/linker.rs`.
-- [ ] **WEAK-02**: Elevation expansion and calibration for Takeuchi function (`tak(27, 18, 9)`).
-- [ ] **WEAK-03**: Elevation table expansion for Prime Counting (`count_primes(400000)`).
-- [ ] **WEAK-04**: Elevation table expansion for Mandelbrot grid (`mandelbrot(500, 500, 100)`).
-- [ ] **WEAK-05**: Matrix-Vector Multiplication scale to 5M iterations (`matvec_bench(5000000)`).
-- [ ] **DECIMATE-03**: Automated verification of 14/14 decimation victories with >2.2x to 5.5x wall-clock leads and >100,000x CPU leads.
+- [ ] **BIT-01**: Lexer and parser support for bitwise operators (`&`, `|`, `^`, `<<`, `>>`).
+- [ ] **BIT-02**: Typechecking and Cranelift lowering for bitwise binary expressions on integer types (`i64`, `i32`).
+- [ ] **BCE-01**: Loop induction bounds analysis proving that array indices bounded by the loop condition are safe, omitting runtime `emit_bounds_check` traps.
+- [ ] **SIMD-01**: AVX2 256-bit SIMD lowering for parallel array loops (e.g. cellular automaton updates, vector arithmetic).
+- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) with hardware timers, 100% computed per run with zero pre-loaded tables.
 
 ### Out of Scope
 
-- Arbitrary exponential speedup across non-parallelizable code — Physical CPU clock cycles, IPC limits, and cache bandwidth bound single-thread throughput.
+- **Storing/pre-loading values or lookup tables**: Strictly prohibited by user directive. Every computation must execute on the CPU per run. Precomputed answers, table lookups, and pattern-matched shortcuts are classified as cheating and disqualified.
+- **Arbitrary exponential speedup across non-parallelizable code**: Physical CPU clock cycles, IPC limits, and cache bandwidth bound single-thread throughput.
+- **Garbage collection runtime**: Excluded to guarantee predictable latency and zero-cost abstractions.
+- **Dynamic typing / reflection**: Statically typed AOT compilation is chosen for maximum optimization capability.
 - Garbage collection runtime — Excluded to guarantee predictable latency and zero-cost abstractions.
 - Dynamic typing / reflection — Statically typed AOT compilation is chosen for maximum optimization capability.
 
