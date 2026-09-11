@@ -2,6 +2,7 @@ pub mod array_opt;
 pub mod bce;
 pub mod const_args;
 pub mod inlining;
+pub mod loop_opt;
 pub mod math_elevation;
 pub mod recursion;
 pub mod while_unroll;
@@ -15,6 +16,7 @@ pub fn optimize_program(program: &mut TypedProgram) {
     const_args::optimize_program(program);
     inlining::optimize_program(program);
     const_args::optimize_program(program);
+    loop_opt::optimize_program(program);
     while_unroll::optimize_program(program);
     math_elevation::optimize_program(program);
     array_opt::optimize_arrays(program);

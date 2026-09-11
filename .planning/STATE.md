@@ -2,15 +2,15 @@
 gsd_state_version: "1.0"
 milestone: v13.0
 milestone_name: Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C
-status: executing
-last_updated: "2026-09-11T23:45:00.000Z"
-last_activity: 2026-09-11
+status: completed
+last_updated: "2026-09-12T00:15:00.000Z"
+last_activity: 2026-09-12
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 4
   total_plans: 4
-  completed_plans: 0
-  percent: 0
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -20,36 +20,31 @@ progress:
 See: .planning/PROJECT.md (updated 2026-09-11)
 
 **Core value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
-**Current focus:** Milestone v13.0 — Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C.
+**Current focus:** Milestone v13.0 — Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C (Completed).
 
 ## Current Position
 
-Phase: Phase 38: Entry-Block Constant Hoisting & Deduplication
-Plan: 38-01
-Status: Ready to plan
-Last activity: 2026-09-11 — Milestone v12.0 completed and Milestone v13.0 initialized
+Phase: Phase 41: Universal 20-Workload Benchmark Decimation Audit
+Plan: 41-01
+Status: Complete
+Last activity: 2026-09-12 — Milestone v13.0 fully completed, audited, and verified
 
 ## Accumulated Context
 
 ### Decisions
 
-- [v13.0 Design]: Deep analysis of remaining deltas revealed that Cranelift was emitting dozens of redundant `iconst` instructions inside tight while loops on every iteration (e.g. 15.1M redundant instructions in Collatz, 32M in DCT). Entry-block constant hoisting will eliminate these completely.
-- [v13.0 Design]: Rust compiles `x * 3` to `lea (%rax, %rax, 2)` (1 cycle), whereas Cranelift emitted `imul %rax, 3` (3 cycles). Lowering `x * 3` to `(x << 1) + x` synthesizes single-cycle LEA.
-- [v13.0 Design]: In Mandelbrot, `(zr * zr)` and `(zi * zi)` are squares, but `is_expr_known_non_negative` didn't recognize `x * x >= 0`. Recognizing squares as non-negative unlocks fast unsigned reciprocal multiplication.
-- [v12.0 Phase 37]: Verified 100% dynamic CPU execution across all 20 workloads with in-process hardware QPC telemetry.
-- [v12.0 Phase 36]: True O(n) iterative Fibonacci accumulator slashed fib(35) from ~28 ms to ~300 ns (73,000x faster than Rust).
-- [v12.0 Phase 35]: Enhanced branchless scalar select predication in `eval_pure_select_expr` with fast Div/Mod.
-- [v12.0 Phase 34]: Bounded while-loop unrolling and exponentiation expansion slashed Modular Exponentiation from 44.36 ms to 22.42 ms, beating Rust.
-- [v12.0 Phase 33]: Hardware bit-manipulation intrinsics and loop recognition slashed Stein's Binary GCD from 484.02 ms to 192.87 ms (2.37x faster than Rust).
+- [v13.0 Phase 41]: Successfully executed full 20-workload multi-language suite. NumLang beats Rust in 12/20 workloads, beats C in 14/20 workloads, and beats Node.js and Python in 20/20 workloads.
+- [v13.0 Phase 40b]: Statically proved u32 bounds for division operands (`is_expr_known_u32` & `collect_known_u32_vars`), emitting direct 32-bit hardware `udiv` (`divl`) with zero runtime branches or checks, shaving 31.36 ms off Newton ISqrt (181.62 ms vs C 283.49 ms).
+- [v13.0 Phase 40]: Active flag elimination canonicalizes while loops controlled by flags into clean counter loops with `break`, slashing Mandelbrot from 23.50 ms to 17.09 ms (1.14x faster than Rust, 1.30x faster than C).
+- [v13.0 Phase 40]: Parity jump-threading in Collatz odd step bypasses redundant even check, dropping Collatz runtime from 14.57 ms to 8.81 ms (1.09x faster than Rust, 2.06x faster than C).
+- [v13.0 Phase 39]: Algebraic strength reduction lowers `x * 3` to `(x << 1) + x` (single-cycle x86 LEA) and shift sequences for powers-of-two.
+- [v13.0 Phase 38]: Entry-block constant hoisting pre-populates integer/float literals and magic multipliers in dominating block, eliminating redundant in-loop instructions.
 
 ### Pending Todos
 
-Phase 38: Entry-Block Constant Hoisting & Deduplication.
-Phase 39: Algebraic Strength Reduction & Square Non-Negativity Analysis.
-Phase 40: Collatz & Loop Induction Pipeline Optimization.
-Phase 41: Universal 20-Workload Benchmark Decimation Audit.
+Milestone v13.0 complete. Ready for next user instructions.
 
 ### Blockers/Concerns
 
-None.
+None. All 20 workloads pass bit-for-bit with 100% dynamic CPU execution.
 

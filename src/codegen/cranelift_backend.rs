@@ -260,6 +260,30 @@ fn is_known_positive(expr: &TypedExpr, non_negative_vars: &HashSet<String>) -> b
     }
 }
 
+fn is_same_expr(a: &TypedExpr, b: &TypedExpr) -> bool {
+    match (a, b) {
+        (TypedExpr::Ident { name: na, .. }, TypedExpr::Ident { name: nb, .. }) => na == nb,
+        (TypedExpr::Literal { lit: la, .. }, TypedExpr::Literal { lit: lb, .. }) => la == lb,
+        (TypedExpr::Binary { op: oa, left: la, right: ra, .. }, TypedExpr::Binary { op: ob, left: lb, right: rb, .. }) => {
+            oa == ob && is_same_expr(la, lb) && is_same_expr(ra, rb)
+        }
+        (TypedExpr::Unary { op: oa, expr: ea, .. }, TypedExpr::Unary { op: ob, expr: eb, .. }) => {
+            oa == ob && is_same_expr(ea, eb)
+        }
+        _ => false,
+    }
+}
+
+fn is_expr_square_or_nonneg(e: &TypedExpr, non_negative_vars: &HashSet<String>) -> bool {
+    if is_expr_known_non_negative(e, non_negative_vars) {
+        return true;
+    }
+    match e {
+        TypedExpr::Binary { op: BinaryOp::Mul, left, right, .. } => is_same_expr(left, right),
+        _ => false,
+    }
+}
+
 fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<String>) -> bool {
     match expr {
         TypedExpr::Literal {
@@ -277,9 +301,16 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
             right,
             ..
         } => match op {
-            BinaryOp::Add | BinaryOp::Mul => {
-                is_expr_known_non_negative(left, non_negative_vars)
-                    && is_expr_known_non_negative(right, non_negative_vars)
+            BinaryOp::Add => {
+                (is_expr_known_non_negative(left, non_negative_vars)
+                    && is_expr_known_non_negative(right, non_negative_vars))
+                    || (is_expr_square_or_nonneg(left, non_negative_vars)
+                        && is_expr_square_or_nonneg(right, non_negative_vars))
+            }
+            BinaryOp::Mul => {
+                (is_expr_known_non_negative(left, non_negative_vars)
+                    && is_expr_known_non_negative(right, non_negative_vars))
+                    || is_same_expr(left, right)
             }
             BinaryOp::Div => {
                 is_expr_known_non_negative(left, non_negative_vars)
@@ -308,6 +339,31 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
             callee == "abs" || callee == "sqrt" || callee == "ctz" || callee == "clz" || callee == "popcnt"
         }
         _ => false,
+    }
+}
+
+fn get_nonneg_var_from_condition(condition: &TypedExpr, known: &HashSet<String>) -> Option<String> {
+    match condition {
+        TypedExpr::Binary { op, left, right, .. } => match op {
+            BinaryOp::Gt | BinaryOp::Ge => {
+                if let TypedExpr::Ident { name: l_name, .. } = &**left {
+                    if is_expr_known_non_negative(right, known) {
+                        return Some(l_name.clone());
+                    }
+                }
+                None
+            }
+            BinaryOp::Lt | BinaryOp::Le => {
+                if let TypedExpr::Ident { name: r_name, .. } = &**right {
+                    if is_expr_known_non_negative(left, known) {
+                        return Some(r_name.clone());
+                    }
+                }
+                None
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -341,22 +397,40 @@ fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &mut 
                     candidates.insert(name.clone());
                 }
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                if then_branch.stmts.iter().any(|s| matches!(s, TypedStmt::Return(..))) {
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, candidates) {
+                                    candidates.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 collect_initial_nonneg_candidates_block(then_branch, candidates);
                 if let Some(eb) = else_branch {
-                    collect_initial_nonneg_candidates_block(eb, candidates);
+                    let mut else_candidates = candidates.clone();
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, &else_candidates) {
+                                    else_candidates.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                    collect_initial_nonneg_candidates_block(eb, &mut else_candidates);
+                    for v in else_candidates {
+                        candidates.insert(v);
+                    }
                 }
             }
             TypedStmt::While { condition, body, .. } => {
                 let mut while_candidates = candidates.clone();
-                if let TypedExpr::Binary { op, left, right, .. } = condition {
-                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
-                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
-                            if candidates.contains(l_name) {
-                                while_candidates.insert(r_name.clone());
-                            }
-                        }
-                    }
+                if let Some(v) = get_nonneg_var_from_condition(condition, &while_candidates) {
+                    while_candidates.insert(v);
                 }
                 collect_initial_nonneg_candidates_block(body, &mut while_candidates);
                 for v in while_candidates {
@@ -398,26 +472,41 @@ fn all_assignments_are_nonneg_in_block(
                     current_candidates.remove(name);
                 }
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
                 if !all_assignments_are_nonneg_in_block(then_branch, var, &current_candidates) {
                     return false;
                 }
                 if let Some(eb) = else_branch {
-                    if !all_assignments_are_nonneg_in_block(eb, var, &current_candidates) {
+                    let mut else_candidates = current_candidates.clone();
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, &else_candidates) {
+                                    else_candidates.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                    if !all_assignments_are_nonneg_in_block(eb, var, &else_candidates) {
                         return false;
+                    }
+                }
+                if then_branch.stmts.iter().any(|s| matches!(s, TypedStmt::Return(..))) {
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, &current_candidates) {
+                                    current_candidates.insert(name.clone());
+                                }
+                            }
+                        }
                     }
                 }
             }
             TypedStmt::While { condition, body, .. } => {
                 let mut while_candidates = current_candidates.clone();
-                if let TypedExpr::Binary { op, left, right, .. } = condition {
-                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
-                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
-                            if current_candidates.contains(l_name) {
-                                while_candidates.insert(r_name.clone());
-                            }
-                        }
-                    }
+                if let Some(v) = get_nonneg_var_from_condition(condition, &while_candidates) {
+                    while_candidates.insert(v);
                 }
                 if !all_assignments_are_nonneg_in_block(body, var, &while_candidates) {
                     return false;
@@ -427,6 +516,300 @@ fn all_assignments_are_nonneg_in_block(
         }
     }
     true
+}
+
+fn is_expr_known_u32(
+    expr: &TypedExpr,
+    non_negative_vars: &HashSet<String>,
+    u32_vars: &HashSet<String>,
+) -> bool {
+    match expr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => *val >= 0 && (*val as u64) <= 0xFFFF_FFFF,
+        TypedExpr::Ident { name, .. } => u32_vars.contains(name),
+        TypedExpr::Binary { op, left, right, .. } => match op {
+            BinaryOp::Mod => {
+                if let Some(d) = get_constant_int(right) {
+                    d > 0 && (d as u64) <= 0x1_0000_0000 && is_expr_known_non_negative(left, non_negative_vars)
+                } else {
+                    is_expr_known_non_negative(left, non_negative_vars)
+                        && is_expr_known_u32(right, non_negative_vars, u32_vars)
+                }
+            }
+            BinaryOp::Div => {
+                is_expr_known_u32(left, non_negative_vars, u32_vars)
+                    && (is_known_positive(right, non_negative_vars) || is_expr_known_non_negative(right, non_negative_vars))
+            }
+            BinaryOp::Add => {
+                if let Some(c) = get_constant_int(right) {
+                    c >= 0 && c <= 1_000_000 && is_expr_known_u32(left, non_negative_vars, u32_vars)
+                } else if let Some(c) = get_constant_int(left) {
+                    c >= 0 && c <= 1_000_000 && is_expr_known_u32(right, non_negative_vars, u32_vars)
+                } else {
+                    is_expr_known_u32(left, non_negative_vars, u32_vars)
+                        && is_expr_known_u32(right, non_negative_vars, u32_vars)
+                }
+            }
+            BinaryOp::BitAnd => {
+                is_expr_known_u32(left, non_negative_vars, u32_vars)
+                    || is_expr_known_u32(right, non_negative_vars, u32_vars)
+            }
+            BinaryOp::Shr => {
+                is_expr_known_u32(left, non_negative_vars, u32_vars)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn collect_known_u32_vars(
+    body: &TypedBlock,
+    non_negative_vars: &HashSet<String>,
+) -> HashSet<String> {
+    let mut candidates: HashSet<String> = HashSet::new();
+    collect_initial_u32_candidates_block(body, non_negative_vars, &mut candidates);
+
+    loop {
+        let mut to_remove = Vec::new();
+        for var in &candidates {
+            if !all_assignments_are_u32_in_block(body, var, non_negative_vars, &candidates) {
+                to_remove.push(var.clone());
+            }
+        }
+        if to_remove.is_empty() {
+            break;
+        }
+        for var in to_remove {
+            candidates.remove(&var);
+        }
+    }
+
+    candidates
+}
+
+fn collect_initial_u32_candidates_block(
+    block: &TypedBlock,
+    non_negative_vars: &HashSet<String>,
+    candidates: &mut HashSet<String>,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } => {
+                if is_expr_known_u32(value, non_negative_vars, candidates) {
+                    candidates.insert(name.clone());
+                }
+            }
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                collect_initial_u32_candidates_block(then_branch, non_negative_vars, candidates);
+                if let Some(eb) = else_branch {
+                    let mut else_candidates = candidates.clone();
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_u32(right, non_negative_vars, &else_candidates) {
+                                    else_candidates.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                    collect_initial_u32_candidates_block(eb, non_negative_vars, &mut else_candidates);
+                    for v in else_candidates {
+                        candidates.insert(v);
+                    }
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                let mut while_candidates = candidates.clone();
+                collect_initial_u32_candidates_block(body, non_negative_vars, &mut while_candidates);
+                for v in while_candidates {
+                    candidates.insert(v);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn all_assignments_are_u32_in_block(
+    block: &TypedBlock,
+    var: &str,
+    non_negative_vars: &HashSet<String>,
+    candidates: &HashSet<String>,
+) -> bool {
+    let mut current_candidates = candidates.clone();
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } => {
+                let is_u32 = is_expr_known_u32(value, non_negative_vars, &current_candidates);
+                if name == var && !is_u32 {
+                    return false;
+                }
+                if is_u32 {
+                    current_candidates.insert(name.clone());
+                } else {
+                    current_candidates.remove(name);
+                }
+            }
+            TypedStmt::Assign { name, value, .. } => {
+                let is_u32 = is_expr_known_u32(value, non_negative_vars, &current_candidates);
+                if name == var && !is_u32 {
+                    return false;
+                }
+                if is_u32 {
+                    current_candidates.insert(name.clone());
+                } else {
+                    current_candidates.remove(name);
+                }
+            }
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                if !all_assignments_are_u32_in_block(then_branch, var, non_negative_vars, &current_candidates) {
+                    return false;
+                }
+                if let Some(eb) = else_branch {
+                    let mut else_candidates = current_candidates.clone();
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_u32(right, non_negative_vars, &else_candidates) {
+                                    else_candidates.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                    if !all_assignments_are_u32_in_block(eb, var, non_negative_vars, &else_candidates) {
+                        return false;
+                    }
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                if !all_assignments_are_u32_in_block(body, var, non_negative_vars, &current_candidates) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn collect_int_literals_block(block: &TypedBlock, out: &mut Vec<(Type, i64)>) {
+    for stmt in &block.stmts {
+        collect_int_literals_stmt(stmt, out);
+    }
+}
+
+fn collect_int_literals_stmt(stmt: &TypedStmt, out: &mut Vec<(Type, i64)>) {
+    match stmt {
+        TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } => {
+            collect_int_literals_expr(value, out);
+        }
+        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            collect_int_literals_expr(condition, out);
+            collect_int_literals_block(then_branch, out);
+            if let Some(eb) = else_branch {
+                collect_int_literals_block(eb, out);
+            }
+        }
+        TypedStmt::While { condition, body, .. } => {
+            collect_int_literals_expr(condition, out);
+            collect_int_literals_block(body, out);
+        }
+        TypedStmt::Return(Some(expr), _) => {
+            collect_int_literals_expr(expr, out);
+        }
+        TypedStmt::Expr(expr) => {
+            collect_int_literals_expr(expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_int_literals_expr(expr: &TypedExpr, out: &mut Vec<(Type, i64)>) {
+    match expr {
+        TypedExpr::Literal { lit: TypedLiteral::Int(n, ty), .. } => {
+            out.push((ty.clone(), *n));
+        }
+        TypedExpr::Binary { left, right, .. } => {
+            collect_int_literals_expr(left, out);
+            collect_int_literals_expr(right, out);
+        }
+        TypedExpr::Unary { expr, .. } => {
+            collect_int_literals_expr(expr, out);
+        }
+        TypedExpr::Call { args, .. } => {
+            for arg in args {
+                collect_int_literals_expr(arg, out);
+            }
+        }
+        TypedExpr::ArrayLiteral { elements, .. } => {
+            for elem in elements {
+                collect_int_literals_expr(elem, out);
+            }
+        }
+        TypedExpr::Index { target, index, .. } => {
+            collect_int_literals_expr(target, out);
+            collect_int_literals_expr(index, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_constant_divisors_block(block: &TypedBlock, out: &mut Vec<i64>) {
+    for stmt in &block.stmts {
+        collect_constant_divisors_stmt(stmt, out);
+    }
+}
+
+fn collect_constant_divisors_stmt(stmt: &TypedStmt, out: &mut Vec<i64>) {
+    match stmt {
+        TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } => {
+            collect_constant_divisors_expr(value, out);
+        }
+        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            collect_constant_divisors_expr(condition, out);
+            collect_constant_divisors_block(then_branch, out);
+            if let Some(eb) = else_branch {
+                collect_constant_divisors_block(eb, out);
+            }
+        }
+        TypedStmt::While { condition, body, .. } => {
+            collect_constant_divisors_expr(condition, out);
+            collect_constant_divisors_block(body, out);
+        }
+        TypedStmt::Return(Some(expr), _) => {
+            collect_constant_divisors_expr(expr, out);
+        }
+        TypedStmt::Expr(expr) => {
+            collect_constant_divisors_expr(expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_constant_divisors_expr(expr: &TypedExpr, out: &mut Vec<i64>) {
+    match expr {
+        TypedExpr::Binary { op, left, right, .. } => {
+            if *op == BinaryOp::Div || *op == BinaryOp::Mod {
+                if let Some(d) = get_constant_int(right) {
+                    if d != 0 && !out.contains(&d) {
+                        out.push(d);
+                    }
+                }
+            }
+            collect_constant_divisors_expr(left, out);
+            collect_constant_divisors_expr(right, out);
+        }
+        TypedExpr::Unary { expr, .. } => collect_constant_divisors_expr(expr, out),
+        TypedExpr::Call { args, .. } => {
+            for arg in args {
+                collect_constant_divisors_expr(arg, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub struct CraneliftCompiler {
@@ -849,6 +1232,42 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             .unwrap_or_else(|| func.body.clone());
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
         let known_non_negative_vars = collect_known_non_negative_vars(&body_to_translate);
+        let known_u32_vars = collect_known_u32_vars(&body_to_translate, &known_non_negative_vars);
+        let mut const_pool = HashMap::new();
+        let mut f64_pool = HashMap::new();
+        let mut f32_pool = HashMap::new();
+
+        for &f in &[0.0f64, 1.0, 2.0, 0.5] {
+            f64_pool.insert(f.to_bits(), builder.ins().f64const(f));
+        }
+        for &f in &[0.0f32, 1.0, 2.0, 0.5] {
+            f32_pool.insert(f.to_bits(), builder.ins().f32const(f));
+        }
+
+        for &n in &[0i64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 32, 64] {
+            const_pool.insert((types::I64, n as u64), builder.ins().iconst(types::I64, n));
+            const_pool.insert((types::I32, n as u64), builder.ins().iconst(types::I32, n));
+            const_pool.insert((types::I8, n as u64), builder.ins().iconst(types::I8, n));
+        }
+
+        let mut ast_literals = Vec::new();
+        collect_int_literals_block(&body_to_translate, &mut ast_literals);
+        for (ty, n) in ast_literals {
+            let clif_ty = type_to_clif(ty);
+            const_pool.entry((clif_ty, n as u64)).or_insert_with(|| builder.ins().iconst(clif_ty, n));
+        }
+
+        let mut divisors = Vec::new();
+        collect_constant_divisors_block(&body_to_translate, &mut divisors);
+        for d in divisors {
+            const_pool.entry((types::I64, d as u64)).or_insert_with(|| builder.ins().iconst(types::I64, d));
+            let ad = d.unsigned_abs();
+            if let Some((m, _)) = compute_magic_u64_nonneg(ad) {
+                const_pool.entry((types::I64, m)).or_insert_with(|| builder.ins().iconst(types::I64, m as i64));
+            }
+            let (m, _, _) = compute_magic_s64(d.abs());
+            const_pool.entry((types::I64, m as u64)).or_insert_with(|| builder.ins().iconst(types::I64, m));
+        }
 
         let mut state = FunctionTranslationState {
             module: &mut self.module,
@@ -858,6 +1277,10 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             loop_exit_blocks: Vec::new(),
             dynamically_indexed_arrays,
             known_non_negative_vars,
+            known_u32_vars,
+            const_pool,
+            f64_pool,
+            f32_pool,
         };
 
         let terminated = state.translate_block(&body_to_translate, &mut builder)?;
@@ -931,9 +1354,96 @@ struct FunctionTranslationState<'a> {
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     dynamically_indexed_arrays: HashSet<String>,
     known_non_negative_vars: HashSet<String>,
+    known_u32_vars: HashSet<String>,
+    const_pool: HashMap<(types::Type, u64), Value>,
+    f64_pool: HashMap<u64, Value>,
+    f32_pool: HashMap<u32, Value>,
 }
 
 impl<'a> FunctionTranslationState<'a> {
+    fn get_iconst(&mut self, ty: types::Type, n: i64, builder: &mut FunctionBuilder) -> Value {
+        let key = (ty, n as u64);
+        if let Some(&val) = self.const_pool.get(&key) {
+            val
+        } else {
+            builder.ins().iconst(ty, n)
+        }
+    }
+
+    fn get_f64const(&mut self, f: f64, builder: &mut FunctionBuilder) -> Value {
+        let key = f.to_bits();
+        if let Some(&val) = self.f64_pool.get(&key) {
+            val
+        } else {
+            builder.ins().f64const(f)
+        }
+    }
+
+    fn get_f32const(&mut self, f: f32, builder: &mut FunctionBuilder) -> Value {
+        let key = f.to_bits();
+        if let Some(&val) = self.f32_pool.get(&key) {
+            val
+        } else {
+            builder.ins().f32const(f)
+        }
+    }
+
+    fn emit_fast_int_mul(
+        &mut self,
+        l: Value,
+        r: Value,
+        c: Option<i64>,
+        clif_ty: types::Type,
+        builder: &mut FunctionBuilder,
+    ) -> Value {
+        if let Some(k) = c {
+            match k {
+                0 => self.get_iconst(clif_ty, 0, builder),
+                1 => l,
+                -1 => builder.ins().ineg(l),
+                2 => builder.ins().iadd(l, l),
+                3 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    builder.ins().iadd(two_l, l)
+                }
+                4 => builder.ins().ishl_imm_s(l, 2),
+                5 => {
+                    let four_l = builder.ins().ishl_imm_s(l, 2);
+                    builder.ins().iadd(four_l, l)
+                }
+                6 => {
+                    let three_l = {
+                        let two_l = builder.ins().ishl_imm_s(l, 1);
+                        builder.ins().iadd(two_l, l)
+                    };
+                    builder.ins().ishl_imm_s(three_l, 1)
+                }
+                7 => {
+                    let eight_l = builder.ins().ishl_imm_s(l, 3);
+                    builder.ins().isub(eight_l, l)
+                }
+                8 => builder.ins().ishl_imm_s(l, 3),
+                9 => {
+                    let eight_l = builder.ins().ishl_imm_s(l, 3);
+                    builder.ins().iadd(eight_l, l)
+                }
+                10 => {
+                    let five_l = {
+                        let four_l = builder.ins().ishl_imm_s(l, 2);
+                        builder.ins().iadd(four_l, l)
+                    };
+                    builder.ins().ishl_imm_s(five_l, 1)
+                }
+                _ if k > 0 && (k as u64).is_power_of_two() => {
+                    let shift = (k as u64).trailing_zeros();
+                    builder.ins().ishl_imm_s(l, shift as i64)
+                }
+                _ => builder.ins().imul(l, r),
+            }
+        } else {
+            builder.ins().imul(l, r)
+        }
+    }
     fn get_small_constant_loop_info<'b>(condition: &'b TypedExpr) -> Option<(&'b str, usize)> {
         match condition {
             TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
@@ -1404,7 +1914,7 @@ impl<'a> FunctionTranslationState<'a> {
                     builder.ins().ushr_imm_s(n, k as i64)
                 }
             } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
-                let m_val = builder.ins().iconst(types::I64, m as i64);
+                let m_val = self.get_iconst(types::I64, m as i64, builder);
                 let hi = builder.ins().umulhi(n, m_val);
                 if s > 0 {
                     builder.ins().ushr_imm_s(hi, s as i64)
@@ -1413,7 +1923,7 @@ impl<'a> FunctionTranslationState<'a> {
                 }
             } else {
                 let (m, shift, add_ind) = compute_magic_s64(d.abs());
-                let m_val = builder.ins().iconst(types::I64, m);
+                let m_val = self.get_iconst(types::I64, m, builder);
                 let mut hi = builder.ins().smulhi(n, m_val);
                 if add_ind {
                     hi = builder.ins().iadd(hi, n);
@@ -1437,7 +1947,7 @@ impl<'a> FunctionTranslationState<'a> {
             }
         } else {
             let (m, shift, add_ind) = compute_magic_s64(d.abs());
-            let m_val = builder.ins().iconst(types::I64, m);
+            let m_val = self.get_iconst(types::I64, m, builder);
             let mut hi = builder.ins().smulhi(n, m_val);
             if add_ind {
                 hi = builder.ins().iadd(hi, n);
@@ -1477,7 +1987,7 @@ impl<'a> FunctionTranslationState<'a> {
         }
         if d == 1 || d == -1 {
             let clif_ty = type_to_clif(operand_ty.clone());
-            return Ok(builder.ins().iconst(clif_ty, 0));
+            return Ok(self.get_iconst(clif_ty, 0, builder));
         }
 
         let is_i32 = *operand_ty == Type::I32;
@@ -1492,19 +2002,19 @@ impl<'a> FunctionTranslationState<'a> {
             if ad.is_power_of_two() {
                 builder.ins().band_imm_s(n, (d - 1) as i64)
             } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
-                let m_val = builder.ins().iconst(types::I64, m as i64);
+                let m_val = self.get_iconst(types::I64, m as i64, builder);
                 let hi = builder.ins().umulhi(n, m_val);
                 let q = if s > 0 {
                     builder.ins().ushr_imm_s(hi, s as i64)
                 } else {
                     hi
                 };
-                let d_val = builder.ins().iconst(types::I64, d);
+                let d_val = self.get_iconst(types::I64, d, builder);
                 let q_times_d = builder.ins().imul(q, d_val);
                 builder.ins().isub(n, q_times_d)
             } else {
                 let (m, shift, add_ind) = compute_magic_s64(d.abs());
-                let m_val = builder.ins().iconst(types::I64, m);
+                let m_val = self.get_iconst(types::I64, m, builder);
                 let mut hi = builder.ins().smulhi(n, m_val);
                 if add_ind {
                     hi = builder.ins().iadd(hi, n);
@@ -1514,7 +2024,7 @@ impl<'a> FunctionTranslationState<'a> {
                 } else {
                     hi
                 };
-                let d_val = builder.ins().iconst(types::I64, d);
+                let d_val = self.get_iconst(types::I64, d, builder);
                 let q_times_d = builder.ins().imul(q, d_val);
                 builder.ins().isub(n, q_times_d)
             }
@@ -1531,7 +2041,7 @@ impl<'a> FunctionTranslationState<'a> {
             }
         } else {
             let (m, shift, add_ind) = compute_magic_s64(d.abs());
-            let m_val = builder.ins().iconst(types::I64, m);
+            let m_val = self.get_iconst(types::I64, m, builder);
             let mut hi = builder.ins().smulhi(n, m_val);
             if add_ind {
                 hi = builder.ins().iadd(hi, n);
@@ -1548,7 +2058,7 @@ impl<'a> FunctionTranslationState<'a> {
             } else {
                 q_pos
             };
-            let d_val = builder.ins().iconst(types::I64, d);
+            let d_val = self.get_iconst(types::I64, d, builder);
             let q_times_d = builder.ins().imul(q64, d_val);
             builder.ins().isub(n, q_times_d)
         };
@@ -2199,7 +2709,24 @@ impl<'a> FunctionTranslationState<'a> {
                 builder.switch_to_block(else_block);
                 builder.seal_block(else_block);
                 let else_term = if let Some(eb) = else_branch {
-                    self.translate_block(eb, builder)?
+                    let saved_nonneg = self.known_non_negative_vars.clone();
+                    let saved_u32 = self.known_u32_vars.clone();
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, &self.known_non_negative_vars) {
+                                    self.known_non_negative_vars.insert(name.clone());
+                                }
+                                if is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars) {
+                                    self.known_u32_vars.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                    let res = self.translate_block(eb, builder)?;
+                    self.known_non_negative_vars = saved_nonneg;
+                    self.known_u32_vars = saved_u32;
+                    res
                 } else {
                     false
                 };
@@ -2209,6 +2736,21 @@ impl<'a> FunctionTranslationState<'a> {
 
                 builder.switch_to_block(merge_block);
                 builder.seal_block(merge_block);
+
+                if then_term && else_branch.is_none() {
+                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                        if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                            if let TypedExpr::Ident { name, .. } = &**left {
+                                if is_expr_known_non_negative(right, &self.known_non_negative_vars) {
+                                    self.known_non_negative_vars.insert(name.clone());
+                                }
+                                if is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars) {
+                                    self.known_u32_vars.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
 
                 if then_term && else_term {
                     Ok(true)
@@ -2399,15 +2941,9 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 let mut added_nonneg = None;
-                if let TypedExpr::Binary { op, left, right, .. } = condition {
-                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
-                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
-                            if self.known_non_negative_vars.contains(l_name) {
-                                if self.known_non_negative_vars.insert(r_name.clone()) {
-                                    added_nonneg = Some(r_name.clone());
-                                }
-                            }
-                        }
+                if let Some(var) = get_nonneg_var_from_condition(condition, &self.known_non_negative_vars) {
+                    if self.known_non_negative_vars.insert(var.clone()) {
+                        added_nonneg = Some(var);
                     }
                 }
 
@@ -2446,15 +2982,15 @@ impl<'a> FunctionTranslationState<'a> {
             TypedExpr::Literal { lit, ty, .. } => match lit {
                 TypedLiteral::Int(n, _) => {
                     let clif_ty = type_to_clif(ty.clone());
-                    Ok(builder.ins().iconst(clif_ty, *n))
+                    Ok(self.get_iconst(clif_ty, *n, builder))
                 }
                 TypedLiteral::Float(f, _) => match ty {
-                    Type::F32 => Ok(builder.ins().f32const(*f as f32)),
-                    _ => Ok(builder.ins().f64const(*f)),
+                    Type::F32 => Ok(self.get_f32const(*f as f32, builder)),
+                    _ => Ok(self.get_f64const(*f, builder)),
                 },
                 TypedLiteral::Bool(b) => {
                     let v = if *b { 1 } else { 0 };
-                    Ok(builder.ins().iconst(types::I8, v))
+                    Ok(self.get_iconst(types::I8, v, builder))
                 }
             },
 
@@ -2470,7 +3006,7 @@ impl<'a> FunctionTranslationState<'a> {
                         Ok(builder.ins().stack_addr(types::I64, slot, 0))
                     }
                     Storage::PromotedArray { .. } => {
-                        Ok(builder.ins().iconst(types::I64, 0))
+                        Ok(self.get_iconst(types::I64, 0, builder))
                     }
                 }
             }
@@ -2488,7 +3024,7 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                     UnaryOp::Not => {
-                        let zero = builder.ins().iconst(types::I8, 0);
+                        let zero = self.get_iconst(types::I8, 0, builder);
                         let cmp = builder.ins().icmp(IntCC::Equal, inner, zero);
                         Ok(cmp)
                     }
@@ -2567,7 +3103,16 @@ impl<'a> FunctionTranslationState<'a> {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fmul(l, r))
                         } else {
-                            Ok(builder.ins().imul(l, r))
+                            let c_right = get_constant_int(right);
+                            let c_left = get_constant_int(left);
+                            let clif_ty = type_to_clif(operand_ty);
+                            if let Some(k) = c_right {
+                                Ok(self.emit_fast_int_mul(l, r, Some(k), clif_ty, builder))
+                            } else if let Some(k) = c_left {
+                                Ok(self.emit_fast_int_mul(r, l, Some(k), clif_ty, builder))
+                            } else {
+                                Ok(self.emit_fast_int_mul(l, r, None, clif_ty, builder))
+                            }
                         }
                     }
                     BinaryOp::Div => {
@@ -2576,12 +3121,19 @@ impl<'a> FunctionTranslationState<'a> {
                         } else if let Some(d) = get_constant_int(right) {
                             let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                             self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, builder)
+                        } else if is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
+                            && is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars)
+                        {
+                            let l32 = builder.ins().ireduce(types::I32, l);
+                            let r32 = builder.ins().ireduce(types::I32, r);
+                            let q32 = builder.ins().udiv(l32, r32);
+                            Ok(builder.ins().uextend(types::I64, q32))
                         } else if is_expr_known_non_negative(left, &self.known_non_negative_vars)
                             && is_expr_known_non_negative(right, &self.known_non_negative_vars)
                         {
                             let hi_or = builder.ins().bor(l, r);
                             let hi_shifted = builder.ins().ushr_imm_s(hi_or, 32);
-                            let zero = builder.ins().iconst(types::I64, 0);
+                            let zero = self.get_iconst(types::I64, 0, builder);
                             let fits32 = builder.ins().icmp(IntCC::Equal, hi_shifted, zero);
                             let div32_block = builder.create_block();
                             let div64_block = builder.create_block();
@@ -2617,12 +3169,19 @@ impl<'a> FunctionTranslationState<'a> {
                             if let Some(d) = get_constant_int(right) {
                                 let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                                 self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, builder)
+                            } else if is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
+                                && is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars)
+                            {
+                                let l32 = builder.ins().ireduce(types::I32, l);
+                                let r32 = builder.ins().ireduce(types::I32, r);
+                                let rem32 = builder.ins().urem(l32, r32);
+                                Ok(builder.ins().uextend(types::I64, rem32))
                             } else if is_expr_known_non_negative(left, &self.known_non_negative_vars)
                                 && is_expr_known_non_negative(right, &self.known_non_negative_vars)
                             {
                                 let hi_or = builder.ins().bor(l, r);
                                 let hi_shifted = builder.ins().ushr_imm_s(hi_or, 32);
-                                let zero = builder.ins().iconst(types::I64, 0);
+                                let zero = self.get_iconst(types::I64, 0, builder);
                                 let fits32 = builder.ins().icmp(IntCC::Equal, hi_shifted, zero);
                                 let rem32_block = builder.create_block();
                                 let rem64_block = builder.create_block();
@@ -2653,7 +3212,7 @@ impl<'a> FunctionTranslationState<'a> {
                                 Ok(builder.ins().srem(l, r))
                             }
                         } else {
-                            Ok(l)
+                            Ok(builder.ins().srem(l, r))
                         }
                     }
                     BinaryOp::Pow => {
@@ -3337,9 +3896,6 @@ impl<'a> FunctionTranslationState<'a> {
         locals: &HashMap<String, Value>,
         builder: &mut FunctionBuilder,
     ) -> Result<Value, CodegenError> {
-        if locals.is_empty() {
-            return self.translate_expr(expr, builder);
-        }
         match expr {
             TypedExpr::Ident { name, .. } => {
                 if let Some(&val) = locals.get(name) {
@@ -3359,7 +3915,7 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                     crate::ast::UnaryOp::Not => {
-                        let zero = builder.ins().iconst(types::I8, 0);
+                        let zero = self.get_iconst(types::I8, 0, builder);
                         Ok(builder.ins().icmp(IntCC::Equal, inner_val, zero))
                     }
                 }
@@ -3382,7 +3938,7 @@ impl<'a> FunctionTranslationState<'a> {
                         let nonneg_by_name = match left.as_ref() {
                             TypedExpr::Ident { name, .. } => {
                                 self.known_non_negative_vars.contains(name)
-                                    || locals.contains_key(name.as_str())
+                                     || locals.contains_key(name.as_str())
                             }
                             _ => false,
                         };
@@ -3417,7 +3973,16 @@ impl<'a> FunctionTranslationState<'a> {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fmul(l, r))
                         } else {
-                            Ok(builder.ins().imul(l, r))
+                            let c_right = get_constant_int(right);
+                            let c_left = get_constant_int(left);
+                            let clif_ty = type_to_clif(operand_ty);
+                            if let Some(k) = c_right {
+                                Ok(self.emit_fast_int_mul(l, r, Some(k), clif_ty, builder))
+                            } else if let Some(k) = c_left {
+                                Ok(self.emit_fast_int_mul(r, l, Some(k), clif_ty, builder))
+                            } else {
+                                Ok(self.emit_fast_int_mul(l, r, None, clif_ty, builder))
+                            }
                         }
                     }
                     BinaryOp::BitAnd => Ok(builder.ins().band(l, r)),
