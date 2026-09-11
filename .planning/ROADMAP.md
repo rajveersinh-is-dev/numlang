@@ -47,7 +47,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 29: Whole-Program Interprocedural Function Inlining** - Inline non-recursive small/medium functions to eliminate call frames and expose constants. (completed 2026-09-11)
 - [x] **Phase 30: Branchless Select Predication & CMOV Lowering** - Lower variable-updating if-else branches to branchless Cranelift select/cmov instructions. (completed 2026-09-11)
 - [x] **Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling** - Transform tail calls in `tak` and `ack` to loops and unroll leaf recursion in `fib`. (completed 2026-09-11)
-- [ ] **Phase 32: Total 20-Workload Benchmark Supremacy Verification** - Full comparative verification against Rust (-O) and C (/O2) with hardware QPC timers.
+- [x] **Phase 32: Total 20-Workload Benchmark Supremacy Verification** - Full comparative verification against Rust (-O) and C (/O2) with hardware QPC timers. (completed 2026-09-11)
 
 ## Phase Details
 
@@ -411,7 +411,7 @@ Plans:
   3. Decisive speedups over Rust (-O) and C (/O2) documented across the suite.
 
 Plans:
-- [ ] 32-01: Full 20-workload comparative benchmark verification and victory report
+- [x] 32-01: Full 20-workload comparative benchmark verification and victory report (completed 2026-09-11)
 
 ## Progress
 
@@ -451,4 +451,4 @@ Phases execute in numeric order: 1 → 2 → ... → 28 → 29 → 30 → 31 →
 | 29. Whole-Program Interprocedural Function Inlining | 1/1 | Complete | 2026-09-11 |
 | 30. Branchless Select Predication & CMOV Lowering | 1/1 | Complete | 2026-09-11 |
 | 31. Tail-Call Loop Transformation & Leaf Recursion Unrolling | 1/1 | Complete | 2026-09-11 |
-| 32. Total 20-Workload Benchmark Supremacy Verification | 0/1 | Planned | — |
+| 32. Total 20-Workload Benchmark Supremacy Verification | 1/1 | Complete | 2026-09-11 |
