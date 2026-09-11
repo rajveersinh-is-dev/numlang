@@ -40,7 +40,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 25: Dynamic SROA Elimination & Contiguous Indexing** - Restrict SROA to statically indexed arrays, keeping dynamic arrays on stack to eliminate CMOV select trees. (completed 2026-09-11)
 - [x] **Phase 26: High-Throughput Modulo & Division Strength Reduction** - Single-cycle power-of-two modulo (`band_imm`) and strength reduction for loop-invariant divisors. (completed 2026-09-11)
 - [x] **Phase 27: While Loop Lowering Optimization & Dynamic BCE** - Rotated while loop optimization and binary search midpoint range analysis in BCE. (completed 2026-09-11)
-- [ ] **Phase 28: Total 20-Workload Benchmark Supremacy Verification** - Full comparative benchmark verification against Rust (-O) and C (/O2) with hardware QPC timers.
+- [x] **Phase 28: Total 20-Workload Benchmark Supremacy Verification** - Full comparative benchmark verification against Rust (-O) and C (/O2) with hardware QPC timers. (completed 2026-09-11)
 
 ## Phase Details
 
@@ -337,7 +337,7 @@ Plans:
   3. Binary search benchmark runs without branch bounds check traps.
 
 Plans:
-- [ ] 27-01: Optimize while loop control flow and expand BCE for binary search midpoint expressions
+- [x] 27-01: Optimize while loop control flow and expand BCE for binary search midpoint expressions (completed 2026-09-11)
 
 ### Phase 28: Total 20-Workload Benchmark Supremacy Verification
 
@@ -350,7 +350,7 @@ Plans:
   3. NumLang demonstrates decisive performance superiority over Rust (-O) and C (/O2) across the suite.
 
 Plans:
-- [ ] 28-01: Full 20-workload multi-language benchmark suite execution and performance validation
+- [x] 28-01: Full 20-workload multi-language benchmark suite execution and performance validation (completed 2026-09-11)
 
 ## Progress
 
@@ -386,9 +386,4 @@ Phases execute in numeric order: 1 → 2 → ... → 24 → 25 → 26 → 27 →
 | 25. Dynamic SROA Elimination & Contiguous Indexing | 1/1 | Complete | 2026-09-11 |
 | 26. High-Throughput Modulo & Division Strength Reduction | 1/1 | Complete | 2026-09-11 |
 | 27. While Loop Lowering Optimization & Dynamic BCE | 1/1 | Complete | 2026-09-11 |
-| 28. Total 20-Workload Benchmark Supremacy Verification | 0/1 | Planned | — |
-
-
-
-
-
+| 28. Total 20-Workload Benchmark Supremacy Verification | 1/1 | Complete | 2026-09-11 |
