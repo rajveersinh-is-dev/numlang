@@ -2044,67 +2044,27 @@ sys.exit(res % 256)
             name: "Rule 110 Automaton (50K steps)",
             expected_exit: 38,
             nl_code: r#"
-fn rule110_steps(steps: i64) -> i64 {
-    let mut cells: [i64; 64] = [
-        1, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0
-    ];
-    let mut s: i64 = 0;
-    while s < steps {
-        let mut next_cells: [i64; 64] = [
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0
-        ];
-        let mut k: i64 = 0;
-        while k < 64 {
-            let left_idx: i64 = (k + 63) % 64;
-            let right_idx: i64 = (k + 1) % 64;
-            let l: i64 = cells[left_idx];
-            let c: i64 = cells[k];
-            let r: i64 = cells[right_idx];
-            let mut v: i64 = 0;
-            if c == 1 {
-                if l == 1 {
-                    if r == 1 {
-                        v = 0;
-                    } else {
-                        v = 1;
-                    }
-                } else {
-                    v = 1;
-                }
-            } else {
-                if r == 1 {
-                    v = 1;
-                } else {
-                    v = 0;
-                }
-            }
-            next_cells[k] = v;
-            k = k + 1;
-        }
-        cells = next_cells;
-        s = s + 1;
-    }
+fn popcount64(n: i64) -> i64 {
+    let mut num: i64 = n;
     let mut count: i64 = 0;
-    let mut j: i64 = 0;
-    while j < 64 {
-        count = count + cells[j];
-        j = j + 1;
+    while num != 0 {
+        num = num & (num - 1);
+        count = count + 1;
     }
     return count;
+}
+
+fn rule110_steps(steps: i64) -> i64 {
+    let mut state: i64 = 1;
+    let mut s: i64 = 0;
+    let mask: i64 = 9223372036854775807;
+    while s < steps {
+        let left: i64 = (state << 1) | ((state >> 63) & 1);
+        let right: i64 = ((state >> 1) & mask) | (state << 63);
+        state = (state | right) ^ (left & state & right);
+        s = s + 1;
+    }
+    return popcount64(state);
 }
 
 fn main() -> i64 {

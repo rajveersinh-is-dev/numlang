@@ -815,6 +815,64 @@ impl<'a> FunctionTranslationState<'a> {
         Ok(())
     }
 
+    fn copy_array_slots(
+        &self,
+        src_slot: StackSlot,
+        dst_slot: StackSlot,
+        total_bytes: usize,
+        elem_ty: &Type,
+        builder: &mut FunctionBuilder,
+    ) {
+        let mut offset = 0;
+        // 64-byte unrolled 4-way SIMD blocks (4x 16-byte XMM registers)
+        while offset + 64 <= total_bytes {
+            let a0 = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
+            let a1 = builder.ins().stack_addr(types::I64, src_slot, (offset + 16) as i32);
+            let a2 = builder.ins().stack_addr(types::I64, src_slot, (offset + 32) as i32);
+            let a3 = builder.ins().stack_addr(types::I64, src_slot, (offset + 48) as i32);
+            let c0 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a0, 0);
+            let c1 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a1, 0);
+            let c2 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a2, 0);
+            let c3 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a3, 0);
+
+            let d0 = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
+            let d1 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 16) as i32);
+            let d2 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 32) as i32);
+            let d3 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 48) as i32);
+            builder.ins().store(MemFlagsData::trusted(), c0, d0, 0);
+            builder.ins().store(MemFlagsData::trusted(), c1, d1, 0);
+            builder.ins().store(MemFlagsData::trusted(), c2, d2, 0);
+            builder.ins().store(MemFlagsData::trusted(), c3, d3, 0);
+            offset += 64;
+        }
+        // 16-byte SIMD blocks
+        while offset + 16 <= total_bytes {
+            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
+            let chunk = builder.ins().load(types::I8X16, MemFlagsData::trusted(), src_addr, 0);
+            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
+            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            offset += 16;
+        }
+        // 8-byte scalar chunks
+        while offset + 8 <= total_bytes {
+            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
+            let chunk = builder.ins().load(types::I64, MemFlagsData::trusted(), src_addr, 0);
+            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
+            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            offset += 8;
+        }
+        // remaining elements
+        let clif_ty = type_to_clif(elem_ty.clone());
+        let elem_size = elem_ty.size_bytes();
+        while offset < total_bytes {
+            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
+            let chunk = builder.ins().load(clif_ty, MemFlagsData::trusted(), src_addr, 0);
+            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
+            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            offset += elem_size;
+        }
+    }
+
     fn translate_vec_add_into_slot(
         &mut self,
         args: &[TypedExpr],
@@ -827,6 +885,81 @@ impl<'a> FunctionTranslationState<'a> {
         let arr_b = self.resolve_array(&args[1], builder)?;
         let elem_size = elem_ty.size_bytes() as i32;
 
+        // If both arrays are stack slots, leverage SIMD vector arithmetic instructions
+        if let (ResolvedArray::Slot { slot: slot_a, .. }, ResolvedArray::Slot { slot: slot_b, .. }) = (&arr_a, &arr_b) {
+            let mut i = 0;
+            match elem_ty {
+                Type::I64 => {
+                    while i + 2 <= len {
+                        let offset = (i as i32) * 8;
+                        let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
+                        let va = builder.ins().load(types::I64X2, MemFlagsData::trusted(), addr_a, 0);
+                        let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
+                        let vb = builder.ins().load(types::I64X2, MemFlagsData::trusted(), addr_b, 0);
+                        let vsum = builder.ins().iadd(va, vb);
+                        let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        i += 2;
+                    }
+                }
+                Type::F64 => {
+                    while i + 2 <= len {
+                        let offset = (i as i32) * 8;
+                        let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
+                        let va = builder.ins().load(types::F64X2, MemFlagsData::trusted(), addr_a, 0);
+                        let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
+                        let vb = builder.ins().load(types::F64X2, MemFlagsData::trusted(), addr_b, 0);
+                        let vsum = builder.ins().fadd(va, vb);
+                        let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        i += 2;
+                    }
+                }
+                Type::I32 => {
+                    while i + 4 <= len {
+                        let offset = (i as i32) * 4;
+                        let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
+                        let va = builder.ins().load(types::I32X4, MemFlagsData::trusted(), addr_a, 0);
+                        let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
+                        let vb = builder.ins().load(types::I32X4, MemFlagsData::trusted(), addr_b, 0);
+                        let vsum = builder.ins().iadd(va, vb);
+                        let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        i += 4;
+                    }
+                }
+                Type::F32 => {
+                    while i + 4 <= len {
+                        let offset = (i as i32) * 4;
+                        let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
+                        let va = builder.ins().load(types::F32X4, MemFlagsData::trusted(), addr_a, 0);
+                        let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
+                        let vb = builder.ins().load(types::F32X4, MemFlagsData::trusted(), addr_b, 0);
+                        let vsum = builder.ins().fadd(va, vb);
+                        let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        i += 4;
+                    }
+                }
+                _ => {}
+            }
+            while i < len {
+                let offset = (i as i32) * elem_size;
+                let val_a = self.get_array_element(&arr_a, i, builder);
+                let val_b = self.get_array_element(&arr_b, i, builder);
+                let sum = if elem_ty.is_float() {
+                    builder.ins().fadd(val_a, val_b)
+                } else {
+                    builder.ins().iadd(val_a, val_b)
+                };
+                let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
+                builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
+                i += 1;
+            }
+            return Ok(());
+        }
+
+        // Fallback when one or both operands are promoted vars
         for i in 0..len {
             let offset = (i as i32) * elem_size;
             let val_a = self.get_array_element(&arr_a, i, builder);
@@ -942,23 +1075,8 @@ impl<'a> FunctionTranslationState<'a> {
                                         }
                                     }
                                     Storage::Array { slot: src_slot, .. } => {
-                                        for i in 0..*len {
-                                            let offset = (i as i32) * (elem_size as i32);
-                                            let clif_ty = type_to_clif((**elem).clone());
-                                            let src_addr =
-                                                builder.ins().stack_addr(types::I64, src_slot, offset);
-                                            let el_val = builder.ins().load(
-                                                clif_ty,
-                                                MemFlagsData::trusted(),
-                                                src_addr,
-                                                0,
-                                            );
-                                            let dst_addr =
-                                                builder.ins().stack_addr(types::I64, slot, offset);
-                                            builder
-                                                .ins()
-                                                .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
-                                        }
+                                        let total_bytes = (*len) * elem.size_bytes();
+                                        self.copy_array_slots(src_slot, slot, total_bytes, elem, builder);
                                     }
                                     _ => {}
                                 }
@@ -1039,23 +1157,8 @@ impl<'a> FunctionTranslationState<'a> {
                                         }
                                     }
                                     Storage::Array { slot: src_slot, .. } => {
-                                        for i in 0..len {
-                                            let offset = (i as i32) * elem_size;
-                                            let clif_ty = type_to_clif(elem.clone());
-                                            let src_addr =
-                                                builder.ins().stack_addr(types::I64, src_slot, offset);
-                                            let el_val = builder.ins().load(
-                                                clif_ty,
-                                                MemFlagsData::trusted(),
-                                                src_addr,
-                                                0,
-                                            );
-                                            let dst_addr =
-                                                builder.ins().stack_addr(types::I64, slot, offset);
-                                            builder
-                                                .ins()
-                                                .store(MemFlagsData::trusted(), el_val, dst_addr, 0);
-                                        }
+                                        let total_bytes = len * elem.size_bytes();
+                                        self.copy_array_slots(src_slot, slot, total_bytes, &elem, builder);
                                     }
                                     _ => {}
                                 }
