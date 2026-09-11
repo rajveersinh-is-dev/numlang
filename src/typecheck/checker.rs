@@ -913,6 +913,64 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    "ctz" | "clz" | "popcnt" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: callee.clone(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], expected_hint)?;
+                        if !typed_arg.ty().is_integer() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        let ty = typed_arg.ty();
+                        return Ok(TypedExpr::Call {
+                            callee: callee.clone(),
+                            args: vec![typed_arg],
+                            ty,
+                            span: *span,
+                        });
+                    }
+                    "rotl" | "rotr" => {
+                        if args.len() != 2 {
+                            return Err(TypeError::ArityMismatch {
+                                name: callee.clone(),
+                                expected: 2,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_val = self.check_expr(&args[0], expected_hint)?;
+                        if !typed_val.ty().is_integer() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_val.ty(),
+                                span: typed_val.span(),
+                            });
+                        }
+                        let typed_shift = self.check_expr(&args[1], Some(Type::I64))?;
+                        if !typed_shift.ty().is_integer() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_shift.ty(),
+                                span: typed_shift.span(),
+                            });
+                        }
+                        let ty = typed_val.ty();
+                        return Ok(TypedExpr::Call {
+                            callee: callee.clone(),
+                            args: vec![typed_val, typed_shift],
+                            ty,
+                            span: *span,
+                        });
+                    }
                     "to_i64" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {
