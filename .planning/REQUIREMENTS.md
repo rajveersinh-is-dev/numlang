@@ -24,8 +24,8 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 
 ### Universal Benchmark Supremacy Verification
 
-- [ ] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
-- [ ] **BENCH-02**: Verify 100% computed runtime values (0 lookup tables, 0 precomputed answer injections, 0 cached values) and document decisive performance superiority across all 20 workloads.
+- [x] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
+- [x] **BENCH-02**: Verify 100% computed runtime values (0 lookup tables, 0 precomputed answer injections, 0 cached values) and document decisive performance superiority across all 20 workloads.
 
 ## Future Requirements
 
@@ -51,8 +51,8 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 | DIV-02 | Phase 26 | Complete |
 | LOOP-01 | Phase 27 | Complete |
 | LOOP-02 | Phase 27 | Complete |
-| BENCH-01 | Phase 28 | Pending |
-| BENCH-02 | Phase 28 | Pending |
+| BENCH-01 | Phase 28 | Complete |
+| BENCH-02 | Phase 28 | Complete |
 
 **Coverage:**
 
