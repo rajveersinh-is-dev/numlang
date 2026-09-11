@@ -51,10 +51,10 @@ fn test_pratt_grouped_precedence() {
 
 #[test]
 fn test_pratt_exponentiation_right_associativity() {
-    let tokens = tokenize("2 ^ 3 ^ 2").unwrap();
+    let tokens = tokenize("2 ** 3 ** 2").unwrap();
     let expr = parse_expr_str(&tokens).unwrap();
 
-    // 2 ^ (3 ^ 2) -> 2 ^ 9
+    // 2 ** (3 ** 2) -> 2 ** 9
     match expr {
         Expr::Binary { op, left, right, .. } => {
             assert_eq!(op, BinaryOp::Pow);
@@ -69,6 +69,49 @@ fn test_pratt_exponentiation_right_associativity() {
             }
         }
         _ => panic!("Expected Pow at root"),
+    }
+}
+
+#[test]
+fn test_pratt_bitwise_operators() {
+    let tokens = tokenize("a | b ^ c & d").unwrap();
+    let expr = parse_expr_str(&tokens).unwrap();
+
+    // In C / Rust: & has highest precedence, then ^, then |
+    // a | (b ^ (c & d))
+    match expr {
+        Expr::Binary { op, left, right, .. } => {
+            assert_eq!(op, BinaryOp::BitOr);
+            match *left {
+                Expr::Ident(name, _) => assert_eq!(name, "a"),
+                _ => panic!("Expected ident a on LHS"),
+            }
+            match *right {
+                Expr::Binary { op: op2, left: l2, right: r2, .. } => {
+                    assert_eq!(op2, BinaryOp::BitXor);
+                    match *l2 {
+                        Expr::Ident(name, _) => assert_eq!(name, "b"),
+                        _ => panic!("Expected ident b"),
+                    }
+                    match *r2 {
+                        Expr::Binary { op: op3, left: l3, right: r3, .. } => {
+                            assert_eq!(op3, BinaryOp::BitAnd);
+                            match *l3 {
+                                Expr::Ident(name, _) => assert_eq!(name, "c"),
+                                _ => panic!("Expected ident c"),
+                            }
+                            match *r3 {
+                                Expr::Ident(name, _) => assert_eq!(name, "d"),
+                                _ => panic!("Expected ident d"),
+                            }
+                        }
+                        _ => panic!("Expected BitAnd"),
+                    }
+                }
+                _ => panic!("Expected BitXor"),
+            }
+        }
+        _ => panic!("Expected BitOr at root"),
     }
 }
 

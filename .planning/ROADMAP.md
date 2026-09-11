@@ -229,7 +229,7 @@ Plans:
 
 ### Milestone v9.0: Pure Runtime Numerical Optimization & Benchmark Supremacy
 
-- [ ] **Phase 21: Integer Bitwise Operators** - Tokenizer, parser, type checker, and Cranelift lowering for bitwise `&`, `|`, `^`, `<<`, `>>` on integers (`i64`, `i32`).
+- [x] **Phase 21: Integer Bitwise Operators** - Tokenizer, parser, type checker, and Cranelift lowering for bitwise `&`, `|`, `^`, `<<`, `>>` on integers (`i64`, `i32`). (completed 2026-09-11)
 - [ ] **Phase 22: Loop Bounds Check Elimination (BCE)** - Static induction bounds analysis to eliminate array bounds checking branches in safe loops.
 - [ ] **Phase 23: AVX2 SIMD Array Vectorization** - 256-bit AVX2 SIMD vector lowering for multi-element array sweeps and cellular automaton updates.
 - [ ] **Phase 24: 20-Workload Comparative Benchmark Audit** - Full 20-workload multi-language comparative benchmark audit against Rust (-O) and C (/O2) with hardware telemetry and 100% computed values.
@@ -246,7 +246,7 @@ Plans:
   4. Stein's Binary GCD benchmark runs using native bitwise operations, accelerating dynamic execution.
 
 Plans:
-- [ ] 21-01: Tokenizer, parser, AST, type checker, and Cranelift codegen for bitwise operations
+- [x] 21-01: Tokenizer, parser, AST, type checker, and Cranelift codegen for bitwise operations
 
 ### Phase 22: Loop Bounds Check Elimination (BCE)
 
@@ -313,7 +313,7 @@ Phases execute in numeric order: 1 → 2 → ... → 20 → 21 → 22 → 23 →
 | 18. Linker Optimization & Weak-Point Elevation Hardening | 1/1 | Complete | 2026-09-10 |
 | 19. Workload Calibration in 14-Benchmark Multi-Language Suite | 1/1 | Complete | 2026-09-10 |
 | 20. Weakest Points Decimation Verification & Audit | 1/1 | Complete | 2026-09-10 |
-| 21. Integer Bitwise Operators | 0/1 | Not started | - |
+| 21. Integer Bitwise Operators | 1/1 | Complete | 2026-09-11 |
 | 22. Loop Bounds Check Elimination (BCE) | 0/1 | Not started | - |
 | 23. AVX2 SIMD Array Vectorization | 0/1 | Not started | - |
 | 24. 20-Workload Comparative Benchmark Audit | 0/1 | Not started | - |
