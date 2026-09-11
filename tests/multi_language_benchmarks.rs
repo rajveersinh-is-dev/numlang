@@ -44,17 +44,22 @@ fn wrap_c(src: &str) -> String {
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
+#include <intrin.h>
 
 int __user_main(void);
 
 int main() {{
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
+    _ReadWriteBarrier();
     QueryPerformanceCounter(&t0);
-    int ret = __user_main();
+    _ReadWriteBarrier();
+    volatile int ret = __user_main();
+    _ReadWriteBarrier();
     QueryPerformanceCounter(&t1);
+    _ReadWriteBarrier();
     long long ns = (t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart;
-    if (ns <= 0) ns = 14;
+    if (ns < 0) ns = 0;
     printf("COMPUTE_NS: %lld\n", ns);
     return ret;
 }}
