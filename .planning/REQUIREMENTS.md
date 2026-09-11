@@ -19,8 +19,8 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 - [x] **REC-02**: Implement leaf recursion unrolling for binary recurrence relations (`fib 35`), slashing call frame traffic.
 
 ### Universal Benchmark Supremacy Verification
-- [ ] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
-- [ ] **BENCH-02**: Verify 100% dynamic bare-metal CPU computation per run (zero lookup tables, zero cached values) and demonstrate decisive performance superiority across all 20 workloads.
+- [x] **BENCH-01**: Execute complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers.
+- [x] **BENCH-02**: Verify 100% dynamic bare-metal CPU computation per run (zero lookup tables, zero cached values) and demonstrate decisive performance superiority across all 20 workloads.
 
 ## Out of Scope
 
@@ -40,8 +40,8 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 | PRED-01 | Phase 30 | Complete |
 | REC-01 | Phase 31 | Complete |
 | REC-02 | Phase 31 | Complete |
-| BENCH-01 | Phase 32 | Pending |
-| BENCH-02 | Phase 32 | Pending |
+| BENCH-01 | Phase 32 | Complete |
+| BENCH-02 | Phase 32 | Complete |
 
 **Coverage:**
 
