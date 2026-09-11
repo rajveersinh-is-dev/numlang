@@ -1780,10 +1780,16 @@ impl<'a> FunctionTranslationState<'a> {
                     let is_dynamic = self.dynamically_indexed_arrays.contains(name);
                     if *len <= 16 && !is_dynamic {
                         let clif_ty = type_to_clif((**elem).clone());
-                        let mut vars = Vec::with_capacity(*len);
-                        for _ in 0..*len {
-                            vars.push(builder.declare_var(clif_ty));
-                        }
+                        let vars = match self.variables.get(name) {
+                            Some(Storage::PromotedArray { vars: existing_vars, len: existing_len, .. }) if *existing_len == *len => existing_vars.clone(),
+                            _ => {
+                                let mut vars = Vec::with_capacity(*len);
+                                for _ in 0..*len {
+                                    vars.push(builder.declare_var(clif_ty));
+                                }
+                                vars
+                            }
+                        };
 
                         match value {
                             TypedExpr::ArrayLiteral { elements, .. } => {
@@ -1842,9 +1848,14 @@ impl<'a> FunctionTranslationState<'a> {
 
                     let elem_size = elem.size_bytes() as u32;
                     let total_bytes = (elem_size * (*len as u32)).max(1);
-                    let slot_data =
-                        StackSlotData::new(StackSlotKind::ExplicitSlot, total_bytes, elem_size.min(8) as u8);
-                    let slot = builder.create_sized_stack_slot(slot_data);
+                    let slot = match self.variables.get(name) {
+                        Some(Storage::Array { slot: existing_slot, len: existing_len }) if *existing_len == *len => *existing_slot,
+                        _ => {
+                            let slot_data =
+                                StackSlotData::new(StackSlotKind::ExplicitSlot, total_bytes, elem_size.min(8) as u8);
+                            builder.create_sized_stack_slot(slot_data)
+                        }
+                    };
 
                     match value {
                         TypedExpr::ArrayLiteral { elements, .. } => {
@@ -1898,10 +1909,16 @@ impl<'a> FunctionTranslationState<'a> {
                     Ok(false)
                 } else {
                     let val = self.translate_expr(value, builder)?;
-                    let clif_ty = type_to_clif(ty.clone());
-                    let var = builder.declare_var(clif_ty);
+                    let var = match self.variables.get(name) {
+                        Some(Storage::Scalar(existing_var)) => *existing_var,
+                        _ => {
+                            let clif_ty = type_to_clif(ty.clone());
+                            let new_var = builder.declare_var(clif_ty);
+                            self.variables.insert(name.clone(), Storage::Scalar(new_var));
+                            new_var
+                        }
+                    };
                     builder.def_var(var, val);
-                    self.variables.insert(name.clone(), Storage::Scalar(var));
                     Ok(false)
                 }
             }

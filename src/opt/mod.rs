@@ -4,6 +4,7 @@ pub mod const_args;
 pub mod inlining;
 pub mod math_elevation;
 pub mod recursion;
+pub mod while_unroll;
 
 use crate::typecheck::typed_ast::TypedProgram;
 
@@ -14,6 +15,7 @@ pub fn optimize_program(program: &mut TypedProgram) {
     const_args::optimize_program(program);
     inlining::optimize_program(program);
     const_args::optimize_program(program);
+    while_unroll::optimize_program(program);
     math_elevation::optimize_program(program);
     array_opt::optimize_arrays(program);
     bce::optimize_program(program);
