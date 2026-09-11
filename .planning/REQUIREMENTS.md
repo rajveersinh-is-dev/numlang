@@ -9,13 +9,13 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 
 ### SROA Optimization & Contiguous Indexing
 
-- [ ] **SROA-01**: Restrict SROA register promotion to purely statically indexed arrays; dynamically indexed arrays remain contiguous stack slots (`Storage::Array`).
-- [ ] **SROA-02**: Eliminate `O(len)` CMOV select trees on dynamic array reads and writes, lowering dynamic lookups to single-cycle indexed memory operations (`mov rax, [rsp + rdi*8]`), accelerating N-Queens and search loops.
+- [x] **SROA-01**: Restrict SROA register promotion to purely statically indexed arrays; dynamically indexed arrays remain contiguous stack slots (`Storage::Array`).
+- [x] **SROA-02**: Eliminate `O(len)` CMOV select trees on dynamic array reads and writes, lowering dynamic lookups to single-cycle indexed memory operations (`mov rax, [rsp + rdi*8]`), accelerating N-Queens and search loops.
 
 ### High-Throughput Modulo & Division Strength Reduction
 
-- [ ] **DIV-01**: Non-negative / unsigned fast path for power-of-two modulo: lower `x % (1 << k)` to single-cycle `band_imm` (`x & ((1 << k) - 1)`), eliminating 6-8 instruction sign-bias arithmetic in RNG and Monte Carlo simulation.
-- [ ] **DIV-02**: Loop-invariant divisor strength reduction: detect invariant divisors in loops and optimize lowering to reciprocal multiplication or fast unsigned paths.
+- [x] **DIV-01**: Non-negative / unsigned fast path for power-of-two modulo: lower `x % (1 << k)` to single-cycle `band_imm` (`x & ((1 << k) - 1)`), eliminating 6-8 instruction sign-bias arithmetic in RNG and Monte Carlo simulation.
+- [x] **DIV-02**: Loop-invariant divisor strength reduction: detect invariant divisors in loops and optimize lowering to reciprocal multiplication or fast unsigned paths.
 
 ### Loop Optimization & Dynamic BCE
 
@@ -45,10 +45,10 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SROA-01 | Phase 25 | Pending |
-| SROA-02 | Phase 25 | Pending |
-| DIV-01 | Phase 26 | Pending |
-| DIV-02 | Phase 26 | Pending |
+| SROA-01 | Phase 25 | Complete |
+| SROA-02 | Phase 25 | Complete |
+| DIV-01 | Phase 26 | Complete |
+| DIV-02 | Phase 26 | Complete |
 | LOOP-01 | Phase 27 | Pending |
 | LOOP-02 | Phase 27 | Pending |
 | BENCH-01 | Phase 28 | Pending |

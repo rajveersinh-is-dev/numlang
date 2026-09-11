@@ -69,6 +69,28 @@ fn compute_magic_s64(d: i64) -> (i64, u8, bool) {
     (m_signed, shift, add_indicator)
 }
 
+fn compute_magic_u64_nonneg(d: u64) -> Option<(u64, u8)> {
+    if d == 0 || d == 1 {
+        return None;
+    }
+    for s in 0..64u8 {
+        let p = 64 + (s as u32);
+        if p <= 126 {
+            let two_p = 1u128 << p;
+            let q = two_p / (d as u128);
+            let r = two_p % (d as u128);
+            let m = if r == 0 { q } else { q + 1 };
+            if m < (1u128 << 64) {
+                let delta = if r == 0 { 0 } else { (d as u128) - r };
+                if (delta << 63) <= two_p {
+                    return Some((m as u64, s));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn get_constant_int(expr: &TypedExpr) -> Option<i64> {
     match expr {
         TypedExpr::Literal {
@@ -185,6 +207,158 @@ fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<String
         }
         TypedExpr::Ident { .. } | TypedExpr::Literal { .. } => {}
     }
+}
+
+fn is_known_positive(expr: &TypedExpr, non_negative_vars: &HashSet<String>) -> bool {
+    match expr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => *val > 0,
+        TypedExpr::Binary {
+            op: BinaryOp::Add,
+            left,
+            right,
+            ..
+        } => {
+            (is_known_positive(left, non_negative_vars)
+                && is_expr_known_non_negative(right, non_negative_vars))
+                || (is_expr_known_non_negative(left, non_negative_vars)
+                    && is_known_positive(right, non_negative_vars))
+        }
+        _ => false,
+    }
+}
+
+fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<String>) -> bool {
+    match expr {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => *val >= 0,
+        TypedExpr::Literal {
+            lit: TypedLiteral::Bool(_),
+            ..
+        } => true,
+        TypedExpr::Ident { name, .. } => non_negative_vars.contains(name),
+        TypedExpr::Binary {
+            op,
+            left,
+            right,
+            ..
+        } => match op {
+            BinaryOp::Add | BinaryOp::Mul => {
+                is_expr_known_non_negative(left, non_negative_vars)
+                    && is_expr_known_non_negative(right, non_negative_vars)
+            }
+            BinaryOp::Div => {
+                is_expr_known_non_negative(left, non_negative_vars)
+                    && is_known_positive(right, non_negative_vars)
+            }
+            BinaryOp::Mod => {
+                is_expr_known_non_negative(left, non_negative_vars)
+                    && is_known_positive(right, non_negative_vars)
+            }
+            BinaryOp::BitAnd => {
+                // If either operand has sign bit 0 (is non-negative), bit 63 of result is 0
+                is_expr_known_non_negative(left, non_negative_vars)
+                    || is_expr_known_non_negative(right, non_negative_vars)
+            }
+            BinaryOp::BitOr | BinaryOp::BitXor => {
+                is_expr_known_non_negative(left, non_negative_vars)
+                    && is_expr_known_non_negative(right, non_negative_vars)
+            }
+            BinaryOp::Shr => is_expr_known_non_negative(left, non_negative_vars),
+            _ => false,
+        },
+        TypedExpr::Unary {
+            op: UnaryOp::Not, ..
+        } => true,
+        TypedExpr::Call { callee, .. } => callee == "abs" || callee == "sqrt",
+        _ => false,
+    }
+}
+
+fn collect_known_non_negative_vars(body: &TypedBlock) -> HashSet<String> {
+    let mut candidates: HashSet<String> = HashSet::new();
+    collect_initial_nonneg_candidates_block(body, &mut candidates);
+
+    loop {
+        let mut to_remove = Vec::new();
+        for var in &candidates {
+            if !all_assignments_are_nonneg_in_block(body, var, &candidates) {
+                to_remove.push(var.clone());
+            }
+        }
+        if to_remove.is_empty() {
+            break;
+        }
+        for var in to_remove {
+            candidates.remove(&var);
+        }
+    }
+
+    candidates
+}
+
+fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &mut HashSet<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } => {
+                if is_expr_known_non_negative(value, candidates) {
+                    candidates.insert(name.clone());
+                }
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                collect_initial_nonneg_candidates_block(then_branch, candidates);
+                if let Some(eb) = else_branch {
+                    collect_initial_nonneg_candidates_block(eb, candidates);
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                collect_initial_nonneg_candidates_block(body, candidates);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn all_assignments_are_nonneg_in_block(
+    block: &TypedBlock,
+    var: &str,
+    candidates: &HashSet<String>,
+) -> bool {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } if name == var => {
+                if !is_expr_known_non_negative(value, candidates) {
+                    return false;
+                }
+            }
+            TypedStmt::Assign { name, value, .. } if name == var => {
+                if !is_expr_known_non_negative(value, candidates) {
+                    return false;
+                }
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                if !all_assignments_are_nonneg_in_block(then_branch, var, candidates) {
+                    return false;
+                }
+                if let Some(eb) = else_branch {
+                    if !all_assignments_are_nonneg_in_block(eb, var, candidates) {
+                        return false;
+                    }
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                if !all_assignments_are_nonneg_in_block(body, var, candidates) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
 }
 
 pub struct CraneliftCompiler {
@@ -389,6 +563,7 @@ impl CraneliftCompiler {
         }
 
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&func.body);
+        let known_non_negative_vars = collect_known_non_negative_vars(&func.body);
 
         let mut state = FunctionTranslationState {
             module: &mut self.module,
@@ -397,6 +572,7 @@ impl CraneliftCompiler {
             variables,
             loop_exit_blocks: Vec::new(),
             dynamically_indexed_arrays,
+            known_non_negative_vars,
         };
 
         let terminated = state.translate_block(&func.body, &mut builder)?;
@@ -469,6 +645,7 @@ struct FunctionTranslationState<'a> {
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     dynamically_indexed_arrays: HashSet<String>,
+    known_non_negative_vars: HashSet<String>,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -639,6 +816,7 @@ impl<'a> FunctionTranslationState<'a> {
         r: Value,
         d: i64,
         operand_ty: &Type,
+        is_nonneg: bool,
         builder: &mut FunctionBuilder,
     ) -> Result<Value, CodegenError> {
         if d == 0 {
@@ -659,18 +837,41 @@ impl<'a> FunctionTranslationState<'a> {
         };
 
         let ad = d.unsigned_abs();
-        let q64 = if ad.is_power_of_two() {
-            let k = ad.trailing_zeros();
-            let q_pos = if k == 1 {
-                let sign = builder.ins().ushr_imm_s(n, 63);
-                let biased = builder.ins().iadd(n, sign);
-                builder.ins().sshr_imm_s(biased, 1)
+        let q64 = if is_nonneg && d > 0 {
+            if ad.is_power_of_two() {
+                let k = ad.trailing_zeros();
+                if k == 0 {
+                    n
+                } else {
+                    builder.ins().ushr_imm_s(n, k as i64)
+                }
+            } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
+                let m_val = builder.ins().iconst(types::I64, m as i64);
+                let hi = builder.ins().umulhi(n, m_val);
+                if s > 0 {
+                    builder.ins().ushr_imm_s(hi, s as i64)
+                } else {
+                    hi
+                }
             } else {
-                let sign = builder.ins().sshr_imm_s(n, 63);
-                let bias = builder.ins().ushr_imm_s(sign, (64 - k) as i64);
-                let biased = builder.ins().iadd(n, bias);
-                builder.ins().sshr_imm_s(biased, k as i64)
-            };
+                let (m, shift, add_ind) = compute_magic_s64(d.abs());
+                let m_val = builder.ins().iconst(types::I64, m);
+                let mut hi = builder.ins().smulhi(n, m_val);
+                if add_ind {
+                    hi = builder.ins().iadd(hi, n);
+                }
+                if shift > 0 {
+                    builder.ins().sshr_imm_s(hi, shift as i64)
+                } else {
+                    hi
+                }
+            }
+        } else if ad.is_power_of_two() {
+            let k = ad.trailing_zeros();
+            let sign = builder.ins().sshr_imm_s(n, 63);
+            let bias = builder.ins().band_imm_s(sign, (ad - 1) as i64);
+            let biased = builder.ins().iadd(n, bias);
+            let q_pos = builder.ins().sshr_imm_s(biased, k as i64);
             if d < 0 {
                 builder.ins().ineg(q_pos)
             } else {
@@ -710,6 +911,7 @@ impl<'a> FunctionTranslationState<'a> {
         r: Value,
         d: i64,
         operand_ty: &Type,
+        is_nonneg: bool,
         builder: &mut FunctionBuilder,
     ) -> Result<Value, CodegenError> {
         if d == 0 {
@@ -728,22 +930,46 @@ impl<'a> FunctionTranslationState<'a> {
         };
 
         let ad = d.unsigned_abs();
-        let q64 = if ad.is_power_of_two() {
-            let k = ad.trailing_zeros();
-            let q_pos = if k == 1 {
-                let sign = builder.ins().ushr_imm_s(n, 63);
-                let biased = builder.ins().iadd(n, sign);
-                builder.ins().sshr_imm_s(biased, 1)
+        let rem64 = if is_nonneg && d > 0 {
+            if ad.is_power_of_two() {
+                builder.ins().band_imm_s(n, (d - 1) as i64)
+            } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
+                let m_val = builder.ins().iconst(types::I64, m as i64);
+                let hi = builder.ins().umulhi(n, m_val);
+                let q = if s > 0 {
+                    builder.ins().ushr_imm_s(hi, s as i64)
+                } else {
+                    hi
+                };
+                let d_val = builder.ins().iconst(types::I64, d);
+                let q_times_d = builder.ins().imul(q, d_val);
+                builder.ins().isub(n, q_times_d)
             } else {
-                let sign = builder.ins().sshr_imm_s(n, 63);
-                let bias = builder.ins().ushr_imm_s(sign, (64 - k) as i64);
-                let biased = builder.ins().iadd(n, bias);
-                builder.ins().sshr_imm_s(biased, k as i64)
-            };
+                let (m, shift, add_ind) = compute_magic_s64(d.abs());
+                let m_val = builder.ins().iconst(types::I64, m);
+                let mut hi = builder.ins().smulhi(n, m_val);
+                if add_ind {
+                    hi = builder.ins().iadd(hi, n);
+                }
+                let q = if shift > 0 {
+                    builder.ins().sshr_imm_s(hi, shift as i64)
+                } else {
+                    hi
+                };
+                let d_val = builder.ins().iconst(types::I64, d);
+                let q_times_d = builder.ins().imul(q, d_val);
+                builder.ins().isub(n, q_times_d)
+            }
+        } else if ad.is_power_of_two() {
+            let sign = builder.ins().sshr_imm_s(n, 63);
+            let bias = builder.ins().band_imm_s(sign, (ad - 1) as i64);
+            let biased = builder.ins().iadd(n, bias);
+            let masked = builder.ins().band_imm_s(biased, -(ad as i64));
+            let rem_pos = builder.ins().isub(n, masked);
             if d < 0 {
-                builder.ins().ineg(q_pos)
+                builder.ins().ineg(rem_pos)
             } else {
-                q_pos
+                rem_pos
             }
         } else {
             let (m, shift, add_ind) = compute_magic_s64(d.abs());
@@ -759,27 +985,15 @@ impl<'a> FunctionTranslationState<'a> {
             };
             let sign = builder.ins().ushr_imm_s(n, 63);
             let q_pos = builder.ins().iadd(shifted, sign);
-            if d < 0 {
+            let q64 = if d < 0 {
                 builder.ins().ineg(q_pos)
             } else {
                 q_pos
-            }
-        };
-
-        // rem = n - q * d
-        let q_times_d = if ad.is_power_of_two() {
-            let k = ad.trailing_zeros();
-            let shifted = builder.ins().ishl_imm_s(q64, k as i64);
-            if d < 0 {
-                builder.ins().ineg(shifted)
-            } else {
-                shifted
-            }
-        } else {
+            };
             let d_val = builder.ins().iconst(types::I64, d);
-            builder.ins().imul(q64, d_val)
+            let q_times_d = builder.ins().imul(q64, d_val);
+            builder.ins().isub(n, q_times_d)
         };
-        let rem64 = builder.ins().isub(n, q_times_d);
 
         if is_i32 {
             Ok(builder.ins().ireduce(types::I32, rem64))
@@ -1702,7 +1916,8 @@ impl<'a> FunctionTranslationState<'a> {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fdiv(l, r))
                         } else if let Some(d) = get_constant_int(right) {
-                            self.emit_fast_signed_div(l, r, d, &operand_ty, builder)
+                            let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
+                            self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, builder)
                         } else {
                             Ok(builder.ins().sdiv(l, r))
                         }
@@ -1710,7 +1925,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Mod => {
                         if operand_ty.is_integer() {
                             if let Some(d) = get_constant_int(right) {
-                                self.emit_fast_signed_rem(l, r, d, &operand_ty, builder)
+                                let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
+                                self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, builder)
                             } else {
                                 Ok(builder.ins().srem(l, r))
                             }
