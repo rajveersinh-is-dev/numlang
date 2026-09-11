@@ -12,7 +12,7 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 - [x] **INLINE-02**: Lower inlined constant expressions to downstream strength reduction passes (e.g. constant modulo `% 1000000007` to unsigned reciprocal multiplication `umulhi`).
 
 ### Branchless Predication & CMOV Lowering
-- [ ] **PRED-01**: Detect variable assignments across if-else branches (such as binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to Cranelift `select` / `cmov`, eliminating branch mispredictions in search loops.
+- [x] **PRED-01**: Detect variable assignments across if-else branches (such as binary search `low = mid + 1` / `high = mid - 1`, conditional swaps in Stein's GCD) and lower them to Cranelift `select` / `cmov`, eliminating branch mispredictions in search loops.
 
 ### Tail-Call Optimization & Recursion Loopification
 - [ ] **REC-01**: Implement tail-call elimination in self-recursive functions (`tak`, `ack`) transforming outer self-recursive calls into in-place parameter re-assignments and unconditional jumps to the function entry.
@@ -37,7 +37,7 @@ Requirements for v11.0 delivering decisive runtime computational superiority ove
 |-------------|-------|--------|
 | INLINE-01 | Phase 29 | Complete |
 | INLINE-02 | Phase 29 | Complete |
-| PRED-01 | Phase 30 | Pending |
+| PRED-01 | Phase 30 | Complete |
 | REC-01 | Phase 31 | Pending |
 | REC-02 | Phase 31 | Pending |
 | BENCH-01 | Phase 32 | Pending |
