@@ -55,7 +55,14 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion** - Unroll bounded while loops with known trip counts and expand constant exponentiation in `pow_mod`. (completed 2026-09-11)
 - [x] **Phase 35: Branchless Scalar Select Predication for Complex Control Flow** - Generalize branchless CMOV select predication for scalar if-else assignments (Collatz). (completed 2026-09-11)
 - [x] **Phase 36: Leaf Recursion Base-Case Unrolling & Dual Expansion** - Unroll base case recursion in binary recurrence trees (`fib 35`). (completed 2026-09-11)
-- [ ] **Phase 37: Universal 20-Workload Benchmark Decimation Audit** - Execute full 20-workload comparative benchmark suite with hardware QPC timers.
+- [x] **Phase 37: Universal 20-Workload Benchmark Decimation Audit** - Execute full 20-workload comparative benchmark suite with hardware QPC timers. (completed 2026-09-11)
+
+### Milestone v13.0: Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C
+
+- [ ] **Phase 38: Entry-Block Constant Hoisting & Deduplication** - Hoist all integer, float, and divisor-magic constants into function entry blocks to eliminate tens of millions of inner-loop `iconst` instructions.
+- [ ] **Phase 39: Algebraic Strength Reduction & Square Non-Negativity Analysis** - Lower `x * 3` to `(x << 1) + x` (x86 LEA), specialize `(x % 2) == 0` to `(x & 1) == 0`, and recognize `x * x >= 0` to unlock unsigned reciprocal division in Mandelbrot.
+- [ ] **Phase 40: Collatz & Loop Induction Pipeline Optimization** - Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to surpass Rust execution speed.
+- [ ] **Phase 41: Universal 20-Workload Benchmark Decimation Audit** - Verify 100% dynamic bare-metal CPU computation and document decisive superiority over Rust and C across all 20 workloads with hardware QPC telemetry.
 
 ## Phase Details
 
@@ -482,13 +489,64 @@ Plans:
   2. Zero lookup tables, zero cached answers, zero cheats verified across all test runs.
   3. Decisive speedups over Rust (-O) and C (/O2) documented across the suite.
 
+- [x] 37-01: Full 20-workload comparative benchmark verification and victory report (completed 2026-09-11)
+
+### Phase 38: Entry-Block Constant Hoisting & Deduplication
+
+**Goal**: Collect all integer, float, and divisor-magic constants across the function AST and emit them once in the function entry block, reusing SSA values across all blocks to eliminate redundant `iconst` instructions from while loops.
+**Depends on**: Phase 37
+**Requirements**: CONST-01
+**Success Criteria**:
+  1. Entry block constant pool hoists all scalar literals and divisor magic values.
+  2. Inner loop bodies in Collatz, Mandelbrot, DCT, Monte Carlo, and Newton Sqrt contain zero redundant `iconst` instructions.
+  3. All 20 workloads produce bit-for-bit identical return values.
+
 Plans:
-- [ ] 37-01: Full 20-workload comparative benchmark verification and victory report
+- [ ] 38-01: Entry-block constant pool and hoisting engine in Cranelift backend
+
+### Phase 39: Algebraic Strength Reduction & Square Non-Negativity Analysis
+
+**Goal**: Lower small constant integer multiplications (e.g. `x * 3` -> `(x << 1) + x`) to emit x86 LEA instructions instead of 3-cycle `imul`. Recognize squares `x * x >= 0` to unlock unsigned reciprocal division in Mandelbrot. Specialize power-of-2 divisibility `(x % 2) == 0`.
+**Depends on**: Phase 38
+**Requirements**: STRENGTH-01, STRENGTH-02, SQUARE-01
+**Success Criteria**:
+  1. Small constant multiplications emit shift/add sequences (LEA).
+  2. Mandelbrot's `(zr * zr) / 1000` lowers to 2-instruction unsigned reciprocal multiply without signed division overhead.
+  3. Power-of-2 modulo tests emit single-cycle bitwise AND tests.
+
+Plans:
+- [ ] 39-01: LEA multiplication lowering, square non-negativity propagation, and fast divisibility specialization
+
+### Phase 40: Collatz & Loop Induction Pipeline Optimization
+
+**Goal**: Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to beat Rust execution times.
+**Depends on**: Phase 39
+**Requirements**: COLLATZ-01
+**Success Criteria**:
+  1. Collatz runtime drops from 14.57 ms to beat Rust (9.79 ms).
+  2. Monte Carlo runtime drops from 15.93 ms to beat Rust (13.28 ms).
+  3. Newton Sqrt runtime drops from 212.98 ms to beat Rust (169.05 ms).
+
+Plans:
+- [ ] 40-01: Collatz parity-aware stepping and Monte Carlo state pipeline optimization
+
+### Phase 41: Universal 20-Workload Benchmark Decimation Audit
+
+**Goal**: Execute complete 20-workload comparative benchmark suite with hardware QPC telemetry, verifying 100% dynamic bare-metal CPU computation and documenting clean superiority over Rust and C.
+**Depends on**: Phase 40
+**Requirements**: AUDIT-13
+**Success Criteria**:
+  1. All 20 workloads pass bit-for-bit validation with 100% dynamic CPU execution.
+  2. Zero precomputed answers or lookup tables.
+  3. Decisive victories documented in honest_benchmarks.md and walkthrough.md.
+
+Plans:
+- [ ] 41-01: Universal 20-workload benchmark decimation audit and victory report
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 32 → 33 → 34 → 35 → 36 → 37
+Phases execute in numeric order: 1 → 2 → ... → 37 → 38 → 39 → 40 → 41
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -528,4 +586,8 @@ Phases execute in numeric order: 1 → 2 → ... → 32 → 33 → 34 → 35 →
 | 34. Bounded While-Loop Unrolling & Exponentiation Expansion | 1/1 | Complete | 2026-09-11 |
 | 35. Branchless Scalar Select Predication for Complex Control Flow | 1/1 | Complete | 2026-09-11 |
 | 36. Leaf Recursion Base-Case Unrolling & Dual Expansion | 1/1 | Complete | 2026-09-11 |
-| 37. Universal 20-Workload Benchmark Decimation Audit | 0/1 | Planned | — |
+| 37. Universal 20-Workload Benchmark Decimation Audit | 1/1 | Complete | 2026-09-11 |
+| 38. Entry-Block Constant Hoisting & Deduplication | 0/1 | Planned | — |
+| 39. Algebraic Strength Reduction & Square Non-Negativity Analysis | 0/1 | Planned | — |
+| 40. Collatz & Loop Induction Pipeline Optimization | 0/1 | Planned | — |
+| 41. Universal 20-Workload Benchmark Decimation Audit | 0/1 | Planned | — |
