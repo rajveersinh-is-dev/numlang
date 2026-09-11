@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
     types, AbiParam, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
@@ -108,6 +108,82 @@ fn is_safe_for_select(expr: &TypedExpr) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+fn collect_dynamically_indexed_arrays(body: &TypedBlock) -> HashSet<String> {
+    let mut dynamic = HashSet::new();
+    collect_dynamic_arrays_in_block(body, &mut dynamic);
+    dynamic
+}
+
+fn collect_dynamic_arrays_in_block(block: &TypedBlock, dynamic: &mut HashSet<String>) {
+    for stmt in &block.stmts {
+        collect_dynamic_arrays_in_stmt(stmt, dynamic);
+    }
+}
+
+fn collect_dynamic_arrays_in_stmt(stmt: &TypedStmt, dynamic: &mut HashSet<String>) {
+    match stmt {
+        TypedStmt::Let { value, .. } => collect_dynamic_arrays_in_expr(value, dynamic),
+        TypedStmt::Assign { value, .. } => collect_dynamic_arrays_in_expr(value, dynamic),
+        TypedStmt::IndexAssign { target, index, value, .. } => {
+            if get_constant_int(index).is_none() {
+                dynamic.insert(target.clone());
+            }
+            collect_dynamic_arrays_in_expr(index, dynamic);
+            collect_dynamic_arrays_in_expr(value, dynamic);
+        }
+        TypedStmt::Expr(expr) => collect_dynamic_arrays_in_expr(expr, dynamic),
+        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            collect_dynamic_arrays_in_expr(condition, dynamic);
+            collect_dynamic_arrays_in_block(then_branch, dynamic);
+            if let Some(eb) = else_branch {
+                collect_dynamic_arrays_in_block(eb, dynamic);
+            }
+        }
+        TypedStmt::While { condition, body, .. } => {
+            collect_dynamic_arrays_in_expr(condition, dynamic);
+            collect_dynamic_arrays_in_block(body, dynamic);
+        }
+        TypedStmt::Return(opt_expr, _) => {
+            if let Some(expr) = opt_expr {
+                collect_dynamic_arrays_in_expr(expr, dynamic);
+            }
+        }
+        TypedStmt::Break(_) => {}
+    }
+}
+
+fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<String>) {
+    match expr {
+        TypedExpr::Index { target, index, .. } => {
+            if let TypedExpr::Ident { name, .. } = target.as_ref() {
+                if get_constant_int(index).is_none() {
+                    dynamic.insert(name.clone());
+                }
+            }
+            collect_dynamic_arrays_in_expr(target, dynamic);
+            collect_dynamic_arrays_in_expr(index, dynamic);
+        }
+        TypedExpr::Binary { left, right, .. } => {
+            collect_dynamic_arrays_in_expr(left, dynamic);
+            collect_dynamic_arrays_in_expr(right, dynamic);
+        }
+        TypedExpr::Unary { expr, .. } => {
+            collect_dynamic_arrays_in_expr(expr, dynamic);
+        }
+        TypedExpr::Call { args, .. } => {
+            for a in args {
+                collect_dynamic_arrays_in_expr(a, dynamic);
+            }
+        }
+        TypedExpr::ArrayLiteral { elements, .. } => {
+            for el in elements {
+                collect_dynamic_arrays_in_expr(el, dynamic);
+            }
+        }
+        TypedExpr::Ident { .. } | TypedExpr::Literal { .. } => {}
     }
 }
 
@@ -312,12 +388,15 @@ impl CraneliftCompiler {
             variables.insert(param.name.clone(), Storage::Scalar(var));
         }
 
+        let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&func.body);
+
         let mut state = FunctionTranslationState {
             module: &mut self.module,
             func_ids: &self.func_ids,
             exit_process_id: self.exit_process_id,
             variables,
             loop_exit_blocks: Vec::new(),
+            dynamically_indexed_arrays,
         };
 
         let terminated = state.translate_block(&func.body, &mut builder)?;
@@ -389,6 +468,7 @@ struct FunctionTranslationState<'a> {
     exit_process_id: FuncId,
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
+    dynamically_indexed_arrays: HashSet<String>,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -985,7 +1065,8 @@ impl<'a> FunctionTranslationState<'a> {
                 name, ty, value, ..
             } => {
                 if let Type::Array(elem, len) = ty {
-                    if *len <= 16 {
+                    let is_dynamic = self.dynamically_indexed_arrays.contains(name);
+                    if *len <= 16 && !is_dynamic {
                         let clif_ty = type_to_clif((**elem).clone());
                         let mut vars = Vec::with_capacity(*len);
                         for _ in 0..*len {
@@ -1085,7 +1166,19 @@ impl<'a> FunctionTranslationState<'a> {
                         TypedExpr::Call { callee, args, .. } if callee == "vec_add" => {
                             self.translate_vec_add_into_slot(args, slot, elem, *len, builder)?;
                         }
-                        _ => {}
+                        _ => {
+                            let clif_ty = type_to_clif((**elem).clone());
+                            let zero = if elem.is_float() {
+                                if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                            } else {
+                                builder.ins().iconst(clif_ty, 0)
+                            };
+                            for i in 0..*len {
+                                let offset = (i as i32) * (elem_size as i32);
+                                let addr = builder.ins().stack_addr(types::I64, slot, offset);
+                                builder.ins().store(MemFlagsData::trusted(), zero, addr, 0);
+                            }
+                        }
                     }
 
                     self.variables
@@ -1221,6 +1314,16 @@ impl<'a> FunctionTranslationState<'a> {
                     Storage::Array { slot, len } => {
                         let elem_ty = value.ty();
                         let elem_size = elem_ty.size_bytes();
+                        let val = self.translate_expr(value, builder)?;
+
+                        if let Some(c) = get_constant_int(index) {
+                            if c >= 0 && (c as usize) < len {
+                                let offset = (c as i32) * (elem_size as i32);
+                                let elem_addr = builder.ins().stack_addr(types::I64, slot, offset);
+                                builder.ins().store(MemFlagsData::trusted(), val, elem_addr, 0);
+                                return Ok(false);
+                            }
+                        }
 
                         let mut idx_val = self.translate_expr(index, builder)?;
                         if index.ty() == Type::I32 {
@@ -1231,7 +1334,6 @@ impl<'a> FunctionTranslationState<'a> {
                             self.emit_bounds_check(idx_val, len, builder);
                         }
 
-                        let val = self.translate_expr(value, builder)?;
                         let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
                         let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
                         let elem_addr = builder.ins().iadd(base_addr, offset);
@@ -1743,6 +1845,16 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                             Storage::Array { slot, len } => {
                                 let elem_size = ty.size_bytes();
+                                let clif_ty = type_to_clif(ty.clone());
+
+                                if let Some(c) = get_constant_int(index) {
+                                    if c >= 0 && (c as usize) < len {
+                                        let offset = (c as i32) * (elem_size as i32);
+                                        let elem_addr = builder.ins().stack_addr(types::I64, slot, offset);
+                                        return Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0));
+                                    }
+                                }
+
                                 let mut idx_val = self.translate_expr(index, builder)?;
                                 if index.ty() == Type::I32 {
                                     idx_val = builder.ins().uextend(types::I64, idx_val);
@@ -1756,7 +1868,6 @@ impl<'a> FunctionTranslationState<'a> {
                                 let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
                                 let elem_addr = builder.ins().iadd(base_addr, offset);
 
-                                let clif_ty = type_to_clif(ty.clone());
                                 Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0))
                             }
                             _ => panic!("Index target must be an array variable"),
