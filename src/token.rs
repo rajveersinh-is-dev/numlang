@@ -34,6 +34,8 @@ pub enum Token {
     Plus,
     #[token("-")]
     Minus,
+    #[token("**")]
+    StarStar,
     #[token("*")]
     Star,
     #[token("/")]
@@ -42,6 +44,14 @@ pub enum Token {
     Percent,
     #[token("^")]
     Caret,
+    #[token("&")]
+    Ampersand,
+    #[token("|")]
+    Pipe,
+    #[token("<<")]
+    Shl,
+    #[token(">>")]
+    Shr,
     #[token("=")]
     Assign,
     #[token("==")]

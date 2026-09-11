@@ -2429,17 +2429,17 @@ fn stein_gcd(u_in: i64, v_in: i64) -> i64 {
     if u == 0 { return v; }
     if v == 0 { return u; }
     let mut shift: i64 = 0;
-    while (u % 2 + v % 2) == 0 {
-        u = u / 2;
-        v = v / 2;
+    while ((u | v) & 1) == 0 {
+        u = u >> 1;
+        v = v >> 1;
         shift = shift + 1;
     }
-    while u % 2 == 0 {
-        u = u / 2;
+    while (u & 1) == 0 {
+        u = u >> 1;
     }
     while v != 0 {
-        while v % 2 == 0 {
-            v = v / 2;
+        while (v & 1) == 0 {
+            v = v >> 1;
         }
         if u > v {
             let temp: i64 = u;
@@ -2448,12 +2448,7 @@ fn stein_gcd(u_in: i64, v_in: i64) -> i64 {
         }
         v = v - u;
     }
-    let mut k: i64 = 0;
-    while k < shift {
-        u = u * 2;
-        k = k + 1;
-    }
-    return u;
+    return u << shift;
 }
 
 fn stein_gcd_bench(iters: i64) -> i64 {

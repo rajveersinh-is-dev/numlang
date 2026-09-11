@@ -728,6 +728,27 @@ impl TypeChecker {
                             span: *span,
                         })
                     }
+                    BinaryOp::BitAnd
+                    | BinaryOp::BitOr
+                    | BinaryOp::BitXor
+                    | BinaryOp::Shl
+                    | BinaryOp::Shr => {
+                        if !matches!(lty, Type::I64 | Type::I32) {
+                            return Err(TypeError::InvalidBinaryOperands {
+                                op: *op,
+                                left: lty,
+                                right: rty,
+                                span: *span,
+                            });
+                        }
+                        Ok(TypedExpr::Binary {
+                            op: *op,
+                            left: Box::new(typed_left),
+                            right: Box::new(typed_right),
+                            ty: lty,
+                            span: *span,
+                        })
+                    }
                     BinaryOp::Eq | BinaryOp::Ne => Ok(TypedExpr::Binary {
                         op: *op,
                         left: Box::new(typed_left),

@@ -1520,6 +1520,11 @@ impl<'a> FunctionTranslationState<'a> {
                             Ok(builder.ins().imul(l, r))
                         }
                     }
+                    BinaryOp::BitAnd => Ok(builder.ins().band(l, r)),
+                    BinaryOp::BitOr => Ok(builder.ins().bor(l, r)),
+                    BinaryOp::BitXor => Ok(builder.ins().bxor(l, r)),
+                    BinaryOp::Shl => Ok(builder.ins().ishl(l, r)),
+                    BinaryOp::Shr => Ok(builder.ins().sshr(l, r)),
                     BinaryOp::Eq => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::Equal, l, r)

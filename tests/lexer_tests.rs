@@ -28,6 +28,25 @@ fn test_tokenize_math_operators() {
 }
 
 #[test]
+fn test_tokenize_bitwise_operators() {
+    let input = "& | ^ << >> **";
+    let tokens = tokenize(input).expect("Tokenization failed");
+    let token_kinds: Vec<Token> = tokens.into_iter().map(|st| st.token).collect();
+
+    assert_eq!(
+        token_kinds,
+        vec![
+            Token::Ampersand,
+            Token::Pipe,
+            Token::Caret,
+            Token::Shl,
+            Token::Shr,
+            Token::StarStar,
+        ]
+    );
+}
+
+#[test]
 fn test_tokenize_keywords() {
     let input = "fn let return if else while for true false";
     let tokens = tokenize(input).expect("Tokenization failed");

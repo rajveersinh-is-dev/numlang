@@ -9,7 +9,7 @@ impl<'a> Parser<'a> {
         loop {
             // Check for postfix indexing `[`
             if self.check(&Token::LBracket) {
-                if min_bp > 15 {
+                if min_bp > 25 {
                     break;
                 }
                 self.advance(); // consume '['
@@ -136,7 +136,7 @@ impl<'a> Parser<'a> {
             }
             Token::Minus => {
                 self.advance();
-                let expr = self.parse_expr(11)?;
+                let expr = self.parse_expr(20)?;
                 let span = token_spanned.span.merge(&expr.span());
                 Ok(Expr::Unary {
                     op: UnaryOp::Neg,
@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
             }
             Token::Not => {
                 self.advance();
-                let expr = self.parse_expr(11)?;
+                let expr = self.parse_expr(20)?;
                 let span = token_spanned.span.merge(&expr.span());
                 Ok(Expr::Unary {
                     op: UnaryOp::Not,
@@ -164,18 +164,23 @@ impl<'a> Parser<'a> {
 
 fn infix_binding_power(op: &Token) -> Option<(u8, u8, BinaryOp)> {
     match op {
-        Token::Eq => Some((1, 2, BinaryOp::Eq)),
-        Token::Ne => Some((1, 2, BinaryOp::Ne)),
-        Token::Lt => Some((3, 4, BinaryOp::Lt)),
-        Token::Le => Some((3, 4, BinaryOp::Le)),
-        Token::Gt => Some((3, 4, BinaryOp::Gt)),
-        Token::Ge => Some((3, 4, BinaryOp::Ge)),
-        Token::Plus => Some((5, 6, BinaryOp::Add)),
-        Token::Minus => Some((5, 6, BinaryOp::Sub)),
-        Token::Star => Some((7, 8, BinaryOp::Mul)),
-        Token::Slash => Some((7, 8, BinaryOp::Div)),
-        Token::Percent => Some((7, 8, BinaryOp::Mod)),
-        Token::Caret => Some((10, 9, BinaryOp::Pow)), // Right-associative (left power > right power)
+        Token::Pipe => Some((1, 2, BinaryOp::BitOr)),
+        Token::Caret => Some((3, 4, BinaryOp::BitXor)),
+        Token::Ampersand => Some((5, 6, BinaryOp::BitAnd)),
+        Token::Eq => Some((7, 8, BinaryOp::Eq)),
+        Token::Ne => Some((7, 8, BinaryOp::Ne)),
+        Token::Lt => Some((9, 10, BinaryOp::Lt)),
+        Token::Le => Some((9, 10, BinaryOp::Le)),
+        Token::Gt => Some((9, 10, BinaryOp::Gt)),
+        Token::Ge => Some((9, 10, BinaryOp::Ge)),
+        Token::Shl => Some((11, 12, BinaryOp::Shl)),
+        Token::Shr => Some((11, 12, BinaryOp::Shr)),
+        Token::Plus => Some((13, 14, BinaryOp::Add)),
+        Token::Minus => Some((13, 14, BinaryOp::Sub)),
+        Token::Star => Some((15, 16, BinaryOp::Mul)),
+        Token::Slash => Some((15, 16, BinaryOp::Div)),
+        Token::Percent => Some((15, 16, BinaryOp::Mod)),
+        Token::StarStar => Some((18, 17, BinaryOp::Pow)), // Right-associative (left power > right power)
         _ => None,
     }
 }
