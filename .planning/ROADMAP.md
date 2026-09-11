@@ -51,7 +51,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 
 ### Milestone v12.0: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
 
-- [ ] **Phase 33: Hardware Bit-Manipulation Intrinsics & Loop Recognition** - Add `ctz`, `clz`, `popcnt`, `rotl`, `rotr` intrinsics and eliminate trailing-zero while loops.
+- [x] **Phase 33: Hardware Bit-Manipulation Intrinsics & Loop Recognition** - Add `ctz`, `clz`, `popcnt`, `rotl`, `rotr` intrinsics and eliminate trailing-zero while loops. (completed 2026-09-11)
 - [ ] **Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion** - Unroll bounded while loops with known trip counts and expand constant exponentiation in `pow_mod`.
 - [ ] **Phase 35: Branchless Scalar Select Predication for Complex Control Flow** - Generalize branchless CMOV select predication for scalar if-else assignments (Collatz).
 - [ ] **Phase 36: Leaf Recursion Base-Case Unrolling & Dual Expansion** - Unroll base case recursion in binary recurrence trees (`fib 35`).
@@ -433,7 +433,7 @@ Plans:
   4. Rule 110 runtime drops from 107 µs to < 40 µs.
 
 Plans:
-- [ ] 33-01: Hardware bit-manipulation intrinsics and trailing-zero loop recognition
+- [x] 33-01: Hardware bit-manipulation intrinsics and trailing-zero loop recognition (completed 2026-09-11)
 
 ### Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion
 
@@ -524,7 +524,7 @@ Phases execute in numeric order: 1 → 2 → ... → 32 → 33 → 34 → 35 →
 | 30. Branchless Select Predication & CMOV Lowering | 1/1 | Complete | 2026-09-11 |
 | 31. Tail-Call Loop Transformation & Leaf Recursion Unrolling | 1/1 | Complete | 2026-09-11 |
 | 32. Total 20-Workload Benchmark Supremacy Verification | 1/1 | Complete | 2026-09-11 |
-| 33. Hardware Bit-Manipulation Intrinsics & Loop Recognition | 0/1 | Planned | — |
+| 33. Hardware Bit-Manipulation Intrinsics & Loop Recognition | 1/1 | Complete | 2026-09-11 |
 | 34. Bounded While-Loop Unrolling & Exponentiation Expansion | 0/1 | Planned | — |
 | 35. Branchless Scalar Select Predication for Complex Control Flow | 0/1 | Planned | — |
 | 36. Leaf Recursion Base-Case Unrolling & Dual Expansion | 0/1 | Planned | — |

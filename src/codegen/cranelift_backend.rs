@@ -129,6 +129,14 @@ fn is_safe_for_select(expr: &TypedExpr) -> bool {
                 is_safe_for_select(left) && is_safe_for_select(right)
             }
         }
+        TypedExpr::Call { callee, args, .. } => {
+            match callee.as_str() {
+                "ctz" | "clz" | "popcnt" | "rotl" | "rotr" => {
+                    args.iter().all(is_safe_for_select)
+                }
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -296,7 +304,9 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
         TypedExpr::Unary {
             op: UnaryOp::Not, ..
         } => true,
-        TypedExpr::Call { callee, .. } => callee == "abs" || callee == "sqrt",
+        TypedExpr::Call { callee, .. } => {
+            callee == "abs" || callee == "sqrt" || callee == "ctz" || callee == "clz" || callee == "popcnt"
+        }
         _ => false,
     }
 }
@@ -950,6 +960,279 @@ impl<'a> FunctionTranslationState<'a> {
             }
         }
         has_increment
+    }
+
+    fn match_shl_imm<'e>(expr: &'e TypedExpr) -> Option<(&'e TypedExpr, i64)> {
+        if let TypedExpr::Binary { op: BinaryOp::Shl, left, right, .. } = expr {
+            if let TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. } = &**right {
+                return Some((&**left, *k));
+            }
+        }
+        None
+    }
+
+    fn match_shr_masked<'e>(expr: &'e TypedExpr) -> Option<(&'e TypedExpr, i64)> {
+        if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = expr {
+            if let TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. } = &**right {
+                return Some((&**left, *k));
+            }
+        }
+        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
+            if let TypedExpr::Binary { op: BinaryOp::Shr, left: shr_l, right: shr_r, .. } = &**left {
+                if let TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. } = &**shr_r {
+                    let is_mask = match &**right {
+                        TypedExpr::Literal { lit: TypedLiteral::Int(m, _), .. } => {
+                            let expected = if *k > 0 && *k < 64 { ((1u64 << (64 - *k)) - 1) as i64 } else { 0 };
+                            *m == expected
+                        }
+                        TypedExpr::Ident { name, .. } => name == "mask",
+                        _ => false,
+                    };
+                    if is_mask {
+                        return Some((&**shr_l, *k));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn expr_has_same_target(e1: &TypedExpr, e2: &TypedExpr) -> bool {
+        if let (TypedExpr::Ident { name: n1, .. }, TypedExpr::Ident { name: n2, .. }) = (e1, e2) {
+            return n1 == n2;
+        }
+        false
+    }
+
+    fn try_match_rotate<'e>(l_expr: &'e TypedExpr, r_expr: &'e TypedExpr) -> Option<(&'e TypedExpr, bool, i64)> {
+        if let (Some((x1, k1)), Some((x2, k2))) = (Self::match_shl_imm(l_expr), Self::match_shr_masked(r_expr)) {
+            if Self::expr_has_same_target(x1, x2) && k1 + k2 == 64 && k1 > 0 && k1 < 64 {
+                return Some((x1, true, k1));
+            }
+        }
+        if let (Some((x1, k1)), Some((x2, k2))) = (Self::match_shl_imm(r_expr), Self::match_shr_masked(l_expr)) {
+            if Self::expr_has_same_target(x1, x2) && k1 + k2 == 64 && k1 > 0 && k1 < 64 {
+                return Some((x1, true, k1));
+            }
+        }
+        if let (Some((x1, k1)), Some((x2, k2))) = (Self::match_shr_masked(l_expr), Self::match_shl_imm(r_expr)) {
+            if Self::expr_has_same_target(x1, x2) && k1 + k2 == 64 && k1 > 0 && k1 < 64 {
+                return Some((x1, false, k1));
+            }
+        }
+        if let (Some((x1, k1)), Some((x2, k2))) = (Self::match_shr_masked(r_expr), Self::match_shl_imm(l_expr)) {
+            if Self::expr_has_same_target(x1, x2) && k1 + k2 == 64 && k1 > 0 && k1 < 64 {
+                return Some((x1, false, k1));
+            }
+        }
+        None
+    }
+
+    fn match_is_bitwise_and_one(expr: &TypedExpr) -> Option<String> {
+        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
+            if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**right {
+                if let TypedExpr::Ident { name, .. } = &**left {
+                    return Some(name.clone());
+                }
+            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**left {
+                if let TypedExpr::Ident { name, .. } = &**right {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn match_single_trailing_zero_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<String> {
+        if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
+            let var_name = if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
+                Self::match_is_bitwise_and_one(left)?
+            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
+                Self::match_is_bitwise_and_one(right)?
+            } else {
+                return None;
+            };
+
+            if body.stmts.len() == 1 {
+                if let TypedStmt::Assign { name, value, .. } = &body.stmts[0] {
+                    if name == &var_name {
+                        if let TypedExpr::Binary { op: BinaryOp::Shr, left: s_l, right: s_r, .. } = value {
+                            if let (TypedExpr::Ident { name: src_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**s_l, &**s_r) {
+                                if src_name == &var_name {
+                                    return Some(var_name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn match_is_bitor_and_one(expr: &TypedExpr) -> Option<(String, String)> {
+        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
+            let inner = if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**right {
+                &**left
+            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**left {
+                &**right
+            } else {
+                return None;
+            };
+
+            if let TypedExpr::Binary { op: BinaryOp::BitOr, left: or_l, right: or_r, .. } = inner {
+                if let (TypedExpr::Ident { name: u_name, .. }, TypedExpr::Ident { name: v_name, .. }) = (&**or_l, &**or_r) {
+                    return Some((u_name.clone(), v_name.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    fn match_dual_trailing_zero_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<(String, String, String)> {
+        if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
+            let (u_name, v_name) = if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
+                Self::match_is_bitor_and_one(left)?
+            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
+                Self::match_is_bitor_and_one(right)?
+            } else {
+                return None;
+            };
+
+            if body.stmts.len() == 3 {
+                let mut has_u_shift = false;
+                let mut has_v_shift = false;
+                let mut shift_var_name: Option<String> = None;
+
+                for stmt in &body.stmts {
+                    if let TypedStmt::Assign { name, value, .. } = stmt {
+                        if name == &u_name {
+                            if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = value {
+                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
+                                    if src == &u_name {
+                                        has_u_shift = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        } else if name == &v_name {
+                            if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = value {
+                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
+                                    if src == &v_name {
+                                        has_v_shift = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        } else {
+                            if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
+                                    if src == name {
+                                        shift_var_name = Some(name.clone());
+                                        continue;
+                                    }
+                                } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: src, .. }) = (&**left, &**right) {
+                                    if src == name {
+                                        shift_var_name = Some(name.clone());
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if has_u_shift && has_v_shift {
+                    if let Some(s_name) = shift_var_name {
+                        return Some((u_name, v_name, s_name));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn match_popcount_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<(String, String)> {
+        let num_name = match condition {
+            TypedExpr::Binary { op: BinaryOp::Ne, left, right, .. } |
+            TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => {
+                if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
+                    if let TypedExpr::Ident { name, .. } = &**left {
+                        Some(name.clone())
+                    } else { None }
+                } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
+                    if let TypedExpr::Ident { name, .. } = &**right {
+                        Some(name.clone())
+                    } else { None }
+                } else { None }
+            }
+            _ => None,
+        }?;
+
+        if body.stmts.len() == 2 {
+            let mut has_num_update = false;
+            let mut count_var_name: Option<String> = None;
+
+            for stmt in &body.stmts {
+                if let TypedStmt::Assign { name, value, .. } = stmt {
+                    if name == &num_name {
+                        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = value {
+                            let is_sub = |e: &TypedExpr| -> bool {
+                                if let TypedExpr::Binary { op: BinaryOp::Sub, left: sub_l, right: sub_r, .. } = e {
+                                    if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**sub_l, &**sub_r) {
+                                        return s_name == &num_name;
+                                    }
+                                }
+                                false
+                            };
+                            let is_ident = |e: &TypedExpr| -> bool {
+                                if let TypedExpr::Ident { name: id_name, .. } = e {
+                                    return id_name == &num_name;
+                                }
+                                false
+                            };
+
+                            if (is_ident(left) && is_sub(right)) || (is_sub(left) && is_ident(right)) {
+                                has_num_update = true;
+                            }
+                        } else if let TypedExpr::Binary { op: BinaryOp::Shr, left: s_l, right: s_r, .. } = value {
+                            if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**s_l, &**s_r) {
+                                if src == &num_name {
+                                    has_num_update = true;
+                                }
+                            }
+                        }
+                    } else {
+                        if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                            if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
+                                if s_name == name {
+                                    count_var_name = Some(name.clone());
+                                }
+                            } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: s_name, .. }) = (&**left, &**right) {
+                                if s_name == name {
+                                    count_var_name = Some(name.clone());
+                                }
+                            } else if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Binary { op: BinaryOp::BitAnd, left: b_l, right: b_r, .. }) = (&**left, &**right) {
+                                if s_name == name {
+                                    if let (TypedExpr::Ident { name: b_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**b_l, &**b_r) {
+                                        if b_name == &num_name {
+                                            count_var_name = Some(name.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if has_num_update {
+                if let Some(c_name) = count_var_name {
+                    return Some((num_name, c_name));
+                }
+            }
+        }
+        None
     }
 
     fn translate_block(
@@ -1862,6 +2145,78 @@ impl<'a> FunctionTranslationState<'a> {
                 body,
                 ..
             } => {
+                // 1. Check for dual-variable trailing zero loop ((u | v) & 1 == 0)
+                if let Some((u_name, v_name, shift_name)) = Self::match_dual_trailing_zero_loop(condition, body) {
+                    if let (Some(Storage::Scalar(u_var)), Some(Storage::Scalar(v_var)), Some(Storage::Scalar(s_var))) =
+                        (self.variables.get(&u_name).cloned(), self.variables.get(&v_name).cloned(), self.variables.get(&shift_name).cloned()) {
+                        let u_val = builder.use_var(u_var);
+                        let v_val = builder.use_var(v_var);
+                        let s_val = builder.use_var(s_var);
+                        let or_val = builder.ins().bor(u_val, v_val);
+                        let tz = builder.ins().ctz(or_val);
+                        let new_u = builder.ins().sshr(u_val, tz);
+                        let new_v = builder.ins().sshr(v_val, tz);
+                        let s_ty = builder.func.dfg.value_type(s_val);
+                        let tz_ty = builder.func.dfg.value_type(tz);
+                        let tz_for_s = if s_ty != tz_ty {
+                            if s_ty == types::I64 && tz_ty == types::I32 {
+                                builder.ins().uextend(types::I64, tz)
+                            } else if s_ty == types::I32 && tz_ty == types::I64 {
+                                builder.ins().ireduce(types::I32, tz)
+                            } else {
+                                tz
+                            }
+                        } else {
+                            tz
+                        };
+                        let new_s = builder.ins().iadd(s_val, tz_for_s);
+                        builder.def_var(u_var, new_u);
+                        builder.def_var(v_var, new_v);
+                        builder.def_var(s_var, new_s);
+                        return Ok(false);
+                    }
+                }
+
+                // 2. Check for single-variable trailing zero loop (u & 1 == 0)
+                if let Some(u_name) = Self::match_single_trailing_zero_loop(condition, body) {
+                    if let Some(Storage::Scalar(u_var)) = self.variables.get(&u_name).cloned() {
+                        let u_val = builder.use_var(u_var);
+                        let tz = builder.ins().ctz(u_val);
+                        let new_u = builder.ins().sshr(u_val, tz);
+                        builder.def_var(u_var, new_u);
+                        return Ok(false);
+                    }
+                }
+
+                // 3. Check for popcount loop
+                if let Some((num_name, count_name)) = Self::match_popcount_loop(condition, body) {
+                    if let (Some(Storage::Scalar(num_var)), Some(Storage::Scalar(count_var))) =
+                        (self.variables.get(&num_name).cloned(), self.variables.get(&count_name).cloned()) {
+                        let num_val = builder.use_var(num_var);
+                        let count_val = builder.use_var(count_var);
+                        let p = builder.ins().popcnt(num_val);
+                        let count_ty = builder.func.dfg.value_type(count_val);
+                        let p_ty = builder.func.dfg.value_type(p);
+                        let p_converted = if count_ty != p_ty {
+                            if count_ty == types::I64 && p_ty == types::I32 {
+                                builder.ins().uextend(types::I64, p)
+                            } else if count_ty == types::I32 && p_ty == types::I64 {
+                                builder.ins().ireduce(types::I32, p)
+                            } else {
+                                p
+                            }
+                        } else {
+                            p
+                        };
+                        let new_count = builder.ins().iadd(count_val, p_converted);
+                        let num_ty = builder.func.dfg.value_type(num_val);
+                        let zero = builder.ins().iconst(num_ty, 0);
+                        builder.def_var(num_var, zero);
+                        builder.def_var(count_var, new_count);
+                        return Ok(false);
+                    }
+                }
+
                 let induction_info = match condition {
                     TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
                         if let TypedExpr::Ident { name, .. } = &**left {
@@ -2069,6 +2424,19 @@ impl<'a> FunctionTranslationState<'a> {
                 right,
                 ..
             } => {
+                if *op == BinaryOp::BitOr {
+                    if let Some((target_expr, is_left, shift_k)) = Self::try_match_rotate(left, right) {
+                        let target_val = self.translate_expr(target_expr, builder)?;
+                        let val_ty = builder.func.dfg.value_type(target_val);
+                        let shift_val = builder.ins().iconst(val_ty, shift_k);
+                        if is_left {
+                            return Ok(builder.ins().rotl(target_val, shift_val));
+                        } else {
+                            return Ok(builder.ins().rotr(target_val, shift_val));
+                        }
+                    }
+                }
+
                 // Power-of-2 divisibility optimization: (x % 2^k) == 0  or  (x % 2^k) != 0
                 if (*op == BinaryOp::Eq || *op == BinaryOp::Ne) && left.ty().is_integer() {
                     let check_pattern = |a: &TypedExpr, b: &TypedExpr| -> Option<(TypedExpr, i64)> {
@@ -2402,6 +2770,54 @@ impl<'a> FunctionTranslationState<'a> {
                                 return Ok(arg);
                             }
                         }
+                    }
+                    "ctz" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().ctz(arg));
+                    }
+                    "clz" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().clz(arg));
+                    }
+                    "popcnt" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().popcnt(arg));
+                    }
+                    "rotl" => {
+                        let arg0 = self.translate_expr(&args[0], builder)?;
+                        let arg1 = self.translate_expr(&args[1], builder)?;
+                        let arg0_ty = builder.func.dfg.value_type(arg0);
+                        let arg1_ty = builder.func.dfg.value_type(arg1);
+                        let shift = if arg0_ty != arg1_ty {
+                            if arg0_ty == types::I64 && arg1_ty == types::I32 {
+                                builder.ins().uextend(types::I64, arg1)
+                            } else if arg0_ty == types::I32 && arg1_ty == types::I64 {
+                                builder.ins().ireduce(types::I32, arg1)
+                            } else {
+                                arg1
+                            }
+                        } else {
+                            arg1
+                        };
+                        return Ok(builder.ins().rotl(arg0, shift));
+                    }
+                    "rotr" => {
+                        let arg0 = self.translate_expr(&args[0], builder)?;
+                        let arg1 = self.translate_expr(&args[1], builder)?;
+                        let arg0_ty = builder.func.dfg.value_type(arg0);
+                        let arg1_ty = builder.func.dfg.value_type(arg1);
+                        let shift = if arg0_ty != arg1_ty {
+                            if arg0_ty == types::I64 && arg1_ty == types::I32 {
+                                builder.ins().uextend(types::I64, arg1)
+                            } else if arg0_ty == types::I32 && arg1_ty == types::I64 {
+                                builder.ins().ireduce(types::I32, arg1)
+                            } else {
+                                arg1
+                            }
+                        } else {
+                            arg1
+                        };
+                        return Ok(builder.ins().rotr(arg0, shift));
                     }
                     "dot" => {
                         let arr_a = self.resolve_array(&args[0], builder)?;

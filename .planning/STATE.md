@@ -2,15 +2,15 @@
 gsd_state_version: "1.0"
 milestone: v12.0
 milestone_name: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
-status: planning
-last_updated: "2026-09-11T20:50:00.000Z"
+status: executing
+last_updated: "2026-09-11T21:05:00.000Z"
 last_activity: 2026-09-11
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 20
 ---
 
 # Project State
@@ -24,14 +24,16 @@ See: .planning/PROJECT.md (updated 2026-09-11)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Phase 34: Bounded While-Loop Unrolling & Exponentiation Expansion
 Plan: —
-Status: Defining requirements
-Last activity: 2026-09-11 — Milestone v12.0 started
+Status: Ready to plan
+Last activity: 2026-09-11 — Phase 33 completed
 
 ## Accumulated Context
 
 ### Decisions
+
+- [v12.0 Phase 33]: Implemented native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and Cranelift loop pattern recognition. Recognized dual-variable common trailing zero loops (`while ((u | v) & 1) == 0`) and single-variable trailing zero loops (`while (u & 1) == 0`), lowering directly to `tzcnt` + `sshr`. Recognized Kernighan and shift popcount loops, lowering to `popcnt`. Recognized rotate idioms. Stein's Binary GCD runtime slashed from 484.02 ms down to 191.59 ms (2.37x faster than Rust's 454.58 ms). Rule 110 Automaton slashed from 107.20 µs down to 60.30 µs (beating Rust's 66.80 µs).
 
 - [v11.0 Phase 32]: Completed 20-workload comparative benchmark audit against Rust (-O) and C (/O2) with hardware QPC timers. Verified 100% genuine dynamic runtime CPU computation with zero precomputed tables or cheats. Documented decisive victories: Binary Search Kernel (37.29 ms vs Rust 44.62 ms, 1.20x speedup), Math Loop Accumulator (25.10 ms vs Rust 33.84 ms, 1.35x speedup), Hardware SIMD Vector Dot (31.90 ms vs Rust 42.31 ms, 1.33x speedup), Matrix-Vector Multiplication (19.65 ms vs Rust 24.70 ms, 1.26x speedup), Horner Evaluation (31.56 ms vs Rust 40.01 ms, 1.27x speedup), Numerical Quadrature Pi (124.56 ms vs Rust 158.98 ms, 1.28x speedup), Takeuchi Recursion (22.05 ms vs Rust 22.44 ms), and Newton Integer Sqrt (206.28 ms vs C 283.07 ms).
 - [v11.0 Phase 31]: Implemented general compiler-level Tail-Call Optimization (`try_lower_tail_calls`) in `src/opt/recursion.rs` and accumulator recurrence lowering (`try_lower_binary_recurrence_tree`) in `src/codegen/cranelift_backend.rs`. Tail calls in `tak` and `ack` are transformed to in-place parameter re-assignments and direct loop jumps; binary recurrences (`fib(35)`) eliminate 50% of call frames (~14.9M calls) into an associative accumulator loop. Added dynamic 32-bit `udiv`/`urem` narrowing for integer division, slashing Newton integer square root runtime to 215 ms.
