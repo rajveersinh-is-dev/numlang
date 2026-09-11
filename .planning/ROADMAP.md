@@ -227,10 +227,69 @@ Plans:
 Plans:
 - [x] 20-01: Run full benchmark verification, record performance matrix, and document walkthrough (completed 2026-09-10)
 
+### Milestone v9.0: Pure Runtime Numerical Optimization & Benchmark Supremacy
+
+- [ ] **Phase 21: Integer Bitwise Operators** - Tokenizer, parser, type checker, and Cranelift lowering for bitwise `&`, `|`, `^`, `<<`, `>>` on integers (`i64`, `i32`).
+- [ ] **Phase 22: Loop Bounds Check Elimination (BCE)** - Static induction bounds analysis to eliminate array bounds checking branches in safe loops.
+- [ ] **Phase 23: AVX2 SIMD Array Vectorization** - 256-bit AVX2 SIMD vector lowering for multi-element array sweeps and cellular automaton updates.
+- [ ] **Phase 24: 20-Workload Comparative Benchmark Audit** - Full 20-workload multi-language comparative benchmark audit against Rust (-O) and C (/O2) with hardware telemetry and 100% computed values.
+
+### Phase 21: Integer Bitwise Operators
+
+**Goal**: Implement native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) in tokenizer, parser, typechecker, and Cranelift backend to eliminate arithmetic modulo/division overhead in bit-intensive algorithms (Stein's GCD, Rule 110).
+**Depends on**: Phase 20
+**Requirements**: BIT-01, BIT-02
+**Success Criteria**:
+  1. Lexer and Pratt parser recognize `&`, `|`, `^`, `<<`, `>>` with standard operator precedence.
+  2. Typechecker validates that operands are integer types (`i64`, `i32`).
+  3. Cranelift codegen lowers operators to native machine instructions (`band`, `bor`, `bxor`, `ishl`, `sshr`/`ushr`).
+  4. Stein's Binary GCD benchmark runs using native bitwise operations, accelerating dynamic execution.
+
+Plans:
+- [ ] 21-01: Tokenizer, parser, AST, type checker, and Cranelift codegen for bitwise operations
+
+### Phase 22: Loop Bounds Check Elimination (BCE)
+
+**Goal**: Statically analyze induction loops to prove array accesses with induction variables (`0 <= i < N`) are always within bounds, removing redundant bounds check branches and traps.
+**Depends on**: Phase 21
+**Requirements**: BCE-01
+**Success Criteria**:
+  1. Bounds checker identifies monotonic induction loops and verifies index safety against array length.
+  2. Array indexing in verified loops emits zero bounds checks, saving millions of branch instructions in tight loops (N-Queens, arrays).
+  3. Unsafe/unverified array accesses retain safe panic traps.
+
+Plans:
+- [ ] 22-01: Static induction loop bounds analysis and bounds check elimination
+
+### Phase 23: AVX2 SIMD Array Vectorization
+
+**Goal**: Implement 256-bit AVX2 SIMD code generation for array batch updates, bitwise sweeps, and vector kernels.
+**Depends on**: Phase 22
+**Requirements**: SIMD-01
+**Success Criteria**:
+  1. Fixed array sweeps (e.g. 64-element cellular automaton updates like Rule 110) lower to 256-bit AVX2 SIMD operations.
+  2. Rule 110 execution time drops towards competitive microsecond speeds matching or beating auto-vectorized C and Rust.
+
+Plans:
+- [ ] 23-01: AVX2 256-bit SIMD lowering for array batch updates and sweeps
+
+### Phase 24: 20-Workload Comparative Benchmark Audit
+
+**Goal**: Execute and verify the complete 20-workload multi-language comparative benchmark suite against Rust (-O) and C (/O2).
+**Depends on**: Phase 23
+**Requirements**: BENCH-01
+**Success Criteria**:
+  1. All 20 workloads pass with 100% correct outputs.
+  2. QueryPerformanceCounter telemetry records honest, non-clamped execution times.
+  3. Audit confirms 0 lookup tables, 0 precomputed answer injections, and 100% genuine dynamic computation.
+
+Plans:
+- [ ] 24-01: 20-workload comparative benchmark audit and verification
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20
+Phases execute in numeric order: 1 → 2 → ... → 20 → 21 → 22 → 23 → 24
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -254,6 +313,11 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 18. Linker Optimization & Weak-Point Elevation Hardening | 1/1 | Complete | 2026-09-10 |
 | 19. Workload Calibration in 14-Benchmark Multi-Language Suite | 1/1 | Complete | 2026-09-10 |
 | 20. Weakest Points Decimation Verification & Audit | 1/1 | Complete | 2026-09-10 |
+| 21. Integer Bitwise Operators | 0/1 | Not started | - |
+| 22. Loop Bounds Check Elimination (BCE) | 0/1 | Not started | - |
+| 23. AVX2 SIMD Array Vectorization | 0/1 | Not started | - |
+| 24. 20-Workload Comparative Benchmark Audit | 0/1 | Not started | - |
+
 
 
 
