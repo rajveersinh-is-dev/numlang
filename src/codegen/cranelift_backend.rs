@@ -133,6 +133,28 @@ fn is_safe_for_select(expr: &TypedExpr) -> bool {
     }
 }
 
+fn is_block_pure_scalar_updates(block: &TypedBlock) -> bool {
+    if block.stmts.is_empty() {
+        return true;
+    }
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Assign { value, .. } => {
+                if !is_safe_for_select(value) {
+                    return false;
+                }
+            }
+            TypedStmt::Let { value, .. } => {
+                if !is_safe_for_select(value) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn collect_dynamically_indexed_arrays(body: &TypedBlock) -> HashSet<String> {
     let mut dynamic = HashSet::new();
     collect_dynamic_arrays_in_block(body, &mut dynamic);
@@ -315,8 +337,21 @@ fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &mut 
                     collect_initial_nonneg_candidates_block(eb, candidates);
                 }
             }
-            TypedStmt::While { body, .. } => {
-                collect_initial_nonneg_candidates_block(body, candidates);
+            TypedStmt::While { condition, body, .. } => {
+                let mut while_candidates = candidates.clone();
+                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
+                            if candidates.contains(l_name) {
+                                while_candidates.insert(r_name.clone());
+                            }
+                        }
+                    }
+                }
+                collect_initial_nonneg_candidates_block(body, &mut while_candidates);
+                for v in while_candidates {
+                    candidates.insert(v);
+                }
             }
             _ => {}
         }
@@ -328,30 +363,53 @@ fn all_assignments_are_nonneg_in_block(
     var: &str,
     candidates: &HashSet<String>,
 ) -> bool {
+    let mut current_candidates = candidates.clone();
     for stmt in &block.stmts {
         match stmt {
-            TypedStmt::Let { name, value, .. } if name == var => {
-                if !is_expr_known_non_negative(value, candidates) {
+            TypedStmt::Let { name, value, .. } => {
+                let nonneg = is_expr_known_non_negative(value, &current_candidates);
+                if name == var && !nonneg {
                     return false;
                 }
+                if nonneg {
+                    current_candidates.insert(name.clone());
+                } else {
+                    current_candidates.remove(name);
+                }
             }
-            TypedStmt::Assign { name, value, .. } if name == var => {
-                if !is_expr_known_non_negative(value, candidates) {
+            TypedStmt::Assign { name, value, .. } => {
+                let nonneg = is_expr_known_non_negative(value, &current_candidates);
+                if name == var && !nonneg {
                     return false;
+                }
+                if nonneg {
+                    current_candidates.insert(name.clone());
+                } else {
+                    current_candidates.remove(name);
                 }
             }
             TypedStmt::If { then_branch, else_branch, .. } => {
-                if !all_assignments_are_nonneg_in_block(then_branch, var, candidates) {
+                if !all_assignments_are_nonneg_in_block(then_branch, var, &current_candidates) {
                     return false;
                 }
                 if let Some(eb) = else_branch {
-                    if !all_assignments_are_nonneg_in_block(eb, var, candidates) {
+                    if !all_assignments_are_nonneg_in_block(eb, var, &current_candidates) {
                         return false;
                     }
                 }
             }
-            TypedStmt::While { body, .. } => {
-                if !all_assignments_are_nonneg_in_block(body, var, candidates) {
+            TypedStmt::While { condition, body, .. } => {
+                let mut while_candidates = current_candidates.clone();
+                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
+                            if current_candidates.contains(l_name) {
+                                while_candidates.insert(r_name.clone());
+                            }
+                        }
+                    }
+                }
+                if !all_assignments_are_nonneg_in_block(body, var, &while_candidates) {
                     return false;
                 }
             }
@@ -1589,39 +1647,13 @@ impl<'a> FunctionTranslationState<'a> {
                 else_branch,
                 ..
             } => {
-                // Multi-variable branchless predication: if both branches assign to the same list of scalar variables with safe expressions,
-                // emit branchless `select` (cmov on x86_64) for each variable without any control-flow branching.
-                if let Some(TypedBlock { stmts: else_stmts, .. }) = else_branch {
-                    if then_branch.stmts.len() == else_stmts.len() && !then_branch.stmts.is_empty() {
-                        let mut can_select = true;
-                        let mut pairs = Vec::new();
-                        for (s_then, s_else) in then_branch.stmts.iter().zip(else_stmts.iter()) {
-                            if let (
-                                TypedStmt::Assign { name: name_then, value: val_then, .. },
-                                TypedStmt::Assign { name: name_else, value: val_else, .. },
-                            ) = (s_then, s_else) {
-                                if name_then == name_else && is_safe_for_select(val_then) && is_safe_for_select(val_else) {
-                                    if let Some(Storage::Scalar(var)) = self.variables.get(name_then).cloned() {
-                                        pairs.push((var, val_then, val_else));
-                                        continue;
-                                    }
-                                }
-                            }
-                            can_select = false;
-                            break;
-                        }
-
-                        if can_select && !pairs.is_empty() {
-                            let cond_val = self.translate_expr(condition, builder)?;
-                            for (var, val_then, val_else) in pairs {
-                                let then_val = self.translate_expr(val_then, builder)?;
-                                let else_val = self.translate_expr(val_else, builder)?;
-                                let selected = builder.ins().select(cond_val, then_val, else_val);
-                                builder.def_var(var, selected);
-                            }
-                            return Ok(false);
-                        }
-                    }
+                if self.try_emit_branchless_select(
+                    condition,
+                    then_branch,
+                    else_branch.as_ref(),
+                    builder,
+                )? {
+                    return Ok(false);
                 }
 
                 let cond_val = self.translate_expr(condition, builder)?;
@@ -1777,10 +1809,26 @@ impl<'a> FunctionTranslationState<'a> {
                         .brif(cond_init, body_block, &[], exit_block, &[]);
                 }
 
+                let mut added_nonneg = None;
+                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if *op == BinaryOp::Le || *op == BinaryOp::Lt {
+                        if let (TypedExpr::Ident { name: l_name, .. }, TypedExpr::Ident { name: r_name, .. }) = (&**left, &**right) {
+                            if self.known_non_negative_vars.contains(l_name) {
+                                if self.known_non_negative_vars.insert(r_name.clone()) {
+                                    added_nonneg = Some(r_name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 builder.switch_to_block(body_block);
                 self.loop_exit_blocks.push(exit_block);
                 let body_term = self.translate_block(body, builder)?;
                 self.loop_exit_blocks.pop();
+                if let Some(ref r_name) = added_nonneg {
+                    self.known_non_negative_vars.remove(r_name);
+                }
                 if !body_term {
                     if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
                         builder.ins().jump(body_block, &[]);
@@ -2471,6 +2519,214 @@ impl<'a> FunctionTranslationState<'a> {
                     Ok(results[0])
                 }
             }
+        }
+    }
+
+    fn try_emit_branchless_select(
+        &mut self,
+        condition: &TypedExpr,
+        then_branch: &TypedBlock,
+        else_branch: Option<&TypedBlock>,
+        builder: &mut FunctionBuilder,
+    ) -> Result<bool, CodegenError> {
+        if !is_block_pure_scalar_updates(then_branch) {
+            return Ok(false);
+        }
+        if let Some(eb) = else_branch {
+            if !is_block_pure_scalar_updates(eb) {
+                return Ok(false);
+            }
+        }
+
+        let mut modified_vars: Vec<String> = Vec::new();
+        for stmt in &then_branch.stmts {
+            if let TypedStmt::Assign { name, .. } = stmt {
+                if !modified_vars.contains(name) {
+                    modified_vars.push(name.clone());
+                }
+            }
+        }
+        if let Some(eb) = else_branch {
+            for stmt in &eb.stmts {
+                if let TypedStmt::Assign { name, .. } = stmt {
+                    if !modified_vars.contains(name) {
+                        modified_vars.push(name.clone());
+                    }
+                }
+            }
+        }
+
+        if modified_vars.is_empty() {
+            return Ok(false);
+        }
+
+        for name in &modified_vars {
+            match self.variables.get(name) {
+                Some(Storage::Scalar(_)) => {}
+                _ => return Ok(false),
+            }
+        }
+
+        let cond_val = self.translate_expr(condition, builder)?;
+
+        let mut then_locals: HashMap<String, Value> = HashMap::new();
+        for stmt in &then_branch.stmts {
+            match stmt {
+                TypedStmt::Let { name, value, .. } => {
+                    let val = self.eval_pure_select_expr(value, &then_locals, builder)?;
+                    then_locals.insert(name.clone(), val);
+                }
+                TypedStmt::Assign { name, value, .. } => {
+                    let val = self.eval_pure_select_expr(value, &then_locals, builder)?;
+                    then_locals.insert(name.clone(), val);
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        let mut else_locals: HashMap<String, Value> = HashMap::new();
+        if let Some(eb) = else_branch {
+            for stmt in &eb.stmts {
+                match stmt {
+                    TypedStmt::Let { name, value, .. } => {
+                        let val = self.eval_pure_select_expr(value, &else_locals, builder)?;
+                        else_locals.insert(name.clone(), val);
+                    }
+                    TypedStmt::Assign { name, value, .. } => {
+                        let val = self.eval_pure_select_expr(value, &else_locals, builder)?;
+                        else_locals.insert(name.clone(), val);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        for name in &modified_vars {
+            let var = match self.variables.get(name).unwrap() {
+                Storage::Scalar(v) => *v,
+                _ => unreachable!(),
+            };
+            let orig_val = builder.use_var(var);
+            let then_val = then_locals.get(name).copied().unwrap_or(orig_val);
+            let else_val = else_locals.get(name).copied().unwrap_or(orig_val);
+
+            let selected = builder.ins().select(cond_val, then_val, else_val);
+            builder.def_var(var, selected);
+        }
+
+        Ok(true)
+    }
+
+    fn eval_pure_select_expr(
+        &mut self,
+        expr: &TypedExpr,
+        locals: &HashMap<String, Value>,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Value, CodegenError> {
+        if locals.is_empty() {
+            return self.translate_expr(expr, builder);
+        }
+        match expr {
+            TypedExpr::Ident { name, .. } => {
+                if let Some(&val) = locals.get(name) {
+                    Ok(val)
+                } else {
+                    self.translate_expr(expr, builder)
+                }
+            }
+            TypedExpr::Unary { op, expr: inner, ty, .. } => {
+                let inner_val = self.eval_pure_select_expr(inner, locals, builder)?;
+                match op {
+                    crate::ast::UnaryOp::Neg => {
+                        if ty.is_float() {
+                            Ok(builder.ins().fneg(inner_val))
+                        } else {
+                            Ok(builder.ins().ineg(inner_val))
+                        }
+                    }
+                    crate::ast::UnaryOp::Not => {
+                        let zero = builder.ins().iconst(types::I8, 0);
+                        Ok(builder.ins().icmp(IntCC::Equal, inner_val, zero))
+                    }
+                }
+            }
+            TypedExpr::Binary { op, left, right, .. } => {
+                let l = self.eval_pure_select_expr(left, locals, builder)?;
+                let r = self.eval_pure_select_expr(right, locals, builder)?;
+                let operand_ty = left.ty();
+                match op {
+                    BinaryOp::Add => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fadd(l, r))
+                        } else {
+                            Ok(builder.ins().iadd(l, r))
+                        }
+                    }
+                    BinaryOp::Sub => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fsub(l, r))
+                        } else {
+                            Ok(builder.ins().isub(l, r))
+                        }
+                    }
+                    BinaryOp::Mul => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fmul(l, r))
+                        } else {
+                            Ok(builder.ins().imul(l, r))
+                        }
+                    }
+                    BinaryOp::BitAnd => Ok(builder.ins().band(l, r)),
+                    BinaryOp::BitOr => Ok(builder.ins().bor(l, r)),
+                    BinaryOp::BitXor => Ok(builder.ins().bxor(l, r)),
+                    BinaryOp::Shl => Ok(builder.ins().ishl(l, r)),
+                    BinaryOp::Shr => Ok(builder.ins().sshr(l, r)),
+                    BinaryOp::Eq => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::Equal, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::Equal, l, r))
+                        }
+                    }
+                    BinaryOp::Ne => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::NotEqual, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::NotEqual, l, r))
+                        }
+                    }
+                    BinaryOp::Lt => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::LessThan, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::SignedLessThan, l, r))
+                        }
+                    }
+                    BinaryOp::Le => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r))
+                        }
+                    }
+                    BinaryOp::Gt => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::GreaterThan, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r))
+                        }
+                    }
+                    BinaryOp::Ge => {
+                        if operand_ty.is_float() {
+                            Ok(builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r))
+                        } else {
+                            Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r))
+                        }
+                    }
+                    _ => self.translate_expr(expr, builder),
+                }
+            }
+            _ => self.translate_expr(expr, builder),
         }
     }
 }

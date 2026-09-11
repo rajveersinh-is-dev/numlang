@@ -7,10 +7,10 @@ last_updated: "2026-09-11T19:15:00.000Z"
 last_activity: 2026-09-11
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -24,15 +24,16 @@ See: .planning/PROJECT.md (updated 2026-09-11)
 
 ## Current Position
 
-Phase: Phase 30: Branchless Select Predication & CMOV Lowering
-Plan: Ready to plan (Plan 30-01)
+Phase: Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling
+Plan: Ready to plan (Plan 31-01)
 Status: In progress
-Last activity: 2026-09-11 — Completed Phase 29: Whole-Program Interprocedural Function Inlining with A-normal call lifting and multi-return normalization.
+Last activity: 2026-09-11 — Completed Phase 30: Branchless Select Predication & CMOV Lowering (slashed Binary Search Kernel from 107.84 ms to 37.29 ms, beating Rust at 43.16 ms).
 
 ## Accumulated Context
 
 ### Decisions
 
+- [v11.0 Phase 30]: Implemented generalized branchless select predication in `src/codegen/cranelift_backend.rs` (`try_emit_branchless_select` and `eval_pure_select_expr`), lowering asymmetric variable updates across branches (binary search) and conditional assignments without else-branch (Stein's GCD conditional swap) to branchless `select` (`cmov`). Propagated relational interval bounds in while loops (`while low <= high`) to optimize `(low + high) / 2` to single-cycle `ushr_imm_s 1`. Slashed Binary Search Kernel runtime by 2.89x (107.84 ms -> 37.29 ms), beating Rust (43.16 ms).
 - [v11.0 Phase 29]: Implemented whole-program interprocedural function inlining pass (`src/opt/inlining.rs`) with A-normal call lifting and multi-return normalization (`normalize_function_returns`). Eliminates function call frames and exposes argument constants to downstream strength reduction. Verified on `pow_mod` (31.8% speedup), `isqrt_newton` (5M call frames eliminated), and `is_prime` (400k call frames eliminated).
 
 - [v9.0 Phase 21]: Implemented native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) across the entire compiler pipeline.

@@ -45,7 +45,7 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 ### Milestone v11.0: Total Rust Decimation — Bare-Metal Upper Hand Across All Workloads
 
 - [x] **Phase 29: Whole-Program Interprocedural Function Inlining** - Inline non-recursive small/medium functions to eliminate call frames and expose constants. (completed 2026-09-11)
-- [ ] **Phase 30: Branchless Select Predication & CMOV Lowering** - Lower variable-updating if-else branches to branchless Cranelift select/cmov instructions.
+- [x] **Phase 30: Branchless Select Predication & CMOV Lowering** - Lower variable-updating if-else branches to branchless Cranelift select/cmov instructions. (completed 2026-09-11)
 - [ ] **Phase 31: Tail-Call Loop Transformation & Leaf Recursion Unrolling** - Transform tail calls in `tak` and `ack` to loops and unroll leaf recursion in `fib`.
 - [ ] **Phase 32: Total 20-Workload Benchmark Supremacy Verification** - Full comparative verification against Rust (-O) and C (/O2) with hardware QPC timers.
 

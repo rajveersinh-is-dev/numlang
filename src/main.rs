@@ -335,7 +335,9 @@ fn main() -> Result<()> {
     }
 
     // Intermediate Representation (IR) Lowering
-    let ir_program = numlang::ir::lower::lower_to_ir(&typed_program);
+    let mut opt_typed = typed_program.clone();
+    numlang::opt::optimize_program(&mut opt_typed);
+    let ir_program = numlang::ir::lower::lower_to_ir(&opt_typed);
 
     if cli.emit_ir {
         print!("{}", numlang::ir::format_ir(&ir_program));
