@@ -1,4 +1,4 @@
-﻿use numlang::codegen::compile_to_obj;
+use numlang::codegen::compile_to_obj;
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
@@ -104,4 +104,152 @@ fn test_unrolled_vector_sum_and_add() {
 
     let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(140));
+}
+
+#[test]
+fn test_simd_large_array_copy() {
+    let test_dir = std::env::temp_dir().join("numlang_test_simd_large_copy");
+    fs::create_dir_all(&test_dir).unwrap();
+    let src_file = test_dir.join("large_copy.nl");
+    let exe_file = test_dir.join("large_copy.exe");
+
+    let src = r#"
+        fn main() -> i64 {
+            let mut src_arr: [i64; 32] = [
+                1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11, 12, 13, 14, 15, 16,
+                17, 18, 19, 20, 21, 22, 23, 24,
+                25, 26, 27, 28, 29, 30, 31, 32
+            ];
+            let mut dst_arr: [i64; 32] = [
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0
+            ];
+            dst_arr = src_arr;
+            return dst_arr[31]; // should be 32
+        }
+    "#;
+    fs::write(&src_file, src).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
+        .arg("build")
+        .arg(&src_file)
+        .arg("-o")
+        .arg(&exe_file)
+        .output()
+        .expect("Failed to build SIMD array copy binary");
+
+    assert!(output.status.success());
+    assert!(exe_file.exists());
+
+    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    assert_eq!(run_output.status.code(), Some(32));
+}
+
+#[test]
+fn test_simd_large_vec_add() {
+    let test_dir = std::env::temp_dir().join("numlang_test_simd_large_vec_add");
+    fs::create_dir_all(&test_dir).unwrap();
+    let src_file = test_dir.join("large_vec_add.nl");
+    let exe_file = test_dir.join("large_vec_add.exe");
+
+    let src = r#"
+        fn main() -> i64 {
+            let a: [i64; 32] = [
+                1, 1, 1, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 1, 1, 1,
+                1, 1, 1, 1, 1, 1, 1, 1
+            ];
+            let b: [i64; 32] = [
+                2, 2, 2, 2, 2, 2, 2, 2,
+                2, 2, 2, 2, 2, 2, 2, 2,
+                2, 2, 2, 2, 2, 2, 2, 2,
+                2, 2, 2, 2, 2, 2, 2, 2
+            ];
+            let mut c: [i64; 32] = [
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0
+            ];
+            c = vec_add(a, b);
+            let s: i64 = sum(c);
+            // 32 * 3 = 96
+            return s;
+        }
+    "#;
+    fs::write(&src_file, src).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
+        .arg("build")
+        .arg(&src_file)
+        .arg("-o")
+        .arg(&exe_file)
+        .output()
+        .expect("Failed to build SIMD large vec_add binary");
+
+    assert!(output.status.success());
+    assert!(exe_file.exists());
+
+    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    assert_eq!(run_output.status.code(), Some(96));
+}
+
+#[test]
+fn test_bitwise_rule110_automaton() {
+    let test_dir = std::env::temp_dir().join("numlang_test_bitwise_rule110");
+    fs::create_dir_all(&test_dir).unwrap();
+    let src_file = test_dir.join("rule110.nl");
+    let exe_file = test_dir.join("rule110.exe");
+
+    let src = r#"
+        fn popcount64(n: i64) -> i64 {
+            let mut num: i64 = n;
+            let mut count: i64 = 0;
+            while num != 0 {
+                num = num & (num - 1);
+                count = count + 1;
+            }
+            return count;
+        }
+
+        fn rule110_steps(steps: i64) -> i64 {
+            let mut state: i64 = 1;
+            let mut s: i64 = 0;
+            let mask: i64 = 9223372036854775807;
+            while s < steps {
+                let left: i64 = (state << 1) | ((state >> 63) & 1);
+                let right: i64 = ((state >> 1) & mask) | (state << 63);
+                state = (state | right) ^ (left & state & right);
+                s = s + 1;
+            }
+            return popcount64(state);
+        }
+
+        fn main() -> i64 {
+            let res: i64 = rule110_steps(50000);
+            return res % 256;
+        }
+    "#;
+    fs::write(&src_file, src).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
+        .arg("build")
+        .arg(&src_file)
+        .arg("-o")
+        .arg(&exe_file)
+        .output()
+        .expect("Failed to build Rule 110 binary");
+
+    if !output.status.success() {
+        panic!("Build failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    assert!(output.status.success());
+    assert!(exe_file.exists());
+
+    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    assert_eq!(run_output.status.code(), Some(38));
 }
