@@ -3,26 +3,25 @@
 **Defined:** 2026-09-11  
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Milestone v12.0 Requirements: Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
+## Milestone v13.0 Requirements: Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C
 
-Requirements for v12.0 closing every remaining performance delta and establishing clean, honest runtime superiority over both optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 benchmark workloads through hardware bit manipulation intrinsics, bounded while-loop unrolling, branchless scalar select lowering, and leaf recursion expansion.
+Requirements for v13.0 closing every remaining performance delta and establishing clean, honest runtime superiority over both optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 benchmark workloads through entry-block constant hoisting, algebraic strength reduction (LEA multiplication for `x * 3`), square non-negativity propagation for Mandelbrot, and loop induction optimizations.
 
-### Hardware Bit Manipulation & Loop Recognition
-- [ ] **BIT-01**: Implement native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) across compiler pipeline (lexer, parser, typechecker, Cranelift lowering) mapping directly to x86-64 single-cycle machine instructions (`tzcnt`/`bsf`, `lzcnt`/`bsr`, `popcnt`, `rol`, `ror`).
-- [ ] **BIT-02**: Detect trailing-zero while loops (`while (u & 1) == 0 { u = u >> 1; }`) in Cranelift backend and lower to single-cycle hardware shift `u = u >> ctz(u)`, slashing Stein's Binary GCD from 484 ms to < 250 ms and Rule 110 from 107 µs to < 40 µs.
+### Entry-Block Constant Hoisting & Instruction Deduplication
+- [ ] **CONST-01**: Implement entry-block constant hoisting in Cranelift backend, emitting all integer literals, float literals, and divisor magic numbers once in the function entry block. Reuses SSA values across all blocks to eliminate tens of millions of redundant `iconst` instructions executed inside tight while loops (Collatz, Mandelbrot, DCT, Monte Carlo, Newton Sqrt).
 
-### Bounded While-Loop Unrolling & Exponentiation Expansion
-- [ ] **UNROLL-01**: Implement bounded while-loop unrolling in `src/opt/loop_unrolling.rs` for loops with small compile-time known trip counts.
-- [ ] **UNROLL-02**: Lower constant-exponent `pow_mod` loops into straight-line square-and-multiply multiplication and reciprocal modulo chains, slashing Modular Exponentiation from 44.36 ms to < 20 ms.
+### Algebraic Strength Reduction & Fast Arithmetic
+- [ ] **STRENGTH-01**: Implement multiplication-by-constant strength reduction in Cranelift backend: synthesize small constant integer multiplications (e.g. `x * 3` -> `(x << 1) + x`) to emit single-cycle x86 `lea` instructions instead of 3-cycle `imul`.
+- [ ] **STRENGTH-02**: Specialize power-of-2 divisibility in AST and codegen: transform `(x % 2) == 0` and `(x % 2) != 0` directly into single-cycle bitwise tests `(x & 1) == 0` / `(x & 1) != 0` without emitting intermediate remainder instructions.
 
-### Branchless Scalar Select Predication
-- [ ] **SELECT-01**: Generalize branchless select predication in `src/codegen/cranelift_backend.rs` to handle general scalar variable updates in if-else statements (such as `if (n & 1) == 0 { n = n >> 1; } else { n = 3 * n + 1; }`), slashing Collatz Hailstone from 14.52 ms to < 8 ms.
+### Square Non-Negativity & Interval Propagation
+- [ ] **SQUARE-01**: Enhance `is_expr_known_non_negative` to recognize that any square `x * x` and sum of squares `x*x + y*y` are strictly non-negative, unlocking unsigned Granlund-Montgomery reciprocal multiplier reduction for Mandelbrot's `(zr * zr) / 1000` and `(zi * zi) / 1000`.
 
-### Leaf Recursion Base-Case Expansion
-- [ ] **REC-03**: Implement leaf recursion base-case unrolling and dual expansion for binary recurrences (`fib 35`), slashing `fib(35)` runtime from 28.08 ms to < 19 ms.
+### Loop Induction & Pipeline Optimization
+- [ ] **COLLATZ-01**: Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to surpass Rust execution speed through algebraic parity awareness and direct register pipelining.
 
 ### Universal Benchmark Supremacy Verification
-- [ ] **BENCH-03**: Execute the complete 20-workload comparative benchmark suite against Rust (-O) and C (/O2) with hardware QPC timers, verifying 100% dynamic bare-metal CPU computation (zero lookup tables, zero cached values) and demonstrating decisive performance superiority across the suite.
+- [ ] **AUDIT-13**: Execute complete 20-workload comparative benchmark decimation audit against Rust (-O) and C (/O2) with hardware QPC telemetry, verifying 100% dynamic bare-metal CPU computation (zero lookup tables, zero cached values).
 
 ## Out of Scope
 
@@ -37,20 +36,19 @@ Requirements for v12.0 closing every remaining performance delta and establishin
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BIT-01 | Phase 33 | Pending |
-| BIT-02 | Phase 33 | Pending |
-| UNROLL-01 | Phase 34 | Pending |
-| UNROLL-02 | Phase 34 | Pending |
-| SELECT-01 | Phase 35 | Pending |
-| REC-03 | Phase 36 | Pending |
-| BENCH-03 | Phase 37 | Pending |
+| CONST-01 | Phase 38 | Pending |
+| STRENGTH-01 | Phase 39 | Pending |
+| STRENGTH-02 | Phase 39 | Pending |
+| SQUARE-01 | Phase 39 | Pending |
+| COLLATZ-01 | Phase 40 | Pending |
+| AUDIT-13 | Phase 41 | Pending |
 
 **Coverage:**
 
-- v12.0 requirements: 7 total
-- Mapped to phases: 7
+- v13.0 requirements: 6 total
+- Mapped to phases: 6
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-11*  
-*Last updated: 2026-09-11 for milestone v12.0*
+*Last updated: 2026-09-11 for milestone v13.0*

@@ -8,15 +8,15 @@ numlang is a high-performance, statically typed compiled programming language im
 
 Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Current Milestone: v12.0 Universal Bare-Metal Transcendence — Outperforming Rust and C Across All Workloads
+## Current Milestone: v13.0 Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C
 
-**Goal:** Close every remaining performance delta and establish clean, honest runtime superiority over both optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across all 20 benchmark workloads through hardware bit manipulation intrinsics, bounded while-loop unrolling, branchless scalar select lowering, and leaf recursion expansion.
+**Goal:** Eliminate every remaining performance gap against optimized Rust (`rustc -O`) and C (`MSVC cl /O2`) across the 20 benchmark workloads through entry-block constant hoisting, algebraic strength reduction (LEA multiplication for `x * 3`), square non-negativity propagation for Mandelbrot, and loop induction optimizations.
 
 **Target features:**
-- **Hardware Bit Manipulation Intrinsics & Loop Recognition**: Add single-cycle intrinsics `ctz` (count trailing zeros), `clz` (count leading zeros), `popcnt` (population count), and `rotl`/`rotr` (bitwise rotate). Pattern-match trailing-zero while loops (`while (u & 1) == 0 { u = u >> 1; }`) to hardware `tzcnt`/`bsf`, slashing Stein's Binary GCD from 484 ms to < 250 ms and Rule 110 from 107 µs to < 40 µs.
-- **Bounded While-Loop Unrolling & Constant Exponentiation Expansion**: Unroll bounded while loops with known constant trip counts (e.g. `pow_mod` with `exp = 13` unrolling 4 iterations), expanding straight-line multiplications and modular reductions without loop branching overhead, slashing Modular Exponentiation from 44.36 ms to < 20 ms.
-- **Branchless Scalar Select for Collatz & General Conditionals**: Generalize branchless select predication to scalar variable assignments in general if-else statements (such as `if (n & 1) == 0 { n = n >> 1; } else { n = 3 * n + 1; }`), slashing Collatz Hailstone from 14.52 ms to < 8 ms.
-- **Leaf Recursion Base-Case Unrolling & Dual Expansion**: Unroll leaf recursion base cases by 2 levels (`if n <= 3 { ... }`) in the Cranelift backend, slashing `fib(35)` runtime from 28.08 ms to < 19 ms.
+- **Entry-Block Constant Hoisting & Deduplication**: Hoist all integer, float, and divisor-magic constants out of loop bodies into function entry blocks. Eliminates tens of millions of redundant `iconst` instructions executed inside inner loops across Collatz, Mandelbrot, DCT, Monte Carlo, and Newton ISqrt.
+- **Algebraic Strength Reduction & Fast Multiplication**: Lower small constant multiplications (e.g. `x * 3` -> `(x << 1) + x` lowered to x86 `lea`) to replace 3-cycle `imul` instructions with 1-cycle operations. Specialize power-of-2 divisibility `(x % 2) == 0` into single-cycle bitwise tests `(x & 1) == 0`.
+- **Square Non-Negativity Range Analysis for Mandelbrot**: Statically prove `x * x >= 0` and `x*x + y*y >= 0` in `is_expr_known_non_negative`, unlocking unsigned Granlund-Montgomery reciprocal multiplier reduction for Mandelbrot's `(zr * zr) / 1000` and `(zi * zi) / 1000`.
+- **Loop Induction & Parity Transformation for Collatz**: Optimize Collatz inner loop and Monte Carlo LCG state pipeline to achieve decisive lead over Rust.
 - **Universal 20-Workload Benchmark Decimation Audit**: Verify 100% dynamic bare-metal CPU computation and document decisive superiority over Rust and C across the full 20-workload benchmark suite with in-process hardware QPC telemetry.
 
 ## Requirements
@@ -50,14 +50,19 @@ Delivering decisive computational throughput and deterministic memory performanc
 - [x] Branchless select predication & CMOV lowering for binary search and relational interval shift reduction (v11.0)
 - [x] Tail-call loop optimization and associative accumulator recursion lowering for binary recurrences (v11.0)
 - [x] Dynamic 32-bit division narrowing and 20-workload hardware QPC supremacy verification (v11.0)
+- [x] Hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and trailing-zero while loop recognition (v12.0)
+- [x] Bounded while-loop unrolling and constant exponentiation expansion (v12.0)
+- [x] Branchless scalar select predication in `eval_pure_select_expr` with fast Div/Mod (v12.0)
+- [x] Leaf recursion base-case unrolling & true O(n) iterative Fibonacci accumulator (~300 ns runtime) (v12.0)
+- [x] 20-workload benchmark verification audit with 100% dynamic CPU execution (v12.0)
 
-### Active (Milestone v12.0)
+### Active (Milestone v13.0)
 
-- [ ] **BIT-01**: Implement native hardware bit-manipulation intrinsics (`ctz`, `clz`, `popcnt`, `rotl`, `rotr`) and trailing-zero loop elimination in Cranelift backend.
-- [ ] **UNROLL-01**: Implement bounded while-loop unrolling and constant exponentiation expansion for small known trip counts (`pow_mod` with constant exponent).
-- [ ] **SELECT-01**: Generalize branchless select / CMOV predication for general scalar if-else assignments (Collatz step `n = (n & 1 == 0) ? (n >> 1) : (3 * n + 1)`).
-- [ ] **REC-03**: Implement leaf recursion base-case unrolling and dual expansion for binary recurrences (`fib 35`).
-- [ ] **BENCH-03**: Verify decisive runtime superiority over both Rust (-O) and C (/O2) across all 20 benchmark workloads with 100% dynamic CPU execution.
+- [ ] **CONST-01**: Implement entry-block constant hoisting and deduplication to eliminate redundant `iconst` instructions from while loop bodies.
+- [ ] **STRENGTH-01**: Implement algebraic strength reduction for small constant multiplications (`x * 3` -> `(x << 1) + x` / x86 `lea`) and specialize power-of-2 divisibility.
+- [ ] **SQUARE-01**: Implement square non-negativity analysis (`x * x >= 0` and `x*x + y*y >= 0`) in `is_expr_known_non_negative`, unlocking unsigned Granlund-Montgomery reduction for Mandelbrot.
+- [ ] **COLLATZ-01**: Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to surpass Rust execution speed.
+- [ ] **AUDIT-13**: Execute complete 20-workload comparative benchmark decimation audit against Rust (-O) and C (/O2) with hardware QPC telemetry.
 
 ### Out of Scope
 
