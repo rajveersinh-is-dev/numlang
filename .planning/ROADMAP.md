@@ -57,12 +57,12 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 36: Leaf Recursion Base-Case Unrolling & Dual Expansion** - Unroll base case recursion in binary recurrence trees (`fib 35`). (completed 2026-09-11)
 - [x] **Phase 37: Universal 20-Workload Benchmark Decimation Audit** - Execute full 20-workload comparative benchmark suite with hardware QPC timers. (completed 2026-09-11)
 
-### Milestone v13.0: Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C
+### Milestone v13.0: Total Bare-Metal Dominance — Eradicating Remaining Deltas vs Rust and C (Completed)
 
-- [ ] **Phase 38: Entry-Block Constant Hoisting & Deduplication** - Hoist all integer, float, and divisor-magic constants into function entry blocks to eliminate tens of millions of inner-loop `iconst` instructions.
-- [ ] **Phase 39: Algebraic Strength Reduction & Square Non-Negativity Analysis** - Lower `x * 3` to `(x << 1) + x` (x86 LEA), specialize `(x % 2) == 0` to `(x & 1) == 0`, and recognize `x * x >= 0` to unlock unsigned reciprocal division in Mandelbrot.
-- [ ] **Phase 40: Collatz & Loop Induction Pipeline Optimization** - Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to surpass Rust execution speed.
-- [ ] **Phase 41: Universal 20-Workload Benchmark Decimation Audit** - Verify 100% dynamic bare-metal CPU computation and document decisive superiority over Rust and C across all 20 workloads with hardware QPC telemetry.
+- [x] **Phase 38: Entry-Block Constant Hoisting & Deduplication** - Hoist all integer, float, and divisor-magic constants into function entry blocks to eliminate tens of millions of inner-loop `iconst` instructions. (completed 2026-09-12)
+- [x] **Phase 39: Algebraic Strength Reduction & Square Non-Negativity Analysis** - Lower `x * 3` to `(x << 1) + x` (x86 LEA), specialize `(x % 2) == 0` to `(x & 1) == 0`, and recognize `x * x >= 0` to unlock unsigned reciprocal division in Mandelbrot. (completed 2026-09-12)
+- [x] **Phase 40: Collatz & Loop Induction Pipeline Optimization** - Optimize Collatz hailstone trajectory and Monte Carlo RNG pipelines to surpass Rust execution speed. (completed 2026-09-12)
+- [x] **Phase 41: Universal 20-Workload Benchmark Decimation Audit** - Verify 100% dynamic bare-metal CPU computation and document decisive superiority over Rust and C across all 20 workloads with hardware QPC telemetry. (completed 2026-09-12)
 
 ## Phase Details
 
@@ -587,7 +587,7 @@ Phases execute in numeric order: 1 → 2 → ... → 37 → 38 → 39 → 40 →
 | 35. Branchless Scalar Select Predication for Complex Control Flow | 1/1 | Complete | 2026-09-11 |
 | 36. Leaf Recursion Base-Case Unrolling & Dual Expansion | 1/1 | Complete | 2026-09-11 |
 | 37. Universal 20-Workload Benchmark Decimation Audit | 1/1 | Complete | 2026-09-11 |
-| 38. Entry-Block Constant Hoisting & Deduplication | 0/1 | Planned | — |
-| 39. Algebraic Strength Reduction & Square Non-Negativity Analysis | 0/1 | Planned | — |
-| 40. Collatz & Loop Induction Pipeline Optimization | 0/1 | Planned | — |
-| 41. Universal 20-Workload Benchmark Decimation Audit | 0/1 | Planned | — |
+| 38. Entry-Block Constant Hoisting & Deduplication | 1/1 | Complete | 2026-09-12 |
+| 39. Algebraic Strength Reduction & Square Non-Negativity Analysis | 1/1 | Complete | 2026-09-12 |
+| 40. Collatz & Loop Induction Pipeline Optimization | 1/1 | Complete | 2026-09-12 |
+| 41. Universal 20-Workload Benchmark Decimation Audit | 1/1 | Complete | 2026-09-12 |
