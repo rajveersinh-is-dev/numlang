@@ -22,11 +22,25 @@ Milestone v3.0 focuses on **Total Rust Decimation**: implementing recursive call
 - [x] **Phase 7: Static Bounds Analysis, BCE & Loop Unrolling Pass** - Static induction range checking, bounds check elimination in loops, and loop unrolling. (completed 2026-09-10)
 - [x] **Phase 8: High-Performance Numerical Benchmark Suite & Victory Verification** - Extended benchmark harness validating decisive victories across all benchmarks. (completed 2026-09-10)
 
-### Milestone v3.0: Total Rust Decimation
+### Milestone v3.0: Total Rust Decimation (Completed)
 
 - [x] **Phase 9: Recursive Call Optimization & Inlining Pass** - Slashing function call frame count by 50%+ via recursive call expansion. (completed 2026-09-10)
 - [x] **Phase 10: Scalar Replacement of Aggregates (SROA) & SSA Register Promotion** - Promoting small fixed arrays to SSA registers, eliminating stack memory round-trips. (completed 2026-09-10)
 - [x] **Phase 11: Benchmark Supremacy Across All Workloads & Total Victory Audit** - Verifying decisive speed advantages over Rust across all 4 workloads. (completed 2026-09-10)
+
+### Milestone v9.0: Pure Runtime Numerical Optimization & Benchmark Supremacy (Completed)
+
+- [x] **Phase 21: Integer Bitwise Operators** - Native bitwise operators (`&`, `|`, `^`, `<<`, `>>`) across compiler pipeline. (completed 2026-09-11)
+- [x] **Phase 22: Loop Bounds Check Elimination (BCE)** - Static induction bounds analysis and safe range elimination. (completed 2026-09-11)
+- [x] **Phase 23: AVX2 SIMD Array Vectorization** - 16-byte SIMD vector array copying and SIMD vector arithmetic. (completed 2026-09-11)
+- [x] **Phase 24: 20-Workload Comparative Benchmark Audit** - Full comparative benchmark audit with hardware QPC timers. (completed 2026-09-11)
+
+### Milestone v10.0: Compiler Hardening & Universal Benchmark Supremacy
+
+- [ ] **Phase 25: Dynamic SROA Elimination & Contiguous Indexing** - Restrict SROA to statically indexed arrays, keeping dynamic arrays on stack to eliminate CMOV select trees.
+- [ ] **Phase 26: High-Throughput Modulo & Division Strength Reduction** - Single-cycle power-of-two modulo (`band_imm`) and strength reduction for loop-invariant divisors.
+- [ ] **Phase 27: While Loop Lowering Optimization & Dynamic BCE** - Rotated while loop optimization and binary search midpoint range analysis in BCE.
+- [ ] **Phase 28: Total 20-Workload Benchmark Supremacy Verification** - Full comparative benchmark verification against Rust (-O) and C (/O2) with hardware QPC timers.
 
 ## Phase Details
 
@@ -286,10 +300,62 @@ Plans:
 Plans:
 - [x] 24-01: 20-workload comparative benchmark audit and verification (completed 2026-09-11)
 
+### Phase 25: Dynamic SROA Elimination & Contiguous Indexing
+
+**Goal**: Detect dynamic array indexing operations (`arr[i]` where index is non-constant) and retain small arrays as contiguous stack slots (`Storage::Array`) rather than promoting into SSA variable arrays (`Storage::PromotedArray`), eliminating the `O(len)` CMOV select cascade on dynamic reads and writes.
+**Depends on**: Phase 24
+**Requirements**: SROA-01, SROA-02
+**Success Criteria**:
+  1. Arrays indexed dynamically remain contiguous stack slots with direct indexed memory operations (`mov [rsp + rdi*8]`).
+  2. Statically indexed arrays (`len <= 16`) retain pure register promotion.
+  3. N-Queens benchmark runtime drops substantially due to elimination of hundreds of millions of redundant CMOV instructions.
+
+Plans:
+- [ ] 25-01: Detect dynamic array indexing and preserve contiguous stack allocation
+
+### Phase 26: High-Throughput Modulo & Division Strength Reduction
+
+**Goal**: Eliminate multi-cycle hardware `idiv`/`srem` serialization stalls with non-negative / unsigned fast paths for power-of-two modulo (`band_imm`) and strength reduction for loop-invariant divisors.
+**Depends on**: Phase 25
+**Requirements**: DIV-01, DIV-02
+**Success Criteria**:
+  1. Power-of-two modulo with non-negative dividends lowers to single-cycle `band_imm` (`x & ((1 << k) - 1)`).
+  2. Invariant divisors in loops are strength-reduced to reciprocal multiplication or fast unsigned paths.
+  3. Monte Carlo and modular exponentiation benchmarks demonstrate significant throughput gains.
+
+Plans:
+- [ ] 26-01: Implement non-negative power-of-two modulo lowering and loop-invariant divisor optimization
+
+### Phase 27: While Loop Lowering Optimization & Dynamic BCE
+
+**Goal**: Streamline while loop control flow lowering to eliminate redundant condition evaluations, and expand BCE interval analysis to binary search midpoint formulas `(low + high) / 2`.
+**Depends on**: Phase 26
+**Requirements**: LOOP-01, LOOP-02
+**Success Criteria**:
+  1. While loops emit clean rotated control flow without redundant condition subexpression evaluations.
+  2. BCE statically eliminates bounds checks on `arr[mid]` when `mid = (low + high) / 2` and `0 <= low <= high < len`.
+  3. Binary search benchmark runs without branch bounds check traps.
+
+Plans:
+- [ ] 27-01: Optimize while loop control flow and expand BCE for binary search midpoint expressions
+
+### Phase 28: Total 20-Workload Benchmark Supremacy Verification
+
+**Goal**: Run the full 20-workload multi-language comparative benchmark suite with hardware QPC timers, validating 100% computed runtime execution per run with 0 lookup tables, and documenting decisive performance superiority over Rust (-O) and C (/O2).
+**Depends on**: Phase 27
+**Requirements**: BENCH-01, BENCH-02
+**Success Criteria**:
+  1. All 20 workloads pass with 100% bit-for-bit mathematical correctness.
+  2. Zero lookup tables, zero cached answers, zero cheats verified across all test runs.
+  3. NumLang demonstrates decisive performance superiority over Rust (-O) and C (/O2) across the suite.
+
+Plans:
+- [ ] 28-01: Full 20-workload multi-language benchmark suite execution and performance validation
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → ... → 20 → 21 → 22 → 23 → 24
+Phases execute in numeric order: 1 → 2 → ... → 24 → 25 → 26 → 27 → 28
 
 | Phase | Plans Complete | Status | Completed |
 |---|---|---|---|
@@ -317,6 +383,11 @@ Phases execute in numeric order: 1 → 2 → ... → 20 → 21 → 22 → 23 →
 | 22. Loop Bounds Check Elimination (BCE) | 1/1 | Complete | 2026-09-11 |
 | 23. AVX2 SIMD Array Vectorization | 1/1 | Complete | 2026-09-11 |
 | 24. 20-Workload Comparative Benchmark Audit | 1/1 | Complete | 2026-09-11 |
+| 25. Dynamic SROA Elimination & Contiguous Indexing | 0/1 | Planned | — |
+| 26. High-Throughput Modulo & Division Strength Reduction | 0/1 | Planned | — |
+| 27. While Loop Lowering Optimization & Dynamic BCE | 0/1 | Planned | — |
+| 28. Total 20-Workload Benchmark Supremacy Verification | 0/1 | Planned | — |
+
 
 
 
