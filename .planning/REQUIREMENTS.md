@@ -3,23 +3,26 @@
 **Defined:** 2026-09-10
 **Core Value:** Delivering decisive computational throughput and deterministic memory performance for mathematical algorithms, consistently outperforming optimized C and Rust on bare metal without runtime garbage collection.
 
-## Milestone v3.0 Requirements: Total Rust Decimation
+## Milestone v9.0 Requirements: Pure Runtime Numerical Optimization & Benchmark Supremacy
 
-Requirements for the v3.0 performance-focused milestone targeting decisive benchmark victories over Rust (`rustc -O`) across all 4 benchmark workloads.
+Requirements for the v9.0 milestone delivering genuine, honest bare-metal computational supremacy over Rust (`rustc -O`) and C (`MSVC cl /O2`) across 20 standard numerical workloads with 100% runtime execution and zero lookup tables.
 
-### Recursive Call Optimization
+### Integer Bitwise Operators
 
-- [x] **REC-01**: Recursive call unrolling optimization pass expands self-recursive calls by depth 1-2 (`fib(n-1) -> fib(n-2) + fib(n-3)`), eliminating 50%+ of recursive call frames and overhead.
+- [ ] **BIT-01**: Lexer and parser support for bitwise operators (`&`, `|`, `^`, `<<`, `>>`) with standard operator precedence.
+- [ ] **BIT-02**: Semantic typechecking and Cranelift lowering for bitwise binary expressions on integer types (`i64`, `i32`).
 
-### Scalar Replacement of Aggregates (SROA) & SSA Register Promotion
+### Induction Bounds Check Elimination (BCE)
 
-- [x] **SROA-01**: Scalar Replacement of Aggregates (SROA) promotes small fixed array elements (`N <= 16`) into Cranelift SSA variables, eliminating stack memory allocations, loads, and stores.
-- [x] **SROA-02**: Array element reads `arr[c]` and mutations `arr[c] = v` for promoted arrays lower directly to SSA register reads and variable definitions (`builder.use_var`, `builder.def_var`).
-- [x] **SROA-03**: Vector operations (`dot`, `vec_add`, `sum`) operating on promoted arrays execute directly using SSA register values without memory round-trips.
+- [ ] **BCE-01**: Loop induction bounds analysis proving that array indices bounded by loop conditions (`0 <= i < N`) are safe, omitting runtime `emit_bounds_check` branches and panic blocks.
 
-### Total Benchmark Supremacy Verification
+### Hardware SIMD Array Vectorization
 
-- [x] **VICTORY-01**: Automated benchmark verification proves `numlang` achieves statistically significant speedup over `rustc -O` across all 4 benchmark workloads (Fibonacci, Math Loop Accumulator, SIMD Dot, and Matrix-Vector Multiplication) while preserving 100% bit-for-bit mathematical output equivalence.
+- [ ] **SIMD-01**: AVX2 256-bit SIMD lowering for parallel array loops and sweeps (e.g. cellular automaton updates, vector arithmetic).
+
+### Genuine Benchmark Supremacy Verification
+
+- [ ] **BENCH-01**: 20-workload comparative benchmark verification against Rust (-O) and C (/O2) with hardware timers, validating 100% dynamic computation per run with zero pre-loaded tables or hardcoded answers.
 
 ## Future Requirements
 
@@ -30,6 +33,7 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 
 | Feature | Reason |
 |---------|--------|
+| Storing/pre-loading values or lookup tables | Strictly prohibited by user directive. Every computation must execute on the CPU per run. Precomputed answers, table lookups, and pattern-matched shortcuts are classified as cheating and disqualified. |
 | Arbitrary exponential speedup across non-parallelizable code | Physical CPU clock cycles, IPC limits, and cache bandwidth bound single-thread throughput. |
 | Garbage collection runtime | Excluded to guarantee predictable latency and zero-cost abstractions. |
 | Dynamic typing / reflection | Statically typed AOT compilation is chosen for maximum optimization capability. |
@@ -38,18 +42,18 @@ Requirements for the v3.0 performance-focused milestone targeting decisive bench
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REC-01 | Phase 9 | Complete |
-| SROA-01 | Phase 10 | Complete |
-| SROA-02 | Phase 10 | Complete |
-| SROA-03 | Phase 10 | Complete |
-| VICTORY-01 | Phase 11 | Complete |
+| BIT-01 | Phase 21 | Pending |
+| BIT-02 | Phase 21 | Pending |
+| BCE-01 | Phase 22 | Pending |
+| SIMD-01 | Phase 23 | Pending |
+| BENCH-01 | Phase 24 | Pending |
 
 **Coverage:**
 
-- v3 requirements: 5 total
+- v9.0 requirements: 5 total
 - Mapped to phases: 5
 - Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-09-10*
-*Last updated: 2026-09-10 for milestone v3.0*
+*Requirements defined: 2026-09-11*
+*Last updated: 2026-09-11 for milestone v9.0*
