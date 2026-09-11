@@ -161,6 +161,11 @@ impl CompilerDiagnostic {
                 format!("expected `{}`, found `{}`", expected, found),
                 "All elements in an array literal must share the exact same type".to_string(),
             ),
+            crate::typecheck::TypeError::BreakOutsideLoop { .. } => (
+                "`break` used outside a loop".to_string(),
+                "no enclosing loop".to_string(),
+                "Use `break;` only inside a `while` loop".to_string(),
+            ),
         };
 
         CompilerDiagnostic::TypeError {
@@ -194,4 +199,3 @@ pub fn format_ast(program: &Program) -> String {
 pub fn format_typed_ast(program: &crate::typecheck::TypedProgram) -> String {
     format!("{:#?}", program)
 }
-

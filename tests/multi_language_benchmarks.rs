@@ -1162,11 +1162,11 @@ fn solve_nqueens(n: i64) -> i64 {
                 let r_diff: i64 = row - i;
                 if b[i] == col {
                     valid = false;
-                    i = row;
+                    break;
                 } else {
                     if c_diff == r_diff {
                         valid = false;
-                        i = row;
+                        break;
                     }
                 }
                 i = i + 1;
@@ -1174,7 +1174,7 @@ fn solve_nqueens(n: i64) -> i64 {
             if valid {
                 b[row] = col;
                 found = true;
-                col = n;
+                break;
             } else {
                 col = col + 1;
             }
@@ -1889,7 +1889,7 @@ fn bsearch_kernel(iters: i64) -> i64 {
             let val: i64 = mid * 7 + 3;
             if val == target {
                 idx = mid;
-                low = high + 1;
+                break;
             } else {
                 if val < target {
                     low = mid + 1;

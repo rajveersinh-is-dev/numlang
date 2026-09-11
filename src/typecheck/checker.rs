@@ -112,6 +112,9 @@ pub enum TypeError {
         found: Type,
         span: Span,
     },
+
+    #[error("'break' may only be used inside a loop")]
+    BreakOutsideLoop { span: Span },
 }
 
 impl TypeError {
@@ -133,6 +136,7 @@ impl TypeError {
             TypeError::EmptyArrayLiteral { span, .. } => *span,
             TypeError::IndexOutOfBounds { span, .. } => *span,
             TypeError::ArrayElementMismatch { span, .. } => *span,
+            TypeError::BreakOutsideLoop { span } => *span,
         }
     }
 }
@@ -143,6 +147,7 @@ pub struct TypeChecker {
     env: ScopeEnvironment,
     current_fn_return_ty: Type,
     active_loop_bounds: HashMap<String, i64>,
+    loop_depth: usize,
 }
 
 impl Default for TypeChecker {
@@ -157,6 +162,7 @@ impl TypeChecker {
             env: ScopeEnvironment::new(),
             current_fn_return_ty: Type::Void,
             active_loop_bounds: HashMap::new(),
+            loop_depth: 0,
         }
     }
 
@@ -473,6 +479,14 @@ impl TypeChecker {
                 Ok(TypedStmt::Expr(typed_expr))
             }
 
+            Stmt::Break(span) => {
+                if self.loop_depth == 0 {
+                    Err(TypeError::BreakOutsideLoop { span: *span })
+                } else {
+                    Ok(TypedStmt::Break(*span))
+                }
+            }
+
             Stmt::If {
                 condition,
                 then_branch,
@@ -556,10 +570,12 @@ impl TypeChecker {
                 }
 
                 self.env.enter_scope();
+                self.loop_depth += 1;
                 let mut body_stmts = Vec::new();
                 for s in &body.stmts {
                     body_stmts.push(self.check_stmt(s)?);
                 }
+                self.loop_depth -= 1;
                 self.env.exit_scope();
 
                 if let Some((ref var_name, _)) = loop_bound {

@@ -102,6 +102,7 @@ pub enum TypedStmt {
         span: Span,
     },
     Return(Option<TypedExpr>, Span),
+    Break(Span),
     Expr(TypedExpr),
     If {
         condition: TypedExpr,
@@ -123,6 +124,7 @@ impl TypedStmt {
             TypedStmt::Assign { span, .. } => *span,
             TypedStmt::IndexAssign { span, .. } => *span,
             TypedStmt::Return(_, span) => *span,
+            TypedStmt::Break(span) => *span,
             TypedStmt::Expr(e) => e.span(),
             TypedStmt::If { span, .. } => *span,
             TypedStmt::While { span, .. } => *span,

@@ -97,6 +97,7 @@ pub enum Stmt {
         span: Span,
     },
     Return(Option<Expr>, Span),
+    Break(Span),
     Expr(Expr),
     If {
         condition: Expr,
@@ -118,6 +119,7 @@ impl Stmt {
             Stmt::Assign { span, .. } => *span,
             Stmt::IndexAssign { span, .. } => *span,
             Stmt::Return(_, span) => *span,
+            Stmt::Break(span) => *span,
             Stmt::Expr(e) => e.span(),
             Stmt::If { span, .. } => *span,
             Stmt::While { span, .. } => *span,

@@ -164,6 +164,10 @@ impl<'a> Parser<'a> {
             let semi_span = self.consume(&Token::Semi, "';' after return statement")?;
             let span = ret_span.merge(&semi_span);
             Ok(Stmt::Return(value, span))
+        } else if self.check(&Token::Break) {
+            let break_span = self.advance().unwrap().span;
+            let semi_span = self.consume(&Token::Semi, "';' after break statement")?;
+            Ok(Stmt::Break(break_span.merge(&semi_span)))
         } else if self.check(&Token::If) {
             let if_span = self.advance().unwrap().span;
             let condition = self.parse_expr(0)?;
