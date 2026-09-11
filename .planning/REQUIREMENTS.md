@@ -19,8 +19,8 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 
 ### Loop Optimization & Dynamic BCE
 
-- [ ] **LOOP-01**: While loop code generation optimization: eliminate condition re-evaluation overhead and prune dead merge blocks in Cranelift lowering.
-- [ ] **LOOP-02**: Expand BCE (`src/opt/bce.rs`) interval range analysis to handle binary search midpoint formulas `mid = (low + high) / 2` when `0 <= low <= high < len`, marking `arr[mid]` as `is_safe = true` and eliminating bounds checks.
+- [x] **LOOP-01**: While loop code generation optimization: eliminate condition re-evaluation overhead and prune dead merge blocks in Cranelift lowering.
+- [x] **LOOP-02**: Expand BCE (`src/opt/bce.rs`) interval range analysis to handle binary search midpoint formulas `mid = (low + high) / 2` when `0 <= low <= high < len`, marking `arr[mid]` as `is_safe = true` and eliminating bounds checks.
 
 ### Universal Benchmark Supremacy Verification
 
@@ -49,8 +49,8 @@ Requirements for the v10.0 milestone delivering genuine bare-metal computational
 | SROA-02 | Phase 25 | Complete |
 | DIV-01 | Phase 26 | Complete |
 | DIV-02 | Phase 26 | Complete |
-| LOOP-01 | Phase 27 | Pending |
-| LOOP-02 | Phase 27 | Pending |
+| LOOP-01 | Phase 27 | Complete |
+| LOOP-02 | Phase 27 | Complete |
 | BENCH-01 | Phase 28 | Pending |
 | BENCH-02 | Phase 28 | Pending |
 
