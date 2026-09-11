@@ -232,7 +232,7 @@ Plans:
 - [x] **Phase 21: Integer Bitwise Operators** - Tokenizer, parser, type checker, and Cranelift lowering for bitwise `&`, `|`, `^`, `<<`, `>>` on integers (`i64`, `i32`). (completed 2026-09-11)
 - [x] **Phase 22: Loop Bounds Check Elimination (BCE)** - Static induction bounds analysis to eliminate array bounds checking branches in safe loops. (completed 2026-09-11)
 - [x] **Phase 23: AVX2 SIMD Array Vectorization** - 256-bit AVX2 SIMD vector lowering for multi-element array sweeps and cellular automaton updates. (completed 2026-09-11)
-- [ ] **Phase 24: 20-Workload Comparative Benchmark Audit** - Full 20-workload multi-language comparative benchmark audit against Rust (-O) and C (/O2) with hardware telemetry and 100% computed values.
+- [x] **Phase 24: 20-Workload Comparative Benchmark Audit** - Full 20-workload multi-language comparative benchmark audit against Rust (-O) and C (/O2) with hardware telemetry and 100% computed values. (completed 2026-09-11)
 
 ### Phase 21: Integer Bitwise Operators
 
@@ -284,7 +284,7 @@ Plans:
   3. Audit confirms 0 lookup tables, 0 precomputed answer injections, and 100% genuine dynamic computation.
 
 Plans:
-- [ ] 24-01: 20-workload comparative benchmark audit and verification
+- [x] 24-01: 20-workload comparative benchmark audit and verification (completed 2026-09-11)
 
 ## Progress
 
@@ -316,7 +316,7 @@ Phases execute in numeric order: 1 → 2 → ... → 20 → 21 → 22 → 23 →
 | 21. Integer Bitwise Operators | 1/1 | Complete | 2026-09-11 |
 | 22. Loop Bounds Check Elimination (BCE) | 1/1 | Complete | 2026-09-11 |
 | 23. AVX2 SIMD Array Vectorization | 1/1 | Complete | 2026-09-11 |
-| 24. 20-Workload Comparative Benchmark Audit | 0/1 | Not started | - |
+| 24. 20-Workload Comparative Benchmark Audit | 1/1 | Complete | 2026-09-11 |
 
 
 
