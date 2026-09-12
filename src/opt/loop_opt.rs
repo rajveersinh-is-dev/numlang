@@ -8,6 +8,8 @@
 //!    Identifies odd/even parity branches in 3n+1 loops and jump-threads the odd step
 //!    curr = (curr * 3 + 1) / 2; total_steps += 2; since 3n+1 is strictly even for all odd n.
 
+use std::collections::HashSet;
+
 use crate::ast::BinaryOp;
 use crate::span::Span;
 use crate::typecheck::types::Type;
@@ -43,6 +45,9 @@ pub fn optimize_block(block: &mut TypedBlock) {
 
     // Pass 2: Collatz Parity Jump Threading
     try_thread_collatz_parity(block);
+
+    // Pass 3: Split Isolated Accumulator If
+    try_split_isolated_accumulator_if(block);
 }
 
 // Transform:
@@ -401,3 +406,176 @@ fn try_thread_collatz_parity(block: &mut TypedBlock) {
         }
     }
 }
+
+fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
+    match expr {
+        TypedExpr::Ident { name, .. } => {
+            reads.insert(name.clone());
+        }
+        TypedExpr::Unary { expr, .. } => {
+            collect_read_vars_expr(expr, reads);
+        }
+        TypedExpr::Binary { left, right, .. } => {
+            collect_read_vars_expr(left, reads);
+            collect_read_vars_expr(right, reads);
+        }
+        TypedExpr::Call { args, .. } => {
+            for a in args {
+                collect_read_vars_expr(a, reads);
+            }
+        }
+        TypedExpr::ArrayLiteral { elements, .. } => {
+            for e in elements {
+                collect_read_vars_expr(e, reads);
+            }
+        }
+        TypedExpr::Index { target, index, .. } => {
+            collect_read_vars_expr(target, reads);
+            collect_read_vars_expr(index, reads);
+        }
+        _ => {}
+    }
+}
+
+fn collect_read_vars_stmts(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
+    for s in stmts {
+        match s {
+            TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } => {
+                collect_read_vars_expr(value, reads);
+            }
+            TypedStmt::IndexAssign { index, value, .. } => {
+                collect_read_vars_expr(index, reads);
+                collect_read_vars_expr(value, reads);
+            }
+            TypedStmt::Expr(expr) => {
+                collect_read_vars_expr(expr, reads);
+            }
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                collect_read_vars_expr(condition, reads);
+                collect_read_vars_stmts(&then_branch.stmts, reads);
+                if let Some(eb) = else_branch {
+                    collect_read_vars_stmts(&eb.stmts, reads);
+                }
+            }
+            TypedStmt::While { condition, body, .. } => {
+                collect_read_vars_expr(condition, reads);
+                collect_read_vars_stmts(&body.stmts, reads);
+            }
+            TypedStmt::Return(opt_e, ..) => {
+                if let Some(e) = opt_e {
+                    collect_read_vars_expr(e, reads);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_mutated_vars_stmts(stmts: &[TypedStmt], mutated: &mut HashSet<String>) {
+    for s in stmts {
+        match s {
+            TypedStmt::Let { name, .. } | TypedStmt::Assign { name, .. } => {
+                mutated.insert(name.clone());
+            }
+            TypedStmt::IndexAssign { target, .. } => {
+                mutated.insert(target.clone());
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                collect_mutated_vars_stmts(&then_branch.stmts, mutated);
+                if let Some(eb) = else_branch {
+                    collect_mutated_vars_stmts(&eb.stmts, mutated);
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                collect_mutated_vars_stmts(&body.stmts, mutated);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn is_simple_inc_dec(stmt: &TypedStmt) -> Option<String> {
+    if let TypedStmt::Assign { name, value, .. } = stmt {
+        if let TypedExpr::Binary { op, left, right, ty, .. } = value {
+            if !ty.is_integer() {
+                return None;
+            }
+            let is_add = *op == BinaryOp::Add;
+            let is_sub = *op == BinaryOp::Sub;
+            if !is_add && !is_sub {
+                return None;
+            }
+            let is_one = |e: &TypedExpr| -> bool {
+                matches!(e, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
+            };
+            let is_name = |e: &TypedExpr| -> bool {
+                matches!(e, TypedExpr::Ident { name: n, .. } if n == name)
+            };
+            let is_inc = (is_name(left) && is_one(right)) || (is_add && is_one(left) && is_name(right));
+            let is_dec = is_sub && is_name(left) && is_one(right);
+            if is_inc || is_dec {
+                return Some(name.clone());
+            }
+        }
+    }
+    None
+}
+
+fn try_split_isolated_accumulator_if(block: &mut TypedBlock) {
+    let mut i = 0;
+    while i < block.stmts.len() {
+        let should_split = if let TypedStmt::If { condition, then_branch, else_branch, .. } = &block.stmts[i] {
+            if then_branch.stmts.len() > 1 {
+                if let Some(var_name) = is_simple_inc_dec(&then_branch.stmts[0]) {
+                    let mut cond_reads = HashSet::new();
+                    collect_read_vars_expr(condition, &mut cond_reads);
+
+                    let mut rem_reads = HashSet::new();
+                    collect_read_vars_stmts(&then_branch.stmts[1..], &mut rem_reads);
+
+                    let mut rem_writes = HashSet::new();
+                    collect_mutated_vars_stmts(&then_branch.stmts[1..], &mut rem_writes);
+
+                    let mut else_reads = HashSet::new();
+                    let mut else_writes = HashSet::new();
+                    if let Some(eb) = else_branch {
+                        collect_read_vars_stmts(&eb.stmts, &mut else_reads);
+                        collect_mutated_vars_stmts(&eb.stmts, &mut else_writes);
+                    }
+
+                    !cond_reads.contains(&var_name)
+                        && !rem_reads.contains(&var_name)
+                        && !rem_writes.contains(&var_name)
+                        && !else_reads.contains(&var_name)
+                        && !else_writes.contains(&var_name)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if should_split {
+            if let TypedStmt::If { condition, then_branch, span, .. } = &mut block.stmts[i] {
+                let first_stmt = then_branch.stmts.remove(0);
+                let if_inc = TypedStmt::If {
+                    condition: condition.clone(),
+                    then_branch: TypedBlock {
+                        stmts: vec![first_stmt],
+                        span: then_branch.span,
+                    },
+                    else_branch: None,
+                    span: *span,
+                };
+                block.stmts.insert(i, if_inc);
+                i += 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+}
+

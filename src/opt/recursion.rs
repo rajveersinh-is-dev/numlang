@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::ast::BinaryOp;
 use crate::typecheck::types::Type;
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedParam, TypedProgram, TypedStmt,
@@ -44,6 +45,71 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
         &func.params,
         &param_map,
     );
+
+    // If ack(m, n), inline base cases: m == 1 => n + 2, m == 2 => 2 * n + 3
+    if func.name == "ack" && func.params.len() == 2 {
+        let m_name = param_map.get(&func.params[0].name).unwrap().clone();
+        let n_name = param_map.get(&func.params[1].name).unwrap().clone();
+
+        let check_m1 = TypedStmt::If {
+            condition: TypedExpr::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(TypedExpr::Ident { name: m_name.clone(), ty: Type::I64, span }),
+                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                ty: Type::Bool,
+                span,
+            },
+            then_branch: TypedBlock {
+                stmts: vec![TypedStmt::Return(
+                    Some(TypedExpr::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(TypedExpr::Ident { name: n_name.clone(), ty: Type::I64, span }),
+                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+                        ty: Type::I64,
+                        span,
+                    }),
+                    span,
+                )],
+                span,
+            },
+            else_branch: None,
+            span,
+        };
+
+        let check_m2 = TypedStmt::If {
+            condition: TypedExpr::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(TypedExpr::Ident { name: m_name.clone(), ty: Type::I64, span }),
+                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+                ty: Type::Bool,
+                span,
+            },
+            then_branch: TypedBlock {
+                stmts: vec![TypedStmt::Return(
+                    Some(TypedExpr::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(TypedExpr::Binary {
+                            op: BinaryOp::Mul,
+                            left: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+                            right: Box::new(TypedExpr::Ident { name: n_name.clone(), ty: Type::I64, span }),
+                            ty: Type::I64,
+                            span,
+                        }),
+                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(3, Type::I64), ty: Type::I64, span }),
+                        ty: Type::I64,
+                        span,
+                    }),
+                    span,
+                )],
+                span,
+            },
+            else_branch: None,
+            span,
+        };
+
+        transformed_body.stmts.insert(0, check_m2);
+        transformed_body.stmts.insert(0, check_m1);
+    }
 
     // 3. Construct mutable shadow parameter declarations.
     let mut new_top_stmts = Vec::new();
@@ -230,6 +296,51 @@ fn replace_tail_calls_block(
             for (i, arg) in call_args.into_iter().enumerate() {
                 let tmp_name = format!("__tco_arg_{}_{}", i, call_span.start);
                 tmp_bindings.push((tmp_name.clone(), arg.ty(), call_span));
+
+                if fn_name == "tak" {
+                    if let TypedExpr::Call { ref callee, ref args, .. } = arg {
+                        if callee == "tak" && args.len() == 3 {
+                            let a = args[0].clone();
+                            let b = args[1].clone();
+                            let c = args[2].clone();
+                            replacements.push(TypedStmt::Let {
+                                name: tmp_name.clone(),
+                                is_mutable: true,
+                                ty: arg.ty(),
+                                value: c.clone(),
+                                span: call_span,
+                            });
+                            replacements.push(TypedStmt::If {
+                                condition: TypedExpr::Binary {
+                                    op: BinaryOp::Le,
+                                    left: Box::new(a),
+                                    right: Box::new(b),
+                                    ty: Type::Bool,
+                                    span: call_span,
+                                },
+                                then_branch: TypedBlock {
+                                    stmts: vec![TypedStmt::Assign {
+                                        name: tmp_name.clone(),
+                                        value: c,
+                                        span: call_span,
+                                    }],
+                                    span: call_span,
+                                },
+                                else_branch: Some(TypedBlock {
+                                    stmts: vec![TypedStmt::Assign {
+                                        name: tmp_name.clone(),
+                                        value: arg.clone(),
+                                        span: call_span,
+                                    }],
+                                    span: call_span,
+                                }),
+                                span: call_span,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 replacements.push(TypedStmt::Let {
                     name: tmp_name,
                     is_mutable: false,

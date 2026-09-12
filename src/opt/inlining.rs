@@ -811,13 +811,45 @@ fn expand_inlined_call(
 ) {
     // 1. Build variable rename mapping for all parameters and locals in callee
     let mut rename_map: HashMap<String, String> = HashMap::new();
-    for p in &callee.params {
-        rename_map.insert(p.name.clone(), format!("__inl_{}_{}_{}", callee.name, call_id, p.name));
+    let target_name = match &target {
+        TargetVar::Let { name, .. } | TargetVar::Assign { name, .. } => Some(name.as_str()),
+        TargetVar::Return { .. } => None,
+    };
+    for (i, p) in callee.params.iter().enumerate() {
+        let is_mutated = is_var_mutated_in_block(&p.name, &callee.body);
+        let arg_ident = if i < args.len() {
+            if let TypedExpr::Ident { ref name, .. } = args[i] {
+                Some(name.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if !is_mutated && arg_ident.is_some() && target_name != arg_ident.as_deref() {
+            rename_map.insert(p.name.clone(), arg_ident.unwrap());
+        } else {
+            rename_map.insert(p.name.clone(), format!("__inl_{}_{}_{}", callee.name, call_id, p.name));
+        }
     }
     collect_local_names(&callee.body, &mut rename_map, &callee.name, call_id);
 
-    // 2. Emit parameter bindings: let mut renamed_p = arg;
+    // 2. Emit parameter bindings: let renamed_p = arg;
     for (i, p) in callee.params.iter().enumerate() {
+        let is_mutated = is_var_mutated_in_block(&p.name, &callee.body);
+        let arg_ident = if i < args.len() {
+            if let TypedExpr::Ident { ref name, .. } = args[i] {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if !is_mutated && arg_ident.is_some() && target_name != arg_ident {
+            // Directly mapped to caller variable, skip redundant binding
+            continue;
+        }
         let renamed_name = rename_map.get(&p.name).unwrap().clone();
         let arg_expr = if i < args.len() {
             args[i].clone()
@@ -830,7 +862,7 @@ fn expand_inlined_call(
         };
         out_stmts.push(TypedStmt::Let {
             name: renamed_name,
-            is_mutable: true,
+            is_mutable: is_mutated,
             ty: p.ty.clone(),
             value: arg_expr,
             span: p.span,
@@ -1030,3 +1062,38 @@ fn rename_expr(expr: &TypedExpr, map: &HashMap<String, String>) -> TypedExpr {
         _ => expr.clone(),
     }
 }
+
+fn is_var_mutated_in_block(name: &str, block: &TypedBlock) -> bool {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Assign { name: target, .. } => {
+                if target == name {
+                    return true;
+                }
+            }
+            TypedStmt::IndexAssign { target, .. } => {
+                if target == name {
+                    return true;
+                }
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                if is_var_mutated_in_block(name, then_branch) {
+                    return true;
+                }
+                if let Some(eb) = else_branch {
+                    if is_var_mutated_in_block(name, eb) {
+                        return true;
+                    }
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                if is_var_mutated_in_block(name, body) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+

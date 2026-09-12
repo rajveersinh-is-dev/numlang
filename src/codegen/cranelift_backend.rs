@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
+    types, AbiParam, Endianness, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
     Value,
 };
 use cranelift_codegen::settings::{self, Configurable};
@@ -85,6 +85,25 @@ fn compute_magic_u64_nonneg(d: u64) -> Option<(u64, u8)> {
                 if (delta << 63) <= two_p {
                     return Some((m as u64, s));
                 }
+            }
+        }
+    }
+    None
+}
+
+fn compute_magic_u32_fast(d: u64) -> Option<(u64, u8)> {
+    if d == 0 || d == 1 {
+        return None;
+    }
+    for s in 32..64u8 {
+        let two_s = 1u128 << s;
+        let m = (two_s + (d as u128) - 1) / (d as u128);
+        if m < (1u128 << 32) {
+            let rem = (m * (d as u128)) - two_s;
+            let q_max = 0xFFFF_FFFFu128 / (d as u128);
+            let r_max = (d as u128) - 1;
+            if q_max * rem + r_max * m < two_s {
+                return Some((m as u64, s));
             }
         }
     }
@@ -338,6 +357,12 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
         TypedExpr::Call { callee, .. } => {
             callee == "abs" || callee == "sqrt" || callee == "ctz" || callee == "clz" || callee == "popcnt"
         }
+        TypedExpr::ArrayLiteral { elements, .. } => {
+            elements.iter().all(|e| is_expr_known_non_negative(e, non_negative_vars))
+        }
+        TypedExpr::Index { target, .. } => {
+            is_expr_known_non_negative(target, non_negative_vars)
+        }
         _ => false,
     }
 }
@@ -512,6 +537,12 @@ fn all_assignments_are_nonneg_in_block(
                     return false;
                 }
             }
+            TypedStmt::IndexAssign { target, value, .. } => {
+                let nonneg = is_expr_known_non_negative(value, &current_candidates);
+                if target == var && !nonneg {
+                    return false;
+                }
+            }
             _ => {}
         }
     }
@@ -539,17 +570,75 @@ fn is_expr_known_u32(
                 }
             }
             BinaryOp::Div => {
-                is_expr_known_u32(left, non_negative_vars, u32_vars)
+                if is_expr_known_u32(left, non_negative_vars, u32_vars)
                     && (is_known_positive(right, non_negative_vars) || is_expr_known_non_negative(right, non_negative_vars))
+                {
+                    true
+                } else if let Some(d) = get_constant_int(right) {
+                    if d >= 2 {
+                        if let TypedExpr::Binary { op: BinaryOp::Add, left: a, right: b, .. } = &**left {
+                            is_expr_known_u32(a, non_negative_vars, u32_vars)
+                                && is_expr_known_u32(b, non_negative_vars, u32_vars)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
             BinaryOp::Add => {
                 if let Some(c) = get_constant_int(right) {
-                    c >= 0 && c <= 1_000_000 && is_expr_known_u32(left, non_negative_vars, u32_vars)
+                    if c >= 0 {
+                        match &**left {
+                            TypedExpr::Binary { op: BinaryOp::Mod, right: mod_r, .. } => {
+                                if let Some(d) = get_constant_int(mod_r) {
+                                    if d > 0 && ((d as u64) + (c as u64) <= 0x1_0000_0000) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => {
+                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) {
+                                    return true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    c == 0 && is_expr_known_u32(left, non_negative_vars, u32_vars)
                 } else if let Some(c) = get_constant_int(left) {
-                    c >= 0 && c <= 1_000_000 && is_expr_known_u32(right, non_negative_vars, u32_vars)
+                    if c >= 0 {
+                        match &**right {
+                            TypedExpr::Binary { op: BinaryOp::Mod, right: mod_r, .. } => {
+                                if let Some(d) = get_constant_int(mod_r) {
+                                    if d > 0 && ((d as u64) + (c as u64) <= 0x1_0000_0000) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => {
+                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) {
+                                    return true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    c == 0 && is_expr_known_u32(right, non_negative_vars, u32_vars)
                 } else {
-                    is_expr_known_u32(left, non_negative_vars, u32_vars)
-                        && is_expr_known_u32(right, non_negative_vars, u32_vars)
+                    false
+                }
+            }
+            BinaryOp::Mul => {
+                if let Some(c) = get_constant_int(right) {
+                    c == 0 || (c == 1 && is_expr_known_u32(left, non_negative_vars, u32_vars))
+                } else if let Some(c) = get_constant_int(left) {
+                    c == 0 || (c == 1 && is_expr_known_u32(right, non_negative_vars, u32_vars))
+                } else {
+                    false
                 }
             }
             BinaryOp::BitAnd => {
@@ -557,10 +646,31 @@ fn is_expr_known_u32(
                     || is_expr_known_u32(right, non_negative_vars, u32_vars)
             }
             BinaryOp::Shr => {
-                is_expr_known_u32(left, non_negative_vars, u32_vars)
+                if is_expr_known_u32(left, non_negative_vars, u32_vars) {
+                    true
+                } else if let Some(s) = get_constant_int(right) {
+                    if s >= 1 {
+                        if let TypedExpr::Binary { op: BinaryOp::Add, left: a, right: b, .. } = &**left {
+                            is_expr_known_u32(a, non_negative_vars, u32_vars)
+                                && is_expr_known_u32(b, non_negative_vars, u32_vars)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
             _ => false,
         },
+        TypedExpr::ArrayLiteral { elements, .. } => {
+            elements.iter().all(|e| is_expr_known_u32(e, non_negative_vars, u32_vars))
+        }
+        TypedExpr::Index { target, .. } => {
+            is_expr_known_u32(target, non_negative_vars, u32_vars)
+        }
         _ => false,
     }
 }
@@ -689,71 +799,290 @@ fn all_assignments_are_u32_in_block(
                     return false;
                 }
             }
+            TypedStmt::IndexAssign { target, value, .. } => {
+                let is_u32 = is_expr_known_u32(value, non_negative_vars, &current_candidates);
+                if target == var && !is_u32 {
+                    return false;
+                }
+            }
             _ => {}
         }
     }
     true
 }
 
-fn collect_int_literals_block(block: &TypedBlock, out: &mut Vec<(Type, i64)>) {
-    for stmt in &block.stmts {
-        collect_int_literals_stmt(stmt, out);
-    }
-}
-
-fn collect_int_literals_stmt(stmt: &TypedStmt, out: &mut Vec<(Type, i64)>) {
-    match stmt {
-        TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } => {
-            collect_int_literals_expr(value, out);
-        }
-        TypedStmt::If { condition, then_branch, else_branch, .. } => {
-            collect_int_literals_expr(condition, out);
-            collect_int_literals_block(then_branch, out);
-            if let Some(eb) = else_branch {
-                collect_int_literals_block(eb, out);
-            }
-        }
-        TypedStmt::While { condition, body, .. } => {
-            collect_int_literals_expr(condition, out);
-            collect_int_literals_block(body, out);
-        }
-        TypedStmt::Return(Some(expr), _) => {
-            collect_int_literals_expr(expr, out);
-        }
-        TypedStmt::Expr(expr) => {
-            collect_int_literals_expr(expr, out);
-        }
-        _ => {}
-    }
-}
-
-fn collect_int_literals_expr(expr: &TypedExpr, out: &mut Vec<(Type, i64)>) {
+fn compute_expr_upper_bound(
+    expr: &TypedExpr,
+    var_bounds: &HashMap<String, i64>,
+    non_negative_vars: &HashSet<String>,
+) -> Option<i64> {
     match expr {
-        TypedExpr::Literal { lit: TypedLiteral::Int(n, ty), .. } => {
-            out.push((ty.clone(), *n));
-        }
-        TypedExpr::Binary { left, right, .. } => {
-            collect_int_literals_expr(left, out);
-            collect_int_literals_expr(right, out);
-        }
-        TypedExpr::Unary { expr, .. } => {
-            collect_int_literals_expr(expr, out);
-        }
-        TypedExpr::Call { args, .. } => {
-            for arg in args {
-                collect_int_literals_expr(arg, out);
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => {
+            if *val >= 0 {
+                Some(*val)
+            } else {
+                None
             }
         }
+        TypedExpr::Literal {
+            lit: TypedLiteral::Bool(_),
+            ..
+        } => Some(1),
+        TypedExpr::Ident { name, .. } => var_bounds.get(name).copied(),
+        TypedExpr::Binary { op, left, right, .. } => match op {
+            BinaryOp::Mod => {
+                if let Some(d) = get_constant_int(right) {
+                    if d > 0 && is_expr_known_non_negative(left, non_negative_vars) {
+                        return Some(d - 1);
+                    }
+                }
+                None
+            }
+            BinaryOp::Add => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                let r_bound = compute_expr_upper_bound(right, var_bounds, non_negative_vars)?;
+                l_bound.checked_add(r_bound)
+            }
+            BinaryOp::Sub => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                if is_expr_known_non_negative(right, non_negative_vars) {
+                    Some(l_bound)
+                } else {
+                    None
+                }
+            }
+            BinaryOp::Mul => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                let r_bound = compute_expr_upper_bound(right, var_bounds, non_negative_vars)?;
+                l_bound.checked_mul(r_bound)
+            }
+            BinaryOp::Div => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                if let Some(d) = get_constant_int(right) {
+                    if d > 0 {
+                        return Some(l_bound / d);
+                    }
+                }
+                if is_known_positive(right, non_negative_vars) || is_expr_known_non_negative(right, non_negative_vars) {
+                    return Some(l_bound);
+                }
+                None
+            }
+            BinaryOp::BitAnd => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars);
+                let r_bound = compute_expr_upper_bound(right, var_bounds, non_negative_vars);
+                match (l_bound, r_bound) {
+                    (Some(l), Some(r)) => Some(l.min(r)),
+                    (Some(l), None) => Some(l),
+                    (None, Some(r)) => Some(r),
+                    (None, None) => None,
+                }
+            }
+            BinaryOp::Shr => {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                if let Some(s) = get_constant_int(right) {
+                    if s >= 0 && s < 64 {
+                        return Some(l_bound >> s);
+                    }
+                }
+                Some(l_bound)
+            }
+            _ => None,
+        },
         TypedExpr::ArrayLiteral { elements, .. } => {
-            for elem in elements {
-                collect_int_literals_expr(elem, out);
+            let mut max_el: Option<i64> = None;
+            for el in elements {
+                let b = compute_expr_upper_bound(el, var_bounds, non_negative_vars)?;
+                max_el = Some(max_el.map_or(b, |m| m.max(b)));
             }
+            max_el
         }
-        TypedExpr::Index { target, index, .. } => {
-            collect_int_literals_expr(target, out);
-            collect_int_literals_expr(index, out);
+        TypedExpr::Index { .. } => None,
+        _ => None,
+    }
+}
+
+fn collect_mutated_vars_in_block(block: &TypedBlock, mutated: &mut HashSet<String>) {
+    for s in &block.stmts {
+        match s {
+            TypedStmt::Assign { name, .. } => {
+                mutated.insert(name.clone());
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                collect_mutated_vars_in_block(then_branch, mutated);
+                if let Some(eb) = else_branch {
+                    collect_mutated_vars_in_block(eb, mutated);
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                collect_mutated_vars_in_block(body, mutated);
+            }
+            _ => {}
         }
-        _ => {}
+    }
+}
+
+fn collect_known_var_upper_bounds(
+    body: &TypedBlock,
+    non_negative_vars: &HashSet<String>,
+) -> HashMap<String, i64> {
+    let mut bounds: HashMap<String, i64> = HashMap::new();
+    for _ in 0..8 {
+        let mut changed = false;
+        collect_bounds_in_block(body, non_negative_vars, &mut bounds, &mut changed);
+        if !changed {
+            break;
+        }
+    }
+    bounds
+}
+
+fn collect_bounds_in_block(
+    block: &TypedBlock,
+    non_negative_vars: &HashSet<String>,
+    bounds: &mut HashMap<String, i64>,
+    changed: &mut bool,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, value, .. } => {
+                if let Some(ub) = compute_expr_upper_bound(value, bounds, non_negative_vars) {
+                    match bounds.get(name) {
+                        Some(&prev) if prev >= ub => {}
+                        Some(&prev) => {
+                            let new_val = prev.max(ub);
+                            bounds.insert(name.clone(), new_val);
+                            *changed = true;
+                        }
+                        None => {
+                            bounds.insert(name.clone(), ub);
+                            *changed = true;
+                        }
+                    }
+                } else if bounds.remove(name).is_some() {
+                    *changed = true;
+                }
+            }
+            TypedStmt::Assign { name, value, .. } => {
+                if let Some(ub) = compute_expr_upper_bound(value, bounds, non_negative_vars) {
+                    match bounds.get(name) {
+                        Some(&prev) if prev >= ub => {}
+                        Some(&prev) => {
+                            let new_val = prev.max(ub);
+                            bounds.insert(name.clone(), new_val);
+                            *changed = true;
+                        }
+                        None => {
+                            bounds.insert(name.clone(), ub);
+                            *changed = true;
+                        }
+                    }
+                } else if bounds.remove(name).is_some() {
+                    *changed = true;
+                }
+            }
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                let orig_bounds = bounds.clone();
+                let mut then_bounds = bounds.clone();
+                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Ident { name, .. } = &**left {
+                        if let Some(c) = get_constant_int(right) {
+                            if *op == BinaryOp::Lt && c > 0 {
+                                then_bounds.entry(name.clone()).and_modify(|old| *old = (*old).min(c - 1)).or_insert(c - 1);
+                            } else if *op == BinaryOp::Le && c >= 0 {
+                                then_bounds.entry(name.clone()).and_modify(|old| *old = (*old).min(c)).or_insert(c);
+                            }
+                        }
+                    }
+                }
+                collect_bounds_in_block(then_branch, non_negative_vars, &mut then_bounds, changed);
+
+                if let Some(eb) = else_branch {
+                    let mut else_bounds = orig_bounds.clone();
+                    collect_bounds_in_block(eb, non_negative_vars, &mut else_bounds, changed);
+
+                    let mut merged_bounds = HashMap::new();
+                    let all_vars: HashSet<String> = then_bounds.keys().chain(else_bounds.keys()).cloned().collect();
+                    for v in all_vars {
+                        let t_b = then_bounds.get(&v).copied().or_else(|| orig_bounds.get(&v).copied());
+                        let e_b = else_bounds.get(&v).copied().or_else(|| orig_bounds.get(&v).copied());
+                        if let (Some(t), Some(e)) = (t_b, e_b) {
+                            merged_bounds.insert(v, t.max(e));
+                        }
+                    }
+                    *bounds = merged_bounds;
+                } else {
+                    let mut merged_bounds = orig_bounds.clone();
+                    for (v, t_b) in then_bounds {
+                        if let Some(&orig_b) = orig_bounds.get(&v) {
+                            merged_bounds.insert(v, t_b.max(orig_b));
+                        }
+                    }
+                    *bounds = merged_bounds;
+                }
+            }
+            TypedStmt::While { condition, body, .. } => {
+                let mut cond_bounded_var = None;
+                let mut cond_bound = None;
+                let mut exit_bound = None;
+                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Ident { name, .. } = &**left {
+                        let limit = get_constant_int(right)
+                            .or_else(|| compute_expr_upper_bound(right, bounds, non_negative_vars));
+                        if let Some(c) = limit {
+                            if *op == BinaryOp::Lt && c > 0 {
+                                cond_bounded_var = Some(name.clone());
+                                cond_bound = Some(c - 1);
+                                exit_bound = Some(c);
+                            } else if *op == BinaryOp::Le && c >= 0 {
+                                cond_bounded_var = Some(name.clone());
+                                cond_bound = Some(c);
+                                exit_bound = Some(c + 1);
+                            }
+                        }
+                    }
+                }
+                let mut loop_mutated = HashSet::new();
+                collect_mutated_vars_in_block(body, &mut loop_mutated);
+
+                // Pre-loop bounds before entering the loop
+                let pre_loop_bounds = bounds.clone();
+
+                // Before analyzing body: loop-mutated variables cannot retain their pre-loop values unconditionally
+                for var in &loop_mutated {
+                    if Some(var) == cond_bounded_var.as_ref() {
+                        if let Some(cb) = cond_bound {
+                            bounds.insert(var.clone(), cb);
+                        }
+                    } else {
+                        bounds.remove(var);
+                    }
+                }
+
+                collect_bounds_in_block(body, non_negative_vars, bounds, changed);
+
+                for var in loop_mutated {
+                    if Some(&var) == cond_bounded_var.as_ref() {
+                        if let Some(eb) = exit_bound {
+                            bounds.insert(var, eb);
+                        }
+                        continue;
+                    }
+                    if let Some(&new_b) = bounds.get(&var) {
+                        if let Some(&old_b) = pre_loop_bounds.get(&var) {
+                            let merged_b = old_b.max(new_b);
+                            bounds.insert(var, merged_b);
+                        } else {
+                            bounds.insert(var, new_b);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -981,7 +1310,7 @@ impl CraneliftCompiler {
 /// Phase 36: Transform a standard binary Fibonacci-style recurrence
 ///   `fn f(n) { if n <= 1 { return n; } else { return f(n-1) + f(n-2); } }`
 /// into a fully iterative O(n) two-variable rolling accumulator:
-///   ```
+///   ```text
 ///   let mut a = 0; let mut b = 1;
 ///   if n <= 1 { return n; }
 ///   let mut i = 2;
@@ -1233,6 +1562,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
         let known_non_negative_vars = collect_known_non_negative_vars(&body_to_translate);
         let known_u32_vars = collect_known_u32_vars(&body_to_translate, &known_non_negative_vars);
+        let known_var_bounds = collect_known_var_upper_bounds(&body_to_translate, &known_non_negative_vars);
         let mut const_pool = HashMap::new();
         let mut f64_pool = HashMap::new();
         let mut f32_pool = HashMap::new();
@@ -1244,29 +1574,30 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             f32_pool.insert(f.to_bits(), builder.ins().f32const(f));
         }
 
-        for &n in &[0i64, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 32, 64] {
-            const_pool.insert((types::I64, n as u64), builder.ins().iconst(types::I64, n));
-            const_pool.insert((types::I32, n as u64), builder.ins().iconst(types::I32, n));
-            const_pool.insert((types::I8, n as u64), builder.ins().iconst(types::I8, n));
-        }
 
-        let mut ast_literals = Vec::new();
-        collect_int_literals_block(&body_to_translate, &mut ast_literals);
-        for (ty, n) in ast_literals {
-            let clif_ty = type_to_clif(ty);
-            const_pool.entry((clif_ty, n as u64)).or_insert_with(|| builder.ins().iconst(clif_ty, n));
-        }
 
         let mut divisors = Vec::new();
         collect_constant_divisors_block(&body_to_translate, &mut divisors);
         for d in divisors {
             const_pool.entry((types::I64, d as u64)).or_insert_with(|| builder.ins().iconst(types::I64, d));
             let ad = d.unsigned_abs();
-            if let Some((m, _)) = compute_magic_u64_nonneg(ad) {
+            if let Some((m, _)) = compute_magic_u32_fast(ad) {
                 const_pool.entry((types::I64, m)).or_insert_with(|| builder.ins().iconst(types::I64, m as i64));
             }
+            if let Some((m, _)) = compute_magic_u64_nonneg(ad) {
+                const_pool.entry((types::I64, m)).or_insert_with(|| {
+                    let c1 = builder.ins().iconst(types::I64, (m.wrapping_sub(1)) as i64);
+                    let c2 = builder.ins().iconst(types::I64, 1);
+                    builder.ins().iadd(c1, c2)
+                });
+            }
             let (m, _, _) = compute_magic_s64(d.abs());
-            const_pool.entry((types::I64, m as u64)).or_insert_with(|| builder.ins().iconst(types::I64, m));
+            const_pool.entry((types::I64, m as u64)).or_insert_with(|| {
+                let m_u = m as u64;
+                let c1 = builder.ins().iconst(types::I64, (m_u.wrapping_sub(1)) as i64);
+                let c2 = builder.ins().iconst(types::I64, 1);
+                builder.ins().iadd(c1, c2)
+            });
         }
 
         let mut state = FunctionTranslationState {
@@ -1278,9 +1609,11 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             dynamically_indexed_arrays,
             known_non_negative_vars,
             known_u32_vars,
+            known_var_bounds,
             const_pool,
             f64_pool,
             f32_pool,
+            array_load_cache: HashMap::new(),
         };
 
         let terminated = state.translate_block(&body_to_translate, &mut builder)?;
@@ -1291,6 +1624,9 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
 
         let config = self.module.target_config();
         builder.finalize(config);
+        if std::env::var("DUMP_CLIF").is_ok() && func.name == "solve_nqueens" {
+            eprintln!("=== CLIF IR for {} ===\n{}", func.name, ctx.func);
+        }
 
         if let Err(e) = self.module.define_function(func_id, ctx) {
             eprintln!("VERIFIER ERROR for function {}:\n{:#?}\nIR:\n{}", func.name, e, ctx.func);
@@ -1346,6 +1682,42 @@ impl ResolvedArray {
     }
 }
 
+fn format_index_key(expr: &TypedExpr) -> String {
+    match expr {
+        TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => format!("#{}", v),
+        TypedExpr::Ident { name, .. } => format!("${}", name),
+        TypedExpr::Binary { op, left, right, .. } => {
+            let l = format_index_key(left);
+            let r = format_index_key(right);
+            if l.is_empty() || r.is_empty() {
+                String::new()
+            } else {
+                format!("({:?}{}{})", op, l, r)
+            }
+        }
+        TypedExpr::Unary { op, expr, .. } => {
+            let e = format_index_key(expr);
+            if e.is_empty() {
+                String::new()
+            } else {
+                format!("({:?}{})", op, e)
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+fn index_reads_var(expr: &TypedExpr, var: &str) -> bool {
+    match expr {
+        TypedExpr::Ident { name, .. } => name == var,
+        TypedExpr::Binary { left, right, .. } => {
+            index_reads_var(left, var) || index_reads_var(right, var)
+        }
+        TypedExpr::Unary { expr, .. } => index_reads_var(expr, var),
+        _ => false,
+    }
+}
+
 struct FunctionTranslationState<'a> {
     module: &'a mut ObjectModule,
     func_ids: &'a HashMap<String, FuncId>,
@@ -1355,9 +1727,11 @@ struct FunctionTranslationState<'a> {
     dynamically_indexed_arrays: HashSet<String>,
     known_non_negative_vars: HashSet<String>,
     known_u32_vars: HashSet<String>,
+    known_var_bounds: HashMap<String, i64>,
     const_pool: HashMap<(types::Type, u64), Value>,
     f64_pool: HashMap<u64, Value>,
     f32_pool: HashMap<u32, Value>,
+    array_load_cache: HashMap<(String, String), (TypedExpr, Value)>,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -1434,9 +1808,79 @@ impl<'a> FunctionTranslationState<'a> {
                     };
                     builder.ins().ishl_imm_s(five_l, 1)
                 }
+                11 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let eight_l = builder.ins().ishl_imm_s(l, 3);
+                    builder.ins().iadd(three_l, eight_l)
+                }
+                13 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let twelve_l = builder.ins().ishl_imm_s(three_l, 2);
+                    builder.ins().iadd(twelve_l, l)
+                }
+                19 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let sixteen_l = builder.ins().ishl_imm_s(l, 4);
+                    builder.ins().iadd(three_l, sixteen_l)
+                }
+                23 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let tfour_l = builder.ins().ishl_imm_s(three_l, 3);
+                    builder.ins().isub(tfour_l, l)
+                }
+                29 => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let thirtytwo_l = builder.ins().ishl_imm_s(l, 5);
+                    builder.ins().isub(thirtytwo_l, three_l)
+                }
                 _ if k > 0 && (k as u64).is_power_of_two() => {
                     let shift = (k as u64).trailing_zeros();
                     builder.ins().ishl_imm_s(l, shift as i64)
+                }
+                _ if k > 1 && ((k as u64) + 1).is_power_of_two() => {
+                    let shift = ((k as u64) + 1).trailing_zeros();
+                    let shifted = builder.ins().ishl_imm_s(l, shift as i64);
+                    builder.ins().isub(shifted, l)
+                }
+                _ if k > 1 && ((k as u64) - 1).is_power_of_two() => {
+                    let shift = ((k as u64) - 1).trailing_zeros();
+                    let shifted = builder.ins().ishl_imm_s(l, shift as i64);
+                    builder.ins().iadd(shifted, l)
+                }
+                _ if k > 0 && k % 3 == 0 && ((k / 3) as u64).is_power_of_two() => {
+                    let two_l = builder.ins().ishl_imm_s(l, 1);
+                    let three_l = builder.ins().iadd(two_l, l);
+                    let shift = ((k / 3) as u64).trailing_zeros();
+                    if shift > 0 {
+                        builder.ins().ishl_imm_s(three_l, shift as i64)
+                    } else {
+                        three_l
+                    }
+                }
+                _ if k > 0 && k % 5 == 0 && ((k / 5) as u64).is_power_of_two() => {
+                    let four_l = builder.ins().ishl_imm_s(l, 2);
+                    let five_l = builder.ins().iadd(four_l, l);
+                    let shift = ((k / 5) as u64).trailing_zeros();
+                    if shift > 0 {
+                        builder.ins().ishl_imm_s(five_l, shift as i64)
+                    } else {
+                        five_l
+                    }
+                }
+                _ if k > 0 && k % 9 == 0 && ((k / 9) as u64).is_power_of_two() => {
+                    let eight_l = builder.ins().ishl_imm_s(l, 3);
+                    let nine_l = builder.ins().iadd(eight_l, l);
+                    let shift = ((k / 9) as u64).trailing_zeros();
+                    if shift > 0 {
+                        builder.ins().ishl_imm_s(nine_l, shift as i64)
+                    } else {
+                        nine_l
+                    }
                 }
                 _ => builder.ins().imul(l, r),
             }
@@ -1805,11 +2249,79 @@ impl<'a> FunctionTranslationState<'a> {
         None
     }
 
+    fn check_flag_in_block(
+        block: &TypedBlock,
+        flag: &str,
+        break_flag_vals: &mut Vec<bool>,
+        other_assigns: &mut usize,
+    ) {
+        for (idx, stmt) in block.stmts.iter().enumerate() {
+            match stmt {
+                TypedStmt::Break(..) => {
+                    let mut found = None;
+                    if idx > 0 {
+                        if let TypedStmt::Assign { name, value, .. } | TypedStmt::Let { name, value, .. } = &block.stmts[idx - 1] {
+                            if name == flag {
+                                if let TypedExpr::Literal { lit: TypedLiteral::Bool(b), .. } = value {
+                                    found = Some(*b);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(b) = found {
+                        break_flag_vals.push(b);
+                    } else {
+                        *other_assigns += 1;
+                    }
+                }
+                TypedStmt::Assign { name, .. } | TypedStmt::Let { name, .. } => {
+                    if name == flag {
+                        let is_before_break = idx + 1 < block.stmts.len() && matches!(block.stmts[idx + 1], TypedStmt::Break(..));
+                        if !is_before_break {
+                            *other_assigns += 1;
+                        }
+                    }
+                }
+                TypedStmt::If { then_branch, else_branch, .. } => {
+                    Self::check_flag_in_block(then_branch, flag, break_flag_vals, other_assigns);
+                    if let Some(eb) = else_branch {
+                        Self::check_flag_in_block(eb, flag, break_flag_vals, other_assigns);
+                    }
+                }
+                TypedStmt::While { .. } => {
+                    // Do not recurse into nested while loops
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn match_while_flag_if(
+        while_body: &TypedBlock,
+        next_stmt: &TypedStmt,
+    ) -> Option<(String, bool, TypedBlock, Option<TypedBlock>)> {
+        if let TypedStmt::If { condition, then_branch, else_branch, .. } = next_stmt {
+            if let TypedExpr::Ident { name: flag_name, .. } = condition {
+                let mut break_flag_vals = Vec::new();
+                let mut other_assigns = 0;
+                Self::check_flag_in_block(while_body, flag_name, &mut break_flag_vals, &mut other_assigns);
+                if !break_flag_vals.is_empty() && other_assigns == 0 {
+                    let first_val = break_flag_vals[0];
+                    if break_flag_vals.iter().all(|&v| v == first_val) {
+                        return Some((flag_name.clone(), first_val, then_branch.clone(), else_branch.clone()));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn translate_block(
         &mut self,
         block: &TypedBlock,
         builder: &mut FunctionBuilder,
     ) -> Result<bool, CodegenError> {
+        self.array_load_cache.clear();
         let mut terminated = false;
         let num_stmts = block.stmts.len();
         let mut i = 0;
@@ -1825,6 +2337,7 @@ impl<'a> FunctionTranslationState<'a> {
                     if let Some((var_name, limit)) = Self::get_small_constant_loop_info(condition) {
                         if Self::is_var_initialized_to_zero(&block.stmts[i - 1], var_name)
                             && Self::is_simple_induction_body(body, var_name)
+                            && body.stmts.len() <= 6
                         {
                             for _ in 0..limit {
                                 if self.translate_block(body, builder)? {
@@ -1837,13 +2350,109 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                 }
+
+                // Fused while-if jump threading optimization
+                if i + 1 < num_stmts {
+                    if let Some((flag_name, break_val, then_branch, else_branch)) =
+                        Self::match_while_flag_if(body, &block.stmts[i + 1])
+                    {
+                        let then_block = builder.create_block();
+                        let else_block = builder.create_block();
+                        let merge_block = builder.create_block();
+
+                        let break_target = if break_val { then_block } else { else_block };
+                        let normal_target = if break_val { else_block } else { then_block };
+
+                        let body_block = builder.create_block();
+                        if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                            builder.ins().jump(body_block, &[]);
+                        } else {
+                            let cond_init = self.translate_expr(condition, builder)?;
+                            builder.ins().brif(cond_init, body_block, &[], normal_target, &[]);
+                        }
+
+                        let mut added_nonneg = None;
+                        if let Some(var) = get_nonneg_var_from_condition(condition, &self.known_non_negative_vars) {
+                            if self.known_non_negative_vars.insert(var.clone()) {
+                                added_nonneg = Some(var);
+                            }
+                        }
+
+                        builder.switch_to_block(body_block);
+                        self.loop_exit_blocks.push(break_target);
+                        let body_term = self.translate_block(body, builder)?;
+                        self.loop_exit_blocks.pop();
+                        if let Some(ref r_name) = added_nonneg {
+                            self.known_non_negative_vars.remove(r_name);
+                        }
+                        if !body_term {
+                            if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                                builder.ins().jump(body_block, &[]);
+                            } else {
+                                let cond_repeat = self.translate_expr(condition, builder)?;
+                                builder.ins().brif(cond_repeat, body_block, &[], normal_target, &[]);
+                            }
+                        }
+                        builder.seal_block(body_block);
+
+                        let is_flag_read_after = {
+                            let mut reads = HashSet::new();
+                            for s in &block.stmts[i + 2..] {
+                                Self::collect_stmt_reads(s, &mut reads);
+                            }
+                            reads.contains(&flag_name)
+                        };
+
+                        builder.switch_to_block(then_block);
+                        builder.seal_block(then_block);
+                        if is_flag_read_after {
+                            if let Some(Storage::Scalar(flag_var)) = self.variables.get(&flag_name).cloned() {
+                                let one = self.get_iconst(types::I8, 1, builder);
+                                builder.def_var(flag_var, one);
+                            }
+                        }
+                        let then_term = self.translate_block(&then_branch, builder)?;
+                        if !then_term {
+                            builder.ins().jump(merge_block, &[]);
+                        }
+
+                        builder.switch_to_block(else_block);
+                        builder.seal_block(else_block);
+                        if is_flag_read_after {
+                            if let Some(Storage::Scalar(flag_var)) = self.variables.get(&flag_name).cloned() {
+                                let zero = self.get_iconst(types::I8, 0, builder);
+                                builder.def_var(flag_var, zero);
+                            }
+                        }
+                        let else_term = if let Some(ref eb) = else_branch {
+                            let term = self.translate_block(eb, builder)?;
+                            if !term {
+                                builder.ins().jump(merge_block, &[]);
+                            }
+                            term
+                        } else {
+                            builder.ins().jump(merge_block, &[]);
+                            false
+                        };
+
+                        builder.switch_to_block(merge_block);
+                        builder.seal_block(merge_block);
+
+                        if then_term && else_term {
+                            terminated = true;
+                        }
+                        i += 2;
+                        continue;
+                    }
+                }
             }
 
-            if self.translate_stmt(stmt, builder)? {
+            if self.translate_stmt(stmt, &block.stmts[i + 1..], builder)? {
                 terminated = true;
             }
             i += 1;
         }
+        self.array_load_cache.clear();
         Ok(terminated)
     }
 
@@ -1885,6 +2494,7 @@ impl<'a> FunctionTranslationState<'a> {
         d: i64,
         operand_ty: &Type,
         is_nonneg: bool,
+        is_u32: bool,
         builder: &mut FunctionBuilder,
     ) -> Result<Value, CodegenError> {
         if d == 0 {
@@ -1913,6 +2523,11 @@ impl<'a> FunctionTranslationState<'a> {
                 } else {
                     builder.ins().ushr_imm_s(n, k as i64)
                 }
+            } else if is_u32 && compute_magic_u32_fast(ad).is_some() {
+                let (m, s) = compute_magic_u32_fast(ad).unwrap();
+                let m_val = self.get_iconst(types::I64, m as i64, builder);
+                let prod = builder.ins().imul(n, m_val);
+                builder.ins().ushr_imm_s(prod, s as i64)
             } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
                 let m_val = self.get_iconst(types::I64, m as i64, builder);
                 let hi = builder.ins().umulhi(n, m_val);
@@ -1980,6 +2595,7 @@ impl<'a> FunctionTranslationState<'a> {
         d: i64,
         operand_ty: &Type,
         is_nonneg: bool,
+        is_u32: bool,
         builder: &mut FunctionBuilder,
     ) -> Result<Value, CodegenError> {
         if d == 0 {
@@ -1999,8 +2615,19 @@ impl<'a> FunctionTranslationState<'a> {
 
         let ad = d.unsigned_abs();
         let rem64 = if is_nonneg && d > 0 {
-            if ad.is_power_of_two() {
+            if ad == 4294967296 {
+                let r32 = builder.ins().ireduce(types::I32, n);
+                builder.ins().uextend(types::I64, r32)
+            } else if ad.is_power_of_two() {
                 builder.ins().band_imm_s(n, (d - 1) as i64)
+            } else if is_u32 && compute_magic_u32_fast(ad).is_some() {
+                let (m, s) = compute_magic_u32_fast(ad).unwrap();
+                let m_val = self.get_iconst(types::I64, m as i64, builder);
+                let prod = builder.ins().imul(n, m_val);
+                let q = builder.ins().ushr_imm_s(prod, s as i64);
+                let d_val = self.get_iconst(types::I64, d, builder);
+                let q_times_d = self.emit_fast_int_mul(q, d_val, Some(d), types::I64, builder);
+                builder.ins().isub(n, q_times_d)
             } else if let Some((m, s)) = compute_magic_u64_nonneg(ad) {
                 let m_val = self.get_iconst(types::I64, m as i64, builder);
                 let hi = builder.ins().umulhi(n, m_val);
@@ -2010,7 +2637,7 @@ impl<'a> FunctionTranslationState<'a> {
                     hi
                 };
                 let d_val = self.get_iconst(types::I64, d, builder);
-                let q_times_d = builder.ins().imul(q, d_val);
+                let q_times_d = self.emit_fast_int_mul(q, d_val, Some(d), types::I64, builder);
                 builder.ins().isub(n, q_times_d)
             } else {
                 let (m, shift, add_ind) = compute_magic_s64(d.abs());
@@ -2025,7 +2652,7 @@ impl<'a> FunctionTranslationState<'a> {
                     hi
                 };
                 let d_val = self.get_iconst(types::I64, d, builder);
-                let q_times_d = builder.ins().imul(q, d_val);
+                let q_times_d = self.emit_fast_int_mul(q, d_val, Some(d), types::I64, builder);
                 builder.ins().isub(n, q_times_d)
             }
         } else if ad.is_power_of_two() {
@@ -2059,7 +2686,7 @@ impl<'a> FunctionTranslationState<'a> {
                 q_pos
             };
             let d_val = self.get_iconst(types::I64, d, builder);
-            let q_times_d = builder.ins().imul(q64, d_val);
+            let q_times_d = self.emit_fast_int_mul(q64, d_val, Some(d), types::I64, builder);
             builder.ins().isub(n, q_times_d)
         };
 
@@ -2068,6 +2695,42 @@ impl<'a> FunctionTranslationState<'a> {
         } else {
             Ok(rem64)
         }
+    }
+
+    fn is_array_op(callee: &str) -> bool {
+        matches!(
+            callee,
+            "vec_add"
+                | "vec_sub"
+                | "vec_mul"
+                | "vec_scale"
+                | "vec_div_scalar"
+                | "vec_cross3"
+                | "mat_mul2"
+                | "mat_mul3"
+                | "mat_mul4"
+                | "mat_transpose2"
+                | "mat_transpose3"
+                | "mat_transpose4"
+                | "mat_inv2"
+                | "mat_inv3"
+                | "mat_inv4"
+                | "mat_solve2"
+                | "mat_solve3"
+                | "mat_solve4"
+                | "c_make"
+                | "c_add"
+                | "c_sub"
+                | "c_mul"
+                | "c_div"
+                | "c_conj"
+                | "c_exp"
+                | "fft8"
+                | "fft8_re"
+                | "fft8_im"
+                | "fft16_re"
+                | "fft16_im"
+        )
     }
 
     fn resolve_array(
@@ -2132,7 +2795,39 @@ impl<'a> FunctionTranslationState<'a> {
                     })
                 }
             }
-            _ => panic!("Expected array variable or literal"),
+            TypedExpr::Call { callee, args, ty, .. } if Self::is_array_op(callee) => {
+                let elem = ty.element_type().unwrap().clone();
+                let len = ty.array_len().unwrap();
+                if len <= 16 {
+                    let clif_ty = type_to_clif(elem.clone());
+                    let mut vars = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        vars.push(builder.declare_var(clif_ty));
+                    }
+                    self.translate_array_op_into_vars(callee, args, &vars, &elem, len, builder)?;
+                    Ok(ResolvedArray::Promoted {
+                        vars,
+                        len,
+                        elem_ty: elem,
+                    })
+                } else {
+                    let elem_size = elem.size_bytes() as u32;
+                    let total_bytes = (elem_size * (len as u32)).max(1);
+                    let slot_data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        total_bytes,
+                        elem_size.min(8) as u8,
+                    );
+                    let slot = builder.create_sized_stack_slot(slot_data);
+                    self.translate_array_op_into_slot(callee, args, slot, &elem, len, builder)?;
+                    Ok(ResolvedArray::Slot {
+                        slot,
+                        len,
+                        elem_ty: elem,
+                    })
+                }
+            }
+            _ => panic!("Expected array variable, literal, or array-returning call"),
         }
     }
 
@@ -2154,25 +2849,939 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
-    fn translate_vec_add_into_vars(
+    fn emit_det3_val(
+        builder: &mut FunctionBuilder,
+        elem_ty: &Type,
+        m00: Value, m01: Value, m02: Value,
+        m10: Value, m11: Value, m12: Value,
+        m20: Value, m21: Value, m22: Value,
+    ) -> Value {
+        if elem_ty.is_float() {
+            let p0 = builder.ins().fmul(m11, m22);
+            let p1 = builder.ins().fmul(m12, m21);
+            let sub0 = builder.ins().fsub(p0, p1);
+            let d0 = builder.ins().fmul(m00, sub0);
+
+            let p2 = builder.ins().fmul(m10, m22);
+            let p3 = builder.ins().fmul(m12, m20);
+            let sub1 = builder.ins().fsub(p2, p3);
+            let d1 = builder.ins().fmul(m01, sub1);
+
+            let p4 = builder.ins().fmul(m10, m21);
+            let p5 = builder.ins().fmul(m11, m20);
+            let sub2 = builder.ins().fsub(p4, p5);
+            let d2 = builder.ins().fmul(m02, sub2);
+
+            let sub_d = builder.ins().fsub(d0, d1);
+            builder.ins().fadd(sub_d, d2)
+        } else {
+            let p0 = builder.ins().imul(m11, m22);
+            let p1 = builder.ins().imul(m12, m21);
+            let sub0 = builder.ins().isub(p0, p1);
+            let d0 = builder.ins().imul(m00, sub0);
+
+            let p2 = builder.ins().imul(m10, m22);
+            let p3 = builder.ins().imul(m12, m20);
+            let sub1 = builder.ins().isub(p2, p3);
+            let d1 = builder.ins().imul(m01, sub1);
+
+            let p4 = builder.ins().imul(m10, m21);
+            let p5 = builder.ins().imul(m11, m20);
+            let sub2 = builder.ins().isub(p4, p5);
+            let d2 = builder.ins().imul(m02, sub2);
+
+            let sub_d = builder.ins().isub(d0, d1);
+            builder.ins().iadd(sub_d, d2)
+        }
+    }
+
+    fn emit_gcd(
+        builder: &mut FunctionBuilder,
+        clif_ty: types::Type,
+        a_val: Value,
+        b_val: Value,
+    ) -> Value {
+        let zero = builder.ins().iconst(clif_ty, 0);
+        let neg_a = builder.ins().ineg(a_val);
+        let cond_a = builder.ins().icmp(IntCC::SignedLessThan, a_val, zero);
+        let abs_a = builder.ins().select(cond_a, neg_a, a_val);
+
+        let neg_b = builder.ins().ineg(b_val);
+        let cond_b = builder.ins().icmp(IntCC::SignedLessThan, b_val, zero);
+        let abs_b = builder.ins().select(cond_b, neg_b, b_val);
+
+        let var_u = builder.declare_var(clif_ty);
+        let var_v = builder.declare_var(clif_ty);
+        builder.def_var(var_u, abs_a);
+        builder.def_var(var_v, abs_b);
+
+        let header_block = builder.create_block();
+        let body_block = builder.create_block();
+        let exit_block = builder.create_block();
+
+        builder.ins().jump(header_block, &[]);
+
+        builder.switch_to_block(header_block);
+        let cur_v = builder.use_var(var_v);
+        let is_zero = builder.ins().icmp(IntCC::Equal, cur_v, zero);
+        builder.ins().brif(is_zero, exit_block, &[], body_block, &[]);
+
+        builder.switch_to_block(body_block);
+        let cur_u = builder.use_var(var_u);
+        let rem = builder.ins().urem(cur_u, cur_v);
+        builder.def_var(var_u, cur_v);
+        builder.def_var(var_v, rem);
+        builder.ins().jump(header_block, &[]);
+
+        builder.seal_block(header_block);
+        builder.seal_block(body_block);
+
+        builder.switch_to_block(exit_block);
+        builder.seal_block(exit_block);
+        builder.use_var(var_u)
+    }
+
+    fn emit_sin(builder: &mut FunctionBuilder, x: Value) -> Value {
+        let inv_pi = builder.ins().f64const(0.31830988618379067154);
+        let pi = builder.ins().f64const(3.14159265358979323846);
+        let x_scaled = builder.ins().fmul(x, inv_pi);
+        let k_f = builder.ins().nearest(x_scaled);
+        let k_pi = builder.ins().fmul(k_f, pi);
+        let r = builder.ins().fsub(x, k_pi);
+
+        let r2 = builder.ins().fmul(r, r);
+        let r3 = builder.ins().fmul(r2, r);
+
+        let c13 = builder.ins().f64const(1.605904383682161e-10);
+        let c11 = builder.ins().f64const(-2.505210838544172e-8);
+        let c9 = builder.ins().f64const(2.755731922398589e-6);
+        let c7 = builder.ins().f64const(-1.984126984126984e-4);
+        let c5 = builder.ins().f64const(8.333333333333333e-3);
+        let c3 = builder.ins().f64const(-1.6666666666666666e-1);
+
+        let p11 = builder.ins().fma(r2, c13, c11);
+        let p9 = builder.ins().fma(r2, p11, c9);
+        let p7 = builder.ins().fma(r2, p9, c7);
+        let p5 = builder.ins().fma(r2, p7, c5);
+        let p3 = builder.ins().fma(r2, p5, c3);
+
+        let poly = builder.ins().fma(r3, p3, r);
+
+        let k_i = builder.ins().fcvt_to_sint(types::I64, k_f);
+        let one_i = builder.ins().iconst(types::I64, 1);
+        let zero_i = builder.ins().iconst(types::I64, 0);
+        let is_odd = builder.ins().band(k_i, one_i);
+        let cond = builder.ins().icmp(IntCC::NotEqual, is_odd, zero_i);
+        let neg_poly = builder.ins().fneg(poly);
+        builder.ins().select(cond, neg_poly, poly)
+    }
+
+    fn emit_cos(builder: &mut FunctionBuilder, x: Value) -> Value {
+        let half_pi = builder.ins().f64const(1.57079632679489661923);
+        let x_shifted = builder.ins().fadd(x, half_pi);
+        Self::emit_sin(builder, x_shifted)
+    }
+
+    fn emit_tan(builder: &mut FunctionBuilder, x: Value) -> Value {
+        let s = Self::emit_sin(builder, x);
+        let c = Self::emit_cos(builder, x);
+        builder.ins().fdiv(s, c)
+    }
+
+    fn emit_exp(builder: &mut FunctionBuilder, x: Value) -> Value {
+        let log2_e = builder.ins().f64const(1.44269504088896340736);
+        let ln2_hi = builder.ins().f64const(0.6931471803691238);
+        let ln2_lo = builder.ins().f64const(1.9082149292705877e-10);
+
+        let x_scaled = builder.ins().fmul(x, log2_e);
+        let k_f = builder.ins().nearest(x_scaled);
+        let t_hi = builder.ins().fmul(k_f, ln2_hi);
+        let r_hi = builder.ins().fsub(x, t_hi);
+        let t_lo = builder.ins().fmul(k_f, ln2_lo);
+        let r = builder.ins().fsub(r_hi, t_lo);
+
+        let c7 = builder.ins().f64const(1.0 / 5040.0);
+        let c6 = builder.ins().f64const(1.0 / 720.0);
+        let c5 = builder.ins().f64const(1.0 / 120.0);
+        let c4 = builder.ins().f64const(1.0 / 24.0);
+        let c3 = builder.ins().f64const(1.0 / 6.0);
+        let c2 = builder.ins().f64const(0.5);
+        let c1 = builder.ins().f64const(1.0);
+        let c0 = builder.ins().f64const(1.0);
+
+        let p6 = builder.ins().fma(r, c7, c6);
+        let p5 = builder.ins().fma(r, p6, c5);
+        let p4 = builder.ins().fma(r, p5, c4);
+        let p3 = builder.ins().fma(r, p4, c3);
+        let p2 = builder.ins().fma(r, p3, c2);
+        let p1 = builder.ins().fma(r, p2, c1);
+        let poly = builder.ins().fma(r, p1, c0);
+
+        let k_i = builder.ins().fcvt_to_sint(types::I64, k_f);
+        let bias = builder.ins().iconst(types::I64, 1023);
+        let exp_bits = builder.ins().iadd(k_i, bias);
+        let sh = builder.ins().iconst(types::I64, 52);
+        let bits = builder.ins().ishl(exp_bits, sh);
+        let two_pow_k = builder.ins().bitcast(types::F64, MemFlagsData::new().with_endianness(Endianness::Little), bits);
+
+        builder.ins().fmul(poly, two_pow_k)
+    }
+
+    fn emit_ln(builder: &mut FunctionBuilder, x: Value) -> Value {
+        let bits = builder.ins().bitcast(types::I64, MemFlagsData::new().with_endianness(Endianness::Little), x);
+        let sh52 = builder.ins().iconst(types::I64, 52);
+        let exp_shifted = builder.ins().ushr(bits, sh52);
+        let mask_7ff = builder.ins().iconst(types::I64, 0x7FF);
+        let exp_bits = builder.ins().band(exp_shifted, mask_7ff);
+        let bias = builder.ins().iconst(types::I64, 1023);
+        let k_i = builder.ins().isub(exp_bits, bias);
+        let k_f = builder.ins().fcvt_from_sint(types::F64, k_i);
+
+        let mant_mask = builder.ins().iconst(types::I64, 0x000F_FFFF_FFFF_FFFF);
+        let mant_bits = builder.ins().band(bits, mant_mask);
+        let exp_1023 = builder.ins().iconst(types::I64, 0x3FF0_0000_0000_0000);
+        let norm_bits = builder.ins().bor(mant_bits, exp_1023);
+        let m = builder.ins().bitcast(types::F64, MemFlagsData::new().with_endianness(Endianness::Little), norm_bits);
+
+        let sqrt2 = builder.ins().f64const(1.4142135623730951);
+        let half = builder.ins().f64const(0.5);
+        let one_f = builder.ins().f64const(1.0);
+        let cond = builder.ins().fcmp(FloatCC::GreaterThan, m, sqrt2);
+        let m_half = builder.ins().fmul(m, half);
+        let m_adj = builder.ins().select(cond, m_half, m);
+        let k_plus1 = builder.ins().fadd(k_f, one_f);
+        let k_adj = builder.ins().select(cond, k_plus1, k_f);
+
+        let num = builder.ins().fsub(m_adj, one_f);
+        let den = builder.ins().fadd(m_adj, one_f);
+        let u = builder.ins().fdiv(num, den);
+        let u2 = builder.ins().fmul(u, u);
+
+        let c13 = builder.ins().f64const(1.0 / 13.0);
+        let c11 = builder.ins().f64const(1.0 / 11.0);
+        let c9 = builder.ins().f64const(1.0 / 9.0);
+        let c7 = builder.ins().f64const(1.0 / 7.0);
+        let c5 = builder.ins().f64const(1.0 / 5.0);
+        let c3 = builder.ins().f64const(1.0 / 3.0);
+        let c1 = builder.ins().f64const(1.0);
+
+        let p11 = builder.ins().fma(u2, c13, c11);
+        let p9 = builder.ins().fma(u2, p11, c9);
+        let p7 = builder.ins().fma(u2, p9, c7);
+        let p5 = builder.ins().fma(u2, p7, c5);
+        let p3 = builder.ins().fma(u2, p5, c3);
+        let poly = builder.ins().fma(u2, p3, c1);
+
+        let two_u = builder.ins().fadd(u, u);
+        let ln_m = builder.ins().fmul(two_u, poly);
+
+        let ln2 = builder.ins().f64const(0.693147180559945309417);
+        let k_ln2 = builder.ins().fmul(k_adj, ln2);
+        builder.ins().fadd(ln_m, k_ln2)
+    }
+
+    fn emit_atan2(builder: &mut FunctionBuilder, y: Value, x: Value) -> Value {
+        let zero = builder.ins().f64const(0.0);
+        let pi = builder.ins().f64const(3.14159265358979323846);
+        let half_pi = builder.ins().f64const(1.57079632679489661923);
+
+        let abs_y = builder.ins().fabs(y);
+        let abs_x = builder.ins().fabs(x);
+
+        let x_greater = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, abs_x, abs_y);
+        let num = builder.ins().select(x_greater, abs_y, abs_x);
+        let den = builder.ins().select(x_greater, abs_x, abs_y);
+        let t = builder.ins().fdiv(num, den);
+        let t2 = builder.ins().fmul(t, t);
+
+        let c11 = builder.ins().f64const(-0.01172120);
+        let c9 = builder.ins().f64const(0.05265332);
+        let c7 = builder.ins().f64const(-0.11643287);
+        let c5 = builder.ins().f64const(0.19354346);
+        let c3 = builder.ins().f64const(-0.33262347);
+        let c1 = builder.ins().f64const(0.99997726);
+
+        let p9 = builder.ins().fma(t2, c11, c9);
+        let p7 = builder.ins().fma(t2, p9, c7);
+        let p5 = builder.ins().fma(t2, p7, c5);
+        let p3 = builder.ins().fma(t2, p5, c3);
+        let poly = builder.ins().fma(t2, p3, c1);
+        let at = builder.ins().fmul(t, poly);
+
+        let pi_over_2_sub = builder.ins().fsub(half_pi, at);
+        let mut angle = builder.ins().select(x_greater, at, pi_over_2_sub);
+
+        let x_neg = builder.ins().fcmp(FloatCC::LessThan, x, zero);
+        let pi_sub = builder.ins().fsub(pi, angle);
+        angle = builder.ins().select(x_neg, pi_sub, angle);
+
+        let y_neg = builder.ins().fcmp(FloatCC::LessThan, y, zero);
+        let neg_angle = builder.ins().fneg(angle);
+        builder.ins().select(y_neg, neg_angle, angle)
+    }
+
+    fn emit_powf(builder: &mut FunctionBuilder, x: Value, y: Value) -> Value {
+        let ln_x = Self::emit_ln(builder, x);
+        let y_ln_x = builder.ins().fmul(y, ln_x);
+        Self::emit_exp(builder, y_ln_x)
+    }
+
+    fn emit_fft(
+        builder: &mut FunctionBuilder,
+        re_vals: &[Value],
+        im_vals: &[Value],
+        n: usize,
+    ) -> (Vec<Value>, Vec<Value>) {
+        assert!(n == 8 || n == 16);
+        let bits = if n == 8 { 3 } else { 4 };
+        let mut r = vec![re_vals[0]; n];
+        let mut i = vec![im_vals[0]; n];
+        for k in 0..n {
+            let mut rev = 0;
+            for b in 0..bits {
+                if (k & (1 << b)) != 0 {
+                    rev |= 1 << (bits - 1 - b);
+                }
+            }
+            r[rev] = re_vals[k];
+            i[rev] = im_vals[k];
+        }
+
+        let mut s = 1;
+        while s < n {
+            let len = s * 2;
+            let mut group = 0;
+            while group < n {
+                for j in 0..s {
+                    let angle = -2.0 * std::f64::consts::PI * (j as f64) / (len as f64);
+                    let wr_f = angle.cos();
+                    let wi_f = angle.sin();
+                    let wr = builder.ins().f64const(wr_f);
+                    let wi = builder.ins().f64const(wi_f);
+
+                    let u_idx = group + j;
+                    let v_idx = group + j + s;
+
+                    let rv = r[v_idx];
+                    let iv = i[v_idx];
+
+                    let tr0 = builder.ins().fmul(wr, rv);
+                    let tr1 = builder.ins().fmul(wi, iv);
+                    let tr = builder.ins().fsub(tr0, tr1);
+
+                    let ti0 = builder.ins().fmul(wr, iv);
+                    let ti = builder.ins().fma(wi, rv, ti0);
+
+                    let ru = r[u_idx];
+                    let iu = i[u_idx];
+
+                    r[u_idx] = builder.ins().fadd(ru, tr);
+                    i[u_idx] = builder.ins().fadd(iu, ti);
+                    r[v_idx] = builder.ins().fsub(ru, tr);
+                    i[v_idx] = builder.ins().fsub(iu, ti);
+                }
+                group += len;
+            }
+            s *= 2;
+        }
+
+        (r, i)
+    }
+
+    fn emit_sub_mul(builder: &mut FunctionBuilder, a: Value, b: Value, c: Value, d: Value) -> Value {
+        let ab = builder.ins().fmul(a, b);
+        let cd = builder.ins().fmul(c, d);
+        builder.ins().fsub(ab, cd)
+    }
+
+    fn evaluate_array_op_values(
         &mut self,
+        callee: &str,
+        args: &[TypedExpr],
+        elem_ty: &Type,
+        len: usize,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Vec<Value>, CodegenError> {
+        match callee {
+            "vec_add" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let val_a = self.get_array_element(&arr_a, i, builder);
+                    let val_b = self.get_array_element(&arr_b, i, builder);
+                    let sum = if elem_ty.is_float() {
+                        builder.ins().fadd(val_a, val_b)
+                    } else {
+                        builder.ins().iadd(val_a, val_b)
+                    };
+                    res.push(sum);
+                }
+                Ok(res)
+            }
+            "vec_sub" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let val_a = self.get_array_element(&arr_a, i, builder);
+                    let val_b = self.get_array_element(&arr_b, i, builder);
+                    let diff = if elem_ty.is_float() {
+                        builder.ins().fsub(val_a, val_b)
+                    } else {
+                        builder.ins().isub(val_a, val_b)
+                    };
+                    res.push(diff);
+                }
+                Ok(res)
+            }
+            "vec_mul" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let val_a = self.get_array_element(&arr_a, i, builder);
+                    let val_b = self.get_array_element(&arr_b, i, builder);
+                    let prod = if elem_ty.is_float() {
+                        builder.ins().fmul(val_a, val_b)
+                    } else {
+                        builder.ins().imul(val_a, val_b)
+                    };
+                    res.push(prod);
+                }
+                Ok(res)
+            }
+            "vec_scale" => {
+                let arr_v = self.resolve_array(&args[0], builder)?;
+                let s_val = self.translate_expr(&args[1], builder)?;
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let val_v = self.get_array_element(&arr_v, i, builder);
+                    let scaled = if elem_ty.is_float() {
+                        builder.ins().fmul(val_v, s_val)
+                    } else {
+                        builder.ins().imul(val_v, s_val)
+                    };
+                    res.push(scaled);
+                }
+                Ok(res)
+            }
+            "vec_div_scalar" => {
+                let arr_v = self.resolve_array(&args[0], builder)?;
+                let s_val = self.translate_expr(&args[1], builder)?;
+                let mut res = Vec::with_capacity(len);
+                for i in 0..len {
+                    let val_v = self.get_array_element(&arr_v, i, builder);
+                    let div = if elem_ty.is_float() {
+                        builder.ins().fdiv(val_v, s_val)
+                    } else {
+                        builder.ins().sdiv(val_v, s_val)
+                    };
+                    res.push(div);
+                }
+                Ok(res)
+            }
+            "vec_cross3" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let a0 = self.get_array_element(&arr_a, 0, builder);
+                let a1 = self.get_array_element(&arr_a, 1, builder);
+                let a2 = self.get_array_element(&arr_a, 2, builder);
+                let b0 = self.get_array_element(&arr_b, 0, builder);
+                let b1 = self.get_array_element(&arr_b, 1, builder);
+                let b2 = self.get_array_element(&arr_b, 2, builder);
+
+                let (c0, c1, c2) = if elem_ty.is_float() {
+                    let p0 = builder.ins().fmul(a1, b2);
+                    let p1 = builder.ins().fmul(a2, b1);
+                    let c0 = builder.ins().fsub(p0, p1);
+
+                    let p2 = builder.ins().fmul(a2, b0);
+                    let p3 = builder.ins().fmul(a0, b2);
+                    let c1 = builder.ins().fsub(p2, p3);
+
+                    let p4 = builder.ins().fmul(a0, b1);
+                    let p5 = builder.ins().fmul(a1, b0);
+                    let c2 = builder.ins().fsub(p4, p5);
+                    (c0, c1, c2)
+                } else {
+                    let p0 = builder.ins().imul(a1, b2);
+                    let p1 = builder.ins().imul(a2, b1);
+                    let c0 = builder.ins().isub(p0, p1);
+
+                    let p2 = builder.ins().imul(a2, b0);
+                    let p3 = builder.ins().imul(a0, b2);
+                    let c1 = builder.ins().isub(p2, p3);
+
+                    let p4 = builder.ins().imul(a0, b1);
+                    let p5 = builder.ins().imul(a1, b0);
+                    let c2 = builder.ins().isub(p4, p5);
+                    (c0, c1, c2)
+                };
+                Ok(vec![c0, c1, c2])
+            }
+            "mat_mul2" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let a0 = self.get_array_element(&arr_a, 0, builder);
+                let a1 = self.get_array_element(&arr_a, 1, builder);
+                let a2 = self.get_array_element(&arr_a, 2, builder);
+                let a3 = self.get_array_element(&arr_a, 3, builder);
+                let b0 = self.get_array_element(&arr_b, 0, builder);
+                let b1 = self.get_array_element(&arr_b, 1, builder);
+                let b2 = self.get_array_element(&arr_b, 2, builder);
+                let b3 = self.get_array_element(&arr_b, 3, builder);
+
+                let (c0, c1, c2, c3) = if elem_ty.is_float() {
+                    let a0b0 = builder.ins().fmul(a0, b0);
+                    let c0 = builder.ins().fma(a1, b2, a0b0);
+                    let a0b1 = builder.ins().fmul(a0, b1);
+                    let c1 = builder.ins().fma(a1, b3, a0b1);
+                    let a2b0 = builder.ins().fmul(a2, b0);
+                    let c2 = builder.ins().fma(a3, b2, a2b0);
+                    let a2b1 = builder.ins().fmul(a2, b1);
+                    let c3 = builder.ins().fma(a3, b3, a2b1);
+                    (c0, c1, c2, c3)
+                } else {
+                    let p00 = builder.ins().imul(a0, b0);
+                    let p01 = builder.ins().imul(a1, b2);
+                    let c0 = builder.ins().iadd(p00, p01);
+                    let p10 = builder.ins().imul(a0, b1);
+                    let p11 = builder.ins().imul(a1, b3);
+                    let c1 = builder.ins().iadd(p10, p11);
+                    let p20 = builder.ins().imul(a2, b0);
+                    let p21 = builder.ins().imul(a3, b2);
+                    let c2 = builder.ins().iadd(p20, p21);
+                    let p30 = builder.ins().imul(a2, b1);
+                    let p31 = builder.ins().imul(a3, b3);
+                    let c3 = builder.ins().iadd(p30, p31);
+                    (c0, c1, c2, c3)
+                };
+                Ok(vec![c0, c1, c2, c3])
+            }
+            "mat_mul3" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let mut res = Vec::with_capacity(9);
+                for r in 0..3 {
+                    let ar0 = self.get_array_element(&arr_a, r * 3, builder);
+                    let ar1 = self.get_array_element(&arr_a, r * 3 + 1, builder);
+                    let ar2 = self.get_array_element(&arr_a, r * 3 + 2, builder);
+                    for c in 0..3 {
+                        let b0c = self.get_array_element(&arr_b, c, builder);
+                        let b1c = self.get_array_element(&arr_b, 3 + c, builder);
+                        let b2c = self.get_array_element(&arr_b, 6 + c, builder);
+                        let entry = if elem_ty.is_float() {
+                            let p0 = builder.ins().fmul(ar0, b0c);
+                            let s1 = builder.ins().fma(ar1, b1c, p0);
+                            builder.ins().fma(ar2, b2c, s1)
+                        } else {
+                            let p0 = builder.ins().imul(ar0, b0c);
+                            let p1 = builder.ins().imul(ar1, b1c);
+                            let p2 = builder.ins().imul(ar2, b2c);
+                            let s01 = builder.ins().iadd(p0, p1);
+                            builder.ins().iadd(s01, p2)
+                        };
+                        res.push(entry);
+                    }
+                }
+                Ok(res)
+            }
+            "mat_mul4" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let arr_b = self.resolve_array(&args[1], builder)?;
+                let mut res = Vec::with_capacity(16);
+                for r in 0..4 {
+                    let a_r0 = self.get_array_element(&arr_a, r * 4, builder);
+                    let a_r1 = self.get_array_element(&arr_a, r * 4 + 1, builder);
+                    let a_r2 = self.get_array_element(&arr_a, r * 4 + 2, builder);
+                    let a_r3 = self.get_array_element(&arr_a, r * 4 + 3, builder);
+                    for c in 0..4 {
+                        let b_0c = self.get_array_element(&arr_b, c, builder);
+                        let b_1c = self.get_array_element(&arr_b, 4 + c, builder);
+                        let b_2c = self.get_array_element(&arr_b, 8 + c, builder);
+                        let b_3c = self.get_array_element(&arr_b, 12 + c, builder);
+
+                        let entry = if elem_ty.is_float() {
+                            let p0 = builder.ins().fmul(a_r0, b_0c);
+                            let s1 = builder.ins().fma(a_r1, b_1c, p0);
+                            let s2 = builder.ins().fma(a_r2, b_2c, s1);
+                            builder.ins().fma(a_r3, b_3c, s2)
+                        } else {
+                            let p0 = builder.ins().imul(a_r0, b_0c);
+                            let p1 = builder.ins().imul(a_r1, b_1c);
+                            let p2 = builder.ins().imul(a_r2, b_2c);
+                            let p3 = builder.ins().imul(a_r3, b_3c);
+                            let s01 = builder.ins().iadd(p0, p1);
+                            let s23 = builder.ins().iadd(p2, p3);
+                            builder.ins().iadd(s01, s23)
+                        };
+                        res.push(entry);
+                    }
+                }
+                Ok(res)
+            }
+            "mat_transpose2" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let a0 = self.get_array_element(&arr_a, 0, builder);
+                let a1 = self.get_array_element(&arr_a, 1, builder);
+                let a2 = self.get_array_element(&arr_a, 2, builder);
+                let a3 = self.get_array_element(&arr_a, 3, builder);
+                Ok(vec![a0, a2, a1, a3])
+            }
+            "mat_transpose3" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let mut res = Vec::with_capacity(9);
+                for r in 0..3 {
+                    for c in 0..3 {
+                        let val = self.get_array_element(&arr_a, c * 3 + r, builder);
+                        res.push(val);
+                    }
+                }
+                Ok(res)
+            }
+            "mat_transpose4" => {
+                let arr_a = self.resolve_array(&args[0], builder)?;
+                let mut res = Vec::with_capacity(16);
+                for r in 0..4 {
+                    for c in 0..4 {
+                        let val = self.get_array_element(&arr_a, c * 4 + r, builder);
+                        res.push(val);
+                    }
+                }
+                Ok(res)
+            }
+            "mat_inv2" => {
+                let m = self.resolve_array(&args[0], builder)?;
+                let a = self.get_array_element(&m, 0, builder);
+                let b = self.get_array_element(&m, 1, builder);
+                let c = self.get_array_element(&m, 2, builder);
+                let d = self.get_array_element(&m, 3, builder);
+                let ad = builder.ins().fmul(a, d);
+                let bc = builder.ins().fmul(b, c);
+                let det = builder.ins().fsub(ad, bc);
+                let one = builder.ins().f64const(1.0);
+                let inv_det = builder.ins().fdiv(one, det);
+                let neg_b = builder.ins().fneg(b);
+                let neg_c = builder.ins().fneg(c);
+                let i0 = builder.ins().fmul(d, inv_det);
+                let i1 = builder.ins().fmul(neg_b, inv_det);
+                let i2 = builder.ins().fmul(neg_c, inv_det);
+                let i3 = builder.ins().fmul(a, inv_det);
+                Ok(vec![i0, i1, i2, i3])
+            }
+            "mat_solve2" => {
+                let mat = self.resolve_array(&args[0], builder)?;
+                let vec_b = self.resolve_array(&args[1], builder)?;
+                let a = self.get_array_element(&mat, 0, builder);
+                let b = self.get_array_element(&mat, 1, builder);
+                let c = self.get_array_element(&mat, 2, builder);
+                let d = self.get_array_element(&mat, 3, builder);
+                let b0 = self.get_array_element(&vec_b, 0, builder);
+                let b1 = self.get_array_element(&vec_b, 1, builder);
+                let det = Self::emit_sub_mul(builder, a, d, b, c);
+                let one = builder.ins().f64const(1.0);
+                let inv_det = builder.ins().fdiv(one, det);
+                let num0 = Self::emit_sub_mul(builder, b0, d, b1, b);
+                let num1 = Self::emit_sub_mul(builder, a, b1, c, b0);
+                let x0 = builder.ins().fmul(num0, inv_det);
+                let x1 = builder.ins().fmul(num1, inv_det);
+                Ok(vec![x0, x1])
+            }
+            "mat_inv3" => {
+                let m = self.resolve_array(&args[0], builder)?;
+                let m0 = self.get_array_element(&m, 0, builder);
+                let m1 = self.get_array_element(&m, 1, builder);
+                let m2 = self.get_array_element(&m, 2, builder);
+                let m3 = self.get_array_element(&m, 3, builder);
+                let m4 = self.get_array_element(&m, 4, builder);
+                let m5 = self.get_array_element(&m, 5, builder);
+                let m6 = self.get_array_element(&m, 6, builder);
+                let m7 = self.get_array_element(&m, 7, builder);
+                let m8 = self.get_array_element(&m, 8, builder);
+
+                let c00 = Self::emit_sub_mul(builder, m4, m8, m5, m7);
+                let c01 = Self::emit_sub_mul(builder, m5, m6, m3, m8);
+                let c02 = Self::emit_sub_mul(builder, m3, m7, m4, m6);
+
+                let c10 = Self::emit_sub_mul(builder, m2, m7, m1, m8);
+                let c11 = Self::emit_sub_mul(builder, m0, m8, m2, m6);
+                let c12 = Self::emit_sub_mul(builder, m1, m6, m0, m7);
+
+                let c20 = Self::emit_sub_mul(builder, m1, m5, m2, m4);
+                let c21 = Self::emit_sub_mul(builder, m2, m3, m0, m5);
+                let c22 = Self::emit_sub_mul(builder, m0, m4, m1, m3);
+
+                let d0 = builder.ins().fmul(m0, c00);
+                let s1 = builder.ins().fma(m1, c01, d0);
+                let det = builder.ins().fma(m2, c02, s1);
+                let one = builder.ins().f64const(1.0);
+                let inv_det = builder.ins().fdiv(one, det);
+
+                let i0 = builder.ins().fmul(c00, inv_det);
+                let i1 = builder.ins().fmul(c10, inv_det);
+                let i2 = builder.ins().fmul(c20, inv_det);
+                let i3 = builder.ins().fmul(c01, inv_det);
+                let i4 = builder.ins().fmul(c11, inv_det);
+                let i5 = builder.ins().fmul(c21, inv_det);
+                let i6 = builder.ins().fmul(c02, inv_det);
+                let i7 = builder.ins().fmul(c12, inv_det);
+                let i8 = builder.ins().fmul(c22, inv_det);
+                Ok(vec![i0, i1, i2, i3, i4, i5, i6, i7, i8])
+            }
+            "mat_solve3" => {
+                let mat = self.resolve_array(&args[0], builder)?;
+                let vec_b = self.resolve_array(&args[1], builder)?;
+                let m0 = self.get_array_element(&mat, 0, builder);
+                let m1 = self.get_array_element(&mat, 1, builder);
+                let m2 = self.get_array_element(&mat, 2, builder);
+                let m3 = self.get_array_element(&mat, 3, builder);
+                let m4 = self.get_array_element(&mat, 4, builder);
+                let m5 = self.get_array_element(&mat, 5, builder);
+                let m6 = self.get_array_element(&mat, 6, builder);
+                let m7 = self.get_array_element(&mat, 7, builder);
+                let m8 = self.get_array_element(&mat, 8, builder);
+
+                let b0 = self.get_array_element(&vec_b, 0, builder);
+                let b1 = self.get_array_element(&vec_b, 1, builder);
+                let b2 = self.get_array_element(&vec_b, 2, builder);
+
+                let c00 = Self::emit_sub_mul(builder, m4, m8, m5, m7);
+                let c01 = Self::emit_sub_mul(builder, m5, m6, m3, m8);
+                let c02 = Self::emit_sub_mul(builder, m3, m7, m4, m6);
+
+                let c10 = Self::emit_sub_mul(builder, m2, m7, m1, m8);
+                let c11 = Self::emit_sub_mul(builder, m0, m8, m2, m6);
+                let c12 = Self::emit_sub_mul(builder, m1, m6, m0, m7);
+
+                let c20 = Self::emit_sub_mul(builder, m1, m5, m2, m4);
+                let c21 = Self::emit_sub_mul(builder, m2, m3, m0, m5);
+                let c22 = Self::emit_sub_mul(builder, m0, m4, m1, m3);
+
+                let d0 = builder.ins().fmul(m0, c00);
+                let s1 = builder.ins().fma(m1, c01, d0);
+                let det = builder.ins().fma(m2, c02, s1);
+                let one = builder.ins().f64const(1.0);
+                let inv_det = builder.ins().fdiv(one, det);
+
+                let t0 = builder.ins().fmul(c00, b0);
+                let s0_1 = builder.ins().fma(c10, b1, t0);
+                let num0 = builder.ins().fma(c20, b2, s0_1);
+
+                let t1 = builder.ins().fmul(c01, b0);
+                let s1_1 = builder.ins().fma(c11, b1, t1);
+                let num1 = builder.ins().fma(c21, b2, s1_1);
+
+                let t2 = builder.ins().fmul(c02, b0);
+                let s2_1 = builder.ins().fma(c12, b1, t2);
+                let num2 = builder.ins().fma(c22, b2, s2_1);
+
+                let x0 = builder.ins().fmul(num0, inv_det);
+                let x1 = builder.ins().fmul(num1, inv_det);
+                let x2 = builder.ins().fmul(num2, inv_det);
+                Ok(vec![x0, x1, x2])
+            }
+            "mat_inv4" => {
+                let arr = self.resolve_array(&args[0], builder)?;
+                let elem_ty = arr.elem_ty();
+                let a: Vec<Value> = (0..16).map(|i| self.get_array_element(&arr, i, builder)).collect();
+
+                let c00 = Self::emit_det3_val(builder, &elem_ty, a[5], a[6], a[7], a[9], a[10], a[11], a[13], a[14], a[15]);
+                let d01 = Self::emit_det3_val(builder, &elem_ty, a[4], a[6], a[7], a[8], a[10], a[11], a[12], a[14], a[15]);
+                let c01 = builder.ins().fneg(d01);
+                let c02 = Self::emit_det3_val(builder, &elem_ty, a[4], a[5], a[7], a[8], a[9], a[11], a[12], a[13], a[15]);
+                let d03 = Self::emit_det3_val(builder, &elem_ty, a[4], a[5], a[6], a[8], a[9], a[10], a[12], a[13], a[14]);
+                let c03 = builder.ins().fneg(d03);
+
+                let d10 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[9], a[10], a[11], a[13], a[14], a[15]);
+                let c10 = builder.ins().fneg(d10);
+                let c11 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[8], a[10], a[11], a[12], a[14], a[15]);
+                let d12 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[8], a[9], a[11], a[12], a[13], a[15]);
+                let c12 = builder.ins().fneg(d12);
+                let c13 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[8], a[9], a[10], a[12], a[13], a[14]);
+
+                let c20 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[13], a[14], a[15]);
+                let d21 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[12], a[14], a[15]);
+                let c21 = builder.ins().fneg(d21);
+                let c22 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[12], a[13], a[15]);
+                let d23 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[12], a[13], a[14]);
+                let c23 = builder.ins().fneg(d23);
+
+                let d30 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[9], a[10], a[11]);
+                let c30 = builder.ins().fneg(d30);
+                let c31 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[8], a[10], a[11]);
+                let d32 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[8], a[9], a[11]);
+                let c32 = builder.ins().fneg(d32);
+                let c33 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[8], a[9], a[10]);
+
+                let d0 = builder.ins().fmul(a[0], c00);
+                let d1 = builder.ins().fma(a[1], c01, d0);
+                let d2 = builder.ins().fma(a[2], c02, d1);
+                let det = builder.ins().fma(a[3], c03, d2);
+                let one = builder.ins().f64const(1.0);
+                let inv_det = builder.ins().fdiv(one, det);
+
+                let cofactors = [
+                    c00, c10, c20, c30,
+                    c01, c11, c21, c31,
+                    c02, c12, c22, c32,
+                    c03, c13, c23, c33,
+                ];
+                let mut res = Vec::with_capacity(16);
+                for c in cofactors {
+                    res.push(builder.ins().fmul(c, inv_det));
+                }
+                Ok(res)
+            }
+            "mat_solve4" => {
+                let mat_inv = self.evaluate_array_op_values("mat_inv4", &args[0..1], elem_ty, 16, builder)?;
+                let vec_b = self.resolve_array(&args[1], builder)?;
+                let b: Vec<Value> = (0..4).map(|i| self.get_array_element(&vec_b, i, builder)).collect();
+                let mut res = Vec::with_capacity(4);
+                for r in 0..4 {
+                    let p0 = builder.ins().fmul(mat_inv[r * 4], b[0]);
+                    let s1 = builder.ins().fma(mat_inv[r * 4 + 1], b[1], p0);
+                    let s2 = builder.ins().fma(mat_inv[r * 4 + 2], b[2], s1);
+                    let entry = builder.ins().fma(mat_inv[r * 4 + 3], b[3], s2);
+                    res.push(entry);
+                }
+                Ok(res)
+            }
+            "c_make" => {
+                let re = self.translate_expr(&args[0], builder)?;
+                let im = self.translate_expr(&args[1], builder)?;
+                Ok(vec![re, im])
+            }
+            "c_add" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let b = self.resolve_array(&args[1], builder)?;
+                let a0 = self.get_array_element(&a, 0, builder);
+                let a1 = self.get_array_element(&a, 1, builder);
+                let b0 = self.get_array_element(&b, 0, builder);
+                let b1 = self.get_array_element(&b, 1, builder);
+                let re = builder.ins().fadd(a0, b0);
+                let im = builder.ins().fadd(a1, b1);
+                Ok(vec![re, im])
+            }
+            "c_sub" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let b = self.resolve_array(&args[1], builder)?;
+                let a0 = self.get_array_element(&a, 0, builder);
+                let a1 = self.get_array_element(&a, 1, builder);
+                let b0 = self.get_array_element(&b, 0, builder);
+                let b1 = self.get_array_element(&b, 1, builder);
+                let re = builder.ins().fsub(a0, b0);
+                let im = builder.ins().fsub(a1, b1);
+                Ok(vec![re, im])
+            }
+            "c_mul" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let b = self.resolve_array(&args[1], builder)?;
+                let a_re = self.get_array_element(&a, 0, builder);
+                let a_im = self.get_array_element(&a, 1, builder);
+                let b_re = self.get_array_element(&b, 0, builder);
+                let b_im = self.get_array_element(&b, 1, builder);
+                let p0 = builder.ins().fmul(a_re, b_re);
+                let p1 = builder.ins().fmul(a_im, b_im);
+                let re = builder.ins().fsub(p0, p1);
+                let q0 = builder.ins().fmul(a_re, b_im);
+                let im = builder.ins().fma(a_im, b_re, q0);
+                Ok(vec![re, im])
+            }
+            "c_div" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let b = self.resolve_array(&args[1], builder)?;
+                let a_re = self.get_array_element(&a, 0, builder);
+                let a_im = self.get_array_element(&a, 1, builder);
+                let b_re = self.get_array_element(&b, 0, builder);
+                let b_im = self.get_array_element(&b, 1, builder);
+                let d0 = builder.ins().fmul(b_re, b_re);
+                let denom = builder.ins().fma(b_im, b_im, d0);
+                let p0 = builder.ins().fmul(a_re, b_re);
+                let num_re = builder.ins().fma(a_im, b_im, p0);
+                let q0 = builder.ins().fmul(a_im, b_re);
+                let q1 = builder.ins().fmul(a_re, b_im);
+                let num_im = builder.ins().fsub(q0, q1);
+                let re = builder.ins().fdiv(num_re, denom);
+                let im = builder.ins().fdiv(num_im, denom);
+                Ok(vec![re, im])
+            }
+            "c_conj" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let re = self.get_array_element(&a, 0, builder);
+                let im = self.get_array_element(&a, 1, builder);
+                let neg_im = builder.ins().fneg(im);
+                Ok(vec![re, neg_im])
+            }
+            "c_exp" => {
+                let a = self.resolve_array(&args[0], builder)?;
+                let x = self.get_array_element(&a, 0, builder);
+                let y = self.get_array_element(&a, 1, builder);
+                let r = Self::emit_exp(builder, x);
+                let c = Self::emit_cos(builder, y);
+                let s = Self::emit_sin(builder, y);
+                let re = builder.ins().fmul(r, c);
+                let im = builder.ins().fmul(r, s);
+                Ok(vec![re, im])
+            }
+            "fft8" => {
+                let re_arr = self.resolve_array(&args[0], builder)?;
+                let im_arr = self.resolve_array(&args[1], builder)?;
+                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
+                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let (r, i) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                let mut res = r;
+                res.extend(i);
+                Ok(res)
+            }
+            "fft8_re" => {
+                let re_arr = self.resolve_array(&args[0], builder)?;
+                let im_arr = self.resolve_array(&args[1], builder)?;
+                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
+                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                Ok(r)
+            }
+            "fft8_im" => {
+                let re_arr = self.resolve_array(&args[0], builder)?;
+                let im_arr = self.resolve_array(&args[1], builder)?;
+                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
+                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                Ok(i)
+            }
+            "fft16_re" => {
+                let re_arr = self.resolve_array(&args[0], builder)?;
+                let im_arr = self.resolve_array(&args[1], builder)?;
+                let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
+                let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 16);
+                Ok(r)
+            }
+            "fft16_im" => {
+                let re_arr = self.resolve_array(&args[0], builder)?;
+                let im_arr = self.resolve_array(&args[1], builder)?;
+                let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
+                let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 16);
+                Ok(i)
+            }
+            _ => panic!("Unsupported array op {}", callee),
+        }
+    }
+
+    fn translate_array_op_into_vars(
+        &mut self,
+        callee: &str,
         args: &[TypedExpr],
         dst_vars: &[Variable],
         elem_ty: &Type,
         len: usize,
         builder: &mut FunctionBuilder,
     ) -> Result<(), CodegenError> {
-        let arr_a = self.resolve_array(&args[0], builder)?;
-        let arr_b = self.resolve_array(&args[1], builder)?;
-        for i in 0..len {
-            let val_a = self.get_array_element(&arr_a, i, builder);
-            let val_b = self.get_array_element(&arr_b, i, builder);
-            let sum = if elem_ty.is_float() {
-                builder.ins().fadd(val_a, val_b)
-            } else {
-                builder.ins().iadd(val_a, val_b)
-            };
-            builder.def_var(dst_vars[i], sum);
+        let vals = self.evaluate_array_op_values(callee, args, elem_ty, len, builder)?;
+        for (i, val) in vals.into_iter().enumerate() {
+            builder.def_var(dst_vars[i], val);
         }
         Ok(())
     }
@@ -2186,53 +3795,61 @@ impl<'a> FunctionTranslationState<'a> {
         builder: &mut FunctionBuilder,
     ) {
         let mut offset = 0;
-        // 64-byte unrolled 4-way SIMD blocks (4x 16-byte XMM registers)
-        while offset + 64 <= total_bytes {
-            let a0 = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
-            let a1 = builder.ins().stack_addr(types::I64, src_slot, (offset + 16) as i32);
-            let a2 = builder.ins().stack_addr(types::I64, src_slot, (offset + 32) as i32);
-            let a3 = builder.ins().stack_addr(types::I64, src_slot, (offset + 48) as i32);
-            let c0 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a0, 0);
-            let c1 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a1, 0);
-            let c2 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a2, 0);
-            let c3 = builder.ins().load(types::I8X16, MemFlagsData::trusted(), a3, 0);
-
-            let d0 = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
-            let d1 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 16) as i32);
-            let d2 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 32) as i32);
-            let d3 = builder.ins().stack_addr(types::I64, dst_slot, (offset + 48) as i32);
-            builder.ins().store(MemFlagsData::trusted(), c0, d0, 0);
-            builder.ins().store(MemFlagsData::trusted(), c1, d1, 0);
-            builder.ins().store(MemFlagsData::trusted(), c2, d2, 0);
-            builder.ins().store(MemFlagsData::trusted(), c3, d3, 0);
-            offset += 64;
+        if total_bytes <= 128 && total_bytes % 16 == 0 {
+            let mut chunks = Vec::with_capacity(total_bytes / 16);
+            while offset + 16 <= total_bytes {
+                let chunk = builder.ins().stack_load(types::I64, types::I8X16, src_slot, offset as i32);
+                chunks.push((offset, chunk));
+                offset += 16;
+            }
+            for (off, val) in chunks {
+                builder.ins().stack_store(types::I64, val, dst_slot, off as i32);
+            }
+            return;
         }
-        // 16-byte SIMD blocks
+
         while offset + 16 <= total_bytes {
-            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
-            let chunk = builder.ins().load(types::I8X16, MemFlagsData::trusted(), src_addr, 0);
-            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
-            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            let chunk = builder.ins().stack_load(types::I64, types::I8X16, src_slot, offset as i32);
+            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += 16;
         }
+
         // 8-byte scalar chunks
         while offset + 8 <= total_bytes {
-            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
-            let chunk = builder.ins().load(types::I64, MemFlagsData::trusted(), src_addr, 0);
-            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
-            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            let chunk = builder.ins().stack_load(types::I64, types::I64, src_slot, offset as i32);
+            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += 8;
         }
         // remaining elements
         let clif_ty = type_to_clif(elem_ty.clone());
         let elem_size = elem_ty.size_bytes();
         while offset < total_bytes {
-            let src_addr = builder.ins().stack_addr(types::I64, src_slot, offset as i32);
-            let chunk = builder.ins().load(clif_ty, MemFlagsData::trusted(), src_addr, 0);
-            let dst_addr = builder.ins().stack_addr(types::I64, dst_slot, offset as i32);
-            builder.ins().store(MemFlagsData::trusted(), chunk, dst_addr, 0);
+            let chunk = builder.ins().stack_load(types::I64, clif_ty, src_slot, offset as i32);
+            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += elem_size;
         }
+    }
+
+    fn translate_array_op_into_slot(
+        &mut self,
+        callee: &str,
+        args: &[TypedExpr],
+        dst_slot: StackSlot,
+        elem_ty: &Type,
+        len: usize,
+        builder: &mut FunctionBuilder,
+    ) -> Result<(), CodegenError> {
+        if callee == "vec_add" {
+            return self.translate_vec_add_into_slot(args, dst_slot, elem_ty, len, builder);
+        }
+        let elem_size = elem_ty.size_bytes() as i32;
+        let vals = self.evaluate_array_op_values(callee, args, elem_ty, len, builder)?;
+        for (i, val) in vals.into_iter().enumerate() {
+            let offset = (i as i32) * elem_size;
+            let addr = builder.ins().stack_addr(types::I64, dst_slot, offset);
+            builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
+        }
+        Ok(())
     }
 
     fn translate_vec_add_into_slot(
@@ -2337,9 +3954,417 @@ impl<'a> FunctionTranslationState<'a> {
         Ok(())
     }
 
+    fn emit_dot_product(
+        &mut self,
+        arr_a: &ResolvedArray,
+        arr_b: &ResolvedArray,
+        builder: &mut FunctionBuilder,
+    ) -> Result<Value, CodegenError> {
+        let len_a = arr_a.len();
+        let elem_ty = arr_a.elem_ty();
+        let clif_ty = type_to_clif(elem_ty.clone());
+
+        if len_a == 4 {
+            let v_a0 = self.get_array_element(arr_a, 0, builder);
+            let v_b0 = self.get_array_element(arr_b, 0, builder);
+            let v_a1 = self.get_array_element(arr_a, 1, builder);
+            let v_b1 = self.get_array_element(arr_b, 1, builder);
+            let v_a2 = self.get_array_element(arr_a, 2, builder);
+            let v_b2 = self.get_array_element(arr_b, 2, builder);
+            let v_a3 = self.get_array_element(arr_a, 3, builder);
+            let v_b3 = self.get_array_element(arr_b, 3, builder);
+
+            if elem_ty.is_float() {
+                let p0 = builder.ins().fmul(v_a0, v_b0);
+                let p1 = builder.ins().fmul(v_a1, v_b1);
+                let p2 = builder.ins().fmul(v_a2, v_b2);
+                let p3 = builder.ins().fmul(v_a3, v_b3);
+                let s01 = builder.ins().fadd(p0, p1);
+                let s23 = builder.ins().fadd(p2, p3);
+                return Ok(builder.ins().fadd(s01, s23));
+            } else {
+                let p0 = builder.ins().imul(v_a0, v_b0);
+                let p1 = builder.ins().imul(v_a1, v_b1);
+                let p2 = builder.ins().imul(v_a2, v_b2);
+                let p3 = builder.ins().imul(v_a3, v_b3);
+                let s01 = builder.ins().iadd(p0, p1);
+                let s23 = builder.ins().iadd(p2, p3);
+                return Ok(builder.ins().iadd(s01, s23));
+            }
+        }
+
+        if len_a == 8 {
+            let v_a0 = self.get_array_element(arr_a, 0, builder);
+            let v_b0 = self.get_array_element(arr_b, 0, builder);
+            let v_a1 = self.get_array_element(arr_a, 1, builder);
+            let v_b1 = self.get_array_element(arr_b, 1, builder);
+            let v_a2 = self.get_array_element(arr_a, 2, builder);
+            let v_b2 = self.get_array_element(arr_b, 2, builder);
+            let v_a3 = self.get_array_element(arr_a, 3, builder);
+            let v_b3 = self.get_array_element(arr_b, 3, builder);
+            let v_a4 = self.get_array_element(arr_a, 4, builder);
+            let v_b4 = self.get_array_element(arr_b, 4, builder);
+            let v_a5 = self.get_array_element(arr_a, 5, builder);
+            let v_b5 = self.get_array_element(arr_b, 5, builder);
+            let v_a6 = self.get_array_element(arr_a, 6, builder);
+            let v_b6 = self.get_array_element(arr_b, 6, builder);
+            let v_a7 = self.get_array_element(arr_a, 7, builder);
+            let v_b7 = self.get_array_element(arr_b, 7, builder);
+
+            if elem_ty.is_float() {
+                let p0 = builder.ins().fmul(v_a0, v_b0);
+                let p1 = builder.ins().fmul(v_a1, v_b1);
+                let p2 = builder.ins().fmul(v_a2, v_b2);
+                let p3 = builder.ins().fmul(v_a3, v_b3);
+                let p4 = builder.ins().fmul(v_a4, v_b4);
+                let p5 = builder.ins().fmul(v_a5, v_b5);
+                let p6 = builder.ins().fmul(v_a6, v_b6);
+                let p7 = builder.ins().fmul(v_a7, v_b7);
+                let s01 = builder.ins().fadd(p0, p1);
+                let s23 = builder.ins().fadd(p2, p3);
+                let s45 = builder.ins().fadd(p4, p5);
+                let s67 = builder.ins().fadd(p6, p7);
+                let s03 = builder.ins().fadd(s01, s23);
+                let s47 = builder.ins().fadd(s45, s67);
+                return Ok(builder.ins().fadd(s03, s47));
+            } else {
+                let p0 = builder.ins().imul(v_a0, v_b0);
+                let p1 = builder.ins().imul(v_a1, v_b1);
+                let p2 = builder.ins().imul(v_a2, v_b2);
+                let p3 = builder.ins().imul(v_a3, v_b3);
+                let p4 = builder.ins().imul(v_a4, v_b4);
+                let p5 = builder.ins().imul(v_a5, v_b5);
+                let p6 = builder.ins().imul(v_a6, v_b6);
+                let p7 = builder.ins().imul(v_a7, v_b7);
+                let s01 = builder.ins().iadd(p0, p1);
+                let s23 = builder.ins().iadd(p2, p3);
+                let s45 = builder.ins().iadd(p4, p5);
+                let s67 = builder.ins().iadd(p6, p7);
+                let s03 = builder.ins().iadd(s01, s23);
+                let s47 = builder.ins().iadd(s45, s67);
+                return Ok(builder.ins().iadd(s03, s47));
+            }
+        }
+
+        let zero = if elem_ty.is_float() {
+            if elem_ty == Type::F32 {
+                builder.ins().f32const(0.0)
+            } else {
+                builder.ins().f64const(0.0)
+            }
+        } else {
+            builder.ins().iconst(clif_ty, 0)
+        };
+
+        let mut acc0 = zero;
+        let mut acc1 = zero;
+        let mut acc2 = zero;
+        let mut acc3 = zero;
+        let mut acc4 = zero;
+        let mut acc5 = zero;
+        let mut acc6 = zero;
+        let mut acc7 = zero;
+
+        let mut i = 0;
+        while i + 8 <= len_a {
+            let v_a0 = self.get_array_element(arr_a, i, builder);
+            let v_b0 = self.get_array_element(arr_b, i, builder);
+            let v_a1 = self.get_array_element(arr_a, i + 1, builder);
+            let v_b1 = self.get_array_element(arr_b, i + 1, builder);
+            let v_a2 = self.get_array_element(arr_a, i + 2, builder);
+            let v_b2 = self.get_array_element(arr_b, i + 2, builder);
+            let v_a3 = self.get_array_element(arr_a, i + 3, builder);
+            let v_b3 = self.get_array_element(arr_b, i + 3, builder);
+            let v_a4 = self.get_array_element(arr_a, i + 4, builder);
+            let v_b4 = self.get_array_element(arr_b, i + 4, builder);
+            let v_a5 = self.get_array_element(arr_a, i + 5, builder);
+            let v_b5 = self.get_array_element(arr_b, i + 5, builder);
+            let v_a6 = self.get_array_element(arr_a, i + 6, builder);
+            let v_b6 = self.get_array_element(arr_b, i + 6, builder);
+            let v_a7 = self.get_array_element(arr_a, i + 7, builder);
+            let v_b7 = self.get_array_element(arr_b, i + 7, builder);
+
+            if elem_ty.is_float() {
+                acc0 = builder.ins().fma(v_a0, v_b0, acc0);
+                acc1 = builder.ins().fma(v_a1, v_b1, acc1);
+                acc2 = builder.ins().fma(v_a2, v_b2, acc2);
+                acc3 = builder.ins().fma(v_a3, v_b3, acc3);
+                acc4 = builder.ins().fma(v_a4, v_b4, acc4);
+                acc5 = builder.ins().fma(v_a5, v_b5, acc5);
+                acc6 = builder.ins().fma(v_a6, v_b6, acc6);
+                acc7 = builder.ins().fma(v_a7, v_b7, acc7);
+            } else {
+                let p0 = builder.ins().imul(v_a0, v_b0); acc0 = builder.ins().iadd(acc0, p0);
+                let p1 = builder.ins().imul(v_a1, v_b1); acc1 = builder.ins().iadd(acc1, p1);
+                let p2 = builder.ins().imul(v_a2, v_b2); acc2 = builder.ins().iadd(acc2, p2);
+                let p3 = builder.ins().imul(v_a3, v_b3); acc3 = builder.ins().iadd(acc3, p3);
+                let p4 = builder.ins().imul(v_a4, v_b4); acc4 = builder.ins().iadd(acc4, p4);
+                let p5 = builder.ins().imul(v_a5, v_b5); acc5 = builder.ins().iadd(acc5, p5);
+                let p6 = builder.ins().imul(v_a6, v_b6); acc6 = builder.ins().iadd(acc6, p6);
+                let p7 = builder.ins().imul(v_a7, v_b7); acc7 = builder.ins().iadd(acc7, p7);
+            }
+            i += 8;
+        }
+
+        while i + 4 <= len_a {
+            let v_a0 = self.get_array_element(arr_a, i, builder);
+            let v_b0 = self.get_array_element(arr_b, i, builder);
+            let v_a1 = self.get_array_element(arr_a, i + 1, builder);
+            let v_b1 = self.get_array_element(arr_b, i + 1, builder);
+            let v_a2 = self.get_array_element(arr_a, i + 2, builder);
+            let v_b2 = self.get_array_element(arr_b, i + 2, builder);
+            let v_a3 = self.get_array_element(arr_a, i + 3, builder);
+            let v_b3 = self.get_array_element(arr_b, i + 3, builder);
+
+            if elem_ty.is_float() {
+                acc0 = builder.ins().fma(v_a0, v_b0, acc0);
+                acc1 = builder.ins().fma(v_a1, v_b1, acc1);
+                acc2 = builder.ins().fma(v_a2, v_b2, acc2);
+                acc3 = builder.ins().fma(v_a3, v_b3, acc3);
+            } else {
+                let p0 = builder.ins().imul(v_a0, v_b0);
+                acc0 = builder.ins().iadd(acc0, p0);
+                let p1 = builder.ins().imul(v_a1, v_b1);
+                acc1 = builder.ins().iadd(acc1, p1);
+                let p2 = builder.ins().imul(v_a2, v_b2);
+                acc2 = builder.ins().iadd(acc2, p2);
+                let p3 = builder.ins().imul(v_a3, v_b3);
+                acc3 = builder.ins().iadd(acc3, p3);
+            }
+            i += 4;
+        }
+
+        while i < len_a {
+            let v_a = self.get_array_element(arr_a, i, builder);
+            let v_b = self.get_array_element(arr_b, i, builder);
+            if elem_ty.is_float() {
+                acc0 = builder.ins().fma(v_a, v_b, acc0);
+            } else {
+                let p = builder.ins().imul(v_a, v_b);
+                acc0 = builder.ins().iadd(acc0, p);
+            }
+            i += 1;
+        }
+
+        let total = if elem_ty.is_float() {
+            let s01 = builder.ins().fadd(acc0, acc1);
+            let s23 = builder.ins().fadd(acc2, acc3);
+            let s45 = builder.ins().fadd(acc4, acc5);
+            let s67 = builder.ins().fadd(acc6, acc7);
+            let s03 = builder.ins().fadd(s01, s23);
+            let s47 = builder.ins().fadd(s45, s67);
+            builder.ins().fadd(s03, s47)
+        } else {
+            let s01 = builder.ins().iadd(acc0, acc1);
+            let s23 = builder.ins().iadd(acc2, acc3);
+            let s45 = builder.ins().iadd(acc4, acc5);
+            let s67 = builder.ins().iadd(acc6, acc7);
+            let s03 = builder.ins().iadd(s01, s23);
+            let s47 = builder.ins().iadd(s45, s67);
+            builder.ins().iadd(s03, s47)
+        };
+        Ok(total)
+    }
+
+    fn collect_expr_reads(expr: &TypedExpr, reads: &mut HashSet<String>) {
+        match expr {
+            TypedExpr::Ident { name, .. } => {
+                reads.insert(name.clone());
+            }
+            TypedExpr::Unary { expr, .. } => {
+                Self::collect_expr_reads(expr, reads);
+            }
+            TypedExpr::Binary { left, right, .. } => {
+                Self::collect_expr_reads(left, reads);
+                Self::collect_expr_reads(right, reads);
+            }
+            TypedExpr::Call { args, .. } => {
+                for a in args {
+                    Self::collect_expr_reads(a, reads);
+                }
+            }
+            TypedExpr::ArrayLiteral { elements, .. } => {
+                for e in elements {
+                    Self::collect_expr_reads(e, reads);
+                }
+            }
+            TypedExpr::Index { target, index, .. } => {
+                Self::collect_expr_reads(target, reads);
+                Self::collect_expr_reads(index, reads);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_stmt_reads(stmt: &TypedStmt, reads: &mut HashSet<String>) {
+        match stmt {
+            TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } | TypedStmt::Expr(value) => {
+                Self::collect_expr_reads(value, reads);
+            }
+            TypedStmt::IndexAssign { target, index, value, .. } => {
+                reads.insert(target.clone());
+                Self::collect_expr_reads(index, reads);
+                Self::collect_expr_reads(value, reads);
+            }
+            TypedStmt::Return(Some(expr), _) => {
+                Self::collect_expr_reads(expr, reads);
+            }
+            _ => {}
+        }
+    }
+
+    fn parse_stride_offset(index: &TypedExpr, loop_var: &str) -> Option<(i64, i64)> {
+        match index {
+            TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
+                let off = get_constant_int(right)?;
+                if let TypedExpr::Binary { op: BinaryOp::Mul, left: mul_l, right: mul_r, .. } = &**left {
+                    if matches!(&**mul_l, TypedExpr::Ident { name: v, .. } if v == loop_var) {
+                        let stride = get_constant_int(mul_r)?;
+                        return Some((stride, off));
+                    }
+                }
+                None
+            }
+            TypedExpr::Binary { op: BinaryOp::Mul, left, right, .. } => {
+                if matches!(&**left, TypedExpr::Ident { name: v, .. } if v == loop_var) {
+                    let stride = get_constant_int(right)?;
+                    return Some((stride, 0));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn while_covers_array_indices(name: &str, len: usize, condition: &TypedExpr, body: &TypedBlock) -> bool {
+        for s in &body.stmts {
+            match s {
+                TypedStmt::IndexAssign { index, value, .. } => {
+                    let mut reads = HashSet::new();
+                    Self::collect_expr_reads(index, &mut reads);
+                    Self::collect_expr_reads(value, &mut reads);
+                    if reads.contains(name) {
+                        return false;
+                    }
+                }
+                _ => {
+                    let mut reads = HashSet::new();
+                    Self::collect_stmt_reads(s, &mut reads);
+                    if reads.contains(name) {
+                        return false;
+                    }
+                }
+            }
+        }
+        let (loop_var, bound) = match condition {
+            TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                if let (TypedExpr::Ident { name: v, .. }, Some(b)) = (&**left, get_constant_int(right)) {
+                    (v.as_str(), b)
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        };
+        if bound <= 0 {
+            return false;
+        }
+
+        let mut has_step = false;
+        for s in &body.stmts {
+            if let TypedStmt::Assign { name: v, value, .. } = s {
+                if v == loop_var {
+                    if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                        if matches!(&**left, TypedExpr::Ident { name: l, .. } if l == loop_var) && get_constant_int(right) == Some(1) {
+                            has_step = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !has_step {
+            return false;
+        }
+
+        let mut offsets = HashSet::new();
+        let mut detected_stride = None;
+
+        for s in &body.stmts {
+            if let TypedStmt::IndexAssign { target, index, .. } = s {
+                if target == name {
+                    if let Some((stride, off)) = Self::parse_stride_offset(index, loop_var) {
+                        if let Some(s) = detected_stride {
+                            if s != stride { return false; }
+                        } else {
+                            detected_stride = Some(stride);
+                        }
+                        offsets.insert(off);
+                    }
+                }
+            }
+        }
+
+        if let Some(stride) = detected_stride {
+            if (bound as usize) * (stride as usize) == len && offsets.len() == (stride as usize) {
+                return (0..stride).all(|o| offsets.contains(&o));
+            }
+        }
+        false
+    }
+
+    fn is_array_fully_overwritten(name: &str, len: usize, remaining_stmts: &[TypedStmt]) -> bool {
+        let mut assigned_indices = HashSet::new();
+        for s in remaining_stmts {
+            match s {
+                TypedStmt::IndexAssign { target, index, value, .. } if target == name => {
+                    let mut rhs_reads = HashSet::new();
+                    Self::collect_expr_reads(value, &mut rhs_reads);
+                    if rhs_reads.contains(name) {
+                        return false;
+                    }
+                    if let Some(idx) = get_constant_int(index) {
+                        if idx >= 0 && (idx as usize) < len {
+                            assigned_indices.insert(idx as usize);
+                            if assigned_indices.len() == len {
+                                return true;
+                            }
+                        } else {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                TypedStmt::While { condition, body, .. } => {
+                    let mut reads = HashSet::new();
+                    Self::collect_stmt_reads(s, &mut reads);
+                    if reads.contains(name) {
+                        return false;
+                    }
+                    if Self::while_covers_array_indices(name, len, condition, body) {
+                        return true;
+                    }
+                    return false;
+                }
+                _ => {
+                    let mut reads = HashSet::new();
+                    Self::collect_stmt_reads(s, &mut reads);
+                    if reads.contains(name) {
+                        return false;
+                    }
+                    if matches!(s, TypedStmt::If { .. } | TypedStmt::Break(_) | TypedStmt::Return(..)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        assigned_indices.len() == len
+    }
+
     fn translate_stmt(
         &mut self,
         stmt: &TypedStmt,
+        remaining_stmts: &[TypedStmt],
         builder: &mut FunctionBuilder,
     ) -> Result<bool, CodegenError> {
         match stmt {
@@ -2361,46 +4386,48 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         };
 
-                        match value {
-                            TypedExpr::ArrayLiteral { elements, .. } => {
-                                for (i, el) in elements.iter().enumerate() {
-                                    let el_val = self.translate_expr(el, builder)?;
-                                    builder.def_var(vars[i], el_val);
-                                }
-                            }
-                            TypedExpr::Ident { name: src_name, .. } => {
-                                if let Some(src_storage) = self.variables.get(src_name).cloned() {
-                                    match src_storage {
-                                        Storage::PromotedArray { vars: src_vars, .. } => {
-                                            for i in 0..*len {
-                                                let val = builder.use_var(src_vars[i]);
-                                                builder.def_var(vars[i], val);
-                                            }
-                                        }
-                                        Storage::Array { slot: src_slot, .. } => {
-                                            let elem_size = elem.size_bytes() as i32;
-                                            for i in 0..*len {
-                                                let offset = (i as i32) * elem_size;
-                                                let addr = builder.ins().stack_addr(types::I64, src_slot, offset);
-                                                let val = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0);
-                                                builder.def_var(vars[i], val);
-                                            }
-                                        }
-                                        _ => {}
+                        let is_dead_init = Self::is_array_fully_overwritten(name, *len, remaining_stmts);
+                        if !is_dead_init {
+                            match value {
+                                TypedExpr::ArrayLiteral { elements, .. } => {
+                                    for (i, el) in elements.iter().enumerate() {
+                                        let el_val = self.translate_expr(el, builder)?;
+                                        builder.def_var(vars[i], el_val);
                                     }
                                 }
-                            }
-                            TypedExpr::Call { callee, args, .. } if callee == "vec_add" => {
-                                self.translate_vec_add_into_vars(args, &vars, elem, *len, builder)?;
-                            }
-                            _ => {
-                                let zero = if elem.is_float() {
-                                    if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
-                                } else {
-                                    builder.ins().iconst(clif_ty, 0)
-                                };
-                                for v in &vars {
-                                    builder.def_var(*v, zero);
+                                TypedExpr::Ident { name: src_name, .. } => {
+                                    if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                        match src_storage {
+                                            Storage::PromotedArray { vars: src_vars, .. } => {
+                                                for i in 0..*len {
+                                                    let val = builder.use_var(src_vars[i]);
+                                                    builder.def_var(vars[i], val);
+                                                }
+                                            }
+                                            Storage::Array { slot: src_slot, .. } => {
+                                                let elem_size = elem.size_bytes() as i32;
+                                                for i in 0..*len {
+                                                    let offset = (i as i32) * elem_size;
+                                                    let val = builder.ins().stack_load(types::I64, clif_ty, src_slot, offset);
+                                                    builder.def_var(vars[i], val);
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                TypedExpr::Call { callee, args, .. } if Self::is_array_op(callee) => {
+                                    self.translate_array_op_into_vars(callee, args, &vars, elem, *len, builder)?;
+                                }
+                                _ => {
+                                    let zero = if elem.is_float() {
+                                        if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                                    } else {
+                                        builder.ins().iconst(clif_ty, 0)
+                                    };
+                                    for v in &vars {
+                                        builder.def_var(*v, zero);
+                                    }
                                 }
                             }
                         }
@@ -2427,55 +4454,55 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     };
 
-                    match value {
-                        TypedExpr::ArrayLiteral { elements, .. } => {
-                            for (i, el) in elements.iter().enumerate() {
-                                let el_val = self.translate_expr(el, builder)?;
-                                let offset = (i as i32) * (elem_size as i32);
-                                let addr = builder.ins().stack_addr(types::I64, slot, offset);
-                                builder.ins().store(MemFlagsData::trusted(), el_val, addr, 0);
-                            }
-                        }
-                        TypedExpr::Ident { name: src_name, .. } => {
-                            if let Some(src_storage) = self.variables.get(src_name).cloned() {
-                                match src_storage {
-                                    Storage::PromotedArray { vars: src_vars, .. } => {
-                                        for i in 0..*len {
-                                            let offset = (i as i32) * (elem_size as i32);
-                                            let el_val = builder.use_var(src_vars[i]);
-                                            let dst_addr =
-                                                builder.ins().stack_addr(types::I64, slot, offset);
-                                            builder.ins().store(MemFlagsData::trusted(), el_val, dst_addr, 0);
-                                        }
-                                    }
-                                    Storage::Array { slot: src_slot, .. } => {
-                                        let total_bytes = (*len) * elem.size_bytes();
-                                        self.copy_array_slots(src_slot, slot, total_bytes, elem, builder);
-                                    }
-                                    _ => {}
+                    let is_dead_init = Self::is_array_fully_overwritten(name, *len, remaining_stmts);
+                    if !is_dead_init {
+                        match value {
+                            TypedExpr::ArrayLiteral { elements, .. } => {
+                                for (i, el) in elements.iter().enumerate() {
+                                    let el_val = self.translate_expr(el, builder)?;
+                                    let offset = (i as i32) * (elem_size as i32);
+                                    builder.ins().stack_store(types::I64, el_val, slot, offset);
                                 }
                             }
-                        }
-                        TypedExpr::Call { callee, args, .. } if callee == "vec_add" => {
-                            self.translate_vec_add_into_slot(args, slot, elem, *len, builder)?;
-                        }
-                        _ => {
-                            let clif_ty = type_to_clif((**elem).clone());
-                            let zero = if elem.is_float() {
-                                if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
-                            } else {
-                                builder.ins().iconst(clif_ty, 0)
-                            };
-                            for i in 0..*len {
-                                let offset = (i as i32) * (elem_size as i32);
-                                let addr = builder.ins().stack_addr(types::I64, slot, offset);
-                                builder.ins().store(MemFlagsData::trusted(), zero, addr, 0);
+                            TypedExpr::Ident { name: src_name, .. } => {
+                                if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                    match src_storage {
+                                        Storage::PromotedArray { vars: src_vars, .. } => {
+                                            for i in 0..*len {
+                                                let offset = (i as i32) * (elem_size as i32);
+                                                let el_val = builder.use_var(src_vars[i]);
+                                                builder.ins().stack_store(types::I64, el_val, slot, offset);
+                                            }
+                                        }
+                                        Storage::Array { slot: src_slot, .. } => {
+                                            let total_bytes = (*len) * elem.size_bytes();
+                                            self.copy_array_slots(src_slot, slot, total_bytes, elem, builder);
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            TypedExpr::Call { callee, args, .. } if Self::is_array_op(callee) => {
+                                self.translate_array_op_into_slot(callee, args, slot, elem, *len, builder)?;
+                            }
+                            _ => {
+                                let clif_ty = type_to_clif((**elem).clone());
+                                let zero = if elem.is_float() {
+                                    if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                                } else {
+                                    builder.ins().iconst(clif_ty, 0)
+                                };
+                                for i in 0..*len {
+                                    let offset = (i as i32) * (elem_size as i32);
+                                    builder.ins().stack_store(types::I64, zero, slot, offset);
+                                }
                             }
                         }
                     }
 
                     self.variables
                         .insert(name.clone(), Storage::Array { slot, len: *len });
+                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
                     Ok(false)
                 } else {
                     let val = self.translate_expr(value, builder)?;
@@ -2489,6 +4516,7 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     };
                     builder.def_var(var, val);
+                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
                     Ok(false)
                 }
             }
@@ -2528,8 +4556,8 @@ impl<'a> FunctionTranslationState<'a> {
                                 }
                             }
                         } else if let TypedExpr::Call { callee, args, .. } = value {
-                            if callee == "vec_add" {
-                                self.translate_vec_add_into_vars(args, &vars, &elem_ty, len, builder)?;
+                            if Self::is_array_op(callee) {
+                                self.translate_array_op_into_vars(callee, args, &vars, &elem_ty, len, builder)?;
                             }
                         }
                     }
@@ -2543,9 +4571,7 @@ impl<'a> FunctionTranslationState<'a> {
                                         for i in 0..len {
                                             let offset = (i as i32) * elem_size;
                                             let el_val = builder.use_var(src_vars[i]);
-                                            let dst_addr =
-                                                builder.ins().stack_addr(types::I64, slot, offset);
-                                            builder.ins().store(MemFlagsData::trusted(), el_val, dst_addr, 0);
+                                            builder.ins().stack_store(types::I64, el_val, slot, offset);
                                         }
                                     }
                                     Storage::Array { slot: src_slot, .. } => {
@@ -2556,13 +4582,14 @@ impl<'a> FunctionTranslationState<'a> {
                                 }
                             }
                         } else if let TypedExpr::Call { callee, args, ty, .. } = value {
-                            if callee == "vec_add" {
+                            if Self::is_array_op(callee) {
                                 let elem = ty.element_type().unwrap().clone();
-                                self.translate_vec_add_into_slot(args, slot, &elem, len, builder)?;
+                                self.translate_array_op_into_slot(callee, args, slot, &elem, len, builder)?;
                             }
                         }
                     }
                 }
+                self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
                 Ok(false)
             }
 
@@ -2573,6 +4600,7 @@ impl<'a> FunctionTranslationState<'a> {
                 is_safe,
                 ..
             } => {
+                self.array_load_cache.retain(|(arr, _), _| arr != target);
                 let storage = self
                     .variables
                     .get(target)
@@ -2618,8 +4646,7 @@ impl<'a> FunctionTranslationState<'a> {
                         if let Some(c) = get_constant_int(index) {
                             if c >= 0 && (c as usize) < len {
                                 let offset = (c as i32) * (elem_size as i32);
-                                let elem_addr = builder.ins().stack_addr(types::I64, slot, offset);
-                                builder.ins().store(MemFlagsData::trusted(), val, elem_addr, 0);
+                                builder.ins().stack_store(types::I64, val, slot, offset);
                                 return Ok(false);
                             }
                         }
@@ -2633,7 +4660,13 @@ impl<'a> FunctionTranslationState<'a> {
                             self.emit_bounds_check(idx_val, len, builder);
                         }
 
-                        let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
+                        let offset = match elem_size {
+                            8 => builder.ins().ishl_imm_s(idx_val, 3),
+                            4 => builder.ins().ishl_imm_s(idx_val, 2),
+                            2 => builder.ins().ishl_imm_s(idx_val, 1),
+                            1 => idx_val,
+                            _ => builder.ins().imul_imm_s(idx_val, elem_size as i64),
+                        };
                         let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
                         let elem_addr = builder.ins().iadd(base_addr, offset);
 
@@ -2674,6 +4707,7 @@ impl<'a> FunctionTranslationState<'a> {
                 else_branch,
                 ..
             } => {
+                self.array_load_cache.clear();
                 if self.try_emit_branchless_select(
                     condition,
                     then_branch,
@@ -2752,6 +4786,7 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                 }
 
+                self.array_load_cache.clear();
                 if then_term && else_term {
                     Ok(true)
                 } else {
@@ -2764,6 +4799,7 @@ impl<'a> FunctionTranslationState<'a> {
                 body,
                 ..
             } => {
+                self.array_load_cache.clear();
                 // 1. Check for dual-variable trailing zero loop ((u | v) & 1 == 0)
                 if let Some((u_name, v_name, shift_name)) = Self::match_dual_trailing_zero_loop(condition, body) {
                     if let (Some(Storage::Scalar(u_var)), Some(Storage::Scalar(v_var)), Some(Storage::Scalar(s_var))) =
@@ -2856,7 +4892,7 @@ impl<'a> FunctionTranslationState<'a> {
 
                 if let Some((ref var_name, limit_expr, is_le)) = induction_info {
                     if let Some(Storage::Scalar(var)) = self.variables.get(var_name).cloned() {
-                        if Self::is_simple_induction_body(body, var_name) {
+                        if body.stmts.len() <= 6 && Self::is_simple_induction_body(body, var_name) {
                             let unroll_head_block = builder.create_block();
                             let unroll_body_block = builder.create_block();
                             let cleanup_head_block = builder.create_block();
@@ -2922,6 +4958,7 @@ impl<'a> FunctionTranslationState<'a> {
                             // Exit block
                             builder.switch_to_block(exit_block);
                             builder.seal_block(exit_block);
+                            self.array_load_cache.clear();
                             return Ok(false);
                         }
                     }
@@ -2968,6 +5005,7 @@ impl<'a> FunctionTranslationState<'a> {
 
                 builder.switch_to_block(exit_block);
                 builder.seal_block(exit_block);
+                self.array_load_cache.clear();
                 Ok(false)
             }
         }
@@ -2982,7 +5020,7 @@ impl<'a> FunctionTranslationState<'a> {
             TypedExpr::Literal { lit, ty, .. } => match lit {
                 TypedLiteral::Int(n, _) => {
                     let clif_ty = type_to_clif(ty.clone());
-                    Ok(self.get_iconst(clif_ty, *n, builder))
+                    Ok(builder.ins().iconst(clif_ty, *n))
                 }
                 TypedLiteral::Float(f, _) => match ty {
                     Type::F32 => Ok(self.get_f32const(*f as f32, builder)),
@@ -3120,7 +5158,11 @@ impl<'a> FunctionTranslationState<'a> {
                             Ok(builder.ins().fdiv(l, r))
                         } else if let Some(d) = get_constant_int(right) {
                             let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
-                            self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, builder)
+                            let is_u32 = operand_ty == Type::I32
+                                || is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
+                                || compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars)
+                                    .map_or(false, |ub| ub <= 0xFFFF_FFFF);
+                            self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, is_u32, builder)
                         } else if is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
                             && is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars)
                         {
@@ -3168,7 +5210,24 @@ impl<'a> FunctionTranslationState<'a> {
                         if operand_ty.is_integer() {
                             if let Some(d) = get_constant_int(right) {
                                 let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
-                                self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, builder)
+                                let is_u32 = operand_ty == Type::I32
+                                    || is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
+                                    || compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars)
+                                        .map_or(false, |ub| ub <= 0xFFFF_FFFF);
+                                if is_nonneg && d > 0 {
+                                    if let Some(max_val) = compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars) {
+                                        if max_val < d {
+                                            return Ok(l);
+                                        } else if max_val < 2 * d {
+                                            let clif_ty = type_to_clif(operand_ty.clone());
+                                            let d_val = self.get_iconst(clif_ty, d, builder);
+                                            let cond = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, d_val);
+                                            let diff = builder.ins().isub(l, d_val);
+                                            return Ok(builder.ins().select(cond, diff, l));
+                                        }
+                                    }
+                                }
+                                self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, is_u32, builder)
                             } else if is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
                                 && is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars)
                             {
@@ -3212,7 +5271,10 @@ impl<'a> FunctionTranslationState<'a> {
                                 Ok(builder.ins().srem(l, r))
                             }
                         } else {
-                            Ok(builder.ins().srem(l, r))
+                            let div = builder.ins().fdiv(l, r);
+                            let tr = builder.ins().trunc(div);
+                            let prod = builder.ins().fmul(tr, r);
+                            Ok(builder.ins().fsub(l, prod))
                         }
                     }
                     BinaryOp::Pow => {
@@ -3344,37 +5406,92 @@ impl<'a> FunctionTranslationState<'a> {
                                 let elem_size = ty.size_bytes();
                                 let clif_ty = type_to_clif(ty.clone());
 
-                                if let Some(c) = get_constant_int(index) {
-                                    if c >= 0 && (c as usize) < len {
-                                        let offset = (c as i32) * (elem_size as i32);
-                                        let elem_addr = builder.ins().stack_addr(types::I64, slot, offset);
-                                        return Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0));
+                                let key_str = if let Some(c) = get_constant_int(index) {
+                                    format!("#{}", c)
+                                } else {
+                                    format_index_key(index)
+                                };
+
+                                if !key_str.is_empty() {
+                                    if let Some((_, cached_val)) = self.array_load_cache.get(&(name.clone(), key_str.clone())) {
+                                        return Ok(*cached_val);
                                     }
                                 }
 
-                                let mut idx_val = self.translate_expr(index, builder)?;
-                                if index.ty() == Type::I32 {
-                                    idx_val = builder.ins().uextend(types::I64, idx_val);
+                                let loaded_val = if let Some(c) = get_constant_int(index) {
+                                    if c >= 0 && (c as usize) < len {
+                                        let offset = (c as i32) * (elem_size as i32);
+                                        builder.ins().stack_load(types::I64, clif_ty, slot, offset)
+                                    } else {
+                                        let mut idx_val = self.translate_expr(index, builder)?;
+                                        if index.ty() == Type::I32 {
+                                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                                        }
+                                        if !*is_safe {
+                                            self.emit_bounds_check(idx_val, len, builder);
+                                        }
+                                        let offset = match elem_size {
+                                            8 => builder.ins().ishl_imm_s(idx_val, 3),
+                                            4 => builder.ins().ishl_imm_s(idx_val, 2),
+                                            2 => builder.ins().ishl_imm_s(idx_val, 1),
+                                            1 => idx_val,
+                                            _ => builder.ins().imul_imm_s(idx_val, elem_size as i64),
+                                        };
+                                        let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                                        let elem_addr = builder.ins().iadd(base_addr, offset);
+                                        builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0)
+                                    }
+                                } else {
+                                    let mut idx_val = self.translate_expr(index, builder)?;
+                                    if index.ty() == Type::I32 {
+                                        idx_val = builder.ins().uextend(types::I64, idx_val);
+                                    }
+                                    if !*is_safe {
+                                        self.emit_bounds_check(idx_val, len, builder);
+                                    }
+                                    let offset = match elem_size {
+                                        8 => builder.ins().ishl_imm_s(idx_val, 3),
+                                        4 => builder.ins().ishl_imm_s(idx_val, 2),
+                                        2 => builder.ins().ishl_imm_s(idx_val, 1),
+                                        1 => idx_val,
+                                        _ => builder.ins().imul_imm_s(idx_val, elem_size as i64),
+                                    };
+                                    let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                                    let elem_addr = builder.ins().iadd(base_addr, offset);
+                                    builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0)
+                                };
+
+                                if !key_str.is_empty() {
+                                    self.array_load_cache.insert((name.clone(), key_str), ((**index).clone(), loaded_val));
                                 }
-
-                                if !*is_safe {
-                                    self.emit_bounds_check(idx_val, len, builder);
-                                }
-
-                                let offset = builder.ins().imul_imm_s(idx_val, elem_size as i64);
-                                let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
-                                let elem_addr = builder.ins().iadd(base_addr, offset);
-
-                                Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0))
+                                Ok(loaded_val)
                             }
                             _ => panic!("Index target must be an array variable"),
                         }
                     }
-                    _ => panic!("Indexing supported on array variables"),
+                    _ => {
+                        let base_addr = self.translate_expr(target, builder)?;
+                        let elem_size = ty.size_bytes() as i64;
+                        let clif_ty = type_to_clif(ty.clone());
+                        let mut idx_val = self.translate_expr(index, builder)?;
+                        if index.ty() == Type::I32 {
+                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        }
+                        let offset = match elem_size {
+                            1 => idx_val,
+                            2 => builder.ins().ishl_imm_s(idx_val, 1),
+                            4 => builder.ins().ishl_imm_s(idx_val, 2),
+                            8 => builder.ins().ishl_imm_s(idx_val, 3),
+                            _ => builder.ins().imul_imm_s(idx_val, elem_size),
+                        };
+                        let elem_addr = builder.ins().iadd(base_addr, offset);
+                        Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), elem_addr, 0))
+                    }
                 }
             }
 
-            TypedExpr::Call { callee, args, .. } => {
+            TypedExpr::Call { callee, args, ty, .. } => {
+                self.array_load_cache.clear();
                 match callee.as_str() {
                     "sqrt" => {
                         let arg = self.translate_expr(&args[0], builder)?;
@@ -3458,210 +5575,19 @@ impl<'a> FunctionTranslationState<'a> {
                     "dot" => {
                         let arr_a = self.resolve_array(&args[0], builder)?;
                         let arr_b = self.resolve_array(&args[1], builder)?;
-                        let len_a = arr_a.len();
-                        let elem_ty = arr_a.elem_ty();
-                        let clif_ty = type_to_clif(elem_ty.clone());
-
-                        if len_a == 4 {
-                            let v_a0 = self.get_array_element(&arr_a, 0, builder);
-                            let v_b0 = self.get_array_element(&arr_b, 0, builder);
-                            let v_a1 = self.get_array_element(&arr_a, 1, builder);
-                            let v_b1 = self.get_array_element(&arr_b, 1, builder);
-                            let v_a2 = self.get_array_element(&arr_a, 2, builder);
-                            let v_b2 = self.get_array_element(&arr_b, 2, builder);
-                            let v_a3 = self.get_array_element(&arr_a, 3, builder);
-                            let v_b3 = self.get_array_element(&arr_b, 3, builder);
-
-                            if elem_ty.is_float() {
-                                let p0 = builder.ins().fmul(v_a0, v_b0);
-                                let p1 = builder.ins().fmul(v_a1, v_b1);
-                                let p2 = builder.ins().fmul(v_a2, v_b2);
-                                let p3 = builder.ins().fmul(v_a3, v_b3);
-                                let s01 = builder.ins().fadd(p0, p1);
-                                let s23 = builder.ins().fadd(p2, p3);
-                                return Ok(builder.ins().fadd(s01, s23));
-                            } else {
-                                let p0 = builder.ins().imul(v_a0, v_b0);
-                                let p1 = builder.ins().imul(v_a1, v_b1);
-                                let p2 = builder.ins().imul(v_a2, v_b2);
-                                let p3 = builder.ins().imul(v_a3, v_b3);
-                                let s01 = builder.ins().iadd(p0, p1);
-                                let s23 = builder.ins().iadd(p2, p3);
-                                return Ok(builder.ins().iadd(s01, s23));
-                            }
-                        }
-
-                        if len_a == 8 {
-                            let v_a0 = self.get_array_element(&arr_a, 0, builder);
-                            let v_b0 = self.get_array_element(&arr_b, 0, builder);
-                            let v_a1 = self.get_array_element(&arr_a, 1, builder);
-                            let v_b1 = self.get_array_element(&arr_b, 1, builder);
-                            let v_a2 = self.get_array_element(&arr_a, 2, builder);
-                            let v_b2 = self.get_array_element(&arr_b, 2, builder);
-                            let v_a3 = self.get_array_element(&arr_a, 3, builder);
-                            let v_b3 = self.get_array_element(&arr_b, 3, builder);
-                            let v_a4 = self.get_array_element(&arr_a, 4, builder);
-                            let v_b4 = self.get_array_element(&arr_b, 4, builder);
-                            let v_a5 = self.get_array_element(&arr_a, 5, builder);
-                            let v_b5 = self.get_array_element(&arr_b, 5, builder);
-                            let v_a6 = self.get_array_element(&arr_a, 6, builder);
-                            let v_b6 = self.get_array_element(&arr_b, 6, builder);
-                            let v_a7 = self.get_array_element(&arr_a, 7, builder);
-                            let v_b7 = self.get_array_element(&arr_b, 7, builder);
-
-                            if elem_ty.is_float() {
-                                let p0 = builder.ins().fmul(v_a0, v_b0);
-                                let p1 = builder.ins().fmul(v_a1, v_b1);
-                                let p2 = builder.ins().fmul(v_a2, v_b2);
-                                let p3 = builder.ins().fmul(v_a3, v_b3);
-                                let p4 = builder.ins().fmul(v_a4, v_b4);
-                                let p5 = builder.ins().fmul(v_a5, v_b5);
-                                let p6 = builder.ins().fmul(v_a6, v_b6);
-                                let p7 = builder.ins().fmul(v_a7, v_b7);
-                                let s01 = builder.ins().fadd(p0, p1);
-                                let s23 = builder.ins().fadd(p2, p3);
-                                let s45 = builder.ins().fadd(p4, p5);
-                                let s67 = builder.ins().fadd(p6, p7);
-                                let s03 = builder.ins().fadd(s01, s23);
-                                let s47 = builder.ins().fadd(s45, s67);
-                                return Ok(builder.ins().fadd(s03, s47));
-                            } else {
-                                let p0 = builder.ins().imul(v_a0, v_b0);
-                                let p1 = builder.ins().imul(v_a1, v_b1);
-                                let p2 = builder.ins().imul(v_a2, v_b2);
-                                let p3 = builder.ins().imul(v_a3, v_b3);
-                                let p4 = builder.ins().imul(v_a4, v_b4);
-                                let p5 = builder.ins().imul(v_a5, v_b5);
-                                let p6 = builder.ins().imul(v_a6, v_b6);
-                                let p7 = builder.ins().imul(v_a7, v_b7);
-                                let s01 = builder.ins().iadd(p0, p1);
-                                let s23 = builder.ins().iadd(p2, p3);
-                                let s45 = builder.ins().iadd(p4, p5);
-                                let s67 = builder.ins().iadd(p6, p7);
-                                let s03 = builder.ins().iadd(s01, s23);
-                                let s47 = builder.ins().iadd(s45, s67);
-                                return Ok(builder.ins().iadd(s03, s47));
-                            }
-                        }
-
-                        let zero = if elem_ty.is_float() {
-                            if elem_ty == Type::F32 {
-                                builder.ins().f32const(0.0)
-                            } else {
-                                builder.ins().f64const(0.0)
-                            }
+                        return self.emit_dot_product(&arr_a, &arr_b, builder);
+                    }
+                    "vec_norm" => {
+                        let arr_v = self.resolve_array(&args[0], builder)?;
+                        let d = self.emit_dot_product(&arr_v, &arr_v, builder)?;
+                        if arr_v.elem_ty().is_float() {
+                            return Ok(builder.ins().sqrt(d));
                         } else {
-                            builder.ins().iconst(clif_ty, 0)
-                        };
-
-                        let mut acc0 = zero;
-                        let mut acc1 = zero;
-                        let mut acc2 = zero;
-                        let mut acc3 = zero;
-                        let mut acc4 = zero;
-                        let mut acc5 = zero;
-                        let mut acc6 = zero;
-                        let mut acc7 = zero;
-
-                        let mut i = 0;
-                        while i + 8 <= len_a {
-                            let v_a0 = self.get_array_element(&arr_a, i, builder);
-                            let v_b0 = self.get_array_element(&arr_b, i, builder);
-                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
-                            let v_b1 = self.get_array_element(&arr_b, i + 1, builder);
-                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
-                            let v_b2 = self.get_array_element(&arr_b, i + 2, builder);
-                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
-                            let v_b3 = self.get_array_element(&arr_b, i + 3, builder);
-                            let v_a4 = self.get_array_element(&arr_a, i + 4, builder);
-                            let v_b4 = self.get_array_element(&arr_b, i + 4, builder);
-                            let v_a5 = self.get_array_element(&arr_a, i + 5, builder);
-                            let v_b5 = self.get_array_element(&arr_b, i + 5, builder);
-                            let v_a6 = self.get_array_element(&arr_a, i + 6, builder);
-                            let v_b6 = self.get_array_element(&arr_b, i + 6, builder);
-                            let v_a7 = self.get_array_element(&arr_a, i + 7, builder);
-                            let v_b7 = self.get_array_element(&arr_b, i + 7, builder);
-
-                            if elem_ty.is_float() {
-                                acc0 = builder.ins().fma(v_a0, v_b0, acc0);
-                                acc1 = builder.ins().fma(v_a1, v_b1, acc1);
-                                acc2 = builder.ins().fma(v_a2, v_b2, acc2);
-                                acc3 = builder.ins().fma(v_a3, v_b3, acc3);
-                                acc4 = builder.ins().fma(v_a4, v_b4, acc4);
-                                acc5 = builder.ins().fma(v_a5, v_b5, acc5);
-                                acc6 = builder.ins().fma(v_a6, v_b6, acc6);
-                                acc7 = builder.ins().fma(v_a7, v_b7, acc7);
-                            } else {
-                                let p0 = builder.ins().imul(v_a0, v_b0); acc0 = builder.ins().iadd(acc0, p0);
-                                let p1 = builder.ins().imul(v_a1, v_b1); acc1 = builder.ins().iadd(acc1, p1);
-                                let p2 = builder.ins().imul(v_a2, v_b2); acc2 = builder.ins().iadd(acc2, p2);
-                                let p3 = builder.ins().imul(v_a3, v_b3); acc3 = builder.ins().iadd(acc3, p3);
-                                let p4 = builder.ins().imul(v_a4, v_b4); acc4 = builder.ins().iadd(acc4, p4);
-                                let p5 = builder.ins().imul(v_a5, v_b5); acc5 = builder.ins().iadd(acc5, p5);
-                                let p6 = builder.ins().imul(v_a6, v_b6); acc6 = builder.ins().iadd(acc6, p6);
-                                let p7 = builder.ins().imul(v_a7, v_b7); acc7 = builder.ins().iadd(acc7, p7);
-                            }
-                            i += 8;
+                            let clif_ty = type_to_clif(arr_v.elem_ty().clone());
+                            let d_f = builder.ins().fcvt_from_sint(types::F64, d);
+                            let s = builder.ins().sqrt(d_f);
+                            return Ok(builder.ins().fcvt_to_sint(clif_ty, s));
                         }
-
-                        while i + 4 <= len_a {
-                            let v_a0 = self.get_array_element(&arr_a, i, builder);
-                            let v_b0 = self.get_array_element(&arr_b, i, builder);
-                            let v_a1 = self.get_array_element(&arr_a, i + 1, builder);
-                            let v_b1 = self.get_array_element(&arr_b, i + 1, builder);
-                            let v_a2 = self.get_array_element(&arr_a, i + 2, builder);
-                            let v_b2 = self.get_array_element(&arr_b, i + 2, builder);
-                            let v_a3 = self.get_array_element(&arr_a, i + 3, builder);
-                            let v_b3 = self.get_array_element(&arr_b, i + 3, builder);
-
-                            if elem_ty.is_float() {
-                                acc0 = builder.ins().fma(v_a0, v_b0, acc0);
-                                acc1 = builder.ins().fma(v_a1, v_b1, acc1);
-                                acc2 = builder.ins().fma(v_a2, v_b2, acc2);
-                                acc3 = builder.ins().fma(v_a3, v_b3, acc3);
-                            } else {
-                                let p0 = builder.ins().imul(v_a0, v_b0);
-                                acc0 = builder.ins().iadd(acc0, p0);
-                                let p1 = builder.ins().imul(v_a1, v_b1);
-                                acc1 = builder.ins().iadd(acc1, p1);
-                                let p2 = builder.ins().imul(v_a2, v_b2);
-                                acc2 = builder.ins().iadd(acc2, p2);
-                                let p3 = builder.ins().imul(v_a3, v_b3);
-                                acc3 = builder.ins().iadd(acc3, p3);
-                            }
-                            i += 4;
-                        }
-
-                        while i < len_a {
-                            let v_a = self.get_array_element(&arr_a, i, builder);
-                            let v_b = self.get_array_element(&arr_b, i, builder);
-                            if elem_ty.is_float() {
-                                acc0 = builder.ins().fma(v_a, v_b, acc0);
-                            } else {
-                                let p = builder.ins().imul(v_a, v_b);
-                                acc0 = builder.ins().iadd(acc0, p);
-                            }
-                            i += 1;
-                        }
-
-                        let total = if elem_ty.is_float() {
-                            let s01 = builder.ins().fadd(acc0, acc1);
-                            let s23 = builder.ins().fadd(acc2, acc3);
-                            let s45 = builder.ins().fadd(acc4, acc5);
-                            let s67 = builder.ins().fadd(acc6, acc7);
-                            let s03 = builder.ins().fadd(s01, s23);
-                            let s47 = builder.ins().fadd(s45, s67);
-                            builder.ins().fadd(s03, s47)
-                        } else {
-                            let s01 = builder.ins().iadd(acc0, acc1);
-                            let s23 = builder.ins().iadd(acc2, acc3);
-                            let s45 = builder.ins().iadd(acc4, acc5);
-                            let s67 = builder.ins().iadd(acc6, acc7);
-                            let s03 = builder.ins().iadd(s01, s23);
-                            let s47 = builder.ins().iadd(s45, s67);
-                            builder.ins().iadd(s03, s47)
-                        };
-                        return Ok(total);
                     }
                     "sum" => {
                         let arr_a = self.resolve_array(&args[0], builder)?;
@@ -3770,13 +5696,364 @@ impl<'a> FunctionTranslationState<'a> {
                         };
                         return Ok(total);
                     }
+                    "min" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let arg_ty = args[0].ty();
+                        if arg_ty.is_float() {
+                            return Ok(builder.ins().fmin(a, b));
+                        } else {
+                            let cond = builder.ins().icmp(IntCC::SignedLessThan, a, b);
+                            return Ok(builder.ins().select(cond, a, b));
+                        }
+                    }
+                    "max" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let arg_ty = args[0].ty();
+                        if arg_ty.is_float() {
+                            return Ok(builder.ins().fmax(a, b));
+                        } else {
+                            let cond = builder.ins().icmp(IntCC::SignedGreaterThan, a, b);
+                            return Ok(builder.ins().select(cond, a, b));
+                        }
+                    }
+                    "clamp" => {
+                        let val = self.translate_expr(&args[0], builder)?;
+                        let lo = self.translate_expr(&args[1], builder)?;
+                        let hi = self.translate_expr(&args[2], builder)?;
+                        let arg_ty = args[0].ty();
+                        if arg_ty.is_float() {
+                            let c1 = builder.ins().fmax(val, lo);
+                            return Ok(builder.ins().fmin(c1, hi));
+                        } else {
+                            let cond_lo = builder.ins().icmp(IntCC::SignedLessThan, val, lo);
+                            let c1 = builder.ins().select(cond_lo, lo, val);
+                            let cond_hi = builder.ins().icmp(IntCC::SignedGreaterThan, c1, hi);
+                            return Ok(builder.ins().select(cond_hi, hi, c1));
+                        }
+                    }
+                    "to_int" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fcvt_to_sint(types::I64, a));
+                    }
+                    "to_float" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fcvt_from_sint(types::F64, a));
+                    }
+                    "floor" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().floor(a));
+                    }
+                    "ceil" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().ceil(a));
+                    }
+                    "round" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().nearest(a));
+                    }
+                    "trunc" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().trunc(a));
+                    }
+                    "fma" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let c = self.translate_expr(&args[2], builder)?;
+                        return Ok(builder.ins().fma(a, b, c));
+                    }
+                    "hypot" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let a2 = builder.ins().fmul(a, a);
+                        let sum2 = builder.ins().fma(b, b, a2);
+                        return Ok(builder.ins().sqrt(sum2));
+                    }
+                    "lerp" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let t = self.translate_expr(&args[2], builder)?;
+                        let diff = builder.ins().fsub(b, a);
+                        return Ok(builder.ins().fma(t, diff, a));
+                    }
+                    "signum" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let arg_ty = args[0].ty();
+                        if arg_ty.is_float() {
+                            let zero = if arg_ty == Type::F32 {
+                                builder.ins().f32const(0.0)
+                            } else {
+                                builder.ins().f64const(0.0)
+                            };
+                            let one = if arg_ty == Type::F32 {
+                                builder.ins().f32const(1.0)
+                            } else {
+                                builder.ins().f64const(1.0)
+                            };
+                            let neg_one = if arg_ty == Type::F32 {
+                                builder.ins().f32const(-1.0)
+                            } else {
+                                builder.ins().f64const(-1.0)
+                            };
+                            let gt = builder.ins().fcmp(FloatCC::GreaterThan, a, zero);
+                            let lt = builder.ins().fcmp(FloatCC::LessThan, a, zero);
+                            let pos_or_zero = builder.ins().select(gt, one, zero);
+                            return Ok(builder.ins().select(lt, neg_one, pos_or_zero));
+                        } else {
+                            let clif_ty = type_to_clif(arg_ty);
+                            let zero = builder.ins().iconst(clif_ty, 0);
+                            let one = builder.ins().iconst(clif_ty, 1);
+                            let neg_one = builder.ins().iconst(clif_ty, -1);
+                            let gt = builder.ins().icmp(IntCC::SignedGreaterThan, a, zero);
+                            let lt = builder.ins().icmp(IntCC::SignedLessThan, a, zero);
+                            let pos_or_zero = builder.ins().select(gt, one, zero);
+                            return Ok(builder.ins().select(lt, neg_one, pos_or_zero));
+                        }
+                    }
+                    "gcd" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let clif_ty = type_to_clif(args[0].ty());
+                        return Ok(Self::emit_gcd(builder, clif_ty, a, b));
+                    }
+                    "lcm" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let b = self.translate_expr(&args[1], builder)?;
+                        let clif_ty = type_to_clif(args[0].ty());
+                        let zero = builder.ins().iconst(clif_ty, 0);
+                        let one = builder.ins().iconst(clif_ty, 1);
+
+                        let neg_a = builder.ins().ineg(a);
+                        let cond_a = builder.ins().icmp(IntCC::SignedLessThan, a, zero);
+                        let abs_a = builder.ins().select(cond_a, neg_a, a);
+
+                        let neg_b = builder.ins().ineg(b);
+                        let cond_b = builder.ins().icmp(IntCC::SignedLessThan, b, zero);
+                        let abs_b = builder.ins().select(cond_b, neg_b, b);
+
+                        let g = Self::emit_gcd(builder, clif_ty, abs_a, abs_b);
+                        let is_zero = builder.ins().icmp(IntCC::Equal, g, zero);
+                        let safe_g = builder.ins().select(is_zero, one, g);
+                        let q = builder.ins().udiv(abs_a, safe_g);
+                        let prod = builder.ins().imul(q, abs_b);
+                        return Ok(builder.ins().select(is_zero, zero, prod));
+                    }
+                    "mat_trace2" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let m00 = self.get_array_element(&arr, 0, builder);
+                        let m11 = self.get_array_element(&arr, 3, builder);
+                        let elem_ty = arr.elem_ty();
+                        if elem_ty.is_float() {
+                            return Ok(builder.ins().fadd(m00, m11));
+                        } else {
+                            return Ok(builder.ins().iadd(m00, m11));
+                        }
+                    }
+                    "mat_trace3" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let m00 = self.get_array_element(&arr, 0, builder);
+                        let m11 = self.get_array_element(&arr, 4, builder);
+                        let m22 = self.get_array_element(&arr, 8, builder);
+                        let elem_ty = arr.elem_ty();
+                        if elem_ty.is_float() {
+                            let s01 = builder.ins().fadd(m00, m11);
+                            return Ok(builder.ins().fadd(s01, m22));
+                        } else {
+                            let s01 = builder.ins().iadd(m00, m11);
+                            return Ok(builder.ins().iadd(s01, m22));
+                        }
+                    }
+                    "mat_trace4" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let m00 = self.get_array_element(&arr, 0, builder);
+                        let m11 = self.get_array_element(&arr, 5, builder);
+                        let m22 = self.get_array_element(&arr, 10, builder);
+                        let m33 = self.get_array_element(&arr, 15, builder);
+                        let elem_ty = arr.elem_ty();
+                        if elem_ty.is_float() {
+                            let s01 = builder.ins().fadd(m00, m11);
+                            let s23 = builder.ins().fadd(m22, m33);
+                            return Ok(builder.ins().fadd(s01, s23));
+                        } else {
+                            let s01 = builder.ins().iadd(m00, m11);
+                            let s23 = builder.ins().iadd(m22, m33);
+                            return Ok(builder.ins().iadd(s01, s23));
+                        }
+                    }
+                    "mat_det2" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let m00 = self.get_array_element(&arr, 0, builder);
+                        let m01 = self.get_array_element(&arr, 1, builder);
+                        let m10 = self.get_array_element(&arr, 2, builder);
+                        let m11 = self.get_array_element(&arr, 3, builder);
+                        let elem_ty = arr.elem_ty();
+                        if elem_ty.is_float() {
+                            let p0 = builder.ins().fmul(m00, m11);
+                            let p1 = builder.ins().fmul(m01, m10);
+                            return Ok(builder.ins().fsub(p0, p1));
+                        } else {
+                            let p0 = builder.ins().imul(m00, m11);
+                            let p1 = builder.ins().imul(m01, m10);
+                            return Ok(builder.ins().isub(p0, p1));
+                        }
+                    }
+                    "mat_det3" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let elem_ty = arr.elem_ty();
+                        let m00 = self.get_array_element(&arr, 0, builder);
+                        let m01 = self.get_array_element(&arr, 1, builder);
+                        let m02 = self.get_array_element(&arr, 2, builder);
+                        let m10 = self.get_array_element(&arr, 3, builder);
+                        let m11 = self.get_array_element(&arr, 4, builder);
+                        let m12 = self.get_array_element(&arr, 5, builder);
+                        let m20 = self.get_array_element(&arr, 6, builder);
+                        let m21 = self.get_array_element(&arr, 7, builder);
+                        let m22 = self.get_array_element(&arr, 8, builder);
+                        return Ok(Self::emit_det3_val(
+                            builder, &elem_ty,
+                            m00, m01, m02,
+                            m10, m11, m12,
+                            m20, m21, m22,
+                        ));
+                    }
+                    "mat_det4" => {
+                        let arr = self.resolve_array(&args[0], builder)?;
+                        let elem_ty = arr.elem_ty();
+                        let a = [
+                            self.get_array_element(&arr, 0, builder),
+                            self.get_array_element(&arr, 1, builder),
+                            self.get_array_element(&arr, 2, builder),
+                            self.get_array_element(&arr, 3, builder),
+                            self.get_array_element(&arr, 4, builder),
+                            self.get_array_element(&arr, 5, builder),
+                            self.get_array_element(&arr, 6, builder),
+                            self.get_array_element(&arr, 7, builder),
+                            self.get_array_element(&arr, 8, builder),
+                            self.get_array_element(&arr, 9, builder),
+                            self.get_array_element(&arr, 10, builder),
+                            self.get_array_element(&arr, 11, builder),
+                            self.get_array_element(&arr, 12, builder),
+                            self.get_array_element(&arr, 13, builder),
+                            self.get_array_element(&arr, 14, builder),
+                            self.get_array_element(&arr, 15, builder),
+                        ];
+                        let m0 = Self::emit_det3_val(
+                            builder, &elem_ty,
+                            a[5], a[6], a[7],
+                            a[9], a[10], a[11],
+                            a[13], a[14], a[15],
+                        );
+                        let m1 = Self::emit_det3_val(
+                            builder, &elem_ty,
+                            a[4], a[6], a[7],
+                            a[8], a[10], a[11],
+                            a[12], a[14], a[15],
+                        );
+                        let m2 = Self::emit_det3_val(
+                            builder, &elem_ty,
+                            a[4], a[5], a[7],
+                            a[8], a[9], a[11],
+                            a[12], a[13], a[15],
+                        );
+                        let m3 = Self::emit_det3_val(
+                            builder, &elem_ty,
+                            a[4], a[5], a[6],
+                            a[8], a[9], a[10],
+                            a[12], a[13], a[14],
+                        );
+
+                        if elem_ty.is_float() {
+                            let t0 = builder.ins().fmul(a[0], m0);
+                            let t1 = builder.ins().fmul(a[1], m1);
+                            let t2 = builder.ins().fmul(a[2], m2);
+                            let t3 = builder.ins().fmul(a[3], m3);
+                            let sub01 = builder.ins().fsub(t0, t1);
+                            let add012 = builder.ins().fadd(sub01, t2);
+                            return Ok(builder.ins().fsub(add012, t3));
+                        } else {
+                            let t0 = builder.ins().imul(a[0], m0);
+                            let t1 = builder.ins().imul(a[1], m1);
+                            let t2 = builder.ins().imul(a[2], m2);
+                            let t3 = builder.ins().imul(a[3], m3);
+                            let sub01 = builder.ins().isub(t0, t1);
+                            let add012 = builder.ins().iadd(sub01, t2);
+                            return Ok(builder.ins().isub(add012, t3));
+                        }
+                    }
+                    "sin" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(Self::emit_sin(builder, a));
+                    }
+                    "cos" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(Self::emit_cos(builder, a));
+                    }
+                    "tan" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(Self::emit_tan(builder, a));
+                    }
+                    "exp" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(Self::emit_exp(builder, a));
+                    }
+                    "ln" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(Self::emit_ln(builder, a));
+                    }
+                    "atan2" => {
+                        let y = self.translate_expr(&args[0], builder)?;
+                        let x = self.translate_expr(&args[1], builder)?;
+                        return Ok(Self::emit_atan2(builder, y, x));
+                    }
+                    "powf" => {
+                        let x = self.translate_expr(&args[0], builder)?;
+                        let y = self.translate_expr(&args[1], builder)?;
+                        return Ok(Self::emit_powf(builder, x, y));
+                    }
+                    "c_re" => {
+                        let z = self.resolve_array(&args[0], builder)?;
+                        return Ok(self.get_array_element(&z, 0, builder));
+                    }
+                    "c_im" => {
+                        let z = self.resolve_array(&args[0], builder)?;
+                        return Ok(self.get_array_element(&z, 1, builder));
+                    }
+                    "c_abs" => {
+                        let z = self.resolve_array(&args[0], builder)?;
+                        let re = self.get_array_element(&z, 0, builder);
+                        let im = self.get_array_element(&z, 1, builder);
+                        let re2 = builder.ins().fmul(re, re);
+                        let d = builder.ins().fma(im, im, re2);
+                        return Ok(builder.ins().sqrt(d));
+                    }
+                    "c_arg" => {
+                        let z = self.resolve_array(&args[0], builder)?;
+                        let re = self.get_array_element(&z, 0, builder);
+                        let im = self.get_array_element(&z, 1, builder);
+                        return Ok(Self::emit_atan2(builder, im, re));
+                    }
+                    c if Self::is_array_op(c) => {
+                        let elem = ty.element_type().unwrap().clone();
+                        let len = ty.array_len().unwrap();
+                        let elem_size = elem.size_bytes() as u32;
+                        let total_bytes = (elem_size * (len as u32)).max(1);
+                        let slot_data = StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            total_bytes,
+                            elem_size.min(8) as u8,
+                        );
+                        let slot = builder.create_sized_stack_slot(slot_data);
+                        self.translate_array_op_into_slot(c, args, slot, &elem, len, builder)?;
+                        return Ok(builder.ins().stack_addr(types::I64, slot, 0));
+                    }
                     _ => {}
                 }
 
                 let func_id = *self
                     .func_ids
                     .get(callee)
-                    .expect("Callee must be declared in module");
+                    .unwrap_or_else(|| panic!("Callee '{}' must be declared in module", callee));
                 let local_func = self.module.declare_func_in_func(func_id, &mut builder.func);
 
                 let mut arg_vals = Vec::new();
@@ -3837,6 +6114,54 @@ impl<'a> FunctionTranslationState<'a> {
             match self.variables.get(name) {
                 Some(Storage::Scalar(_)) => {}
                 _ => return Ok(false),
+            }
+        }
+
+        // Fast path: single variable increment/decrement without else branch:
+        // if cond { x = x + 1; }  =>  x = x + uextend(cond)
+        // if cond { x = x - 1; }  =>  x = x - uextend(cond)
+        if (else_branch.is_none() || else_branch.map_or(true, |b| b.stmts.is_empty()))
+            && then_branch.stmts.len() == 1
+        {
+            if let TypedStmt::Assign { name, value, .. } = &then_branch.stmts[0] {
+                if let TypedExpr::Binary { op, left, right, ty, .. } = value {
+                    let is_add = *op == BinaryOp::Add;
+                    let is_sub = *op == BinaryOp::Sub;
+                    if (is_add || is_sub) && ty.is_integer() {
+                        let is_one = |e: &TypedExpr| -> bool {
+                            match e {
+                                TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } => true,
+                                _ => false,
+                            }
+                        };
+                        let is_target = |e: &TypedExpr| -> bool {
+                            match e {
+                                TypedExpr::Ident { name: n, .. } => n == name,
+                                _ => false,
+                            }
+                        };
+
+                        let is_inc = (is_target(left) && is_one(right)) || (is_add && is_one(left) && is_target(right));
+                        let is_dec = is_sub && is_target(left) && is_one(right);
+
+                        if is_inc || is_dec {
+                            if let Some(Storage::Scalar(var)) = self.variables.get(name) {
+                                let var = *var;
+                                let cond_val = self.translate_expr(condition, builder)?;
+                                let orig_val = builder.use_var(var);
+                                let var_ty = builder.func.dfg.value_type(orig_val);
+                                let inc = builder.ins().uextend(var_ty, cond_val);
+                                let updated = if is_inc {
+                                    builder.ins().iadd(orig_val, inc)
+                                } else {
+                                    builder.ins().isub(orig_val, inc)
+                                };
+                                builder.def_var(var, updated);
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -3944,10 +6269,12 @@ impl<'a> FunctionTranslationState<'a> {
                         };
                         let is_nonneg = nonneg_by_name
                             || is_expr_known_non_negative(left, &self.known_non_negative_vars);
+                        let is_u32 = operand_ty == Type::I32
+                            || is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars);
                         return if *op == BinaryOp::Div {
-                            self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, builder)
+                            self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, is_u32, builder)
                         } else {
-                            self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, builder)
+                            self.emit_fast_signed_rem(l, r, d, &operand_ty, is_nonneg, is_u32, builder)
                         };
                     }
                 }

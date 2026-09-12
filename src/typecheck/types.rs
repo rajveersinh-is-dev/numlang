@@ -56,7 +56,22 @@ impl Type {
         let s = name.trim();
         if s.starts_with('[') && s.ends_with(']') {
             let inner = &s[1..s.len() - 1];
-            if let Some((elem_str, len_str)) = inner.split_once(';') {
+            let mut depth = 0;
+            let mut split_idx = None;
+            for (i, c) in inner.char_indices() {
+                match c {
+                    '[' => depth += 1,
+                    ']' => depth -= 1,
+                    ';' if depth == 0 => {
+                        split_idx = Some(i);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(idx) = split_idx {
+                let elem_str = &inner[..idx];
+                let len_str = &inner[idx + 1..];
                 let elem = Type::from_name(elem_str.trim())?;
                 let len = len_str.trim().parse::<usize>().ok()?;
                 return Some(Type::Array(Box::new(elem), len));
