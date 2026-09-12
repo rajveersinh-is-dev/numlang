@@ -2882,6 +2882,1013 @@ res = isqrt_bench(5000000)
 sys.exit(res % 256)
 "#,
         },
+        // 21. Matrix Inversion 4x4 (500k ops)
+        BenchmarkWorkload {
+            name: "Matrix Inversion 4x4 (500k ops)",
+            expected_exit: 44,
+            nl_code: r#"
+fn main() -> i64 {
+    let mut a: [f64; 16] = [
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0
+    ];
+    let mut i: i64 = 0;
+    let mut trace_sum: f64 = 0.0;
+    while i < 500000 {
+        let inv: [f64; 16] = mat_inv4(a);
+        let tr: f64 = mat_trace4(inv);
+        trace_sum = trace_sum + tr;
+        a[0] = a[0] + 0.000001;
+        i = i + 1;
+    }
+    let res: i64 = to_int(trace_sum);
+    return (res % 256 + 256) % 256;
+}
+"#,
+            rs_code: r#"
+fn det3(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64) -> f64 {
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+}
+
+fn inv4(m: &[f64; 16]) -> [f64; 16] {
+    let c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    let c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    let c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    let c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    let c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    let c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    let c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    let c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    let det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    let inv_det = 1.0 / det;
+
+    [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ]
+}
+
+fn main() {
+    let mut a: [f64; 16] = [
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0,
+    ];
+    let mut i = 0i64;
+    let mut trace_sum = 0.0f64;
+    while i < 500000 {
+        let inv = inv4(&a);
+        trace_sum += inv[0] + inv[5] + inv[10] + inv[15];
+        a[0] += 0.000001;
+        i += 1;
+    }
+    let res = trace_sum as i64;
+    std::process::exit(((res % 256 + 256) % 256) as i32);
+}
+"#,
+            c_code: r#"
+static inline double det3(double a, double b, double c, double d, double e, double f, double g, double h, double i) {
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+
+static inline void inv4(const double* m, double* out) {
+    double c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    double c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    double c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    double c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    double c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    double c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    double c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    double c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    double c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    double c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    double c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    double c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    double c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    double c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    double c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    double c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    double det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    double inv_det = 1.0 / det;
+
+    out[0] = c00 * inv_det; out[1] = c10 * inv_det; out[2] = c20 * inv_det; out[3] = c30 * inv_det;
+    out[4] = c01 * inv_det; out[5] = c11 * inv_det; out[6] = c21 * inv_det; out[7] = c31 * inv_det;
+    out[8] = c02 * inv_det; out[9] = c12 * inv_det; out[10] = c22 * inv_det; out[11] = c32 * inv_det;
+    out[12] = c03 * inv_det; out[13] = c13 * inv_det; out[14] = c23 * inv_det; out[15] = c33 * inv_det;
+}
+
+int main() {
+    double a[16] = {
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0
+    };
+    double inv[16];
+    double trace_sum = 0.0;
+    for (long long i = 0; i < 500000; i++) {
+        inv4(a, inv);
+        trace_sum += inv[0] + inv[5] + inv[10] + inv[15];
+        a[0] += 0.000001;
+    }
+    long long res = (long long)trace_sum;
+    return (int)(((res % 256) + 256) % 256);
+}
+"#,
+            node_code: r#"
+function det3(a, b, c, d, e, f, g, h, i) {
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+function inv4(m) {
+    let c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    let c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    let c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    let c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    let c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    let c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    let c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    let c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    let det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    let inv_det = 1.0 / det;
+
+    return [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ];
+}
+let a = [
+    5.0, 1.0, 0.0, 2.0,
+    1.0, 6.0, 2.0, 0.0,
+    0.0, 2.0, 7.0, 1.0,
+    2.0, 0.0, 1.0, 8.0
+];
+let trace_sum = 0.0;
+for (let i = 0; i < 500000; i++) {
+    let inv = inv4(a);
+    trace_sum += inv[0] + inv[5] + inv[10] + inv[15];
+    a[0] += 0.000001;
+}
+let res = Math.floor(trace_sum);
+process.exit(((res % 256) + 256) % 256);
+"#,
+            py_code: r#"
+import sys
+
+def det3(a, b, c, d, e, f, g, h, i):
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+def inv4(m):
+    c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15])
+    c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15])
+    c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15])
+    c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14])
+
+    c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15])
+    c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15])
+    c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15])
+    c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14])
+
+    c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15])
+    c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15])
+    c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15])
+    c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14])
+
+    c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11])
+    c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11])
+    c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11])
+    c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10])
+
+    det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03
+    inv_det = 1.0 / det
+
+    return [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ]
+
+a = [
+    5.0, 1.0, 0.0, 2.0,
+    1.0, 6.0, 2.0, 0.0,
+    0.0, 2.0, 7.0, 1.0,
+    2.0, 0.0, 1.0, 8.0
+]
+trace_sum = 0.0
+for i in range(500000):
+    inv = inv4(a)
+    trace_sum += inv[0] + inv[5] + inv[10] + inv[15]
+    a[0] += 0.000001
+res = int(trace_sum)
+sys.exit(((res % 256) + 256) % 256)
+"#,
+        },
+        // 22. 16-point FFT (500k ops)
+        BenchmarkWorkload {
+            name: "16-point FFT (500k ops)",
+            expected_exit: 30,
+            nl_code: r#"
+fn main() -> i64 {
+    let mut re: [f64; 16] = [
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0
+    ];
+    let im: [f64; 16] = [
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    ];
+    let mut i: i64 = 0;
+    let mut sum: f64 = 0.0;
+    while i < 500000 {
+        let out: [f64; 16] = fft16_re(re, im);
+        sum = sum + out[0] + out[1] + out[2] + out[3];
+        re[0] = re[0] + 0.000001;
+        i = i + 1;
+    }
+    let res: i64 = to_int(sum);
+    return (res % 256 + 256) % 256;
+}
+"#,
+            rs_code: r#"
+fn fft16(re_in: &[f64; 16], im_in: &[f64; 16]) -> [f64; 16] {
+    const REV: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
+    let mut r = [0.0f64; 16];
+    let mut im = [0.0f64; 16];
+    for k in 0..16 {
+        r[k] = re_in[REV[k]];
+        im[k] = im_in[REV[k]];
+    }
+    // Stage len 2
+    for k in (0..16).step_by(2) {
+        let ur = r[k]; let ui = im[k];
+        let vr = r[k+1]; let vi = im[k+1];
+        r[k] = ur + vr; im[k] = ui + vi;
+        r[k+1] = ur - vr; im[k+1] = ui - vi;
+    }
+    // Stage len 4
+    for k in (0..16).step_by(4) {
+        let ur0 = r[k]; let ui0 = im[k];
+        let vr0 = r[k+2]; let vi0 = im[k+2];
+        r[k] = ur0 + vr0; im[k] = ui0 + vi0;
+        r[k+2] = ur0 - vr0; im[k+2] = ui0 - vi0;
+
+        let ur1 = r[k+1]; let ui1 = im[k+1];
+        let tr = im[k+3]; let ti = -r[k+3];
+        r[k+1] = ur1 + tr; im[k+1] = ui1 + ti;
+        r[k+3] = ur1 - tr; im[k+3] = ui1 - ti;
+    }
+    // Stage len 8
+    let pi = std::f64::consts::PI;
+    for k in (0..16).step_by(8) {
+        for j in 0..4 {
+            let angle = -2.0 * pi * (j as f64) / 8.0;
+            let wr = angle.cos(); let wi = angle.sin();
+            let vr = r[k + j + 4]; let vi = im[k + j + 4];
+            let tr = vr * wr - vi * wi;
+            let ti = vr * wi + vi * wr;
+            let ur = r[k + j]; let ui = im[k + j];
+            r[k + j] = ur + tr; im[k + j] = ui + ti;
+            r[k + j + 4] = ur - tr; im[k + j + 4] = ui - ti;
+        }
+    }
+    // Stage len 16
+    for j in 0..8 {
+        let angle = -2.0 * pi * (j as f64) / 16.0;
+        let wr = angle.cos(); let wi = angle.sin();
+        let vr = r[j + 8]; let vi = im[j + 8];
+        let tr = vr * wr - vi * wi;
+        let ti = vr * wi + vi * wr;
+        let ur = r[j]; let ui = im[j];
+        r[j] = ur + tr; im[j] = ui + ti;
+        r[j + 8] = ur - tr; im[j + 8] = ui - ti;
+    }
+    r
+}
+
+fn main() {
+    let mut re = [
+        1.0f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0
+    ];
+    let im = [0.0f64; 16];
+    let mut sum = 0.0f64;
+    let mut i = 0i64;
+    while i < 500000 {
+        let out = fft16(&re, &im);
+        sum += out[0] + out[1] + out[2] + out[3];
+        re[0] += 0.000001;
+        i += 1;
+    }
+    let res = sum as i64;
+    std::process::exit(((res % 256 + 256) % 256) as i32);
+}
+"#,
+            c_code: r#"
+#include <math.h>
+
+void fft16(const double* re_in, const double* im_in, double* re_out) {
+    static const int rev[16] = {0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15};
+    double r[16], im[16];
+    for (int k = 0; k < 16; k++) {
+        r[k] = re_in[rev[k]];
+        im[k] = im_in[rev[k]];
+    }
+    for (int k = 0; k < 16; k += 2) {
+        double u_r = r[k], u_i = im[k];
+        double v_r = r[k+1], v_i = im[k+1];
+        r[k] = u_r + v_r; im[k] = u_i + v_i;
+        r[k+1] = u_r - v_r; im[k+1] = u_i - v_i;
+    }
+    for (int k = 0; k < 16; k += 4) {
+        double u_r = r[k], u_i = im[k];
+        double v_r = r[k+2], v_i = im[k+2];
+        r[k] = u_r + v_r; im[k] = u_i + v_i;
+        r[k+2] = u_r - v_r; im[k+2] = u_i - v_i;
+        u_r = r[k+1]; u_i = im[k+1];
+        double t_r = im[k+3], t_i = -r[k+3];
+        r[k+1] = u_r + t_r; im[k+1] = u_i + t_i;
+        r[k+3] = u_r - t_r; im[k+3] = u_i - t_i;
+    }
+    double pi = 3.14159265358979323846;
+    for (int k = 0; k < 16; k += 8) {
+        for (int j = 0; j < 4; j++) {
+            double angle = -2.0 * pi * (double)j / 8.0;
+            double wr = cos(angle), wi = sin(angle);
+            double vr = r[k + j + 4], vi = im[k + j + 4];
+            double tr = vr * wr - vi * wi;
+            double ti = vr * wi + vi * wr;
+            double ur = r[k + j], ui = im[k + j];
+            r[k + j] = ur + tr; im[k + j] = ui + ti;
+            r[k + j + 4] = ur - tr; im[k + j + 4] = ui - ti;
+        }
+    }
+    for (int j = 0; j < 8; j++) {
+        double angle = -2.0 * pi * (double)j / 16.0;
+        double wr = cos(angle), wi = sin(angle);
+        double vr = r[j + 8], vi = im[j + 8];
+        double tr = vr * wr - vi * wi;
+        double ti = vr * wi + vi * wr;
+        double ur = r[j], ui = im[j];
+        r[j] = ur + tr; im[j] = ui + ti;
+        r[j + 8] = ur - tr; im[j + 8] = ui - ti;
+    }
+    for (int k = 0; k < 16; k++) {
+        re_out[k] = r[k];
+    }
+}
+
+int main() {
+    double re[16] = {
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+        9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0
+    };
+    double im[16] = {0};
+    double out_r[16];
+    double sum = 0.0;
+    for (long long i = 0; i < 500000; i++) {
+        fft16(re, im, out_r);
+        sum += out_r[0] + out_r[1] + out_r[2] + out_r[3];
+        re[0] += 0.000001;
+    }
+    long long res = (long long)sum;
+    return (int)(((res % 256) + 256) % 256);
+}
+"#,
+            node_code: r#"
+function fft16(re_in, im_in) {
+    const rev = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
+    let r = new Float64Array(16);
+    let im = new Float64Array(16);
+    for (let k = 0; k < 16; k++) {
+        r[k] = re_in[rev[k]];
+        im[k] = im_in[rev[k]];
+    }
+    for (let k = 0; k < 16; k += 2) {
+        let ur = r[k], ui = im[k];
+        let vr = r[k+1], vi = im[k+1];
+        r[k] = ur + vr; im[k] = ui + vi;
+        r[k+1] = ur - vr; im[k+1] = ui - vi;
+    }
+    for (let k = 0; k < 16; k += 4) {
+        let ur = r[k], ui = im[k];
+        let vr = r[k+2], vi = im[k+2];
+        r[k] = ur + vr; im[k] = ui + vi;
+        r[k+2] = ur - vr; im[k+2] = ui - vi;
+        ur = r[k+1]; ui = im[k+1];
+        let tr = im[k+3], ti = -r[k+3];
+        r[k+1] = ur + tr; im[k+1] = ui + ti;
+        r[k+3] = ur - tr; im[k+3] = ui - ti;
+    }
+    const pi = Math.PI;
+    for (let k = 0; k < 16; k += 8) {
+        for (let j = 0; j < 4; j++) {
+            let angle = -2.0 * pi * j / 8.0;
+            let wr = Math.cos(angle), wi = Math.sin(angle);
+            let vr = r[k + j + 4], vi = im[k + j + 4];
+            let tr = vr * wr - vi * wi;
+            let ti = vr * wi + vi * wr;
+            let ur = r[k + j], ui = im[k + j];
+            r[k + j] = ur + tr; im[k + j] = ui + ti;
+            r[k + j + 4] = ur - tr; im[k + j + 4] = ui - ti;
+        }
+    }
+    for (let j = 0; j < 8; j++) {
+        let angle = -2.0 * pi * j / 16.0;
+        let wr = Math.cos(angle), wi = Math.sin(angle);
+        let vr = r[j + 8], vi = im[j + 8];
+        let tr = vr * wr - vi * wi;
+        let ti = vr * wi + vi * wr;
+        let ur = r[j], ui = im[j];
+        r[j] = ur + tr; im[j] = ui + ti;
+        r[j + 8] = ur - tr; im[j + 8] = ui - ti;
+    }
+    return r;
+}
+
+let re = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
+let im = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+let sum = 0.0;
+for (let i = 0; i < 500000; i++) {
+    let out = fft16(re, im);
+    sum += out[0] + out[1] + out[2] + out[3];
+    re[0] += 0.000001;
+}
+let res = Math.floor(sum);
+process.exit(((res % 256) + 256) % 256);
+"#,
+            py_code: r#"
+import math, sys
+
+def fft16(re_in, im_in):
+    rev = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]
+    r = [re_in[rev[k]] for k in range(16)]
+    im = [im_in[rev[k]] for k in range(16)]
+    for k in range(0, 16, 2):
+        ur, ui = r[k], im[k]
+        vr, vi = r[k+1], im[k+1]
+        r[k], im[k] = ur + vr, ui + vi
+        r[k+1], im[k+1] = ur - vr, ui - vi
+    for k in range(0, 16, 4):
+        ur, ui = r[k], im[k]
+        vr, vi = r[k+2], im[k+2]
+        r[k], im[k] = ur + vr, ui + vi
+        r[k+2], im[k+2] = ur - vr, ui - vi
+        ur, ui = r[k+1], im[k+1]
+        tr, ti = im[k+3], -r[k+3]
+        r[k+1], im[k+1] = ur + tr, ui + ti
+        r[k+3], im[k+3] = ur - tr, ui - ti
+    pi = 3.14159265358979323846
+    for k in range(0, 16, 8):
+        for j in range(4):
+            angle = -2.0 * pi * j / 8.0
+            wr, wi = math.cos(angle), math.sin(angle)
+            vr, vi = r[k + j + 4], im[k + j + 4]
+            tr = vr * wr - vi * wi
+            ti = vr * wi + vi * wr
+            ur, ui = r[k + j], im[k + j]
+            r[k + j], im[k + j] = ur + tr, ui + ti
+            r[k + j + 4], im[k + j + 4] = ur - tr, ui - ti
+    for j in range(8):
+        angle = -2.0 * pi * j / 16.0
+        wr, wi = math.cos(angle), math.sin(angle)
+        vr, vi = r[j + 8], im[j + 8]
+        tr = vr * wr - vi * wi
+        ti = vr * wi + vi * wr
+        ur, ui = r[j], im[j]
+        r[j], im[j] = ur + tr, ui + ti
+        r[j + 8], im[j + 8] = ur - tr, ui - ti
+    return r
+
+re = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0]
+im = [0.0] * 16
+sum_val = 0.0
+for i in range(500000):
+    out = fft16(re, im)
+    sum_val += out[0] + out[1] + out[2] + out[3]
+    re[0] += 0.000001
+res = int(sum_val)
+sys.exit(((res % 256) + 256) % 256)
+"#,
+        },
+        // 23. Transcendental Integration (1M steps)
+        BenchmarkWorkload {
+            name: "Transcendental Integration (1M steps)",
+            expected_exit: 40,
+            nl_code: r#"
+fn main() -> i64 {
+    let dt: f64 = 0.000005;
+    let mut sum: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < 1000000 {
+        let t: f64 = to_float(i) * dt;
+        let s: f64 = sin(t);
+        let c: f64 = cos(t * 2.0);
+        let e: f64 = exp(s * 0.1);
+        sum = sum + (s + c + e) * dt;
+        i = i + 1;
+    }
+    let res: i64 = to_int(sum * 100.0);
+    return (res % 256 + 256) % 256;
+}
+"#,
+            rs_code: r#"
+fn main() {
+    let dt: f64 = 0.000005;
+    let mut sum: f64 = 0.0;
+    let mut i = 0i64;
+    while i < 1000000 {
+        let t: f64 = (i as f64) * dt;
+        let s: f64 = t.sin();
+        let c: f64 = (t * 2.0).cos();
+        let e: f64 = (s * 0.1).exp();
+        sum += (s + c + e) * dt;
+        i += 1;
+    }
+    let res = (sum * 100.0) as i64;
+    std::process::exit(((res % 256 + 256) % 256) as i32);
+}
+"#,
+            c_code: r#"
+#include <math.h>
+
+int main() {
+    double dt = 0.000005;
+    double sum = 0.0;
+    for (long long i = 0; i < 1000000; i++) {
+        double t = (double)i * dt;
+        double s = sin(t);
+        double c = cos(t * 2.0);
+        double e = exp(s * 0.1);
+        sum += (s + c + e) * dt;
+    }
+    long long res = (long long)(sum * 100.0);
+    return (int)(((res % 256) + 256) % 256);
+}
+"#,
+            node_code: r#"
+let dt = 0.000005;
+let sum = 0.0;
+for (let i = 0; i < 1000000; i++) {
+    let t = i * dt;
+    let s = Math.sin(t);
+    let c = Math.cos(t * 2.0);
+    let e = Math.exp(s * 0.1);
+    sum += (s + c + e) * dt;
+}
+let res = Math.floor(sum * 100.0);
+process.exit(((res % 256) + 256) % 256);
+"#,
+            py_code: r#"
+import math, sys
+dt = 0.000005
+s_val = 0.0
+for i in range(1000000):
+    t = i * dt
+    s = math.sin(t)
+    c = math.cos(t * 2.0)
+    e = math.exp(s * 0.1)
+    s_val += (s + c + e) * dt
+res = int(s_val * 100.0)
+sys.exit(((res % 256) + 256) % 256)
+"#,
+        },
+        // 24. Complex Number Arithmetic (1M ops)
+        BenchmarkWorkload {
+            name: "Complex Number Arithmetic (1M ops)",
+            expected_exit: 44,
+            nl_code: r#"
+fn main() -> i64 {
+    let mut z: [f64; 2] = c_make(1.0, 0.0);
+    let factor: [f64; 2] = c_make(0.999999, 0.001);
+    let mut sum: f64 = 0.0;
+    let mut i: i64 = 0;
+    while i < 1000000 {
+        z = c_mul(z, factor);
+        let theta: f64 = to_float(i % 1000) * 0.0062831853;
+        let rot: [f64; 2] = c_exp(c_make(0.0, theta));
+        let w: [f64; 2] = c_add(z, rot);
+        sum = sum + c_abs(w);
+        i = i + 1;
+    }
+    let res: i64 = to_int(sum);
+    return (res % 256 + 256) % 256;
+}
+"#,
+            rs_code: r#"
+fn main() {
+    let mut z_re = 1.0f64;
+    let mut z_im = 0.0f64;
+    let factor_re = 0.999999f64;
+    let factor_im = 0.001f64;
+    let mut sum = 0.0f64;
+    let mut i = 0i64;
+    while i < 1000000 {
+        let new_re = z_re * factor_re - z_im * factor_im;
+        let new_im = z_re * factor_im + z_im * factor_re;
+        z_re = new_re;
+        z_im = new_im;
+        let theta = ((i % 1000) as f64) * 0.0062831853;
+        let rot_re = theta.cos();
+        let rot_im = theta.sin();
+        let w_re = z_re + rot_re;
+        let w_im = z_im + rot_im;
+        sum += (w_re * w_re + w_im * w_im).sqrt();
+        i += 1;
+    }
+    let res = sum as i64;
+    std::process::exit(((res % 256 + 256) % 256) as i32);
+}
+"#,
+            c_code: r#"
+#include <math.h>
+
+int main() {
+    double z_re = 1.0;
+    double z_im = 0.0;
+    double factor_re = 0.999999;
+    double factor_im = 0.001;
+    double sum = 0.0;
+    for (long long i = 0; i < 1000000; i++) {
+        double new_re = z_re * factor_re - z_im * factor_im;
+        double new_im = z_re * factor_im + z_im * factor_re;
+        z_re = new_re;
+        z_im = new_im;
+        double theta = (double)(i % 1000) * 0.0062831853;
+        double rot_re = cos(theta);
+        double rot_im = sin(theta);
+        double w_re = z_re + rot_re;
+        double w_im = z_im + rot_im;
+        sum += sqrt(w_re * w_re + w_im * w_im);
+    }
+    long long res = (long long)sum;
+    return (int)(((res % 256) + 256) % 256);
+}
+"#,
+            node_code: r#"
+let z_re = 1.0;
+let z_im = 0.0;
+let factor_re = 0.999999;
+let factor_im = 0.001;
+let sum = 0.0;
+for (let i = 0; i < 1000000; i++) {
+    let new_re = z_re * factor_re - z_im * factor_im;
+    let new_im = z_re * factor_im + z_im * factor_re;
+    z_re = new_re;
+    z_im = new_im;
+    let theta = (i % 1000) * 0.0062831853;
+    let rot_re = Math.cos(theta);
+    let rot_im = Math.sin(theta);
+    let w_re = z_re + rot_re;
+    let w_im = z_im + rot_im;
+    sum += Math.sqrt(w_re * w_re + w_im * w_im);
+}
+let res = Math.floor(sum);
+process.exit(((res % 256) + 256) % 256);
+"#,
+            py_code: r#"
+import math, sys
+z_re = 1.0
+z_im = 0.0
+factor_re = 0.999999
+factor_im = 0.001
+s_val = 0.0
+for i in range(1000000):
+    new_re = z_re * factor_re - z_im * factor_im
+    new_im = z_re * factor_im + z_im * factor_re
+    z_re = new_re
+    z_im = new_im
+    theta = (i % 1000) * 0.0062831853
+    rot_re = math.cos(theta)
+    rot_im = math.sin(theta)
+    w_re = z_re + rot_re
+    w_im = z_im + rot_im
+    s_val += math.sqrt(w_re * w_re + w_im * w_im)
+res = int(s_val)
+sys.exit(((res % 256) + 256) % 256)
+"#,
+        },
+        // 25. 4x4 Linear System Solver (500k ops)
+        BenchmarkWorkload {
+            name: "4x4 Linear System Solver (500k ops)",
+            expected_exit: 37,
+            nl_code: r#"
+fn main() -> i64 {
+    let a: [f64; 16] = [
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0
+    ];
+    let mut i: i64 = 0;
+    let mut sum: f64 = 0.0;
+    while i < 500000 {
+        let b0: f64 = to_float(i % 10);
+        let b1: f64 = to_float((i + 1) % 10);
+        let b2: f64 = to_float((i + 2) % 10);
+        let b3: f64 = to_float((i + 3) % 10);
+        let b: [f64; 4] = [b0, b1, b2, b3];
+        let x: [f64; 4] = mat_solve4(a, b);
+        sum = sum + x[0] + x[1] + x[2] + x[3];
+        i = i + 1;
+    }
+    let res: i64 = to_int(sum);
+    return (res % 256 + 256) % 256;
+}
+"#,
+            rs_code: r#"
+fn det3(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64) -> f64 {
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+}
+
+fn inv4(m: &[f64; 16]) -> [f64; 16] {
+    let c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    let c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    let c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    let c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    let c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    let c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    let c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    let c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    let det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    let inv_det = 1.0 / det;
+
+    [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ]
+}
+
+fn solve4(inv: &[f64; 16], b: &[f64; 4]) -> [f64; 4] {
+    [
+        inv[0] * b[0] + inv[1] * b[1] + inv[2] * b[2] + inv[3] * b[3],
+        inv[4] * b[0] + inv[5] * b[1] + inv[6] * b[2] + inv[7] * b[3],
+        inv[8] * b[0] + inv[9] * b[1] + inv[10] * b[2] + inv[11] * b[3],
+        inv[12] * b[0] + inv[13] * b[1] + inv[14] * b[2] + inv[15] * b[3],
+    ]
+}
+
+fn main() {
+    let a: [f64; 16] = [
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0,
+    ];
+    let inv = inv4(&a);
+    let mut i = 0i64;
+    let mut sum = 0.0f64;
+    while i < 500000 {
+        let b = [
+            (i % 10) as f64,
+            ((i + 1) % 10) as f64,
+            ((i + 2) % 10) as f64,
+            ((i + 3) % 10) as f64,
+        ];
+        let x = solve4(&inv, &b);
+        sum += x[0] + x[1] + x[2] + x[3];
+        i += 1;
+    }
+    let res = sum as i64;
+    std::process::exit(((res % 256 + 256) % 256) as i32);
+}
+"#,
+            c_code: r#"
+static inline double det3(double a, double b, double c, double d, double e, double f, double g, double h, double i) {
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+
+static inline void inv4(const double* m, double* out) {
+    double c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    double c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    double c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    double c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    double c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    double c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    double c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    double c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    double c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    double c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    double c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    double c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    double c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    double c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    double c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    double c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    double det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    double inv_det = 1.0 / det;
+
+    out[0] = c00 * inv_det; out[1] = c10 * inv_det; out[2] = c20 * inv_det; out[3] = c30 * inv_det;
+    out[4] = c01 * inv_det; out[5] = c11 * inv_det; out[6] = c21 * inv_det; out[7] = c31 * inv_det;
+    out[8] = c02 * inv_det; out[9] = c12 * inv_det; out[10] = c22 * inv_det; out[11] = c32 * inv_det;
+    out[12] = c03 * inv_det; out[13] = c13 * inv_det; out[14] = c23 * inv_det; out[15] = c33 * inv_det;
+}
+
+static inline void solve4(const double* inv, const double* b, double* x) {
+    x[0] = inv[0] * b[0] + inv[1] * b[1] + inv[2] * b[2] + inv[3] * b[3];
+    x[1] = inv[4] * b[0] + inv[5] * b[1] + inv[6] * b[2] + inv[7] * b[3];
+    x[2] = inv[8] * b[0] + inv[9] * b[1] + inv[10] * b[2] + inv[11] * b[3];
+    x[3] = inv[12] * b[0] + inv[13] * b[1] + inv[14] * b[2] + inv[15] * b[3];
+}
+
+int main() {
+    double a[16] = {
+        5.0, 1.0, 0.0, 2.0,
+        1.0, 6.0, 2.0, 0.0,
+        0.0, 2.0, 7.0, 1.0,
+        2.0, 0.0, 1.0, 8.0
+    };
+    double inv[16];
+    inv4(a, inv);
+    double sum = 0.0;
+    for (long long i = 0; i < 500000; i++) {
+        double b[4] = {
+            (double)(i % 10),
+            (double)((i + 1) % 10),
+            (double)((i + 2) % 10),
+            (double)((i + 3) % 10)
+        };
+        double x[4];
+        solve4(inv, b, x);
+        sum += x[0] + x[1] + x[2] + x[3];
+    }
+    long long res = (long long)sum;
+    return (int)(((res % 256) + 256) % 256);
+}
+"#,
+            node_code: r#"
+function det3(a, b, c, d, e, f, g, h, i) {
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+function inv4(m) {
+    let c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15]);
+    let c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15]);
+    let c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15]);
+    let c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14]);
+
+    let c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15]);
+    let c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15]);
+    let c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15]);
+    let c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14]);
+
+    let c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11]);
+    let c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11]);
+    let c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11]);
+    let c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]);
+
+    let det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03;
+    let inv_det = 1.0 / det;
+
+    return [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ];
+}
+function solve4(inv, b) {
+    return [
+        inv[0] * b[0] + inv[1] * b[1] + inv[2] * b[2] + inv[3] * b[3],
+        inv[4] * b[0] + inv[5] * b[1] + inv[6] * b[2] + inv[7] * b[3],
+        inv[8] * b[0] + inv[9] * b[1] + inv[10] * b[2] + inv[11] * b[3],
+        inv[12] * b[0] + inv[13] * b[1] + inv[14] * b[2] + inv[15] * b[3]
+    ];
+}
+
+let a = [
+    5.0, 1.0, 0.0, 2.0,
+    1.0, 6.0, 2.0, 0.0,
+    0.0, 2.0, 7.0, 1.0,
+    2.0, 0.0, 1.0, 8.0
+];
+let inv = inv4(a);
+let sum = 0.0;
+for (let i = 0; i < 500000; i++) {
+    let b = [i % 10, (i + 1) % 10, (i + 2) % 10, (i + 3) % 10];
+    let x = solve4(inv, b);
+    sum += x[0] + x[1] + x[2] + x[3];
+}
+let res = Math.floor(sum);
+process.exit(((res % 256) + 256) % 256);
+"#,
+            py_code: r#"
+import sys
+
+def det3(a, b, c, d, e, f, g, h, i):
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+def inv4(m):
+    c00 = det3(m[5], m[6], m[7], m[9], m[10], m[11], m[13], m[14], m[15])
+    c01 = -det3(m[4], m[6], m[7], m[8], m[10], m[11], m[12], m[14], m[15])
+    c02 = det3(m[4], m[5], m[7], m[8], m[9], m[11], m[12], m[13], m[15])
+    c03 = -det3(m[4], m[5], m[6], m[8], m[9], m[10], m[12], m[13], m[14])
+
+    c10 = -det3(m[1], m[2], m[3], m[9], m[10], m[11], m[13], m[14], m[15])
+    c11 = det3(m[0], m[2], m[3], m[8], m[10], m[11], m[12], m[14], m[15])
+    c12 = -det3(m[0], m[1], m[3], m[8], m[9], m[11], m[12], m[13], m[15])
+    c13 = det3(m[0], m[1], m[2], m[8], m[9], m[10], m[12], m[13], m[14])
+
+    c20 = det3(m[1], m[2], m[3], m[5], m[6], m[7], m[13], m[14], m[15])
+    c21 = -det3(m[0], m[2], m[3], m[4], m[6], m[7], m[12], m[14], m[15])
+    c22 = det3(m[0], m[1], m[3], m[4], m[5], m[7], m[12], m[13], m[15])
+    c23 = -det3(m[0], m[1], m[2], m[4], m[5], m[6], m[12], m[13], m[14])
+
+    c30 = -det3(m[1], m[2], m[3], m[5], m[6], m[7], m[9], m[10], m[11])
+    c31 = det3(m[0], m[2], m[3], m[4], m[6], m[7], m[8], m[10], m[11])
+    c32 = -det3(m[0], m[1], m[3], m[4], m[5], m[7], m[8], m[9], m[11])
+    c33 = det3(m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10])
+
+    det = m[0] * c00 + m[1] * c01 + m[2] * c02 + m[3] * c03
+    inv_det = 1.0 / det
+
+    return [
+        c00 * inv_det, c10 * inv_det, c20 * inv_det, c30 * inv_det,
+        c01 * inv_det, c11 * inv_det, c21 * inv_det, c31 * inv_det,
+        c02 * inv_det, c12 * inv_det, c22 * inv_det, c32 * inv_det,
+        c03 * inv_det, c13 * inv_det, c23 * inv_det, c33 * inv_det,
+    ]
+
+def solve4(inv, b):
+    return [
+        inv[0] * b[0] + inv[1] * b[1] + inv[2] * b[2] + inv[3] * b[3],
+        inv[4] * b[0] + inv[5] * b[1] + inv[6] * b[2] + inv[7] * b[3],
+        inv[8] * b[0] + inv[9] * b[1] + inv[10] * b[2] + inv[11] * b[3],
+        inv[12] * b[0] + inv[13] * b[1] + inv[14] * b[2] + inv[15] * b[3]
+    ]
+
+a = [
+    5.0, 1.0, 0.0, 2.0,
+    1.0, 6.0, 2.0, 0.0,
+    0.0, 2.0, 7.0, 1.0,
+    2.0, 0.0, 1.0, 8.0
+]
+inv = inv4(a)
+sum_val = 0.0
+for i in range(500000):
+    b = [i % 10, (i + 1) % 10, (i + 2) % 10, (i + 3) % 10]
+    x = solve4(inv, b)
+    sum_val += x[0] + x[1] + x[2] + x[3]
+res = int(sum_val)
+sys.exit(((res % 256) + 256) % 256)
+"#,
+        },
     ];
 
     let fmt_duration = |d: Duration| -> String {
@@ -2968,7 +3975,7 @@ sys.exit(res % 256)
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
         fs::write(&py_file, wrap_py(w.py_code)).unwrap();
-        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") || w.name.contains("Binary Search") || w.name.contains("Rule 110") || w.name.contains("Matrix") || w.name.contains("Binary GCD") || w.name.contains("Cosine") || w.name.contains("Integer Sqrt") { 1 } else { 2 };
+        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") || w.name.contains("Binary Search") || w.name.contains("Rule 110") || w.name.contains("Matrix") || w.name.contains("Binary GCD") || w.name.contains("Cosine") || w.name.contains("Integer Sqrt") || w.name.contains("16-point FFT") || w.name.contains("Transcendental") || w.name.contains("Complex") || w.name.contains("Linear System") { 1 } else { 2 };
         let (py_comp_min, py_comp_avg, py_wall_min, _py_wall_avg, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
         let speedup = py_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(

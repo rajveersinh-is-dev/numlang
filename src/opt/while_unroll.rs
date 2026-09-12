@@ -345,6 +345,7 @@ fn has_break_or_return(block: &TypedBlock) -> bool {
     false
 }
 
+
 fn has_nested_while(block: &TypedBlock) -> bool {
     for s in &block.stmts {
         match s {
@@ -484,6 +485,7 @@ fn specialize_stmts(
     iter_bounds: &mut HashMap<String, i64>,
     is_last_iter: bool,
     live_after: &HashSet<String>,
+    accum_var: Option<&str>,
 ) -> Vec<TypedStmt> {
     iter_consts.insert(var_name.to_string(), curr_val);
 
@@ -498,19 +500,19 @@ fn specialize_stmts(
             } => {
                 if let Some(c) = eval_const_expr(condition, iter_consts) {
                     if c != 0 {
-                        let specialized_then = specialize_stmts(&then_branch.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after);
+                        let specialized_then = specialize_stmts(&then_branch.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after, accum_var);
                         result.extend(specialized_then);
                     } else {
                         if let Some(eb) = else_branch {
-                            let specialized_else = specialize_stmts(&eb.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after);
+                            let specialized_else = specialize_stmts(&eb.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after, accum_var);
                             result.extend(specialized_else);
                         }
                     }
                 } else {
                     let folded_cond = fold_expr(condition, iter_consts, iter_mod, iter_bounds);
-                    let folded_then = specialize_stmts(&then_branch.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after);
+                    let folded_then = specialize_stmts(&then_branch.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after, accum_var);
                     let folded_else = else_branch.as_ref().map(|eb| TypedBlock {
-                        stmts: specialize_stmts(&eb.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after),
+                        stmts: specialize_stmts(&eb.stmts, var_name, curr_val, iter_consts, iter_mod, iter_bounds, is_last_iter, live_after, accum_var),
                         span: eb.span,
                     });
                     result.push(TypedStmt::If {
@@ -537,7 +539,16 @@ fn specialize_stmts(
                         continue;
                     }
                 }
-                let folded_val = fold_expr(value, iter_consts, iter_mod, iter_bounds);
+                let val_to_fold = if !is_last_iter && accum_var == Some(name.as_str()) {
+                    if let TypedExpr::Binary { op: BinaryOp::Mod, left, .. } = value {
+                        left.as_ref()
+                    } else {
+                        value
+                    }
+                } else {
+                    value
+                };
+                let folded_val = fold_expr(val_to_fold, iter_consts, iter_mod, iter_bounds);
                 if let Some(c) = eval_const_expr(&folded_val, iter_consts) {
                     iter_consts.insert(name.clone(), c);
                 } else {
@@ -662,6 +673,85 @@ fn collect_mutated_vars(block: &TypedBlock, mutated: &mut HashSet<String>) {
     }
 }
 
+fn find_accum_mod_var(
+    body: &TypedBlock,
+    loop_var: &str,
+    known_consts: &HashMap<String, i64>,
+    total_iters: usize,
+) -> Option<String> {
+    if total_iters < 2 || total_iters > 8 {
+        return None;
+    }
+
+    let mut candidate = None;
+    for stmt in &body.stmts {
+        if let TypedStmt::Assign { name, value, .. } = stmt {
+            if name == loop_var {
+                continue;
+            }
+            if let TypedExpr::Binary {
+                op: BinaryOp::Mod,
+                left,
+                right,
+                ..
+            } = value
+            {
+                let m_val = eval_const_expr(right, known_consts)?;
+                if m_val <= 0 || m_val > 1_000_000_007 {
+                    return None;
+                }
+                if let TypedExpr::Binary {
+                    op: BinaryOp::Add,
+                    left: add_l,
+                    right: add_r,
+                    ..
+                } = &**left
+                {
+                    let is_acc_l = matches!(&**add_l, TypedExpr::Ident { name: n, .. } if n == name);
+                    let is_acc_r = matches!(&**add_r, TypedExpr::Ident { name: n, .. } if n == name);
+                    if is_acc_l || is_acc_r {
+                        let term = if is_acc_l { add_r } else { add_l };
+                        let mut term_reads = HashSet::new();
+                        collect_read_vars_expr(term, &mut term_reads);
+                        if term_reads.contains(name) {
+                            return None;
+                        }
+                        if candidate.is_some() {
+                            return None;
+                        }
+                        candidate = Some(name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let acc_name = candidate?;
+
+    if count_var_assignments(body, &acc_name) != 1 {
+        return None;
+    }
+
+    if known_consts.get(&acc_name) != Some(&0) {
+        return None;
+    }
+
+    let mut other_reads = HashSet::new();
+    for stmt in &body.stmts {
+        match stmt {
+            TypedStmt::Assign { name, .. } if name == &acc_name => {}
+            _ => {
+                collect_read_vars(std::slice::from_ref(stmt), &mut other_reads);
+            }
+        }
+    }
+    if other_reads.contains(&acc_name) {
+        return None;
+    }
+
+    Some(acc_name)
+}
+
 fn try_unroll_while(
     condition: &TypedExpr,
     body: &TypedBlock,
@@ -713,6 +803,13 @@ fn try_unroll_while(
         curr_val = next_val;
     }
 
+    // Bound unrolling budget to prevent basic block bloat and extreme register pressure
+    if total_iters * body.stmts.len() > 60 {
+        return None;
+    }
+
+    let accum_var = find_accum_mod_var(body, &var_name, known_consts, total_iters);
+
     // Now unroll
     curr_val = init_val;
     let mut current_env = known_consts.clone();
@@ -731,6 +828,7 @@ fn try_unroll_while(
             &mut current_bounds,
             is_last,
             live_after,
+            accum_var.as_deref(),
         );
         unrolled_stmts.extend(iter_stmts);
         curr_val = apply_step(curr_val, step_op);
