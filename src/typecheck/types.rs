@@ -17,6 +17,7 @@ pub enum Type {
     Void,
     Array(Box<Type>, usize),
     Str,
+    Struct(String),
 }
 
 impl Type {
@@ -67,6 +68,10 @@ impl Type {
         matches!(self, Type::F32 | Type::F64)
     }
 
+    pub fn is_struct(&self) -> bool {
+        matches!(self, Type::Struct(_))
+    }
+
     pub fn is_array(&self) -> bool {
         matches!(self, Type::Array(_, _))
     }
@@ -81,6 +86,7 @@ impl Type {
             Type::Void => 0,
             Type::Str => 8,
             Type::Array(elem, len) => elem.size_bytes() * len,
+            Type::Struct(_) => 8,
         }
     }
 
@@ -158,7 +164,15 @@ impl Type {
             "bool" => Some(Type::Bool),
             "str" => Some(Type::Str),
             "void" | "()" => Some(Type::Void),
-            _ => None,
+            _ => {
+                if s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                    && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+                {
+                    Some(Type::Struct(s.to_string()))
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -181,6 +195,7 @@ impl fmt::Display for Type {
             Type::Str => write!(f, "str"),
             Type::Void => write!(f, "void"),
             Type::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
+            Type::Struct(name) => write!(f, "{}", name),
         }
     }
 }

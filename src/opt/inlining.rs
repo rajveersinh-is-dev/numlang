@@ -937,6 +937,12 @@ fn collect_local_names(
             TypedStmt::While { body, .. } => {
                 collect_local_names(body, map, callee_name, call_id);
             }
+            TypedStmt::For { var, body, .. } => {
+                if !map.contains_key(var) {
+                    map.insert(var.clone(), format!("__inl_{}_{}_{}", callee_name, call_id, var));
+                }
+                collect_local_names(body, map, callee_name, call_id);
+            }
             _ => {}
         }
     }
@@ -968,6 +974,16 @@ fn rename_stmt(stmt: &mut TypedStmt, map: &HashMap<String, String>) {
             *index = rename_expr(index, map);
             *value = rename_expr(value, map);
         }
+        TypedStmt::FieldAssign {
+            target,
+            value,
+            ..
+        } => {
+            if let Some(new_name) = map.get(target) {
+                *target = new_name.clone();
+            }
+            *value = rename_expr(value, map);
+        }
         TypedStmt::Return(Some(val), _) => {
             *val = rename_expr(val, map);
         }
@@ -988,6 +1004,20 @@ fn rename_stmt(stmt: &mut TypedStmt, map: &HashMap<String, String>) {
         }
         TypedStmt::While { condition, body, .. } => {
             *condition = rename_expr(condition, map);
+            rename_block(body, map);
+        }
+        TypedStmt::For {
+            var,
+            lo,
+            hi,
+            body,
+            ..
+        } => {
+            if let Some(new_name) = map.get(var) {
+                *var = new_name.clone();
+            }
+            *lo = rename_expr(lo, map);
+            *hi = rename_expr(hi, map);
             rename_block(body, map);
         }
         _ => {}
@@ -1058,6 +1088,31 @@ fn rename_expr(expr: &TypedExpr, map: &HashMap<String, String>) -> TypedExpr {
             ty: ty.clone(),
             span: *span,
         },
+        TypedExpr::StructLiteral {
+            name,
+            fields,
+            ty,
+            span,
+        } => TypedExpr::StructLiteral {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(fname, fexpr)| (fname.clone(), rename_expr(fexpr, map)))
+                .collect(),
+            ty: ty.clone(),
+            span: *span,
+        },
+        TypedExpr::FieldAccess {
+            target,
+            field,
+            ty,
+            span,
+        } => TypedExpr::FieldAccess {
+            target: Box::new(rename_expr(target, map)),
+            field: field.clone(),
+            ty: ty.clone(),
+            span: *span,
+        },
         _ => expr.clone(),
     }
 }
@@ -1075,6 +1130,11 @@ fn is_var_mutated_in_block(name: &str, block: &TypedBlock) -> bool {
                     return true;
                 }
             }
+            TypedStmt::FieldAssign { target, .. } => {
+                if target == name {
+                    return true;
+                }
+            }
             TypedStmt::If { then_branch, else_branch, .. } => {
                 if is_var_mutated_in_block(name, then_branch) {
                     return true;
@@ -1087,6 +1147,10 @@ fn is_var_mutated_in_block(name: &str, block: &TypedBlock) -> bool {
             }
             TypedStmt::While { body, .. }
                 if is_var_mutated_in_block(name, body) => {
+                    return true;
+                }
+            TypedStmt::For { var, body, .. }
+                if var == name || is_var_mutated_in_block(name, body) => {
                     return true;
                 }
             _ => {}

@@ -106,10 +106,24 @@ impl<'a> Parser<'a> {
 
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let mut functions = Vec::new();
+        let mut structs = Vec::new();
+        let mut items = Vec::new();
         while !self.is_at_end() {
-            functions.push(self.parse_function()?);
+            if self.check(&Token::Struct) {
+                let s = self.parse_struct_def()?;
+                structs.push(s.clone());
+                items.push(crate::ast::Item::Struct(s));
+            } else {
+                let f = self.parse_function()?;
+                functions.push(f.clone());
+                items.push(crate::ast::Item::Function(f));
+            }
         }
-        Ok(Program { functions })
+        Ok(Program {
+            items,
+            functions,
+            structs,
+        })
     }
 }
 

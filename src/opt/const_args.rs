@@ -135,6 +135,9 @@ fn collect_calls_in_block(
                 collect_calls_in_expr(index, function_names, calls);
                 collect_calls_in_expr(value, function_names, calls);
             }
+            TypedStmt::FieldAssign { value, .. } => {
+                collect_calls_in_expr(value, function_names, calls);
+            }
             TypedStmt::Return(Some(value), _) => {
                 collect_calls_in_expr(value, function_names, calls)
             }
@@ -194,6 +197,14 @@ fn collect_calls_in_expr(
             collect_calls_in_expr(target, function_names, calls);
             collect_calls_in_expr(index, function_names, calls);
         }
+        TypedExpr::StructLiteral { fields, .. } => {
+            for (_, val) in fields {
+                collect_calls_in_expr(val, function_names, calls);
+            }
+        }
+        TypedExpr::FieldAccess { target, .. } => {
+            collect_calls_in_expr(target, function_names, calls);
+        }
         TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => {}
     }
 }
@@ -216,7 +227,9 @@ fn params_are_mutated(function: &TypedFunction) -> bool {
 
 fn block_mutates_any(block: &TypedBlock, names: &HashSet<&str>) -> bool {
     block.stmts.iter().any(|stmt| match stmt {
-        TypedStmt::Assign { name, .. } | TypedStmt::IndexAssign { target: name, .. } => {
+        TypedStmt::Assign { name, .. }
+        | TypedStmt::IndexAssign { target: name, .. }
+        | TypedStmt::FieldAssign { target: name, .. } => {
             names.contains(name.as_str())
         }
         TypedStmt::If {
@@ -244,6 +257,9 @@ fn replace_in_block(block: &mut TypedBlock, replacements: &HashMap<String, Typed
             }
             TypedStmt::IndexAssign { index, value, .. } => {
                 replace_in_expr(index, replacements);
+                replace_in_expr(value, replacements);
+            }
+            TypedStmt::FieldAssign { value, .. } => {
                 replace_in_expr(value, replacements);
             }
             TypedStmt::Return(Some(value), _) => replace_in_expr(value, replacements),
@@ -302,6 +318,14 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
         TypedExpr::Index { target, index, .. } => {
             replace_in_expr(target, replacements);
             replace_in_expr(index, replacements);
+        }
+        TypedExpr::StructLiteral { fields, .. } => {
+            for (_, val) in fields {
+                replace_in_expr(val, replacements);
+            }
+        }
+        TypedExpr::FieldAccess { target, .. } => {
+            replace_in_expr(target, replacements);
         }
         TypedExpr::Literal { .. } => {}
     }

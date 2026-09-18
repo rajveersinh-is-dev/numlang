@@ -382,6 +382,10 @@ impl IrLowerer {
 
                 self.switch_to_block(exit_bb);
             }
+
+            TypedStmt::FieldAssign { .. } => {
+                todo!("struct field assignment in ir lowering")
+            }
         }
     }
 
@@ -513,6 +517,10 @@ impl IrLowerer {
                     });
                     Operand::Value(dest)
                 }
+            }
+
+            TypedExpr::StructLiteral { .. } | TypedExpr::FieldAccess { .. } => {
+                todo!("struct expressions in ir lowering")
             }
         }
     }

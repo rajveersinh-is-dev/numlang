@@ -220,6 +220,11 @@ pub fn drive_stmt(
                 DriveResult::Continue
             }
         }
+
+        TypedStmt::FieldAssign { .. } => {
+            env.mark_symbolic();
+            DriveResult::Continue
+        }
     }
 }
 
@@ -332,6 +337,11 @@ pub fn drive_expr(
                 "_idx".to_string(),
                 ty.clone(),
             ))
+        }
+
+        TypedExpr::StructLiteral { .. } | TypedExpr::FieldAccess { .. } => {
+            env.mark_symbolic();
+            Value::Symbolic(super::value::SymExpr::Var("_struct".to_string(), expr.ty()))
         }
     }
 }

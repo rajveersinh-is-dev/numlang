@@ -34,6 +34,8 @@ pub enum Token {
     True,
     #[token("false")]
     False,
+    #[token("struct")]
+    Struct,
 
     // Mathematical & Logical Operators
     #[token("+")]
@@ -100,6 +102,8 @@ pub enum Token {
     DotDotEq,
     #[token("..")]
     DotDot,
+    #[token(".")]
+    Dot,
 
     // Literals
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().ok())]

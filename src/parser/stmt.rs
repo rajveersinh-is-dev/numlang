@@ -1,8 +1,75 @@
-use crate::ast::{Block, Function, Param, Stmt};
+use crate::ast::{Block, Function, Param, Stmt, StructDef};
 use crate::parser::{ParseError, Parser};
 use crate::token::Token;
 
 impl<'a> Parser<'a> {
+    pub fn parse_struct_def(&mut self) -> Result<StructDef, ParseError> {
+        let struct_span = self.consume(&Token::Struct, "'struct' keyword")?;
+
+        let name = match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    id
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "struct name".to_string(),
+                        span: t.span,
+                    });
+                }
+            },
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "struct name".to_string(),
+                    span: struct_span,
+                });
+            }
+        };
+
+        self.consume(&Token::LBrace, "'{' after struct name")?;
+        let mut fields = Vec::new();
+        while !self.check(&Token::RBrace) && !self.is_at_end() {
+            let field_name = match self.peek_token().cloned() {
+                Some(t) => match t.token {
+                    Token::Ident(id) => {
+                        self.advance();
+                        id
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: t.token,
+                            expected: "field name".to_string(),
+                            span: t.span,
+                        });
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "field name".to_string(),
+                        span: self.previous_span(),
+                    });
+                }
+            };
+
+            self.consume(&Token::Colon, "':' after field name")?;
+            let field_ty = self.parse_type()?;
+            fields.push((field_name, field_ty));
+
+            if self.match_token(&Token::Comma) {
+                if self.check(&Token::RBrace) {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        let close_span = self.consume(&Token::RBrace, "'}' to close struct definition")?;
+        let span = struct_span.merge(&close_span);
+        Ok(StructDef { name, fields, span })
+    }
+
     pub fn parse_function(&mut self) -> Result<Function, ParseError> {
         let fn_span = self.consume(&Token::Fn, "'fn' keyword")?;
 
@@ -293,6 +360,34 @@ impl<'a> Parser<'a> {
             Ok(Stmt::IndexAssign {
                 target: name,
                 index,
+                value,
+                span,
+            })
+        } else if self.cursor + 3 < self.tokens.len()
+            && matches!(self.tokens[self.cursor].token, Token::Ident(_))
+            && self.tokens[self.cursor + 1].token == Token::Dot
+            && matches!(self.tokens[self.cursor + 2].token, Token::Ident(_))
+            && self.tokens[self.cursor + 3].token == Token::Assign
+        {
+            let id_token = self.advance().unwrap();
+            let target = match &id_token.token {
+                Token::Ident(id) => id.clone(),
+                _ => unreachable!(),
+            };
+            let start_span = id_token.span;
+            self.consume(&Token::Dot, "'.' in field assignment")?;
+            let field_tok = self.advance().unwrap();
+            let field = match &field_tok.token {
+                Token::Ident(id) => id.clone(),
+                _ => unreachable!(),
+            };
+            self.consume(&Token::Assign, "'=' in field assignment")?;
+            let value = self.parse_expr(0)?;
+            let semi_span = self.consume(&Token::Semi, "';' after assignment")?;
+            let span = start_span.merge(&semi_span);
+            Ok(Stmt::FieldAssign {
+                target,
+                field,
                 value,
                 span,
             })

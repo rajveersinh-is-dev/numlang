@@ -105,6 +105,7 @@ pub fn supercompile_program(
 
         // Build a read-only program view for the driver.
         let fake_program = crate::typecheck::typed_ast::TypedProgram {
+            structs: program.structs.clone(),
             functions: func_snapshot.clone(),
         };
 
@@ -141,6 +142,7 @@ fn supercompile_main(program: &mut TypedProgram) {
     // (we allow calling impure sub-functions — the driver handles those)
 
     let fake_program = crate::typecheck::typed_ast::TypedProgram {
+        structs: program.structs.clone(),
         functions: program.functions.clone(),
     };
 

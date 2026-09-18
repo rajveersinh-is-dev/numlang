@@ -171,6 +171,21 @@ impl CompilerDiagnostic {
                 "no enclosing loop".to_string(),
                 "Use `continue;` only inside a loop".to_string(),
             ),
+            crate::typecheck::TypeError::NoSuchField { name, field, .. } => (
+                format!("Struct `{}` has no field `{}`", name, field),
+                format!("field `{}` not found on `{}`", field, name),
+                "Check struct definition for available fields".to_string(),
+            ),
+            crate::typecheck::TypeError::MissingField { name, field, .. } => (
+                format!("Missing field `{}` in struct `{}` initialization", field, name),
+                format!("missing field `{}`", field),
+                "Provide all declared fields in the struct literal".to_string(),
+            ),
+            crate::typecheck::TypeError::CannotAccessFieldNonStruct { found, .. } => (
+                format!("Cannot access field on non-struct type `{}`", found),
+                "not a struct".to_string(),
+                "Field access `.` requires a struct type".to_string(),
+            ),
         };
 
         CompilerDiagnostic::TypeError {
