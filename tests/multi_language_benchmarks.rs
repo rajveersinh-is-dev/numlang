@@ -160,7 +160,7 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     fs::write(&bat_path, bat_content).ok()?;
 
     let output = Command::new("cmd.exe")
-        .args(&["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
+        .args(["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
         .output()
         .ok()?;
 
@@ -3906,7 +3906,7 @@ sys.exit(((res % 256) + 256) % 256)
     };
 
     let fmt_speedup = |ratio: f64| -> String {
-        if ratio <= 1.05 && ratio >= 0.95 {
+        if (0.95..=1.05).contains(&ratio) {
             "1.00x".to_string()
         } else if ratio < 1000.0 {
             format!("{:.2}x", ratio)
@@ -3926,7 +3926,7 @@ sys.exit(((res % 256) + 256) % 256)
     println!("----------------------------------------------------------------------------------------------------------------------------------");
 
     for w in workloads {
-        let slug = w.name.to_lowercase().replace(' ', "_").replace('(', "").replace(')', "").replace(',', "");
+        let slug = w.name.to_lowercase().replace(' ', "_").replace(['(', ')', ','], "");
 
         // 1. numlang
         let nl_exe = compile_numlang(w.nl_code, &test_dir, &slug);

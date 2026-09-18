@@ -84,25 +84,27 @@ fn try_eliminate_active_flags(block: &mut TypedBlock) {
 
         if let Some(active_name) = active_var_opt {
             let mut transformed_while = None;
-            if let TypedStmt::While { condition, body, span } = &block.stmts[i + 1] {
-                if let TypedExpr::Ident { name: cond_name, .. } = condition {
-                    if cond_name == &active_name && body.stmts.len() == 1 {
-                        if let TypedStmt::If {
-                            condition: inner_cond,
-                            then_branch,
-                            else_branch: Some(else_branch),
-                            ..
-                        } = &body.stmts[0]
-                        {
-                            if is_single_assign_bool_false(else_branch, &active_name) {
-                                let mut new_then = (*then_branch).clone();
-                                replace_active_assign_with_break(&mut new_then, &active_name);
-                                transformed_while = Some(TypedStmt::While {
-                                    condition: (*inner_cond).clone(),
-                                    body: new_then,
-                                    span: *span,
-                                });
-                            }
+            if let TypedStmt::While {
+                condition: TypedExpr::Ident { name: cond_name, .. },
+                body,
+                span,
+            } = &block.stmts[i + 1] {
+                if cond_name == &active_name && body.stmts.len() == 1 {
+                    if let TypedStmt::If {
+                        condition: inner_cond,
+                        then_branch,
+                        else_branch: Some(else_branch),
+                        ..
+                    } = &body.stmts[0]
+                    {
+                        if is_single_assign_bool_false(else_branch, &active_name) {
+                            let mut new_then = (*then_branch).clone();
+                            replace_active_assign_with_break(&mut new_then, &active_name);
+                            transformed_while = Some(TypedStmt::While {
+                                condition: (*inner_cond).clone(),
+                                body: new_then,
+                                span: *span,
+                            });
                         }
                     }
                 }
@@ -184,14 +186,14 @@ fn is_var_referenced_in_stmt(stmt: &TypedStmt, var_name: &str) -> bool {
                 || then_branch.stmts.iter().any(|s| is_var_referenced_in_stmt(s, var_name))
                 || else_branch
                     .as_ref()
-                    .map_or(false, |eb| eb.stmts.iter().any(|s| is_var_referenced_in_stmt(s, var_name)))
+                    .is_some_and(|eb| eb.stmts.iter().any(|s| is_var_referenced_in_stmt(s, var_name)))
         }
         TypedStmt::While { condition, body, .. } => {
             is_var_referenced_in_expr(condition, var_name)
                 || body.stmts.iter().any(|s| is_var_referenced_in_stmt(s, var_name))
         }
         TypedStmt::Return(opt_expr, ..) => {
-            opt_expr.as_ref().map_or(false, |e| is_var_referenced_in_expr(e, var_name))
+            opt_expr.as_ref().is_some_and(|e| is_var_referenced_in_expr(e, var_name))
         }
         TypedStmt::Break(..) => false,
     }
@@ -282,10 +284,8 @@ fn collect_read_vars_stmts(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
                 collect_read_vars_expr(condition, reads);
                 collect_read_vars_stmts(&body.stmts, reads);
             }
-            TypedStmt::Return(opt_e, ..) => {
-                if let Some(e) = opt_e {
-                    collect_read_vars_expr(e, reads);
-                }
+            TypedStmt::Return(Some(e), ..) => {
+                collect_read_vars_expr(e, reads);
             }
             _ => {}
         }
@@ -316,27 +316,25 @@ fn collect_mutated_vars_stmts(stmts: &[TypedStmt], mutated: &mut HashSet<String>
 }
 
 fn is_simple_inc_dec(stmt: &TypedStmt) -> Option<String> {
-    if let TypedStmt::Assign { name, value, .. } = stmt {
-        if let TypedExpr::Binary { op, left, right, ty, .. } = value {
-            if !ty.is_integer() {
-                return None;
-            }
-            let is_add = *op == BinaryOp::Add;
-            let is_sub = *op == BinaryOp::Sub;
-            if !is_add && !is_sub {
-                return None;
-            }
-            let is_one = |e: &TypedExpr| -> bool {
-                matches!(e, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
-            };
-            let is_name = |e: &TypedExpr| -> bool {
-                matches!(e, TypedExpr::Ident { name: n, .. } if n == name)
-            };
-            let is_inc = (is_name(left) && is_one(right)) || (is_add && is_one(left) && is_name(right));
-            let is_dec = is_sub && is_name(left) && is_one(right);
-            if is_inc || is_dec {
-                return Some(name.clone());
-            }
+    if let TypedStmt::Assign { name, value: TypedExpr::Binary { op, left, right, ty, .. }, .. } = stmt {
+        if !ty.is_integer() {
+            return None;
+        }
+        let is_add = *op == BinaryOp::Add;
+        let is_sub = *op == BinaryOp::Sub;
+        if !is_add && !is_sub {
+            return None;
+        }
+        let is_one = |e: &TypedExpr| -> bool {
+            matches!(e, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
+        };
+        let is_name = |e: &TypedExpr| -> bool {
+            matches!(e, TypedExpr::Ident { name: n, .. } if n == name)
+        };
+        let is_inc = (is_name(left) && is_one(right)) || (is_add && is_one(left) && is_name(right));
+        let is_dec = is_sub && is_name(left) && is_one(right);
+        if is_inc || is_dec {
+            return Some(name.clone());
         }
     }
     None
@@ -408,7 +406,7 @@ fn is_int_one(expr: &TypedExpr) -> bool {
     matches!(expr, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
 }
 
-fn match_bit_and_one<'a>(expr: &'a TypedExpr) -> Option<&'a TypedExpr> {
+fn match_bit_and_one(expr: &TypedExpr) -> Option<&TypedExpr> {
     if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
         if is_int_one(right) {
             return Some(&**left);
@@ -423,8 +421,7 @@ fn try_optimize_trailing_zero_loops(block: &mut TypedBlock) {
     let mut i = 0;
     while i < block.stmts.len() {
         let mut replacement: Option<Vec<TypedStmt>> = None;
-        if let TypedStmt::While { condition, body, span } = &block.stmts[i] {
-            if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
+        if let TypedStmt::While { condition: TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. }, body, span } = &block.stmts[i] {
                 let inner = if is_int_zero(right) {
                     match_bit_and_one(left)
                 } else if is_int_zero(left) {
@@ -520,61 +517,62 @@ fn try_optimize_trailing_zero_loops(block: &mut TypedBlock) {
                                         }
                                     }
 
-                                    if has_u_shr && has_v_shr && shift_var.is_some() {
-                                        let (shift_name, shift_ty) = shift_var.unwrap();
-                                        let tz_k_name = format!("__tz_{}_{}", u_name, v_name);
-                                        let tz_let = TypedStmt::Let {
-                                            name: tz_k_name.clone(),
-                                            is_mutable: false,
-                                            ty: Type::I64,
-                                            value: TypedExpr::Call {
-                                                callee: "ctz".to_string(),
-                                                args: vec![TypedExpr::Binary {
-                                                    op: BinaryOp::BitOr,
-                                                    left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
-                                                    right: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
+                                    if has_u_shr && has_v_shr {
+                                        if let Some((shift_name, shift_ty)) = shift_var {
+                                            let tz_k_name = format!("__tz_{}_{}", u_name, v_name);
+                                            let tz_let = TypedStmt::Let {
+                                                name: tz_k_name.clone(),
+                                                is_mutable: false,
+                                                ty: Type::I64,
+                                                value: TypedExpr::Call {
+                                                    callee: "ctz".to_string(),
+                                                    args: vec![TypedExpr::Binary {
+                                                        op: BinaryOp::BitOr,
+                                                        left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
+                                                        right: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
+                                                        ty: u_ty.clone(),
+                                                        span: *span,
+                                                    }],
                                                     ty: Type::I64,
                                                     span: *span,
-                                                }],
-                                                ty: Type::I64,
+                                                },
                                                 span: *span,
-                                            },
-                                            span: *span,
-                                        };
-                                        let shift_assign = TypedStmt::Assign {
-                                            name: shift_name.clone(),
-                                            value: TypedExpr::Binary {
-                                                op: BinaryOp::Add,
-                                                left: Box::new(TypedExpr::Ident { name: shift_name, ty: shift_ty.clone(), span: *span }),
-                                                right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
-                                                ty: shift_ty,
+                                            };
+                                            let shift_assign = TypedStmt::Assign {
+                                                name: shift_name.clone(),
+                                                value: TypedExpr::Binary {
+                                                    op: BinaryOp::Add,
+                                                    left: Box::new(TypedExpr::Ident { name: shift_name, ty: shift_ty.clone(), span: *span }),
+                                                    right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
+                                                    ty: shift_ty,
+                                                    span: *span,
+                                                },
                                                 span: *span,
-                                            },
-                                            span: *span,
-                                        };
-                                        let u_assign = TypedStmt::Assign {
-                                            name: u_name.clone(),
-                                            value: TypedExpr::Binary {
-                                                op: BinaryOp::Shr,
-                                                left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
-                                                right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
-                                                ty: u_ty.clone(),
+                                            };
+                                            let u_assign = TypedStmt::Assign {
+                                                name: u_name.clone(),
+                                                value: TypedExpr::Binary {
+                                                    op: BinaryOp::Shr,
+                                                    left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
+                                                    right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
+                                                    ty: u_ty.clone(),
+                                                    span: *span,
+                                                },
                                                 span: *span,
-                                            },
-                                            span: *span,
-                                        };
-                                        let v_assign = TypedStmt::Assign {
-                                            name: v_name.clone(),
-                                            value: TypedExpr::Binary {
-                                                op: BinaryOp::Shr,
-                                                left: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
-                                                right: Box::new(TypedExpr::Ident { name: tz_k_name, ty: Type::I64, span: *span }),
-                                                ty: v_ty.clone(),
+                                            };
+                                            let v_assign = TypedStmt::Assign {
+                                                name: v_name.clone(),
+                                                value: TypedExpr::Binary {
+                                                    op: BinaryOp::Shr,
+                                                    left: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
+                                                    right: Box::new(TypedExpr::Ident { name: tz_k_name, ty: Type::I64, span: *span }),
+                                                    ty: v_ty.clone(),
+                                                    span: *span,
+                                                },
                                                 span: *span,
-                                            },
-                                            span: *span,
-                                        };
-                                        replacement = Some(vec![tz_let, shift_assign, u_assign, v_assign]);
+                                            };
+                                            replacement = Some(vec![tz_let, shift_assign, u_assign, v_assign]);
+                                        }
                                     }
                                 }
                             }
@@ -582,7 +580,6 @@ fn try_optimize_trailing_zero_loops(block: &mut TypedBlock) {
                     }
                 }
             }
-        }
 
         if let Some(repl) = replacement {
             let repl_len = repl.len();
@@ -661,42 +658,43 @@ fn try_optimize_brian_kernighan_popcount(block: &mut TypedBlock) {
                         }
                     }
 
-                    if is_num_update && count_info.is_some() {
-                        let (count_name, count_ty, count_span) = count_info.unwrap();
-                        let assign_count = TypedStmt::Assign {
-                            name: count_name.clone(),
-                            value: TypedExpr::Binary {
-                                op: BinaryOp::Add,
-                                left: Box::new(TypedExpr::Ident {
-                                    name: count_name.clone(),
+                    if is_num_update {
+                        if let Some((count_name, count_ty, count_span)) = count_info {
+                            let assign_count = TypedStmt::Assign {
+                                name: count_name.clone(),
+                                value: TypedExpr::Binary {
+                                    op: BinaryOp::Add,
+                                    left: Box::new(TypedExpr::Ident {
+                                        name: count_name.clone(),
+                                        ty: count_ty.clone(),
+                                        span: count_span,
+                                    }),
+                                    right: Box::new(TypedExpr::Call {
+                                        callee: "popcnt".to_string(),
+                                        args: vec![TypedExpr::Ident {
+                                            name: num_name.clone(),
+                                            ty: num_ty.clone(),
+                                            span: num_span,
+                                        }],
+                                        ty: count_ty.clone(),
+                                        span: count_span,
+                                    }),
                                     ty: count_ty.clone(),
                                     span: count_span,
-                                }),
-                                right: Box::new(TypedExpr::Call {
-                                    callee: "popcnt".to_string(),
-                                    args: vec![TypedExpr::Ident {
-                                        name: num_name.clone(),
-                                        ty: num_ty.clone(),
-                                        span: num_span,
-                                    }],
-                                    ty: count_ty.clone(),
-                                    span: count_span,
-                                }),
-                                ty: count_ty.clone(),
+                                },
                                 span: count_span,
-                            },
-                            span: count_span,
-                        };
-                        let assign_num = TypedStmt::Assign {
-                            name: num_name.clone(),
-                            value: TypedExpr::Literal {
-                                lit: TypedLiteral::Int(0, num_ty.clone()),
-                                ty: num_ty.clone(),
+                            };
+                            let assign_num = TypedStmt::Assign {
+                                name: num_name.clone(),
+                                value: TypedExpr::Literal {
+                                    lit: TypedLiteral::Int(0, num_ty.clone()),
+                                    ty: num_ty.clone(),
+                                    span: num_span,
+                                },
                                 span: num_span,
-                            },
-                            span: num_span,
-                        };
-                        replacement = Some(vec![assign_count, assign_num]);
+                            };
+                            replacement = Some(vec![assign_count, assign_num]);
+                        }
                     }
                 }
             }

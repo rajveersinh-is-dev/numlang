@@ -42,7 +42,7 @@ fn states_equal(a: &HashMap<String, Value>, b: &HashMap<String, Value>) -> bool 
     if a.len() != b.len() {
         return false;
     }
-    a.iter().all(|(k, av)| b.get(k).map_or(false, |bv| values_equal(av, bv)))
+    a.iter().all(|(k, av)| b.get(k).is_some_and(|bv| values_equal(av, bv)))
 }
 
 /// Homeomorphic embedding over value states.

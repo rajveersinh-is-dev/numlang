@@ -62,7 +62,7 @@ pub fn drive_function(
     let params: Vec<(String, Value)> = func
         .params
         .iter()
-        .zip(args.into_iter())
+        .zip(args)
         .map(|(p, v)| (p.name.clone(), v))
         .collect();
 
@@ -81,17 +81,10 @@ pub fn drive_function(
     }
 
     match result {
-        DriveResult::Returned(v) => {
-            if v.is_concrete() {
+        DriveResult::Returned(v)
+            if v.is_concrete() => {
                 v
-            } else {
-                env.mark_symbolic();
-                Value::Symbolic(super::value::SymExpr::Var(
-                    format!("_sym_res_{}", func.name),
-                    func.return_ty.clone(),
-                ))
             }
-        }
         _ => {
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var(
@@ -319,8 +312,6 @@ pub fn drive_expr(
 /// Simulates iterations, collects snapshots during window, and calls the generalizer.
 /// If generalizer succeeds, jumps to closed form.
 /// If generalizer does not apply, but state is concrete, completes simulation directly.
-
-
 fn extract_induction_var(
     condition: &TypedExpr,
     env: &Env,
@@ -532,11 +523,11 @@ fn drive_while(
         // Check for closed form at powers of 2 or at SNAPSHOT_LIMIT (only if no early return/break and sufficient history)
         if can_generalize && iter_count >= 32 && (iter_count.is_power_of_two() || iter_count == SNAPSHOT_LIMIT) {
             let total_iters = infer_total_iters(condition, &snapshots, env, program);
-            if total_iters.map_or(false, |tot| tot > iter_count as i64) {
+            if total_iters.is_some_and(|tot| tot > iter_count as i64) {
                 if let Some(final_state) = generalize_loop(&loop_vars, &snapshots, total_iters, &var_modulos) {
                     env.restore_vars(&final_state);
                     return DriveResult::Continue;
-                } else if iter_count == SNAPSHOT_LIMIT && total_iters.map_or(false, |tot| tot > MAX_CONCRETE_STEPS as i64) {
+                } else if iter_count == SNAPSHOT_LIMIT && total_iters.is_some_and(|tot| tot > MAX_CONCRETE_STEPS as i64) {
                     env.mark_symbolic();
                     return DriveResult::Continue;
                 }
@@ -567,7 +558,7 @@ fn drive_while(
 
             if can_generalize && iter_count >= 32 && detect_embedding(&snapshots, &snap) {
                 let total_iters = infer_total_iters(condition, &snapshots, env, program);
-                if total_iters.map_or(false, |tot| tot > iter_count as i64) {
+                if total_iters.is_some_and(|tot| tot > iter_count as i64) {
                     if let Some(final_state) = generalize_loop(&loop_vars, &snapshots, total_iters, &var_modulos) {
                         env.restore_vars(&final_state);
                         return DriveResult::Continue;
@@ -633,7 +624,7 @@ fn has_return_or_break(block: &TypedBlock) -> bool {
     block.stmts.iter().any(|stmt| match stmt {
         TypedStmt::Return(_, _) | TypedStmt::Break(_) => true,
         TypedStmt::If { then_branch, else_branch, .. } => {
-            has_return_or_break(then_branch) || else_branch.as_ref().map_or(false, has_return_or_break)
+            has_return_or_break(then_branch) || else_branch.as_ref().is_some_and(has_return_or_break)
         }
         TypedStmt::While { body, .. } => has_return_or_break(body),
         _ => false,
@@ -651,7 +642,7 @@ fn stmt_contains_transcendentals(stmt: &TypedStmt) -> bool {
         }
         TypedStmt::If { then_branch, else_branch, .. } => {
             block_contains_transcendentals(then_branch)
-                || else_branch.as_ref().map_or(false, block_contains_transcendentals)
+                || else_branch.as_ref().is_some_and(block_contains_transcendentals)
         }
         TypedStmt::While { body, .. } => block_contains_transcendentals(body),
         _ => false,
@@ -837,7 +828,7 @@ fn calls_external_impure(block: &TypedBlock) -> bool {
         TypedStmt::If { condition, then_branch, else_branch, .. } => {
             expr_calls_external_impure(condition)
                 || calls_external_impure(then_branch)
-                || else_branch.as_ref().map_or(false, |eb| calls_external_impure(eb))
+                || else_branch.as_ref().is_some_and(calls_external_impure)
         }
         TypedStmt::While { condition, body, .. } => {
             expr_calls_external_impure(condition) || calls_external_impure(body)
@@ -897,7 +888,7 @@ fn block_calls_function(block: &TypedBlock, name: &str) -> bool {
         TypedStmt::If { condition, then_branch, else_branch, .. } => {
             expr_calls_function(condition, name)
                 || block_calls_function(then_branch, name)
-                || else_branch.as_ref().map_or(false, |eb| block_calls_function(eb, name))
+                || else_branch.as_ref().is_some_and(|eb| block_calls_function(eb, name))
         }
         TypedStmt::While { condition, body, .. } => {
             expr_calls_function(condition, name) || block_calls_function(body, name)
@@ -929,6 +920,7 @@ fn expr_calls_function(expr: &TypedExpr, name: &str) -> bool {
 // Intrinsic Functions Evaluator
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn det3_helper(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64) -> f64 {
     a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 }
@@ -1050,21 +1042,21 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             Some(Value::Int(r))
         }
         "min" => {
-            match (args.get(0)?, args.get(1)?) {
+            match (args.first()?, args.get(1)?) {
                 (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
                 (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
                 _ => None,
             }
         }
         "max" => {
-            match (args.get(0)?, args.get(1)?) {
+            match (args.first()?, args.get(1)?) {
                 (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
                 (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
                 _ => None,
             }
         }
         "clamp" => {
-            match (args.get(0)?, args.get(1)?, args.get(2)?) {
+            match (args.first()?, args.get(1)?, args.get(2)?) {
                 (Value::Int(v), Value::Int(lo), Value::Int(hi)) => {
                     Some(Value::Int((*v).max(*lo).min(*hi)))
                 }
@@ -1075,24 +1067,24 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             }
         }
         "fma" => {
-            let a = args.get(0)?.as_float()?;
+            let a = args.first()?.as_float()?;
             let b = args.get(1)?.as_float()?;
             let c = args.get(2)?.as_float()?;
             Some(Value::Float(a.mul_add(b, c)))
         }
         "hypot" => {
-            let a = args.get(0)?.as_float()?;
+            let a = args.first()?.as_float()?;
             let b = args.get(1)?.as_float()?;
             Some(Value::Float(a.hypot(b)))
         }
         "lerp" => {
-            let a = args.get(0)?.as_float()?;
+            let a = args.first()?.as_float()?;
             let b = args.get(1)?.as_float()?;
             let t = args.get(2)?.as_float()?;
             Some(Value::Float(a + t * (b - a)))
         }
         "gcd" => {
-            let a = args.get(0)?.as_int()?.abs();
+            let a = args.first()?.as_int()?.abs();
             let b = args.get(1)?.as_int()?.abs();
             let mut u = a;
             let mut v = b;
@@ -1104,7 +1096,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             Some(Value::Int(u))
         }
         "lcm" => {
-            let a = args.get(0)?.as_int()?.abs();
+            let a = args.first()?.as_int()?.abs();
             let b = args.get(1)?.as_int()?.abs();
             if a == 0 || b == 0 {
                 return Some(Value::Int(0));
@@ -1132,7 +1124,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         "log2"  => { let f = args.first()?.as_float()?; Some(Value::Float(f.log2())) }
         "log10" => { let f = args.first()?.as_float()?; Some(Value::Float(f.log10())) }
         "pow" => {
-            match (args.get(0)?, args.get(1)?) {
+            match (args.first()?, args.get(1)?) {
                 (Value::Float(b), Value::Float(e)) => Some(Value::Float(b.powf(*e))),
                 (Value::Float(b), Value::Int(e)) => Some(Value::Float(b.powi(*e as i32))),
                 (Value::Int(b), Value::Int(e)) => {
@@ -1158,20 +1150,20 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             Some(Value::Int(i.leading_zeros() as i64))
         }
         "rotl" => {
-            let val = args.get(0)?.as_int()?;
+            let val = args.first()?.as_int()?;
             let shift = (args.get(1)?.as_int()? & 63) as u32;
             Some(Value::Int(val.rotate_left(shift)))
         }
         "rotr" => {
-            let val = args.get(0)?.as_int()?;
+            let val = args.first()?.as_int()?;
             let shift = (args.get(1)?.as_int()? & 63) as u32;
             Some(Value::Int(val.rotate_right(shift)))
         }
         "dot" => {
-            if let (Value::Array(a, _), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, _), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
                 if a.len() == b.len() {
-                    let is_float = a.first().map_or(false, |v| matches!(v, Value::Float(_)))
-                        || b.first().map_or(false, |v| matches!(v, Value::Float(_)));
+                    let is_float = a.first().is_some_and(|v| matches!(v, Value::Float(_)))
+                        || b.first().is_some_and(|v| matches!(v, Value::Float(_)));
                     if is_float {
                         let mut sum = 0.0;
                         for (x, y) in a.iter().zip(b.iter()) {
@@ -1206,7 +1198,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         }
         "sum" => {
             if let Value::Array(a, _) = args.first()? {
-                let is_float = a.first().map_or(false, |v| matches!(v, Value::Float(_)));
+                let is_float = a.first().is_some_and(|v| matches!(v, Value::Float(_)));
                 if is_float {
                     let mut s = 0.0;
                     for x in a {
@@ -1224,7 +1216,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "vec_add" => {
-            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
                 if a.len() == b.len() {
                     let mut res = Vec::new();
                     for (x, y) in a.iter().zip(b.iter()) {
@@ -1236,7 +1228,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "vec_sub" => {
-            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
                 if a.len() == b.len() {
                     let mut res = Vec::new();
                     for (x, y) in a.iter().zip(b.iter()) {
@@ -1248,7 +1240,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "vec_mul" => {
-            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, ty), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
                 if a.len() == b.len() {
                     let mut res = Vec::new();
                     for (x, y) in a.iter().zip(b.iter()) {
@@ -1260,7 +1252,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "vec_scale" => {
-            if let (Value::Array(a, ty), s) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, ty), s) = (args.first()?, args.get(1)?) {
                 let mut res = Vec::new();
                 for x in a {
                     res.push(fold_binary(BinaryOp::Mul, x.clone(), s.clone()));
@@ -1270,7 +1262,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "vec_div_scalar" => {
-            if let (Value::Array(a, ty), s) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(a, ty), s) = (args.first()?, args.get(1)?) {
                 let mut res = Vec::new();
                 for x in a {
                     res.push(fold_binary(BinaryOp::Div, x.clone(), s.clone()));
@@ -1379,7 +1371,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "mat_solve4" => {
-            if let (Value::Array(mat_elems, _), Value::Array(b_elems, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(mat_elems, _), Value::Array(b_elems, _)) = (args.first()?, args.get(1)?) {
                 if mat_elems.len() >= 16 && b_elems.len() >= 4 {
                     let m: Vec<f64> = mat_elems.iter().filter_map(|v| v.as_float()).collect();
                     let b: Vec<f64> = b_elems.iter().filter_map(|v| v.as_float()).collect();
@@ -1402,13 +1394,13 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "c_make" => {
-            let re = args.get(0)?.as_float()?;
+            let re = args.first()?.as_float()?;
             let im = args.get(1)?.as_float()?;
             Some(Value::Array(vec![Value::Float(re), Value::Float(im)], Type::F64))
         }
         "c_re" => {
             if let Value::Array(elems, _) = args.first()? {
-                return Some(elems.get(0)?.clone());
+                return Some(elems.first()?.clone());
             }
             None
         }
@@ -1419,30 +1411,30 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "c_add" => {
-            if let (Value::Array(a, _), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
-                let a0 = a.get(0)?.as_float()?;
+            if let (Value::Array(a, _), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
+                let a0 = a.first()?.as_float()?;
                 let a1 = a.get(1)?.as_float()?;
-                let b0 = b.get(0)?.as_float()?;
+                let b0 = b.first()?.as_float()?;
                 let b1 = b.get(1)?.as_float()?;
                 return Some(Value::Array(vec![Value::Float(a0 + b0), Value::Float(a1 + b1)], Type::F64));
             }
             None
         }
         "c_sub" => {
-            if let (Value::Array(a, _), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
-                let a0 = a.get(0)?.as_float()?;
+            if let (Value::Array(a, _), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
+                let a0 = a.first()?.as_float()?;
                 let a1 = a.get(1)?.as_float()?;
-                let b0 = b.get(0)?.as_float()?;
+                let b0 = b.first()?.as_float()?;
                 let b1 = b.get(1)?.as_float()?;
                 return Some(Value::Array(vec![Value::Float(a0 - b0), Value::Float(a1 - b1)], Type::F64));
             }
             None
         }
         "c_mul" => {
-            if let (Value::Array(a, _), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
-                let a_re = a.get(0)?.as_float()?;
+            if let (Value::Array(a, _), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
+                let a_re = a.first()?.as_float()?;
                 let a_im = a.get(1)?.as_float()?;
-                let b_re = b.get(0)?.as_float()?;
+                let b_re = b.first()?.as_float()?;
                 let b_im = b.get(1)?.as_float()?;
                 let re = a_re * b_re - a_im * b_im;
                 let im = a_re * b_im + a_im * b_re;
@@ -1451,10 +1443,10 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "c_div" => {
-            if let (Value::Array(a, _), Value::Array(b, _)) = (args.get(0)?, args.get(1)?) {
-                let a_re = a.get(0)?.as_float()?;
+            if let (Value::Array(a, _), Value::Array(b, _)) = (args.first()?, args.get(1)?) {
+                let a_re = a.first()?.as_float()?;
                 let a_im = a.get(1)?.as_float()?;
-                let b_re = b.get(0)?.as_float()?;
+                let b_re = b.first()?.as_float()?;
                 let b_im = b.get(1)?.as_float()?;
                 let denom = b_re * b_re + b_im * b_im;
                 let re = (a_re * b_re + a_im * b_im) / denom;
@@ -1465,7 +1457,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         }
         "c_conj" => {
             if let Value::Array(a, _) = args.first()? {
-                let re = a.get(0)?.as_float()?;
+                let re = a.first()?.as_float()?;
                 let im = a.get(1)?.as_float()?;
                 return Some(Value::Array(vec![Value::Float(re), Value::Float(-im)], Type::F64));
             }
@@ -1473,7 +1465,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         }
         "c_abs" => {
             if let Value::Array(a, _) = args.first()? {
-                let re = a.get(0)?.as_float()?;
+                let re = a.first()?.as_float()?;
                 let im = a.get(1)?.as_float()?;
                 return Some(Value::Float(re.hypot(im)));
             }
@@ -1481,7 +1473,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         }
         "c_arg" => {
             if let Value::Array(a, _) = args.first()? {
-                let re = a.get(0)?.as_float()?;
+                let re = a.first()?.as_float()?;
                 let im = a.get(1)?.as_float()?;
                 return Some(Value::Float(im.atan2(re)));
             }
@@ -1489,7 +1481,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
         }
         "c_exp" => {
             if let Value::Array(a, _) = args.first()? {
-                let x = a.get(0)?.as_float()?;
+                let x = a.first()?.as_float()?;
                 let y = a.get(1)?.as_float()?;
                 let r = x.exp();
                 let re = r * y.cos();
@@ -1499,7 +1491,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft8" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 8 && i_in.len() >= 8 {
@@ -1512,7 +1504,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft8_re" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 8 && i_in.len() >= 8 {
@@ -1524,7 +1516,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft8_im" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 8 && i_in.len() >= 8 {
@@ -1536,7 +1528,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft16" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 16 && i_in.len() >= 16 {
@@ -1549,7 +1541,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft16_re" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 16 && i_in.len() >= 16 {
@@ -1561,7 +1553,7 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             None
         }
         "fft16_im" => {
-            if let (Value::Array(re, _), Value::Array(im, _)) = (args.get(0)?, args.get(1)?) {
+            if let (Value::Array(re, _), Value::Array(im, _)) = (args.first()?, args.get(1)?) {
                 let r_in: Vec<f64> = re.iter().filter_map(|v| v.as_float()).collect();
                 let i_in: Vec<f64> = im.iter().filter_map(|v| v.as_float()).collect();
                 if r_in.len() >= 16 && i_in.len() >= 16 {

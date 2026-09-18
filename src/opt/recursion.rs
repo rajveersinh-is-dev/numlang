@@ -234,7 +234,7 @@ fn has_self_tail_call_stmt(stmt: &TypedStmt, fn_name: &str) -> bool {
             has_self_tail_call_block(then_branch, fn_name)
                 || else_branch
                     .as_ref()
-                    .map_or(false, |eb| has_self_tail_call_block(eb, fn_name))
+                    .is_some_and(|eb| has_self_tail_call_block(eb, fn_name))
         }
         _ => false,
     }
