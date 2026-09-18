@@ -239,6 +239,7 @@ struct BenchmarkWorkload {
 }
 
 #[test]
+#[ignore = "comprehensive multi-language benchmark suite takes several minutes; run with -- --ignored"]
 fn test_comprehensive_multi_language_benchmarks() {
     let test_dir = std::env::temp_dir().join("numlang_multi_lang_benchmarks");
     fs::create_dir_all(&test_dir).unwrap();

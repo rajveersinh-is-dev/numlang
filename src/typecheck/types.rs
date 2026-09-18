@@ -4,6 +4,11 @@ use std::fmt;
 pub enum Type {
     I32,
     I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
     F32,
     F64,
     Bool,
@@ -13,10 +18,41 @@ pub enum Type {
 
 impl Type {
     pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::I32 | Type::I64 | Type::F32 | Type::F64)
+        matches!(
+            self,
+            Type::I32
+                | Type::I64
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::Usize
+                | Type::F32
+                | Type::F64
+        )
     }
 
     pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            Type::I32
+                | Type::I64
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
+                | Type::Usize
+        )
+    }
+
+    pub fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Usize
+        )
+    }
+
+    pub fn is_signed(&self) -> bool {
         matches!(self, Type::I32 | Type::I64)
     }
 
@@ -30,8 +66,10 @@ impl Type {
 
     pub fn size_bytes(&self) -> usize {
         match self {
-            Type::I32 | Type::F32 => 4,
-            Type::I64 | Type::F64 => 8,
+            Type::U8 => 1,
+            Type::U16 => 2,
+            Type::I32 | Type::U32 | Type::F32 => 4,
+            Type::I64 | Type::U64 | Type::Usize | Type::F64 => 8,
             Type::Bool => 1,
             Type::Void => 0,
             Type::Array(elem, len) => elem.size_bytes() * len,
@@ -81,6 +119,11 @@ impl Type {
         match s {
             "i32" => Some(Type::I32),
             "i64" => Some(Type::I64),
+            "u8" => Some(Type::U8),
+            "u16" => Some(Type::U16),
+            "u32" => Some(Type::U32),
+            "u64" => Some(Type::U64),
+            "usize" => Some(Type::Usize),
             "f32" => Some(Type::F32),
             "f64" => Some(Type::F64),
             "bool" => Some(Type::Bool),
@@ -95,6 +138,11 @@ impl fmt::Display for Type {
         match self {
             Type::I32 => write!(f, "i32"),
             Type::I64 => write!(f, "i64"),
+            Type::U8 => write!(f, "u8"),
+            Type::U16 => write!(f, "u16"),
+            Type::U32 => write!(f, "u32"),
+            Type::U64 => write!(f, "u64"),
+            Type::Usize => write!(f, "usize"),
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),

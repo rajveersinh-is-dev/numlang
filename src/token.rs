@@ -95,6 +95,15 @@ pub enum Token {
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().ok())]
     FloatLiteral(f64),
 
+    #[regex(r"[0-9]+(u8|u16|u32|u64|usize|i32|i64)", |lex| {
+        let s = lex.slice();
+        let idx = s.find(|c: char| c.is_alphabetic())?;
+        let (num_str, suffix) = s.split_at(idx);
+        let n = num_str.parse::<u64>().ok()? as i64;
+        Some((n, suffix.to_string()))
+    })]
+    TypedIntLiteral((i64, String)),
+
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     IntLiteral(i64),
 

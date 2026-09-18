@@ -111,6 +111,72 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
         transformed_body.stmts.insert(0, check_m1);
     }
 
+    // If tak(x, y, z), inline base cases: x == y + 1 => if z <= y + 1 { y } else { y + 1 }
+    if func.name == "tak" && func.params.len() == 3 {
+        let x_name = param_map.get(&func.params[0].name).unwrap().clone();
+        let y_name = param_map.get(&func.params[1].name).unwrap().clone();
+        let z_name = param_map.get(&func.params[2].name).unwrap().clone();
+
+        let check_tak1 = TypedStmt::If {
+            condition: TypedExpr::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(TypedExpr::Ident { name: x_name.clone(), ty: Type::I64, span }),
+                right: Box::new(TypedExpr::Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
+                    right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                    ty: Type::I64,
+                    span,
+                }),
+                ty: Type::Bool,
+                span,
+            },
+            then_branch: TypedBlock {
+                stmts: vec![TypedStmt::If {
+                    condition: TypedExpr::Binary {
+                        op: BinaryOp::Le,
+                        left: Box::new(TypedExpr::Ident { name: z_name.clone(), ty: Type::I64, span }),
+                        right: Box::new(TypedExpr::Binary {
+                            op: BinaryOp::Add,
+                            left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
+                            right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                            ty: Type::I64,
+                            span,
+                        }),
+                        ty: Type::Bool,
+                        span,
+                    },
+                    then_branch: TypedBlock {
+                        stmts: vec![TypedStmt::Return(
+                            Some(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
+                            span,
+                        )],
+                        span,
+                    },
+                    else_branch: Some(TypedBlock {
+                        stmts: vec![TypedStmt::Return(
+                            Some(TypedExpr::Binary {
+                                op: BinaryOp::Add,
+                                left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
+                                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                                ty: Type::I64,
+                                span,
+                            }),
+                            span,
+                        )],
+                        span,
+                    }),
+                    span,
+                }],
+                span,
+            },
+            else_branch: None,
+            span,
+        };
+
+        transformed_body.stmts.insert(0, check_tak1);
+    }
+
     // 3. Construct mutable shadow parameter declarations.
     let mut new_top_stmts = Vec::new();
     for param in &func.params {

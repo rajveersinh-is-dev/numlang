@@ -1,8 +1,11 @@
 #include <windows.h>
+#include <stdint.h>
+#include <intrin.h>
 
 extern long long main(void);
 
 void mainCRTStartup() {
+
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);

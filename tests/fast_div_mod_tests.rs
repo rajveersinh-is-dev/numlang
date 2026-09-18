@@ -128,3 +128,4 @@ fn test_horner_constant_mod_7() {
     }
     assert_eq!(code, (total % 256) as i32);
 }
+

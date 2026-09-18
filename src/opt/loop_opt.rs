@@ -40,14 +40,17 @@ pub fn optimize_block(block: &mut TypedBlock) {
         }
     }
 
-    // Pass 1: Active Flag Elimination
+    // Pass 1: Active Flag Elimination (canonical while condition simplification)
     try_eliminate_active_flags(block);
 
-    // Pass 2: Collatz Parity Jump Threading
-    try_thread_collatz_parity(block);
-
-    // Pass 3: Split Isolated Accumulator If
+    // Pass 2: Split Isolated Accumulator If
     try_split_isolated_accumulator_if(block);
+
+    // Pass 3: Trailing Zero Shift Loops -> ctz
+    try_optimize_trailing_zero_loops(block);
+
+    // Pass 4: Brian Kernighan Popcount Loops -> popcnt
+    try_optimize_brian_kernighan_popcount(block);
 }
 
 // Transform:
@@ -224,188 +227,6 @@ fn is_var_referenced_in_expr(expr: &TypedExpr, var_name: &str) -> bool {
 //     total_steps = total_steps + 1;
 // }
 // into:
-// while curr > 1 {
-//     if curr % 2 == 0 {
-//         curr = curr / 2;
-//         total_steps = total_steps + 1;
-//     } else {
-//         curr = (curr * 3 + 1) / 2;
-//         total_steps = total_steps + 2;
-//     }
-// }
-fn try_thread_collatz_parity(block: &mut TypedBlock) {
-    for stmt in &mut block.stmts {
-        if let TypedStmt::While { condition: while_cond, body, .. } = stmt {
-            let curr_var_name = match while_cond {
-                TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => {
-                    if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                        Some(name.clone())
-                    } else { None }
-                }
-                TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
-                    if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name, .. }) = (&**left, &**right) {
-                        Some(name.clone())
-                    } else { None }
-                }
-                _ => None,
-            };
-
-            if let Some(curr_name) = curr_var_name {
-                if body.stmts.len() == 2 {
-                    let mut matched = false;
-                    let mut step_var_name: Option<String> = None;
-                    let mut step_var_ty = Type::I64;
-                    let mut step_stmt_span = Span::new(0, 0);
-
-                    // Check if second stmt is step = step + 1
-                    if let TypedStmt::Assign { name: s_name, value, span } = &body.stmts[1] {
-                        if s_name != &curr_name {
-                            if let TypedExpr::Binary { op: BinaryOp::Add, left, right, ty, .. } = value {
-                                if let (TypedExpr::Ident { name: id, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                    if id == s_name {
-                                        step_var_name = Some(s_name.clone());
-                                        step_var_ty = ty.clone();
-                                        step_stmt_span = *span;
-                                    }
-                                } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: id, .. }) = (&**left, &**right) {
-                                    if id == s_name {
-                                        step_var_name = Some(s_name.clone());
-                                        step_var_ty = ty.clone();
-                                        step_stmt_span = *span;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(step_name) = step_var_name {
-                        // Check if first stmt is if curr % 2 == 0 { curr = curr / 2 } else { curr = curr * 3 + 1 }
-                        if let TypedStmt::If { condition: if_cond, then_branch, else_branch: Some(else_branch), span } = &mut body.stmts[0] {
-                            let is_parity_check = match if_cond {
-                                TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } => {
-                                    if let (TypedExpr::Binary { op: BinaryOp::Mod, left: m_l, right: m_r, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. }) = (&**left, &**right) {
-                                        if let (TypedExpr::Ident { name: id, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(2, _), .. }) = (&**m_l, &**m_r) {
-                                            id == &curr_name
-                                        } else { false }
-                                    } else { false }
-                                }
-                                _ => false,
-                            };
-
-                            let is_then_div2 = then_branch.stmts.len() == 1 && match &then_branch.stmts[0] {
-                                TypedStmt::Assign { name, value, .. } => {
-                                    if name == &curr_name {
-                                        if let TypedExpr::Binary { op: BinaryOp::Div, left, right, .. } = value {
-                                            if let (TypedExpr::Ident { name: id, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(2, _), .. }) = (&**left, &**right) {
-                                                id == &curr_name
-                                            } else { false }
-                                        } else { false }
-                                    } else { false }
-                                }
-                                _ => false,
-                            };
-
-                            let is_else_mul3add1 = else_branch.stmts.len() == 1 && match &else_branch.stmts[0] {
-                                TypedStmt::Assign { name, value, .. } => {
-                                    if name == &curr_name {
-                                        match value {
-                                            TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
-                                                if let (TypedExpr::Binary { op: BinaryOp::Mul, left: mul_l, right: mul_r, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                                    if let (TypedExpr::Ident { name: id, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(3, _), .. }) = (&**mul_l, &**mul_r) {
-                                                        id == &curr_name
-                                                    } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(3, _), .. }, TypedExpr::Ident { name: id, .. }) = (&**mul_l, &**mul_r) {
-                                                        id == &curr_name
-                                                    } else { false }
-                                                } else { false }
-                                            }
-                                            _ => false,
-                                        }
-                                    } else { false }
-                                }
-                                _ => false,
-                            };
-
-                            if is_parity_check && is_then_div2 && is_else_mul3add1 {
-                                let curr_ty = match &then_branch.stmts[0] {
-                                    TypedStmt::Assign { value, .. } => value.ty(),
-                                    _ => Type::I64,
-                                };
-
-                                // In then_branch: curr = curr / 2; total_steps = total_steps + 1;
-                                then_branch.stmts.push(TypedStmt::Assign {
-                                    name: step_name.clone(),
-                                    value: TypedExpr::Binary {
-                                        op: BinaryOp::Add,
-                                        left: Box::new(TypedExpr::Ident {
-                                            name: step_name.clone(),
-                                            ty: step_var_ty.clone(),
-                                            span: step_stmt_span,
-                                        }),
-                                        right: Box::new(TypedExpr::Literal {
-                                            lit: TypedLiteral::Int(1, step_var_ty.clone()),
-                                            ty: step_var_ty.clone(),
-                                            span: step_stmt_span,
-                                        }),
-                                        ty: step_var_ty.clone(),
-                                        span: step_stmt_span,
-                                    },
-                                    span: step_stmt_span,
-                                });
-
-                                // In else_branch: curr = (curr * 3 + 1) / 2; total_steps = total_steps + 2;
-                                let mul3add1_expr = match &else_branch.stmts[0] {
-                                    TypedStmt::Assign { value, .. } => value.clone(),
-                                    _ => unreachable!(),
-                                };
-                                let div2_expr = TypedExpr::Binary {
-                                    op: BinaryOp::Div,
-                                    left: Box::new(mul3add1_expr),
-                                    right: Box::new(TypedExpr::Literal {
-                                        lit: TypedLiteral::Int(2, curr_ty.clone()),
-                                        ty: curr_ty.clone(),
-                                        span: *span,
-                                    }),
-                                    ty: curr_ty.clone(),
-                                    span: *span,
-                                };
-                                else_branch.stmts[0] = TypedStmt::Assign {
-                                    name: curr_name.clone(),
-                                    value: div2_expr,
-                                    span: *span,
-                                };
-                                else_branch.stmts.push(TypedStmt::Assign {
-                                    name: step_name.clone(),
-                                    value: TypedExpr::Binary {
-                                        op: BinaryOp::Add,
-                                        left: Box::new(TypedExpr::Ident {
-                                            name: step_name.clone(),
-                                            ty: step_var_ty.clone(),
-                                            span: step_stmt_span,
-                                        }),
-                                        right: Box::new(TypedExpr::Literal {
-                                            lit: TypedLiteral::Int(2, step_var_ty.clone()),
-                                            ty: step_var_ty.clone(),
-                                            span: step_stmt_span,
-                                        }),
-                                        ty: step_var_ty.clone(),
-                                        span: step_stmt_span,
-                                    },
-                                    span: step_stmt_span,
-                                });
-
-                                matched = true;
-                            }
-                        }
-                    }
-
-                    if matched {
-                        body.stmts.remove(1);
-                    }
-                }
-            }
-        }
-    }
-}
 
 fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
     match expr {
@@ -579,3 +400,314 @@ fn try_split_isolated_accumulator_if(block: &mut TypedBlock) {
     }
 }
 
+fn is_int_zero(expr: &TypedExpr) -> bool {
+    matches!(expr, TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. })
+}
+
+fn is_int_one(expr: &TypedExpr) -> bool {
+    matches!(expr, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
+}
+
+fn match_bit_and_one<'a>(expr: &'a TypedExpr) -> Option<&'a TypedExpr> {
+    if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
+        if is_int_one(right) {
+            return Some(&**left);
+        } else if is_int_one(left) {
+            return Some(&**right);
+        }
+    }
+    None
+}
+
+fn try_optimize_trailing_zero_loops(block: &mut TypedBlock) {
+    let mut i = 0;
+    while i < block.stmts.len() {
+        let mut replacement: Option<Vec<TypedStmt>> = None;
+        if let TypedStmt::While { condition, body, span } = &block.stmts[i] {
+            if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
+                let inner = if is_int_zero(right) {
+                    match_bit_and_one(left)
+                } else if is_int_zero(left) {
+                    match_bit_and_one(right)
+                } else {
+                    None
+                };
+
+                if let Some(inner_expr) = inner {
+                    // Pattern 1: Single-variable shift loop
+                    // while (v & 1) == 0 { v = v >> 1; }
+                    if let TypedExpr::Ident { name: v_name, ty: v_ty, .. } = inner_expr {
+                        if body.stmts.len() == 1 {
+                            if let TypedStmt::Assign { name: assign_name, value, .. } = &body.stmts[0] {
+                                if assign_name == v_name {
+                                    if let TypedExpr::Binary { op: BinaryOp::Shr, left: shr_left, right: shr_right, .. } = value {
+                                        if let TypedExpr::Ident { name: shr_name, .. } = &**shr_left {
+                                            if shr_name == v_name && is_int_one(shr_right) {
+                                                // Replace with: v = v >> ctz(v);
+                                                let assign = TypedStmt::Assign {
+                                                    name: v_name.clone(),
+                                                    value: TypedExpr::Binary {
+                                                        op: BinaryOp::Shr,
+                                                        left: Box::new(TypedExpr::Ident {
+                                                            name: v_name.clone(),
+                                                            ty: v_ty.clone(),
+                                                            span: *span,
+                                                        }),
+                                                        right: Box::new(TypedExpr::Call {
+                                                            callee: "ctz".to_string(),
+                                                            args: vec![TypedExpr::Ident {
+                                                                name: v_name.clone(),
+                                                                ty: v_ty.clone(),
+                                                                span: *span,
+                                                            }],
+                                                            ty: v_ty.clone(),
+                                                            span: *span,
+                                                        }),
+                                                        ty: v_ty.clone(),
+                                                        span: *span,
+                                                    },
+                                                    span: *span,
+                                                };
+                                                replacement = Some(vec![assign]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Pattern 2: Two-variable shift loop with shared shift counter
+                    // while ((u | v) & 1) == 0 { u = u >> 1; v = v >> 1; shift = shift + 1; }
+                    if replacement.is_none() {
+                        if let TypedExpr::Binary { op: BinaryOp::BitOr, left: or_left, right: or_right, .. } = inner_expr {
+                            if let (TypedExpr::Ident { name: u_name, ty: u_ty, .. }, TypedExpr::Ident { name: v_name, ty: v_ty, .. }) = (&**or_left, &**or_right) {
+                                if body.stmts.len() == 3 {
+                                    let mut has_u_shr = false;
+                                    let mut has_v_shr = false;
+                                    let mut shift_var: Option<(String, Type)> = None;
+
+                                    for stmt in &body.stmts {
+                                        if let TypedStmt::Assign { name, value, .. } = stmt {
+                                            if name == u_name {
+                                                if let TypedExpr::Binary { op: BinaryOp::Shr, left: sl, right: sr, .. } = value {
+                                                    if let TypedExpr::Ident { name: id, .. } = &**sl {
+                                                        if id == u_name && is_int_one(sr) {
+                                                            has_u_shr = true;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if name == v_name {
+                                                if let TypedExpr::Binary { op: BinaryOp::Shr, left: sl, right: sr, .. } = value {
+                                                    if let TypedExpr::Ident { name: id, .. } = &**sl {
+                                                        if id == v_name && is_int_one(sr) {
+                                                            has_v_shr = true;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Check shift = shift + 1 or 1 + shift
+                                            if let TypedExpr::Binary { op: BinaryOp::Add, left: al, right: ar, ty, .. } = value {
+                                                let is_inc = (matches!(&**al, TypedExpr::Ident { name: id, .. } if id == name) && is_int_one(ar))
+                                                    || (is_int_one(al) && matches!(&**ar, TypedExpr::Ident { name: id, .. } if id == name));
+                                                if is_inc {
+                                                    shift_var = Some((name.clone(), ty.clone()));
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if has_u_shr && has_v_shr && shift_var.is_some() {
+                                        let (shift_name, shift_ty) = shift_var.unwrap();
+                                        let tz_k_name = format!("__tz_{}_{}", u_name, v_name);
+                                        let tz_let = TypedStmt::Let {
+                                            name: tz_k_name.clone(),
+                                            is_mutable: false,
+                                            ty: Type::I64,
+                                            value: TypedExpr::Call {
+                                                callee: "ctz".to_string(),
+                                                args: vec![TypedExpr::Binary {
+                                                    op: BinaryOp::BitOr,
+                                                    left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
+                                                    right: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
+                                                    ty: Type::I64,
+                                                    span: *span,
+                                                }],
+                                                ty: Type::I64,
+                                                span: *span,
+                                            },
+                                            span: *span,
+                                        };
+                                        let shift_assign = TypedStmt::Assign {
+                                            name: shift_name.clone(),
+                                            value: TypedExpr::Binary {
+                                                op: BinaryOp::Add,
+                                                left: Box::new(TypedExpr::Ident { name: shift_name, ty: shift_ty.clone(), span: *span }),
+                                                right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
+                                                ty: shift_ty,
+                                                span: *span,
+                                            },
+                                            span: *span,
+                                        };
+                                        let u_assign = TypedStmt::Assign {
+                                            name: u_name.clone(),
+                                            value: TypedExpr::Binary {
+                                                op: BinaryOp::Shr,
+                                                left: Box::new(TypedExpr::Ident { name: u_name.clone(), ty: u_ty.clone(), span: *span }),
+                                                right: Box::new(TypedExpr::Ident { name: tz_k_name.clone(), ty: Type::I64, span: *span }),
+                                                ty: u_ty.clone(),
+                                                span: *span,
+                                            },
+                                            span: *span,
+                                        };
+                                        let v_assign = TypedStmt::Assign {
+                                            name: v_name.clone(),
+                                            value: TypedExpr::Binary {
+                                                op: BinaryOp::Shr,
+                                                left: Box::new(TypedExpr::Ident { name: v_name.clone(), ty: v_ty.clone(), span: *span }),
+                                                right: Box::new(TypedExpr::Ident { name: tz_k_name, ty: Type::I64, span: *span }),
+                                                ty: v_ty.clone(),
+                                                span: *span,
+                                            },
+                                            span: *span,
+                                        };
+                                        replacement = Some(vec![tz_let, shift_assign, u_assign, v_assign]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(repl) = replacement {
+            let repl_len = repl.len();
+            block.stmts.splice(i..=i, repl);
+            i += repl_len;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+
+fn is_name_ident(expr: &TypedExpr, name: &str) -> bool {
+    matches!(expr, TypedExpr::Ident { name: n, .. } if n == name)
+}
+
+fn is_name_sub_one(expr: &TypedExpr, name: &str) -> bool {
+    if let TypedExpr::Binary { op: BinaryOp::Sub, left, right, .. } = expr {
+        is_name_ident(left, name) && is_int_one(right)
+    } else {
+        false
+    }
+}
+
+fn try_optimize_brian_kernighan_popcount(block: &mut TypedBlock) {
+    let mut i = 0;
+    while i < block.stmts.len() {
+        let mut replacement: Option<Vec<TypedStmt>> = None;
+        if let TypedStmt::While { condition, body, span: _ } = &block.stmts[i] {
+            let num_info = match condition {
+                TypedExpr::Binary { op: BinaryOp::Ne, left, right, .. } => {
+                    if is_int_zero(right) {
+                        if let TypedExpr::Ident { name, ty, span } = &**left {
+                            Some((name.clone(), ty.clone(), *span))
+                        } else { None }
+                    } else if is_int_zero(left) {
+                        if let TypedExpr::Ident { name, ty, span } = &**right {
+                            Some((name.clone(), ty.clone(), *span))
+                        } else { None }
+                    } else { None }
+                }
+                TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => {
+                    if is_int_zero(right) {
+                        if let TypedExpr::Ident { name, ty, span } = &**left {
+                            Some((name.clone(), ty.clone(), *span))
+                        } else { None }
+                    } else { None }
+                }
+                _ => None,
+            };
+
+            if let Some((num_name, num_ty, num_span)) = num_info {
+                if body.stmts.len() == 2 {
+                    let mut is_num_update = false;
+                    let mut count_info: Option<(String, Type, Span)> = None;
+
+                    for stmt in &body.stmts {
+                        if let TypedStmt::Assign { name, value, span } = stmt {
+                            if name == &num_name {
+                                if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = value {
+                                    let matches_and = (is_name_sub_one(left, &num_name) && is_name_ident(right, &num_name))
+                                        || (is_name_ident(left, &num_name) && is_name_sub_one(right, &num_name));
+                                    if matches_and {
+                                        is_num_update = true;
+                                    }
+                                }
+                            } else {
+                                if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
+                                    let is_count_add = (is_name_ident(left, name) && is_int_one(right))
+                                        || (is_int_one(left) && is_name_ident(right, name));
+                                    if is_count_add {
+                                        count_info = Some((name.clone(), value.ty(), *span));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if is_num_update && count_info.is_some() {
+                        let (count_name, count_ty, count_span) = count_info.unwrap();
+                        let assign_count = TypedStmt::Assign {
+                            name: count_name.clone(),
+                            value: TypedExpr::Binary {
+                                op: BinaryOp::Add,
+                                left: Box::new(TypedExpr::Ident {
+                                    name: count_name.clone(),
+                                    ty: count_ty.clone(),
+                                    span: count_span,
+                                }),
+                                right: Box::new(TypedExpr::Call {
+                                    callee: "popcnt".to_string(),
+                                    args: vec![TypedExpr::Ident {
+                                        name: num_name.clone(),
+                                        ty: num_ty.clone(),
+                                        span: num_span,
+                                    }],
+                                    ty: count_ty.clone(),
+                                    span: count_span,
+                                }),
+                                ty: count_ty.clone(),
+                                span: count_span,
+                            },
+                            span: count_span,
+                        };
+                        let assign_num = TypedStmt::Assign {
+                            name: num_name.clone(),
+                            value: TypedExpr::Literal {
+                                lit: TypedLiteral::Int(0, num_ty.clone()),
+                                ty: num_ty.clone(),
+                                span: num_span,
+                            },
+                            span: num_span,
+                        };
+                        replacement = Some(vec![assign_count, assign_num]);
+                    }
+                }
+            }
+        }
+
+        if let Some(repl) = replacement {
+            let repl_len = repl.len();
+            block.stmts.splice(i..=i, repl);
+            i += repl_len;
+        } else {
+            i += 1;
+        }
+    }
+}
