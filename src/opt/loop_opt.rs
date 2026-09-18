@@ -180,6 +180,9 @@ fn is_var_referenced_in_stmt(stmt: &TypedStmt, var_name: &str) -> bool {
                 || is_var_referenced_in_expr(index, var_name)
                 || is_var_referenced_in_expr(value, var_name)
         }
+        TypedStmt::FieldAssign { target, value, .. } => {
+            target == var_name || is_var_referenced_in_expr(value, var_name)
+        }
         TypedStmt::Expr(expr) => is_var_referenced_in_expr(expr, var_name),
         TypedStmt::If { condition, then_branch, else_branch, .. } => {
             is_var_referenced_in_expr(condition, var_name)
@@ -220,6 +223,12 @@ fn is_var_referenced_in_expr(expr: &TypedExpr, var_name: &str) -> bool {
         }
         TypedExpr::Index { target, index, .. } => {
             is_var_referenced_in_expr(target, var_name) || is_var_referenced_in_expr(index, var_name)
+        }
+        TypedExpr::StructLiteral { fields, .. } => {
+            fields.iter().any(|(_, e)| is_var_referenced_in_expr(e, var_name))
+        }
+        TypedExpr::FieldAccess { target, .. } => {
+            is_var_referenced_in_expr(target, var_name)
         }
         _ => false,
     }
@@ -262,6 +271,14 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
             collect_read_vars_expr(target, reads);
             collect_read_vars_expr(index, reads);
         }
+        TypedExpr::StructLiteral { fields, .. } => {
+            for (_, e) in fields {
+                collect_read_vars_expr(e, reads);
+            }
+        }
+        TypedExpr::FieldAccess { target, .. } => {
+            collect_read_vars_expr(target, reads);
+        }
         _ => {}
     }
 }
@@ -274,6 +291,10 @@ fn collect_read_vars_stmts(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
             }
             TypedStmt::IndexAssign { index, value, .. } => {
                 collect_read_vars_expr(index, reads);
+                collect_read_vars_expr(value, reads);
+            }
+            TypedStmt::FieldAssign { target, value, .. } => {
+                reads.insert(target.clone());
                 collect_read_vars_expr(value, reads);
             }
             TypedStmt::Expr(expr) => {
@@ -305,6 +326,9 @@ fn collect_mutated_vars_stmts(stmts: &[TypedStmt], mutated: &mut HashSet<String>
                 mutated.insert(name.clone());
             }
             TypedStmt::IndexAssign { target, .. } => {
+                mutated.insert(target.clone());
+            }
+            TypedStmt::FieldAssign { target, .. } => {
                 mutated.insert(target.clone());
             }
             TypedStmt::If { then_branch, else_branch, .. } => {

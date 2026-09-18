@@ -1,14 +1,20 @@
-﻿use std::fs;
+use std::fs;
 use std::process::Command;
 
 fn run_numlang_code(code: &str) -> Option<i32> {
-    let test_dir = std::env::temp_dir().join("numlang_test_bit_intrinsics");
+    let id = format!(
+        "{}_{:?}_{}",
+        std::process::id(),
+        std::thread::current().id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    )
+    .replace(['(', ')', ' '], "_");
+    let test_dir = std::env::temp_dir().join(format!("numlang_test_bit_intrinsics_{}", id));
     fs::create_dir_all(&test_dir).unwrap();
-    let id = format!("{}_{}", std::process::id(), std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos());
-    let src_file = test_dir.join(format!("test_{}.nl", id));
+    let src_file = test_dir.join("test.nl");
     fs::write(&src_file, code).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
@@ -17,7 +23,7 @@ fn run_numlang_code(code: &str) -> Option<i32> {
         .output()
         .expect("Failed to run numlang program");
 
-    let _ = fs::remove_file(&src_file);
+    let _ = fs::remove_dir_all(&test_dir);
     output.status.code()
 }
 

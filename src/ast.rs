@@ -66,6 +66,16 @@ pub enum Expr {
         index: Box<Expr>,
         span: Span,
     },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, Expr)>,
+        span: Span,
+    },
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -79,6 +89,8 @@ impl Expr {
             Expr::Group(_, s) => *s,
             Expr::ArrayLiteral { span, .. } => *span,
             Expr::Index { span, .. } => *span,
+            Expr::StructLiteral { span, .. } => *span,
+            Expr::FieldAccess { span, .. } => *span,
         }
     }
 }
@@ -100,6 +112,12 @@ pub enum Stmt {
     IndexAssign {
         target: String,
         index: Expr,
+        value: Expr,
+        span: Span,
+    },
+    FieldAssign {
+        target: String,
+        field: String,
         value: Expr,
         span: Span,
     },
@@ -138,6 +156,7 @@ impl Stmt {
             Stmt::Let { span, .. } => *span,
             Stmt::Assign { span, .. } => *span,
             Stmt::IndexAssign { span, .. } => *span,
+            Stmt::FieldAssign { span, .. } => *span,
             Stmt::Return(_, span) => *span,
             Stmt::Break(span) => *span,
             Stmt::Continue(span) => *span,
@@ -172,7 +191,22 @@ pub struct Function {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, String)>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    Function(Function),
+    Struct(StructDef),
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
+    pub items: Vec<Item>,
     pub functions: Vec<Function>,
+    pub structs: Vec<StructDef>,
 }

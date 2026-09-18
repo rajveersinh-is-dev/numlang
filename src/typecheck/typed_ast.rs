@@ -53,6 +53,18 @@ pub enum TypedExpr {
         ty: Type,
         span: Span,
     },
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, TypedExpr)>,
+        ty: Type,
+        span: Span,
+    },
+    FieldAccess {
+        target: Box<TypedExpr>,
+        field: String,
+        ty: Type,
+        span: Span,
+    },
 }
 
 impl TypedExpr {
@@ -65,6 +77,8 @@ impl TypedExpr {
             TypedExpr::Call { ty, .. } => ty.clone(),
             TypedExpr::ArrayLiteral { ty, .. } => ty.clone(),
             TypedExpr::Index { ty, .. } => ty.clone(),
+            TypedExpr::StructLiteral { ty, .. } => ty.clone(),
+            TypedExpr::FieldAccess { ty, .. } => ty.clone(),
         }
     }
 
@@ -77,6 +91,8 @@ impl TypedExpr {
             TypedExpr::Call { span, .. } => *span,
             TypedExpr::ArrayLiteral { span, .. } => *span,
             TypedExpr::Index { span, .. } => *span,
+            TypedExpr::StructLiteral { span, .. } => *span,
+            TypedExpr::FieldAccess { span, .. } => *span,
         }
     }
 }
@@ -100,6 +116,12 @@ pub enum TypedStmt {
         index: TypedExpr,
         value: TypedExpr,
         is_safe: bool,
+        span: Span,
+    },
+    FieldAssign {
+        target: String,
+        field: String,
+        value: TypedExpr,
         span: Span,
     },
     Return(Option<TypedExpr>, Span),
@@ -133,6 +155,7 @@ impl TypedStmt {
             TypedStmt::Let { span, .. } => *span,
             TypedStmt::Assign { span, .. } => *span,
             TypedStmt::IndexAssign { span, .. } => *span,
+            TypedStmt::FieldAssign { span, .. } => *span,
             TypedStmt::Return(_, span) => *span,
             TypedStmt::Break(span) => *span,
             TypedStmt::Continue(span) => *span,
@@ -166,9 +189,17 @@ pub struct TypedFunction {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedStructDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TypedProgram {
     pub functions: Vec<TypedFunction>,
+    pub structs: Vec<TypedStructDef>,
 }
 
 impl TypedProgram {

@@ -24,6 +24,36 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            // Check for postfix field access `.`
+            if self.check(&Token::Dot) {
+                if min_bp > 25 {
+                    break;
+                }
+                self.advance(); // consume '.'
+                let dot_span = self.previous_span();
+                let field_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                    expected: "field name after '.'".to_string(),
+                    span: dot_span,
+                })?;
+                let field = match &field_tok.token {
+                    Token::Ident(id) => id.clone(),
+                    other => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: other.clone(),
+                            expected: "field name after '.'".to_string(),
+                            span: field_tok.span,
+                        })
+                    }
+                };
+                let span = lhs.span().merge(&field_tok.span);
+                lhs = Expr::FieldAccess {
+                    target: Box::new(lhs),
+                    field,
+                    span,
+                };
+                continue;
+            }
+
             let op = match self.peek() {
                 Some(op) => op.clone(),
                 None => break,
@@ -132,6 +162,46 @@ impl<'a> Parser<'a> {
                         args,
                         span,
                     })
+                } else if self.is_struct_literal_start() {
+                    self.advance(); // consume '{'
+                    let mut fields = Vec::new();
+                    if !self.check(&Token::RBrace) {
+                        loop {
+                            let prev_span = self.previous_span();
+                            let field_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                                expected: "field name in struct literal".to_string(),
+                                span: prev_span,
+                            })?;
+                            let field_name = match &field_tok.token {
+                                Token::Ident(id) => id.clone(),
+                                other => {
+                                    return Err(ParseError::UnexpectedToken {
+                                        found: other.clone(),
+                                        expected: "field name in struct literal".to_string(),
+                                        span: field_tok.span,
+                                    })
+                                }
+                            };
+                            self.consume(&Token::Colon, "':' after field name in struct literal")?;
+                            let val = self.parse_expr(0)?;
+                            fields.push((field_name, val));
+                            if self.match_token(&Token::Comma) {
+                                if self.check(&Token::RBrace) {
+                                    break;
+                                }
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    let end_span = self.consume(&Token::RBrace, "'}' after struct literal fields")?;
+                    let span = token_spanned.span.merge(&end_span);
+                    Ok(Expr::StructLiteral {
+                        name,
+                        fields,
+                        span,
+                    })
                 } else {
                     Ok(Expr::Ident(name, token_spanned.span))
                 }
@@ -168,6 +238,26 @@ impl<'a> Parser<'a> {
                 span: token_spanned.span,
             }),
         }
+    }
+
+    fn is_struct_literal_start(&self) -> bool {
+        if !self.check(&Token::LBrace) {
+            return false;
+        }
+        if self.cursor + 1 >= self.tokens.len() {
+            return false;
+        }
+        let next_tok = &self.tokens[self.cursor + 1].token;
+        if matches!(next_tok, Token::RBrace) {
+            return true;
+        }
+        if matches!(next_tok, Token::Ident(_))
+            && self.cursor + 2 < self.tokens.len()
+            && self.tokens[self.cursor + 2].token == Token::Colon
+        {
+            return true;
+        }
+        false
     }
 }
 

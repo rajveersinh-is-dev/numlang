@@ -3,6 +3,7 @@ use crate::span::Span;
 use crate::typecheck::symtab::{FunctionSig, ScopeEnvironment, Symbol};
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedParam, TypedProgram, TypedStmt,
+    TypedStructDef,
 };
 use crate::typecheck::types::Type;
 use thiserror::Error;
@@ -118,6 +119,26 @@ pub enum TypeError {
 
     #[error("'continue' may only be used inside a loop")]
     ContinueOutsideLoop { span: Span },
+
+    #[error("Struct '{name}' has no field '{field}'")]
+    NoSuchField {
+        name: String,
+        field: String,
+        span: Span,
+    },
+
+    #[error("Missing field '{field}' in struct '{name}' initialization")]
+    MissingField {
+        name: String,
+        field: String,
+        span: Span,
+    },
+
+    #[error("Cannot access field on non-struct type '{found}'")]
+    CannotAccessFieldNonStruct {
+        found: Type,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -141,17 +162,32 @@ impl TypeError {
             TypeError::ArrayElementMismatch { span, .. } => *span,
             TypeError::BreakOutsideLoop { span } => *span,
             TypeError::ContinueOutsideLoop { span } => *span,
+            TypeError::NoSuchField { span, .. } => *span,
+            TypeError::MissingField { span, .. } => *span,
+            TypeError::CannotAccessFieldNonStruct { span, .. } => *span,
         }
     }
 }
 
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub struct StructInfo {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+    pub field_indices: HashMap<String, usize>,
+    pub field_offsets: HashMap<String, u32>,
+    pub total_size: u32,
+    pub align: u32,
+    pub span: Span,
+}
+
 pub struct TypeChecker {
     env: ScopeEnvironment,
     current_fn_return_ty: Type,
     active_loop_bounds: HashMap<String, i64>,
     loop_depth: usize,
+    pub struct_infos: HashMap<String, StructInfo>,
 }
 
 impl Default for TypeChecker {
@@ -167,27 +203,157 @@ impl TypeChecker {
             current_fn_return_ty: Type::Void,
             active_loop_bounds: HashMap::new(),
             loop_depth: 0,
+            struct_infos: HashMap::new(),
         }
     }
 
+    pub fn resolve_type_in_struct(
+        &self,
+        ty_str: &str,
+        known_structs: &[crate::ast::StructDef],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let ty = Type::from_name(ty_str).ok_or_else(|| TypeError::UnknownType {
+            name: ty_str.to_string(),
+            span,
+        })?;
+        match &ty {
+            Type::Struct(sname) => {
+                if !known_structs.iter().any(|st| &st.name == sname) {
+                    return Err(TypeError::UnknownType {
+                        name: sname.clone(),
+                        span,
+                    });
+                }
+            }
+            Type::Array(elem, _) => {
+                if let Type::Struct(sname) = &**elem {
+                    if !known_structs.iter().any(|st| &st.name == sname) {
+                        return Err(TypeError::UnknownType {
+                            name: sname.clone(),
+                            span,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(ty)
+    }
+
+    pub fn resolve_type(&self, ty_str: &str, span: Span) -> Result<Type, TypeError> {
+        let ty = Type::from_name(ty_str).ok_or_else(|| TypeError::UnknownType {
+            name: ty_str.to_string(),
+            span,
+        })?;
+        match &ty {
+            Type::Struct(sname) => {
+                if !self.struct_infos.contains_key(sname) {
+                    return Err(TypeError::UnknownType {
+                        name: sname.clone(),
+                        span,
+                    });
+                }
+            }
+            Type::Array(elem, _) => {
+                if let Type::Struct(sname) = &**elem {
+                    if !self.struct_infos.contains_key(sname) {
+                        return Err(TypeError::UnknownType {
+                            name: sname.clone(),
+                            span,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(ty)
+    }
+
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, TypeError> {
+        // Pass 0: Collect and validate all struct definitions
+        let mut typed_structs = Vec::new();
+        for s in &program.structs {
+            if self.struct_infos.contains_key(&s.name) {
+                return Err(TypeError::DuplicateDeclaration {
+                    name: s.name.clone(),
+                    span: s.span,
+                });
+            }
+        }
+
+        for s in &program.structs {
+            let mut fields = Vec::new();
+            let mut field_indices = HashMap::new();
+            let mut field_offsets = HashMap::new();
+            let mut current_offset: u32 = 0;
+            let mut max_align: u32 = 1;
+
+            for (idx, (f_name, f_ty_str)) in s.fields.iter().enumerate() {
+                if field_indices.contains_key(f_name) {
+                    return Err(TypeError::DuplicateDeclaration {
+                        name: f_name.clone(),
+                        span: s.span,
+                    });
+                }
+                field_indices.insert(f_name.clone(), idx);
+
+                let f_ty = self.resolve_type_in_struct(f_ty_str, &program.structs, s.span)?;
+
+                let f_size = match &f_ty {
+                    Type::Struct(dep) => {
+                        self.struct_infos.get(dep).map_or(8, |i| i.total_size)
+                    }
+                    Type::Array(elem, len) => {
+                        let elem_size = match &**elem {
+                            Type::Struct(dep) => {
+                                self.struct_infos.get(dep).map_or(8, |i| i.total_size as usize)
+                            }
+                            _ => elem.size_bytes(),
+                        };
+                        (elem_size * len) as u32
+                    }
+                    _ => f_ty.size_bytes() as u32,
+                };
+                let align = f_size.clamp(1, 8);
+                max_align = max_align.max(align);
+                current_offset = (current_offset + align - 1) & !(align - 1);
+                field_offsets.insert(f_name.clone(), current_offset);
+                current_offset += f_size;
+                fields.push((f_name.clone(), f_ty));
+            }
+
+            let total_size = (current_offset + max_align - 1) & !(max_align - 1);
+            let total_size = total_size.max(1);
+
+            let info = StructInfo {
+                name: s.name.clone(),
+                fields: fields.clone(),
+                field_indices,
+                field_offsets,
+                total_size,
+                align: max_align,
+                span: s.span,
+            };
+            self.struct_infos.insert(s.name.clone(), info);
+            typed_structs.push(TypedStructDef {
+                name: s.name.clone(),
+                fields,
+                span: s.span,
+            });
+        }
+
         // Pass 1: Collect and validate all function signatures
         for func in &program.functions {
             let return_ty = match &func.return_ty {
-                Some(s) => Type::from_name(s).ok_or_else(|| TypeError::UnknownType {
-                    name: s.clone(),
-                    span: func.span,
-                })?,
+                Some(s) => self.resolve_type(s, func.span)?,
                 None => Type::Void,
             };
 
             let mut param_names = Vec::new();
             let mut param_types = Vec::new();
             for param in &func.params {
-                let pty = Type::from_name(&param.ty).ok_or_else(|| TypeError::UnknownType {
-                    name: param.ty.clone(),
-                    span: param.span,
-                })?;
+                let pty = self.resolve_type(&param.ty, param.span)?;
                 param_names.push(param.name.clone());
                 param_types.push(pty);
             }
@@ -216,6 +382,7 @@ impl TypeChecker {
 
         Ok(TypedProgram {
             functions: typed_functions,
+            structs: typed_structs,
         })
     }
 
@@ -280,11 +447,7 @@ impl TypeChecker {
                 span,
             } => {
                 let declared_ty = if let Some(t_str) = ty {
-                    let parsed = Type::from_name(t_str).ok_or_else(|| TypeError::UnknownType {
-                        name: t_str.clone(),
-                        span: *span,
-                    })?;
-                    Some(parsed)
+                    Some(self.resolve_type(t_str, *span)?)
                 } else {
                     None
                 };
@@ -449,6 +612,67 @@ impl TypeChecker {
                     index: typed_index,
                     value: typed_value,
                     is_safe,
+                    span: *span,
+                })
+            }
+
+            Stmt::FieldAssign {
+                target,
+                field,
+                value,
+                span,
+            } => {
+                let sym = match self.env.lookup_variable(target) {
+                    Some(s) => s.clone(),
+                    None => {
+                        return Err(TypeError::UndeclaredVariable {
+                            name: target.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                if !sym.is_mutable {
+                    return Err(TypeError::CannotMutateImmutable {
+                        name: target.clone(),
+                        span: *span,
+                    });
+                }
+
+                let sname = match &sym.ty {
+                    Type::Struct(s) => s.clone(),
+                    _ => {
+                        return Err(TypeError::CannotAccessFieldNonStruct {
+                            found: sym.ty.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                let info = self.struct_infos.get(&sname).cloned().ok_or_else(|| TypeError::UnknownType {
+                    name: sname.clone(),
+                    span: *span,
+                })?;
+
+                let (_, f_ty) = info.fields.iter().find(|(n, _)| n == field).ok_or_else(|| TypeError::NoSuchField {
+                    name: sname.clone(),
+                    field: field.clone(),
+                    span: *span,
+                })?;
+
+                let typed_val = self.check_expr(value, Some(f_ty.clone()))?;
+                if typed_val.ty() != *f_ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: f_ty.clone(),
+                        found: typed_val.ty(),
+                        span: typed_val.span(),
+                    });
+                }
+
+                Ok(TypedStmt::FieldAssign {
+                    target: target.clone(),
+                    field: field.clone(),
+                    value: typed_val,
                     span: *span,
                 })
             }
@@ -2672,6 +2896,106 @@ impl TypeChecker {
                     callee: callee.clone(),
                     args: typed_args,
                     ty: sig.return_ty,
+                    span: *span,
+                })
+            }
+
+            Expr::StructLiteral { name, fields, span } => {
+                let info = match self.struct_infos.get(name) {
+                    Some(inf) => inf.clone(),
+                    None => {
+                        return Err(TypeError::UnknownType {
+                            name: name.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                let mut provided_fields = HashMap::new();
+                for (f_name, f_expr) in fields {
+                    if provided_fields.contains_key(f_name) {
+                        return Err(TypeError::DuplicateDeclaration {
+                            name: f_name.clone(),
+                            span: f_expr.span(),
+                        });
+                    }
+                    provided_fields.insert(f_name.clone(), f_expr);
+                }
+
+                for (decl_name, _) in &info.fields {
+                    if !provided_fields.contains_key(decl_name) {
+                        return Err(TypeError::MissingField {
+                            name: name.clone(),
+                            field: decl_name.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+
+                for (prov_name, prov_expr) in &provided_fields {
+                    if !info.field_indices.contains_key(prov_name) {
+                        return Err(TypeError::NoSuchField {
+                            name: name.clone(),
+                            field: prov_name.clone(),
+                            span: prov_expr.span(),
+                        });
+                    }
+                }
+
+                let mut typed_fields = Vec::new();
+                for (decl_name, decl_ty) in &info.fields {
+                    let f_expr = provided_fields.get(decl_name).unwrap();
+                    let typed_expr = self.check_expr(f_expr, Some(decl_ty.clone()))?;
+                    if typed_expr.ty() != *decl_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: decl_ty.clone(),
+                            found: typed_expr.ty(),
+                            span: typed_expr.span(),
+                        });
+                    }
+                    typed_fields.push((decl_name.clone(), typed_expr));
+                }
+
+                Ok(TypedExpr::StructLiteral {
+                    name: name.clone(),
+                    fields: typed_fields,
+                    ty: Type::Struct(name.clone()),
+                    span: *span,
+                })
+            }
+
+            Expr::FieldAccess { target, field, span } => {
+                let typed_target = self.check_expr(target, None)?;
+                let sname = match typed_target.ty() {
+                    Type::Struct(s) => s,
+                    other => {
+                        return Err(TypeError::CannotAccessFieldNonStruct {
+                            found: other,
+                            span: *span,
+                        });
+                    }
+                };
+
+                let info = match self.struct_infos.get(&sname) {
+                    Some(inf) => inf.clone(),
+                    None => {
+                        return Err(TypeError::UnknownType {
+                            name: sname.clone(),
+                            span: *span,
+                        });
+                    }
+                };
+
+                let (_, f_ty) = info.fields.iter().find(|(n, _)| n == field).ok_or_else(|| TypeError::NoSuchField {
+                    name: sname.clone(),
+                    field: field.clone(),
+                    span: *span,
+                })?;
+
+                Ok(TypedExpr::FieldAccess {
+                    target: Box::new(typed_target),
+                    field: field.clone(),
+                    ty: f_ty.clone(),
                     span: *span,
                 })
             }
