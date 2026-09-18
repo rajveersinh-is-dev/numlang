@@ -391,6 +391,7 @@ impl IrLowerer {
                 TypedLiteral::Int(n, _) => Operand::IntConst(*n, ty.clone()),
                 TypedLiteral::Float(f, _) => Operand::FloatConst(*f, ty.clone()),
                 TypedLiteral::Bool(b) => Operand::BoolConst(*b),
+                TypedLiteral::Str(_) => Operand::IntConst(0, ty.clone()),
             },
 
             TypedExpr::Ident { name, .. } => {

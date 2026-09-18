@@ -751,6 +751,11 @@ impl TypeChecker {
                     ty: Type::Bool,
                     span: *span,
                 }),
+                Literal::Str(ref s) => Ok(TypedExpr::Literal {
+                    lit: TypedLiteral::Str(s.clone()),
+                    ty: Type::Str,
+                    span: *span,
+                }),
             },
 
             Expr::Ident(name, span) => {
@@ -1103,6 +1108,39 @@ impl TypeChecker {
             Expr::Call { callee, args, span } => {
                 // Built-in intrinsics
                 match callee.as_str() {
+                    "print" | "println" => {
+                        if args.len() != 1 {
+                            if callee == "println" && args.is_empty() {
+                                return Ok(TypedExpr::Call {
+                                    callee: callee.clone(),
+                                    args: vec![],
+                                    ty: Type::Void,
+                                    span: *span,
+                                });
+                            }
+                            return Err(TypeError::ArityMismatch {
+                                name: callee.clone(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], None)?;
+                        let arg_ty = typed_arg.ty();
+                        if !arg_ty.is_numeric() && arg_ty != Type::Bool && arg_ty != Type::Str {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: arg_ty,
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: callee.clone(),
+                            args: vec![typed_arg],
+                            ty: Type::Void,
+                            span: *span,
+                        });
+                    }
                     "sqrt" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {

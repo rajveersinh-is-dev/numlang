@@ -7,6 +7,7 @@ pub enum TypedLiteral {
     Int(i64, Type),
     Float(f64, Type),
     Bool(bool),
+    Str(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
