@@ -205,6 +205,12 @@ fn collect_calls_in_expr(
         TypedExpr::FieldAccess { target, .. } => {
             collect_calls_in_expr(target, function_names, calls);
         }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            collect_calls_in_expr(scrutinee, function_names, calls);
+            for arm in arms {
+                collect_calls_in_expr(&arm.body, function_names, calls);
+            }
+        }
         TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => {}
     }
 }
@@ -326,6 +332,12 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
         }
         TypedExpr::FieldAccess { target, .. } => {
             replace_in_expr(target, replacements);
+        }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            replace_in_expr(scrutinee, replacements);
+            for arm in arms {
+                replace_in_expr(&mut arm.body, replacements);
+            }
         }
         TypedExpr::Literal { .. } => {}
     }

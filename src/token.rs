@@ -36,6 +36,8 @@ pub enum Token {
     False,
     #[token("struct")]
     Struct,
+    #[token("match")]
+    Match,
 
     // Mathematical & Logical Operators
     #[token("+")]
@@ -98,6 +100,10 @@ pub enum Token {
     Semi,
     #[token("->")]
     Arrow,
+    #[token("=>")]
+    FatArrow,
+    #[token("_", priority = 3)]
+    Underscore,
     #[token("..=")]
     DotDotEq,
     #[token("..")]

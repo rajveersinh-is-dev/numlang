@@ -519,8 +519,8 @@ impl IrLowerer {
                 }
             }
 
-            TypedExpr::StructLiteral { .. } | TypedExpr::FieldAccess { .. } => {
-                todo!("struct expressions in ir lowering")
+            TypedExpr::StructLiteral { .. } | TypedExpr::FieldAccess { .. } | TypedExpr::Match { .. } => {
+                todo!("struct and match expressions in ir lowering")
             }
         }
     }

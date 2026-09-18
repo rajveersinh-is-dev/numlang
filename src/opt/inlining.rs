@@ -1113,6 +1113,24 @@ fn rename_expr(expr: &TypedExpr, map: &HashMap<String, String>) -> TypedExpr {
             ty: ty.clone(),
             span: *span,
         },
+        TypedExpr::Match {
+            scrutinee,
+            arms,
+            ty,
+            span,
+        } => TypedExpr::Match {
+            scrutinee: Box::new(rename_expr(scrutinee, map)),
+            arms: arms
+                .iter()
+                .map(|arm| crate::typecheck::typed_ast::TypedMatchArm {
+                    patterns: arm.patterns.clone(),
+                    body: rename_expr(&arm.body, map),
+                    span: arm.span,
+                })
+                .collect(),
+            ty: ty.clone(),
+            span: *span,
+        },
         _ => expr.clone(),
     }
 }

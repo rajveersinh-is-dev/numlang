@@ -186,6 +186,16 @@ impl CompilerDiagnostic {
                 "not a struct".to_string(),
                 "Field access `.` requires a struct type".to_string(),
             ),
+            crate::typecheck::TypeError::NonExhaustiveMatch { .. } => (
+                "Non-exhaustive pattern match".to_string(),
+                "missing wildcard pattern `_` or uncovered cases".to_string(),
+                "Add a wildcard arm `_ => ...` to cover all remaining cases".to_string(),
+            ),
+            crate::typecheck::TypeError::EmptyMatch { .. } => (
+                "Match expression cannot be empty".to_string(),
+                "empty match block".to_string(),
+                "Provide at least one match arm in the match expression".to_string(),
+            ),
         };
 
         CompilerDiagnostic::TypeError {
