@@ -196,6 +196,30 @@ pub fn drive_stmt(
         TypedStmt::While { condition, body, .. } => {
             drive_while(condition, body, program, env)
         }
+
+        TypedStmt::Continue(..) => DriveResult::Continue,
+
+        TypedStmt::For { var, lo, hi, inclusive, body, .. } => {
+            let lo_val = drive_expr(lo, program, env);
+            let hi_val = drive_expr(hi, program, env);
+            if let (Some(lo_int), Some(hi_int)) = (lo_val.as_int(), hi_val.as_int()) {
+                let limit = if *inclusive { hi_int + 1 } else { hi_int };
+                let mut cur = lo_int;
+                while cur < limit {
+                    env.set(var.clone(), Value::Int(cur));
+                    match drive_block(body, program, env) {
+                        DriveResult::Returned(v) => return DriveResult::Returned(v),
+                        DriveResult::Break => break,
+                        DriveResult::Continue => {}
+                    }
+                    cur += 1;
+                }
+                DriveResult::Continue
+            } else {
+                env.mark_symbolic();
+                DriveResult::Continue
+            }
+        }
     }
 }
 

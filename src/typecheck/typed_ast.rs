@@ -103,6 +103,15 @@ pub enum TypedStmt {
     },
     Return(Option<TypedExpr>, Span),
     Break(Span),
+    Continue(Span),
+    For {
+        var: String,
+        lo: TypedExpr,
+        hi: TypedExpr,
+        inclusive: bool,
+        body: TypedBlock,
+        span: Span,
+    },
     Expr(TypedExpr),
     If {
         condition: TypedExpr,
@@ -125,6 +134,8 @@ impl TypedStmt {
             TypedStmt::IndexAssign { span, .. } => *span,
             TypedStmt::Return(_, span) => *span,
             TypedStmt::Break(span) => *span,
+            TypedStmt::Continue(span) => *span,
+            TypedStmt::For { span, .. } => *span,
             TypedStmt::Expr(e) => e.span(),
             TypedStmt::If { span, .. } => *span,
             TypedStmt::While { span, .. } => *span,
@@ -157,4 +168,117 @@ pub struct TypedFunction {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TypedProgram {
     pub functions: Vec<TypedFunction>,
+}
+
+impl TypedProgram {
+    pub fn desugar_for_loops(&mut self) {
+        for func in &mut self.functions {
+            func.body.desugar_for_loops();
+        }
+    }
+}
+
+impl TypedBlock {
+    pub fn desugar_for_loops(&mut self) {
+        let mut i = 0;
+        while i < self.stmts.len() {
+            match &mut self.stmts[i] {
+                TypedStmt::If { then_branch, else_branch, .. } => {
+                    then_branch.desugar_for_loops();
+                    if let Some(eb) = else_branch {
+                        eb.desugar_for_loops();
+                    }
+                    i += 1;
+                }
+                TypedStmt::While { body, .. } => {
+                    body.desugar_for_loops();
+                    i += 1;
+                }
+                TypedStmt::For { .. } => {
+                    let stmt = self.stmts.remove(i);
+                    if let TypedStmt::For { var, lo, hi, inclusive, mut body, span } = stmt {
+                        body.desugar_for_loops();
+                        let var_ty = lo.ty();
+
+                        patch_continue_in_body(&mut body.stmts, &var, &var_ty, span);
+
+                        body.stmts.push(TypedStmt::Assign {
+                            name: var.clone(),
+                            value: TypedExpr::Binary {
+                                op: BinaryOp::Add,
+                                left: Box::new(TypedExpr::Ident { name: var.clone(), ty: var_ty.clone(), span }),
+                                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, var_ty.clone()), ty: var_ty.clone(), span }),
+                                ty: var_ty.clone(),
+                                span,
+                            },
+                            span,
+                        });
+
+                        let let_stmt = TypedStmt::Let {
+                            name: var.clone(),
+                            is_mutable: true,
+                            ty: var_ty.clone(),
+                            value: lo,
+                            span,
+                        };
+
+                        let cond_op = if inclusive { BinaryOp::Le } else { BinaryOp::Lt };
+                        let cond = TypedExpr::Binary {
+                            op: cond_op,
+                            left: Box::new(TypedExpr::Ident { name: var, ty: var_ty, span }),
+                            right: Box::new(hi),
+                            ty: Type::Bool,
+                            span,
+                        };
+
+                        let while_stmt = TypedStmt::While {
+                            condition: cond,
+                            body,
+                            span,
+                        };
+
+                        self.stmts.insert(i, while_stmt);
+                        self.stmts.insert(i, let_stmt);
+                        i += 2;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+    }
+}
+
+fn patch_continue_in_body(stmts: &mut Vec<TypedStmt>, var: &str, var_ty: &Type, span: Span) {
+    let mut i = 0;
+    while i < stmts.len() {
+        match &mut stmts[i] {
+            TypedStmt::Continue(c_span) => {
+                let inc_stmt = TypedStmt::Assign {
+                    name: var.to_string(),
+                    value: TypedExpr::Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(TypedExpr::Ident { name: var.to_string(), ty: var_ty.clone(), span }),
+                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, var_ty.clone()), ty: var_ty.clone(), span }),
+                        ty: var_ty.clone(),
+                        span,
+                    },
+                    span: *c_span,
+                };
+                stmts.insert(i, inc_stmt);
+                i += 2;
+            }
+            TypedStmt::If { then_branch, else_branch, .. } => {
+                patch_continue_in_body(&mut then_branch.stmts, var, var_ty, span);
+                if let Some(eb) = else_branch {
+                    patch_continue_in_body(&mut eb.stmts, var, var_ty, span);
+                }
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
 }

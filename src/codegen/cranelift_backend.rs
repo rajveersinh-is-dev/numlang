@@ -224,7 +224,12 @@ fn collect_dynamic_arrays_in_stmt(stmt: &TypedStmt, dynamic: &mut HashSet<String
                 collect_dynamic_arrays_in_expr(expr, dynamic);
             }
         }
-        TypedStmt::Break(_) => {}
+        TypedStmt::Break(_) | TypedStmt::Continue(_) => {}
+        TypedStmt::For { lo, hi, body, .. } => {
+            collect_dynamic_arrays_in_expr(lo, dynamic);
+            collect_dynamic_arrays_in_expr(hi, dynamic);
+            collect_dynamic_arrays_in_block(body, dynamic);
+        }
     }
 }
 
@@ -1709,6 +1714,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             write_file_id: self.write_file_id,
             variables,
             loop_exit_blocks: Vec::new(),
+            loop_continue_blocks: Vec::new(),
             dynamically_indexed_arrays,
             known_non_negative_vars,
             known_u32_vars,
@@ -1829,6 +1835,7 @@ struct FunctionTranslationState<'a> {
     write_file_id: FuncId,
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
+    loop_continue_blocks: Vec<cranelift_codegen::ir::Block>,
     dynamically_indexed_arrays: HashSet<String>,
     known_non_negative_vars: HashSet<String>,
     known_u32_vars: HashSet<String>,
@@ -2057,7 +2064,7 @@ impl<'a> FunctionTranslationState<'a> {
         let mut has_increment = false;
         for s in &body.stmts {
             match s {
-                TypedStmt::While { .. } | TypedStmt::Return(..) | TypedStmt::Break(..) | TypedStmt::If { .. } => return false,
+                TypedStmt::While { .. } | TypedStmt::For { .. } | TypedStmt::Return(..) | TypedStmt::Break(..) | TypedStmt::Continue(..) | TypedStmt::If { .. } => return false,
                 TypedStmt::Assign { name, value, .. } if name == var_name => {
                     match value {
                         TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
@@ -4476,6 +4483,15 @@ impl<'a> FunctionTranslationState<'a> {
                 Ok(true)
             }
 
+            TypedStmt::Continue(..) => {
+                let cont_block = *self
+                    .loop_continue_blocks
+                    .last()
+                    .expect("type checker guarantees continue is inside a loop");
+                builder.ins().jump(cont_block, &[]);
+                Ok(true)
+            }
+
             TypedStmt::Expr(expr) => {
                 let _ = self.translate_expr(expr, builder)?;
                 Ok(false)
@@ -4675,6 +4691,7 @@ impl<'a> FunctionTranslationState<'a> {
 
                 // Rotated while loop: single conditional branch at the bottom of the body
                 let body_block = builder.create_block();
+                let latch_block = builder.create_block();
                 let exit_block = builder.create_block();
 
                 if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
@@ -4695,21 +4712,92 @@ impl<'a> FunctionTranslationState<'a> {
 
                 builder.switch_to_block(body_block);
                 self.loop_exit_blocks.push(exit_block);
+                self.loop_continue_blocks.push(latch_block);
                 let body_term = self.translate_block(body, builder)?;
+                self.loop_continue_blocks.pop();
                 self.loop_exit_blocks.pop();
                 if let Some(ref r_name) = added_nonneg {
                     self.known_non_negative_vars.remove(r_name);
                 }
                 if !body_term {
-                    if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
-                        builder.ins().jump(body_block, &[]);
-                    } else {
-                        let cond_repeat = self.translate_expr(condition, builder)?;
-                        builder
-                            .ins()
-                            .brif(cond_repeat, body_block, &[], exit_block, &[]);
-                    }
+                    builder.ins().jump(latch_block, &[]);
                 }
+
+                builder.switch_to_block(latch_block);
+                if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                    builder.ins().jump(body_block, &[]);
+                } else {
+                    let cond_repeat = self.translate_expr(condition, builder)?;
+                    builder
+                        .ins()
+                        .brif(cond_repeat, body_block, &[], exit_block, &[]);
+                }
+                builder.seal_block(latch_block);
+                builder.seal_block(body_block);
+
+                builder.switch_to_block(exit_block);
+                builder.seal_block(exit_block);
+                self.array_load_cache.clear();
+                Ok(false)
+            }
+
+            TypedStmt::For {
+                var,
+                lo,
+                hi,
+                inclusive,
+                body,
+                ..
+            } => {
+                self.array_load_cache.clear();
+
+                let lo_val = self.translate_expr(lo, builder)?;
+                let lo_ty = lo.ty();
+                let clif_ty = type_to_clif(lo_ty);
+
+                let var_id = match self.variables.get(var) {
+                    Some(Storage::Scalar(v)) => *v,
+                    _ => {
+                        let v = builder.declare_var(clif_ty);
+                        self.variables.insert(var.clone(), Storage::Scalar(v));
+                        v
+                    }
+                };
+                builder.def_var(var_id, lo_val);
+
+                let hi_val = self.translate_expr(hi, builder)?;
+                let cond_cc = if *inclusive {
+                    IntCC::SignedLessThanOrEqual
+                } else {
+                    IntCC::SignedLessThan
+                };
+                let cond_init = builder.ins().icmp(cond_cc, lo_val, hi_val);
+
+                let body_block = builder.create_block();
+                let latch_block = builder.create_block();
+                let exit_block = builder.create_block();
+
+                builder.ins().brif(cond_init, body_block, &[], exit_block, &[]);
+
+                builder.switch_to_block(body_block);
+                self.loop_exit_blocks.push(exit_block);
+                self.loop_continue_blocks.push(latch_block);
+                let body_term = self.translate_block(body, builder)?;
+                self.loop_continue_blocks.pop();
+                self.loop_exit_blocks.pop();
+                if !body_term {
+                    builder.ins().jump(latch_block, &[]);
+                }
+
+                builder.switch_to_block(latch_block);
+                let cur_val = builder.use_var(var_id);
+                let next_val = builder.ins().iadd_imm_s(cur_val, 1);
+                builder.def_var(var_id, next_val);
+
+                let hi_val_repeat = self.translate_expr(hi, builder)?;
+                let cond_repeat = builder.ins().icmp(cond_cc, next_val, hi_val_repeat);
+                builder.ins().brif(cond_repeat, body_block, &[], exit_block, &[]);
+                builder.seal_block(latch_block);
                 builder.seal_block(body_block);
 
                 builder.switch_to_block(exit_block);
@@ -6139,7 +6227,9 @@ pub fn compile_to_obj_with_opt(program: &TypedProgram, should_optimize: bool) ->
         crate::opt::optimize_program(&mut optimized);
         compiler.compile_program(&optimized)
     } else {
-        compiler.compile_program(program)
+        let mut unopt = program.clone();
+        unopt.desugar_for_loops();
+        compiler.compile_program(&unopt)
     }
 }
 

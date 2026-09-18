@@ -10,6 +10,9 @@ pub mod while_unroll;
 use crate::typecheck::typed_ast::TypedProgram;
 
 pub fn optimize_program(program: &mut TypedProgram) {
+    // Desugar for loops into canonical while loops before optimization
+    program.desugar_for_loops();
+
     // Fixpoint iteration for canonicalization, constant propagation, and inlining
     const MAX_FIXPOINT_ITERS: usize = 4;
     for _ in 0..MAX_FIXPOINT_ITERS {

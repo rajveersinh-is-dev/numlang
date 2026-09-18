@@ -168,6 +168,69 @@ impl<'a> Parser<'a> {
             let break_span = self.advance().unwrap().span;
             let semi_span = self.consume(&Token::Semi, "';' after break statement")?;
             Ok(Stmt::Break(break_span.merge(&semi_span)))
+        } else if self.check(&Token::Continue) {
+            let cont_span = self.advance().unwrap().span;
+            let semi_span = self.consume(&Token::Semi, "';' after continue statement")?;
+            Ok(Stmt::Continue(cont_span.merge(&semi_span)))
+        } else if self.check(&Token::Loop) {
+            let loop_span = self.advance().unwrap().span;
+            let body = self.parse_block()?;
+            let span = loop_span.merge(&body.span);
+            Ok(Stmt::Loop { body, span })
+        } else if self.check(&Token::For) {
+            let for_span = self.advance().unwrap().span;
+            let (var, _) = match self.peek_token().cloned() {
+                Some(t) => match t.token {
+                    Token::Ident(id) => {
+                        self.advance();
+                        (id, t.span)
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: t.token,
+                            expected: "loop variable name".to_string(),
+                            span: t.span,
+                        });
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "loop variable name".to_string(),
+                        span: for_span,
+                    });
+                }
+            };
+            self.consume(&Token::In, "'in' after loop variable")?;
+            let lo = self.parse_expr(0)?;
+            let inclusive = if self.match_token(&Token::DotDotEq) {
+                true
+            } else if self.match_token(&Token::DotDot) {
+                false
+            } else {
+                let tok = self.peek_token().cloned();
+                return Err(match tok {
+                    Some(t) => ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "'..' or '..=' in for range".to_string(),
+                        span: t.span,
+                    },
+                    None => ParseError::UnexpectedEof {
+                        expected: "'..' or '..=' in for range".to_string(),
+                        span: lo.span(),
+                    },
+                });
+            };
+            let hi = self.parse_expr(0)?;
+            let body = self.parse_block()?;
+            let span = for_span.merge(&body.span);
+            Ok(Stmt::For {
+                var,
+                lo,
+                hi,
+                inclusive,
+                body,
+                span,
+            })
         } else if self.check(&Token::If) {
             let if_span = self.advance().unwrap().span;
             let condition = self.parse_expr(0)?;

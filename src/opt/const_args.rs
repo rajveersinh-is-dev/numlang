@@ -138,7 +138,7 @@ fn collect_calls_in_block(
             TypedStmt::Return(Some(value), _) => {
                 collect_calls_in_expr(value, function_names, calls)
             }
-            TypedStmt::Return(None, _) | TypedStmt::Break(_) => {}
+            TypedStmt::Return(None, _) | TypedStmt::Break(_) | TypedStmt::Continue(_) => {}
             TypedStmt::If {
                 condition,
                 then_branch,
@@ -155,6 +155,11 @@ fn collect_calls_in_block(
                 condition, body, ..
             } => {
                 collect_calls_in_expr(condition, function_names, calls);
+                collect_calls_in_block(body, function_names, calls);
+            }
+            TypedStmt::For { lo, hi, body, .. } => {
+                collect_calls_in_expr(lo, function_names, calls);
+                collect_calls_in_expr(hi, function_names, calls);
                 collect_calls_in_block(body, function_names, calls);
             }
         }
@@ -224,7 +229,7 @@ fn block_mutates_any(block: &TypedBlock, names: &HashSet<&str>) -> bool {
                     .as_ref()
                     .is_some_and(|branch| block_mutates_any(branch, names))
         }
-        TypedStmt::While { body, .. } => block_mutates_any(body, names),
+        TypedStmt::While { body, .. } | TypedStmt::For { body, .. } => block_mutates_any(body, names),
         _ => false,
     })
 }
@@ -242,7 +247,7 @@ fn replace_in_block(block: &mut TypedBlock, replacements: &HashMap<String, Typed
                 replace_in_expr(value, replacements);
             }
             TypedStmt::Return(Some(value), _) => replace_in_expr(value, replacements),
-            TypedStmt::Return(None, _) | TypedStmt::Break(_) => {}
+            TypedStmt::Return(None, _) | TypedStmt::Break(_) | TypedStmt::Continue(_) => {}
             TypedStmt::If {
                 condition,
                 then_branch,
@@ -259,6 +264,13 @@ fn replace_in_block(block: &mut TypedBlock, replacements: &HashMap<String, Typed
                 condition, body, ..
             } => {
                 replace_in_expr(condition, replacements);
+                replace_in_block(body, replacements);
+            }
+            TypedStmt::For {
+                lo, hi, body, ..
+            } => {
+                replace_in_expr(lo, replacements);
+                replace_in_expr(hi, replacements);
                 replace_in_block(body, replacements);
             }
         }

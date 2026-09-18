@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::ir::{BasicBlock, BlockId, Instruction, IrFunction, IrOp, IrParam, IrProgram, Operand, ValueId};
 use crate::typecheck::{
-    TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
+    Type, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
 };
 
 pub struct IrLowerer {
@@ -12,6 +12,7 @@ pub struct IrLowerer {
     current_block: BlockId,
     scopes: Vec<HashMap<String, ValueId>>,
     loop_exit_blocks: Vec<BlockId>,
+    loop_continue_blocks: Vec<BlockId>,
 }
 
 impl Default for IrLowerer {
@@ -29,6 +30,7 @@ impl IrLowerer {
             current_block: BlockId(0),
             scopes: vec![HashMap::new()],
             loop_exit_blocks: Vec::new(),
+            loop_continue_blocks: Vec::new(),
         }
     }
 
@@ -115,6 +117,7 @@ impl IrLowerer {
         self.blocks.clear();
         self.scopes = vec![HashMap::new()];
         self.loop_exit_blocks.clear();
+        self.loop_continue_blocks.clear();
 
         let entry_bb = self.new_block();
         self.switch_to_block(entry_bb);
@@ -204,6 +207,14 @@ impl IrLowerer {
                 self.emit(Instruction::Branch { target: exit });
             }
 
+            TypedStmt::Continue(..) => {
+                let cont = *self
+                    .loop_continue_blocks
+                    .last()
+                    .expect("type checker guarantees continue is inside a loop");
+                self.emit(Instruction::Branch { target: cont });
+            }
+
             TypedStmt::Expr(expr) => {
                 self.lower_expr(expr);
             }
@@ -282,14 +293,92 @@ impl IrLowerer {
                 self.switch_to_block(body_bb);
                 self.enter_scope();
                 self.loop_exit_blocks.push(exit_bb);
+                self.loop_continue_blocks.push(cond_bb);
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
+                self.loop_continue_blocks.pop();
                 self.loop_exit_blocks.pop();
                 self.exit_scope();
                 if !self.current_block_terminated() {
                     self.emit(Instruction::Branch { target: cond_bb });
                 }
+
+                self.switch_to_block(exit_bb);
+            }
+
+            TypedStmt::For {
+                var,
+                lo,
+                hi,
+                inclusive,
+                body,
+                ..
+            } => {
+                let lo_ty = lo.ty();
+                let lo_op = self.lower_expr(lo);
+                let var_val = self.new_value();
+                self.emit(Instruction::Assign {
+                    dest: var_val,
+                    operand: lo_op,
+                    ty: lo_ty.clone(),
+                });
+                self.set_variable(var, var_val);
+
+                let cond_bb = self.new_block();
+                let body_bb = self.new_block();
+                let step_bb = self.new_block();
+                let exit_bb = self.new_block();
+
+                self.emit(Instruction::Branch { target: cond_bb });
+
+                // Condition block
+                self.switch_to_block(cond_bb);
+                let cur_var_val = self.get_variable(var).unwrap_or(var_val);
+                let hi_op = self.lower_expr(hi);
+                let cond_res = self.new_value();
+                let op = if *inclusive { IrOp::Le } else { IrOp::Lt };
+                self.emit(Instruction::Binary {
+                    dest: cond_res,
+                    op,
+                    ty: Type::Bool,
+                    left: Operand::Value(cur_var_val),
+                    right: hi_op,
+                });
+                self.emit(Instruction::BranchIf {
+                    cond: Operand::Value(cond_res),
+                    then_block: body_bb,
+                    else_block: exit_bb,
+                });
+
+                // Body block
+                self.switch_to_block(body_bb);
+                self.enter_scope();
+                self.loop_exit_blocks.push(exit_bb);
+                self.loop_continue_blocks.push(step_bb);
+                for s in &body.stmts {
+                    self.lower_stmt(s);
+                }
+                self.loop_continue_blocks.pop();
+                self.loop_exit_blocks.pop();
+                self.exit_scope();
+                if !self.current_block_terminated() {
+                    self.emit(Instruction::Branch { target: step_bb });
+                }
+
+                // Step block
+                self.switch_to_block(step_bb);
+                let step_var_val = self.get_variable(var).unwrap_or(var_val);
+                let next_var_val = self.new_value();
+                self.emit(Instruction::Binary {
+                    dest: next_var_val,
+                    op: IrOp::Add,
+                    ty: lo_ty.clone(),
+                    left: Operand::Value(step_var_val),
+                    right: Operand::IntConst(1, lo_ty),
+                });
+                self.set_variable(var, next_var_val);
+                self.emit(Instruction::Branch { target: cond_bb });
 
                 self.switch_to_block(exit_bb);
             }
