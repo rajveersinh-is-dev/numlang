@@ -76,6 +76,24 @@ pub enum Expr {
         field: String,
         span: Span,
     },
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchPattern {
+    Literal(Literal),
+    Wildcard,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub patterns: Vec<MatchPattern>,
+    pub body: Expr,
+    pub span: Span,
 }
 
 impl Expr {
@@ -91,6 +109,7 @@ impl Expr {
             Expr::Index { span, .. } => *span,
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
+            Expr::Match { span, .. } => *span,
         }
     }
 }

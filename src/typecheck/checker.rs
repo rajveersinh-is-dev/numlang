@@ -1,9 +1,9 @@
-use crate::ast::{BinaryOp, Expr, Function, Literal, Program, Stmt, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Function, Literal, MatchPattern, Program, Stmt, UnaryOp};
 use crate::span::Span;
 use crate::typecheck::symtab::{FunctionSig, ScopeEnvironment, Symbol};
 use crate::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedParam, TypedProgram, TypedStmt,
-    TypedStructDef,
+    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchArm, TypedMatchPattern,
+    TypedParam, TypedProgram, TypedStmt, TypedStructDef,
 };
 use crate::typecheck::types::Type;
 use thiserror::Error;
@@ -139,6 +139,12 @@ pub enum TypeError {
         found: Type,
         span: Span,
     },
+
+    #[error("Non-exhaustive match: missing wildcard '_' or uncovered cases")]
+    NonExhaustiveMatch { span: Span },
+
+    #[error("Match expression must have at least one arm")]
+    EmptyMatch { span: Span },
 }
 
 impl TypeError {
@@ -165,6 +171,8 @@ impl TypeError {
             TypeError::NoSuchField { span, .. } => *span,
             TypeError::MissingField { span, .. } => *span,
             TypeError::CannotAccessFieldNonStruct { span, .. } => *span,
+            TypeError::NonExhaustiveMatch { span } => *span,
+            TypeError::EmptyMatch { span } => *span,
         }
     }
 }
@@ -2996,6 +3004,121 @@ impl TypeChecker {
                     target: Box::new(typed_target),
                     field: field.clone(),
                     ty: f_ty.clone(),
+                    span: *span,
+                })
+            }
+
+            Expr::Match { scrutinee, arms, span } => {
+                if arms.is_empty() {
+                    return Err(TypeError::EmptyMatch { span: *span });
+                }
+                let typed_scrutinee = self.check_expr(scrutinee, None)?;
+                let scrutinee_ty = typed_scrutinee.ty();
+
+                if !scrutinee_ty.is_integer() && scrutinee_ty != Type::Bool {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Type::I64,
+                        found: scrutinee_ty,
+                        span: typed_scrutinee.span(),
+                    });
+                }
+
+                let mut typed_arms = Vec::new();
+                let mut common_body_ty: Option<Type> = None;
+                let mut has_wildcard = false;
+                let mut seen_bool_true = false;
+                let mut seen_bool_false = false;
+
+                for arm in arms {
+                    let mut typed_patterns = Vec::new();
+                    for pat in &arm.patterns {
+                        match pat {
+                            MatchPattern::Wildcard => {
+                                has_wildcard = true;
+                                typed_patterns.push(TypedMatchPattern::Wildcard);
+                            }
+                            MatchPattern::Literal(lit) => {
+                                match lit {
+                                    Literal::Int(n) => {
+                                        if !scrutinee_ty.is_integer() {
+                                            return Err(TypeError::TypeMismatch {
+                                                expected: scrutinee_ty.clone(),
+                                                found: Type::I64,
+                                                span: arm.span,
+                                            });
+                                        }
+                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Int(*n, scrutinee_ty.clone())));
+                                    }
+                                    Literal::TypedInt(n, s) => {
+                                        let lit_ty = Type::from_name(s).unwrap_or(Type::I64);
+                                        if lit_ty != scrutinee_ty {
+                                            return Err(TypeError::TypeMismatch {
+                                                expected: scrutinee_ty.clone(),
+                                                found: lit_ty,
+                                                span: arm.span,
+                                            });
+                                        }
+                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Int(*n, scrutinee_ty.clone())));
+                                    }
+                                    Literal::Bool(b) => {
+                                        if scrutinee_ty != Type::Bool {
+                                            return Err(TypeError::TypeMismatch {
+                                                expected: scrutinee_ty.clone(),
+                                                found: Type::Bool,
+                                                span: arm.span,
+                                            });
+                                        }
+                                        if *b {
+                                            seen_bool_true = true;
+                                        } else {
+                                            seen_bool_false = true;
+                                        }
+                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Bool(*b)));
+                                    }
+                                    _ => {
+                                        return Err(TypeError::TypeMismatch {
+                                            expected: scrutinee_ty.clone(),
+                                            found: Type::Str,
+                                            span: arm.span,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let typed_body = self.check_expr(&arm.body, expected_hint.clone())?;
+                    let body_ty = typed_body.ty();
+
+                    if let Some(ref expected) = common_body_ty {
+                        if body_ty != *expected {
+                            return Err(TypeError::TypeMismatch {
+                                expected: expected.clone(),
+                                found: body_ty,
+                                span: typed_body.span(),
+                            });
+                        }
+                    } else {
+                        common_body_ty = Some(body_ty.clone());
+                    }
+
+                    typed_arms.push(TypedMatchArm {
+                        patterns: typed_patterns,
+                        body: typed_body,
+                        span: arm.span,
+                    });
+                }
+
+                let is_exhaustive = has_wildcard || (scrutinee_ty == Type::Bool && seen_bool_true && seen_bool_false);
+                if !is_exhaustive {
+                    return Err(TypeError::NonExhaustiveMatch { span: *span });
+                }
+
+                let ret_ty = common_body_ty.unwrap_or(Type::Void);
+                Ok(TypedExpr::Match {
+                    scrutinee: Box::new(typed_scrutinee),
+                    arms: typed_arms,
+                    ty: ret_ty,
                     span: *span,
                 })
             }

@@ -354,6 +354,12 @@ fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<String
         TypedExpr::FieldAccess { target, .. } => {
             collect_dynamic_arrays_in_expr(target, dynamic);
         }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            collect_dynamic_arrays_in_expr(scrutinee, dynamic);
+            for arm in arms {
+                collect_dynamic_arrays_in_expr(&arm.body, dynamic);
+            }
+        }
         TypedExpr::Ident { .. } | TypedExpr::Literal { .. } => {}
     }
 }
@@ -4761,6 +4767,12 @@ impl<'a> FunctionTranslationState<'a> {
             TypedExpr::FieldAccess { target, .. } => {
                 Self::collect_expr_reads(target, reads);
             }
+            TypedExpr::Match { scrutinee, arms, .. } => {
+                Self::collect_expr_reads(scrutinee, reads);
+                for arm in arms {
+                    Self::collect_expr_reads(&arm.body, reads);
+                }
+            }
             _ => {}
         }
     }
@@ -7005,6 +7017,105 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                 } else {
                     panic!("Field access target must be a struct");
+                }
+            }
+
+            TypedExpr::Match {
+                scrutinee,
+                arms,
+                ty,
+                ..
+            } => {
+                let scrut_val = self.translate_expr(scrutinee, builder)?;
+                let scrut_ty = scrutinee.ty();
+                let clif_scrut_ty = type_to_clif(scrut_ty);
+
+                let clif_res_ty = if ty.is_struct() || *ty == Type::Void {
+                    types::I64
+                } else {
+                    type_to_clif(ty.clone())
+                };
+
+                let res_var = if *ty != Type::Void {
+                    Some(builder.declare_var(clif_res_ty))
+                } else {
+                    None
+                };
+
+                let merge_block = builder.create_block();
+                let mut terminated = false;
+
+                for arm in arms {
+                    let mut cond: Option<Value> = None;
+                    let mut is_wildcard = false;
+
+                    for pat in &arm.patterns {
+                        match pat {
+                            crate::typecheck::typed_ast::TypedMatchPattern::Wildcard => {
+                                is_wildcard = true;
+                                break;
+                            }
+                            crate::typecheck::typed_ast::TypedMatchPattern::Literal(crate::typecheck::typed_ast::TypedLiteral::Int(n, _)) => {
+                                let lit_val = self.get_iconst(clif_scrut_ty, *n, builder);
+                                let eq = builder.ins().icmp(IntCC::Equal, scrut_val, lit_val);
+                                cond = Some(match cond {
+                                    None => eq,
+                                    Some(prev) => builder.ins().bor(prev, eq),
+                                });
+                            }
+                            crate::typecheck::typed_ast::TypedMatchPattern::Literal(crate::typecheck::typed_ast::TypedLiteral::Bool(b)) => {
+                                let lit_val = self.get_iconst(clif_scrut_ty, if *b { 1 } else { 0 }, builder);
+                                let eq = builder.ins().icmp(IntCC::Equal, scrut_val, lit_val);
+                                cond = Some(match cond {
+                                    None => eq,
+                                    Some(prev) => builder.ins().bor(prev, eq),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let arm_block = builder.create_block();
+
+                    if is_wildcard {
+                        builder.ins().jump(arm_block, &[]);
+                        builder.switch_to_block(arm_block);
+                        builder.seal_block(arm_block);
+                        let body_val = self.translate_expr(&arm.body, builder)?;
+                        if let Some(var) = res_var {
+                            builder.def_var(var, body_val);
+                        }
+                        builder.ins().jump(merge_block, &[]);
+                        terminated = true;
+                        break;
+                    } else if let Some(cond_val) = cond {
+                        let next_check_block = builder.create_block();
+                        builder.ins().brif(cond_val, arm_block, &[], next_check_block, &[]);
+
+                        builder.switch_to_block(arm_block);
+                        builder.seal_block(arm_block);
+                        let body_val = self.translate_expr(&arm.body, builder)?;
+                        if let Some(var) = res_var {
+                            builder.def_var(var, body_val);
+                        }
+                        builder.ins().jump(merge_block, &[]);
+
+                        builder.switch_to_block(next_check_block);
+                        builder.seal_block(next_check_block);
+                    }
+                }
+
+                if !terminated {
+                    builder.ins().jump(merge_block, &[]);
+                }
+
+                builder.switch_to_block(merge_block);
+                builder.seal_block(merge_block);
+
+                if let Some(var) = res_var {
+                    Ok(builder.use_var(var))
+                } else {
+                    Ok(self.get_iconst(types::I64, 0, builder))
                 }
             }
         }

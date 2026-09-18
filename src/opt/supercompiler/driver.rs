@@ -343,6 +343,45 @@ pub fn drive_expr(
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var("_struct".to_string(), expr.ty()))
         }
+
+        TypedExpr::Match { scrutinee, arms, ty, .. } => {
+            let scrut_val = drive_expr(scrutinee, program, env);
+            match scrut_val {
+                Value::Int(n) => {
+                    for arm in arms {
+                        for pat in &arm.patterns {
+                            match pat {
+                                crate::typecheck::typed_ast::TypedMatchPattern::Literal(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) if *v == n => {
+                                    return drive_expr(&arm.body, program, env);
+                                }
+                                crate::typecheck::typed_ast::TypedMatchPattern::Wildcard => {
+                                    return drive_expr(&arm.body, program, env);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Value::Bool(b) => {
+                    for arm in arms {
+                        for pat in &arm.patterns {
+                            match pat {
+                                crate::typecheck::typed_ast::TypedMatchPattern::Literal(crate::typecheck::typed_ast::TypedLiteral::Bool(v)) if *v == b => {
+                                    return drive_expr(&arm.body, program, env);
+                                }
+                                crate::typecheck::typed_ast::TypedMatchPattern::Wildcard => {
+                                    return drive_expr(&arm.body, program, env);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            env.mark_symbolic();
+            Value::Symbolic(super::value::SymExpr::Var("_match".to_string(), ty.clone()))
+        }
     }
 }
 

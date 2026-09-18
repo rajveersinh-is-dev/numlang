@@ -230,6 +230,10 @@ fn is_var_referenced_in_expr(expr: &TypedExpr, var_name: &str) -> bool {
         TypedExpr::FieldAccess { target, .. } => {
             is_var_referenced_in_expr(target, var_name)
         }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            is_var_referenced_in_expr(scrutinee, var_name)
+                || arms.iter().any(|arm| is_var_referenced_in_expr(&arm.body, var_name))
+        }
         _ => false,
     }
 }
@@ -278,6 +282,12 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
         }
         TypedExpr::FieldAccess { target, .. } => {
             collect_read_vars_expr(target, reads);
+        }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            collect_read_vars_expr(scrutinee, reads);
+            for arm in arms {
+                collect_read_vars_expr(&arm.body, reads);
+            }
         }
         _ => {}
     }

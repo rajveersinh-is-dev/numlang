@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, Literal, UnaryOp};
+use crate::ast::{BinaryOp, Expr, Literal, MatchArm, MatchPattern, UnaryOp};
 use crate::parser::{ParseError, Parser};
 use crate::token::Token;
 
@@ -233,9 +233,95 @@ impl<'a> Parser<'a> {
                     span,
                 })
             }
+            Token::Match => {
+                self.advance(); // consume 'match'
+                let scrutinee = self.parse_expr(0)?;
+                self.consume(&Token::LBrace, "'{' after match scrutinee")?;
+                let mut arms = Vec::new();
+                while !self.check(&Token::RBrace) && !self.is_at_end() {
+                    let arm_start_span = self.peek_token().map(|t| t.span).unwrap_or(token_spanned.span);
+                    let mut patterns = Vec::new();
+                    loop {
+                        let pat = self.parse_match_pattern()?;
+                        patterns.push(pat);
+                        if self.match_token(&Token::Pipe) {
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.consume(&Token::FatArrow, "'=>' after match pattern(s)")?;
+                    let body = self.parse_expr(0)?;
+                    let arm_span = arm_start_span.merge(&body.span());
+                    arms.push(MatchArm {
+                        patterns,
+                        body,
+                        span: arm_span,
+                    });
+                    self.match_token(&Token::Comma);
+                }
+                let end_span = self.consume(&Token::RBrace, "'}' after match arms")?;
+                let span = token_spanned.span.merge(&end_span);
+                Ok(Expr::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                    span,
+                })
+            }
             other => Err(ParseError::InvalidPrefix {
                 found: other,
                 span: token_spanned.span,
+            }),
+        }
+    }
+
+    fn parse_match_pattern(&mut self) -> Result<MatchPattern, ParseError> {
+        let tok = self.peek_token().ok_or_else(|| ParseError::UnexpectedEof {
+            expected: "pattern in match arm".to_string(),
+            span: self.previous_span(),
+        })?.clone();
+
+        match tok.token {
+            Token::Underscore => {
+                self.advance();
+                Ok(MatchPattern::Wildcard)
+            }
+            Token::IntLiteral(n) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Literal::Int(n)))
+            }
+            Token::TypedIntLiteral((n, s)) => {
+                self.advance();
+                Ok(MatchPattern::Literal(Literal::TypedInt(n, s)))
+            }
+            Token::Minus => {
+                self.advance();
+                let next_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                    expected: "integer literal after '-' in match pattern".to_string(),
+                    span: tok.span,
+                })?.clone();
+                match next_tok.token {
+                    Token::IntLiteral(n) => Ok(MatchPattern::Literal(Literal::Int(-n))),
+                    Token::TypedIntLiteral((n, s)) => Ok(MatchPattern::Literal(Literal::TypedInt(-n, s))),
+                    other => Err(ParseError::UnexpectedToken {
+                        found: other,
+                        expected: "integer literal after '-' in match pattern".to_string(),
+                        span: next_tok.span,
+                    }),
+                }
+            }
+            Token::True => {
+                self.advance();
+                Ok(MatchPattern::Literal(Literal::Bool(true)))
+            }
+            Token::False => {
+                self.advance();
+                Ok(MatchPattern::Literal(Literal::Bool(false)))
+            }
+            other => Err(ParseError::UnexpectedToken {
+                found: other,
+                expected: "pattern (literal or '_') in match arm".to_string(),
+                span: tok.span,
             }),
         }
     }

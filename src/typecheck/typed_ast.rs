@@ -65,6 +65,25 @@ pub enum TypedExpr {
         ty: Type,
         span: Span,
     },
+    Match {
+        scrutinee: Box<TypedExpr>,
+        arms: Vec<TypedMatchArm>,
+        ty: Type,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypedMatchPattern {
+    Literal(TypedLiteral),
+    Wildcard,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedMatchArm {
+    pub patterns: Vec<TypedMatchPattern>,
+    pub body: TypedExpr,
+    pub span: Span,
 }
 
 impl TypedExpr {
@@ -79,6 +98,7 @@ impl TypedExpr {
             TypedExpr::Index { ty, .. } => ty.clone(),
             TypedExpr::StructLiteral { ty, .. } => ty.clone(),
             TypedExpr::FieldAccess { ty, .. } => ty.clone(),
+            TypedExpr::Match { ty, .. } => ty.clone(),
         }
     }
 
@@ -93,6 +113,7 @@ impl TypedExpr {
             TypedExpr::Index { span, .. } => *span,
             TypedExpr::StructLiteral { span, .. } => *span,
             TypedExpr::FieldAccess { span, .. } => *span,
+            TypedExpr::Match { span, .. } => *span,
         }
     }
 }
