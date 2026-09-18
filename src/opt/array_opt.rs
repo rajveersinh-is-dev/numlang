@@ -126,7 +126,6 @@ fn expand_dot_calls(expr: &mut TypedExpr) {
                         };
                     }
                     *expr = current;
-                    return;
                 }
             }
         }

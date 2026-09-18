@@ -21,6 +21,12 @@ pub struct Env {
     pub has_symbolic: bool,
 }
 
+impl Default for Env {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Env {
     pub fn new() -> Self {
         Env {

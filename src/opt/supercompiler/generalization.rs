@@ -13,6 +13,8 @@
 //!   6. Geometric progression fitting  — exponential scaling (fast exp)
 //!   7. Tail fixed-point / periodic    — tail stabilized or periodic
 
+#![allow(clippy::needless_range_loop)]
+
 use std::collections::HashMap;
 use super::value::Value;
 use super::termination::LoopSnapshot;

@@ -84,6 +84,12 @@ pub struct BceContext {
     pub array_lens: HashMap<String, usize>,
 }
 
+impl Default for BceContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BceContext {
     pub fn new() -> Self {
         Self {
@@ -229,10 +235,12 @@ fn optimize_function(
 fn collect_local_arrays(block: &TypedBlock, ctx: &mut BceContext) {
     for stmt in &block.stmts {
         match stmt {
-            TypedStmt::Let { name, ty, .. } => {
-                if let Type::Array(_, len) = ty {
-                    ctx.array_lens.insert(name.clone(), *len);
-                }
+            TypedStmt::Let {
+                name,
+                ty: Type::Array(_, len),
+                ..
+            } => {
+                ctx.array_lens.insert(name.clone(), *len);
             }
             TypedStmt::If {
                 then_branch,

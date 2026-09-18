@@ -149,11 +149,10 @@ fn is_reachable(
             return true;
         }
         for n in neighbors {
-            if visited.insert(n.clone()) {
-                if is_reachable(n, target, graph, visited) {
+            if visited.insert(n.clone())
+                && is_reachable(n, target, graph, visited) {
                     return true;
                 }
-            }
         }
     }
     false
@@ -225,7 +224,7 @@ fn contains_return(stmt: &TypedStmt) -> bool {
             then_branch.stmts.iter().any(contains_return)
                 || else_branch
                     .as_ref()
-                    .map_or(false, |b| b.stmts.iter().any(contains_return))
+                    .is_some_and(|b| b.stmts.iter().any(contains_return))
         }
         TypedStmt::While { body, .. } => body.stmts.iter().any(contains_return),
         _ => false,
@@ -826,11 +825,13 @@ fn expand_inlined_call(
         } else {
             None
         };
-        if !is_mutated && arg_ident.is_some() && target_name != arg_ident.as_deref() {
-            rename_map.insert(p.name.clone(), arg_ident.unwrap());
-        } else {
-            rename_map.insert(p.name.clone(), format!("__inl_{}_{}_{}", callee.name, call_id, p.name));
+        if !is_mutated && target_name != arg_ident.as_deref() {
+            if let Some(ident) = arg_ident {
+                rename_map.insert(p.name.clone(), ident);
+                continue;
+            }
         }
+        rename_map.insert(p.name.clone(), format!("__inl_{}_{}_{}", callee.name, call_id, p.name));
     }
     collect_local_names(&callee.body, &mut rename_map, &callee.name, call_id);
 
@@ -1086,11 +1087,10 @@ fn is_var_mutated_in_block(name: &str, block: &TypedBlock) -> bool {
                     }
                 }
             }
-            TypedStmt::While { body, .. } => {
-                if is_var_mutated_in_block(name, body) {
+            TypedStmt::While { body, .. }
+                if is_var_mutated_in_block(name, body) => {
                     return true;
                 }
-            }
             _ => {}
         }
     }

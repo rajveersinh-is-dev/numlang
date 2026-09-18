@@ -85,7 +85,7 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     fs::write(&bat_path, bat_content).ok()?;
 
     let output = Command::new("cmd.exe")
-        .args(&["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
+        .args(["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
         .output()
         .ok()?;
 
@@ -446,7 +446,7 @@ int main() {
     println!("------------------------------------------------------------------------------------------");
 
     for (name, expected_code, nl_code, rs_code, c_code) in benchmarks {
-        let slug = name.to_lowercase().replace(' ', "_").replace('(', "").replace(')', "");
+        let slug = name.to_lowercase().replace(' ', "_").replace(['(', ')'], "");
 
         // 1. Compile & Benchmark numlang
         let nl_exe = compile_numlang(nl_code, &test_dir, &slug);

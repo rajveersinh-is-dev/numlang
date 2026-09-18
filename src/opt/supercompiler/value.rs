@@ -79,7 +79,7 @@ pub fn fold_binary_typed(op: BinaryOp, left: Value, right: Value, operand_ty: Op
     // Integer × Integer
     if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
         if matches!(left, Value::Int(_)) && matches!(right, Value::Int(_)) {
-            if operand_ty.map_or(false, |t| t.is_unsigned()) {
+            if operand_ty.is_some_and(|t| t.is_unsigned()) {
                 return fold_uint_binary(op, l as u64, r as u64);
             } else {
                 return fold_int_binary(op, l, r);
@@ -122,10 +122,10 @@ fn fold_uint_binary(op: BinaryOp, l: u64, r: u64) -> Value {
         BinaryOp::Sub => Value::Int(l.wrapping_sub(r) as i64),
         BinaryOp::Mul => Value::Int(l.wrapping_mul(r) as i64),
         BinaryOp::Div => {
-            if r == 0 { Value::Int(0) } else { Value::Int((l / r) as i64) }
+            Value::Int(l.checked_div(r).unwrap_or(0) as i64)
         }
         BinaryOp::Mod => {
-            if r == 0 { Value::Int(0) } else { Value::Int((l % r) as i64) }
+            Value::Int(l.checked_rem(r).unwrap_or(0) as i64)
         }
         BinaryOp::Pow => {
             if r > 62 {
@@ -186,11 +186,11 @@ fn fold_int_binary(op: BinaryOp, l: i64, r: i64) -> Value {
         BinaryOp::BitOr  => Value::Int(l | r),
         BinaryOp::BitXor => Value::Int(l ^ r),
         BinaryOp::Shl => {
-            if r < 0 || r >= 64 { Value::Int(0) }
+            if !(0..64).contains(&r) { Value::Int(0) }
             else { Value::Int(l << r) }
         }
         BinaryOp::Shr => {
-            if r < 0 || r >= 64 { Value::Int(0) }
+            if !(0..64).contains(&r) { Value::Int(0) }
             else { Value::Int(l >> r) }
         }
         BinaryOp::Eq => Value::Bool(l == r),

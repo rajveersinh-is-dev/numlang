@@ -79,11 +79,7 @@ pub enum WindowsLinker {
 pub fn find_windows_linker() -> Option<WindowsLinker> {
     if let Some(lld) = find_rust_lld() {
         Some(WindowsLinker::RustLld(lld))
-    } else if let Some(msvc) = find_msvc_link() {
-        Some(WindowsLinker::MsvcLink(msvc))
-    } else {
-        None
-    }
+    } else { find_msvc_link().map(WindowsLinker::MsvcLink) }
 }
 
 pub fn find_windows_sdk_lib_dirs() -> Vec<PathBuf> {

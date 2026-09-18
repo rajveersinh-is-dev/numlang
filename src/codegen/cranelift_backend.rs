@@ -99,7 +99,7 @@ fn compute_magic_u32_fast(d: u64) -> Option<(u64, u8)> {
     }
     for s in 32..64u8 {
         let two_s = 1u128 << s;
-        let m = (two_s + (d as u128) - 1) / (d as u128);
+        let m = two_s.div_ceil(d as u128);
         if m < (1u128 << 32) {
             let rem = (m * (d as u128)) - two_s;
             let q_max = 0xFFFF_FFFFu128 / (d as u128);
@@ -602,11 +602,10 @@ fn is_expr_known_u32(
                                     }
                                 }
                             }
-                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => {
-                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) {
+                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. }
+                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
                                     return true;
                                 }
-                            }
                             _ => {}
                         }
                     }
@@ -621,11 +620,10 @@ fn is_expr_known_u32(
                                     }
                                 }
                             }
-                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => {
-                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) {
+                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. }
+                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
                                     return true;
                                 }
-                            }
                             _ => {}
                         }
                     }
@@ -886,7 +884,7 @@ fn compute_expr_upper_bound(
             BinaryOp::Shr => {
                 let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
                 if let Some(s) = get_constant_int(right) {
-                    if s >= 0 && s < 64 {
+                    if (0..64).contains(&s) {
                         return Some(l_bound >> s);
                     }
                 }
@@ -1375,7 +1373,7 @@ impl CraneliftCompiler {
         builder.seal_block(entry_block);
         builder.ensure_inserted_block();
 
-        let local_main = self.module.declare_func_in_func(main_id, &mut builder.func);
+        let local_main = self.module.declare_func_in_func(main_id, builder.func);
         let call_inst = builder.ins().call(local_main, &[]);
         let results = builder.inst_results(call_inst);
 
@@ -1395,7 +1393,7 @@ impl CraneliftCompiler {
 
         let local_exit = self
             .module
-            .declare_func_in_func(self.exit_process_id, &mut builder.func);
+            .declare_func_in_func(self.exit_process_id, builder.func);
         builder.ins().call(local_exit, &[exit_code]);
         builder.ins().trap(TrapCode::user(1).unwrap());
 
@@ -1995,7 +1993,7 @@ impl<'a> FunctionTranslationState<'a> {
             builder.ins().imul(l, r)
         }
     }
-    fn get_small_constant_loop_info<'b>(condition: &'b TypedExpr) -> Option<(&'b str, usize)> {
+    fn get_small_constant_loop_info(condition: &TypedExpr) -> Option<(&str, usize)> {
         match condition {
             TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
                 if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(n, _), .. }) = (&**left, &**right) {
@@ -2083,7 +2081,7 @@ impl<'a> FunctionTranslationState<'a> {
         has_increment
     }
 
-    fn match_shl_imm<'e>(expr: &'e TypedExpr) -> Option<(&'e TypedExpr, i64)> {
+    fn match_shl_imm(expr: &TypedExpr) -> Option<(&TypedExpr, i64)> {
         if let TypedExpr::Binary { op: BinaryOp::Shl, left, right, .. } = expr {
             if let TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. } = &**right {
                 return Some((&**left, *k));
@@ -2092,7 +2090,7 @@ impl<'a> FunctionTranslationState<'a> {
         None
     }
 
-    fn match_shr_masked<'e>(expr: &'e TypedExpr) -> Option<(&'e TypedExpr, i64)> {
+    fn match_shr_masked(expr: &TypedExpr) -> Option<(&TypedExpr, i64)> {
         if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = expr {
             if let TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. } = &**right {
                 return Some((&**left, *k));
@@ -2232,19 +2230,19 @@ impl<'a> FunctionTranslationState<'a> {
         let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
 
         let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
-        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, &mut builder.func);
+        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
         let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
         let h_stderr = builder.inst_results(h_call)[0];
 
         let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
         let zero64 = builder.ins().iconst(types::I64, 0);
-        let write_file_func = self.module.declare_func_in_func(self.write_file_id, &mut builder.func);
+        let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
         builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
 
         let exit_code = builder.ins().iconst(types::I32, 101);
         let exit_func = self
             .module
-            .declare_func_in_func(self.exit_process_id, &mut builder.func);
+            .declare_func_in_func(self.exit_process_id, builder.func);
         builder.ins().call(exit_func, &[exit_code]);
         builder.ins().trap(TrapCode::user(2).unwrap());
 
@@ -2252,6 +2250,7 @@ impl<'a> FunctionTranslationState<'a> {
         builder.seal_block(ok_block);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_fast_signed_div(
         &mut self,
         l: Value,
@@ -2353,6 +2352,7 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_fast_signed_rem(
         &mut self,
         l: Value,
@@ -2384,7 +2384,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let r32 = builder.ins().ireduce(types::I32, n);
                 builder.ins().uextend(types::I64, r32)
             } else if ad.is_power_of_two() {
-                builder.ins().band_imm_s(n, (d - 1) as i64)
+                builder.ins().band_imm_s(n, d - 1)
             } else if is_u32 && compute_magic_u32_fast(ad).is_some() {
                 let (m, s) = compute_magic_u32_fast(ad).unwrap();
                 let m_val = self.get_iconst(types::I64, m as i64, builder);
@@ -2614,6 +2614,7 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_det3_val(
         builder: &mut FunctionBuilder,
         elem_ty: &Type,
@@ -3573,7 +3574,7 @@ impl<'a> FunctionTranslationState<'a> {
         builder: &mut FunctionBuilder,
     ) {
         let mut offset = 0;
-        if total_bytes <= 128 && total_bytes % 16 == 0 {
+        if total_bytes <= 128 && total_bytes.is_multiple_of(16) {
             let mut chunks = Vec::with_capacity(total_bytes / 16);
             while offset + 16 <= total_bytes {
                 let chunk = builder.ins().stack_load(types::I64, types::I8X16, src_slot, offset as i32);
@@ -4139,6 +4140,7 @@ impl<'a> FunctionTranslationState<'a> {
         assigned_indices.len() == len
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn translate_stmt(
         &mut self,
         stmt: &TypedStmt,
@@ -4718,6 +4720,7 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     fn translate_expr(
         &mut self,
         expr: &TypedExpr,
@@ -4804,7 +4807,7 @@ impl<'a> FunctionTranslationState<'a> {
                         ) = (a, b) {
                             if let Some(d) = get_constant_int(d_expr) {
                                 if d > 0 && (d as u64).is_power_of_two() {
-                                    return Some(((&**x).clone(), d));
+                                    return Some(((**x).clone(), d));
                                 }
                             }
                         }
@@ -4813,7 +4816,7 @@ impl<'a> FunctionTranslationState<'a> {
 
                     if let Some((x_expr, d)) = check_pattern(left, right).or_else(|| check_pattern(right, left)) {
                         let x_val = self.translate_expr(&x_expr, builder)?;
-                        let mask = (d - 1) as i64;
+                        let mask = d - 1;
                         let masked = builder.ins().band_imm_s(x_val, mask);
                         let zero = builder.ins().iconst(type_to_clif(x_expr.ty()), 0);
                         let cc = if *op == BinaryOp::Eq {
@@ -4870,7 +4873,7 @@ impl<'a> FunctionTranslationState<'a> {
                             let is_u32 = operand_ty == Type::I32
                                 || is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
                                 || compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars)
-                                    .map_or(false, |ub| ub <= 0xFFFF_FFFF);
+                                    .is_some_and(|ub| ub <= 0xFFFF_FFFF);
                             self.emit_fast_signed_div(l, r, d, &operand_ty, is_nonneg, is_u32, builder)
                         } else if is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
                             && is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars)
@@ -4924,7 +4927,7 @@ impl<'a> FunctionTranslationState<'a> {
                                 let is_u32 = operand_ty == Type::I32
                                     || is_expr_known_u32(left, &self.known_non_negative_vars, &self.known_u32_vars)
                                     || compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars)
-                                        .map_or(false, |ub| ub <= 0xFFFF_FFFF);
+                                        .is_some_and(|ub| ub <= 0xFFFF_FFFF);
                                 if is_nonneg && d > 0 {
                                     if let Some(max_val) = compute_expr_upper_bound(left, &self.known_var_bounds, &self.known_non_negative_vars) {
                                         if max_val < d {
@@ -5807,7 +5810,7 @@ impl<'a> FunctionTranslationState<'a> {
                     .func_ids
                     .get(callee)
                     .unwrap_or_else(|| panic!("Callee '{}' must be declared in module", callee));
-                let local_func = self.module.declare_func_in_func(func_id, &mut builder.func);
+                let local_func = self.module.declare_func_in_func(func_id, builder.func);
 
                 let mut arg_vals = Vec::new();
                 for a in args {
@@ -5873,32 +5876,25 @@ impl<'a> FunctionTranslationState<'a> {
         // Fast path: single variable increment/decrement without else branch:
         // if cond { x = x + 1; }  =>  x = x + uextend(cond)
         // if cond { x = x - 1; }  =>  x = x - uextend(cond)
-        if (else_branch.is_none() || else_branch.map_or(true, |b| b.stmts.is_empty()))
+        if (else_branch.is_none() || else_branch.is_none_or(|b| b.stmts.is_empty()))
             && then_branch.stmts.len() == 1
         {
-            if let TypedStmt::Assign { name, value, .. } = &then_branch.stmts[0] {
-                if let TypedExpr::Binary { op, left, right, ty, .. } = value {
-                    let is_add = *op == BinaryOp::Add;
-                    let is_sub = *op == BinaryOp::Sub;
-                    if (is_add || is_sub) && ty.is_integer() {
-                        let is_one = |e: &TypedExpr| -> bool {
-                            match e {
-                                TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } => true,
-                                _ => false,
-                            }
-                        };
-                        let is_target = |e: &TypedExpr| -> bool {
-                            match e {
-                                TypedExpr::Ident { name: n, .. } => n == name,
-                                _ => false,
-                            }
-                        };
+            if let TypedStmt::Assign { name, value: TypedExpr::Binary { op, left, right, ty, .. }, .. } = &then_branch.stmts[0] {
+                let is_add = *op == BinaryOp::Add;
+                let is_sub = *op == BinaryOp::Sub;
+                if (is_add || is_sub) && ty.is_integer() {
+                    let is_one = |e: &TypedExpr| -> bool {
+                        matches!(e, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. })
+                    };
+                    let is_target = |e: &TypedExpr| -> bool {
+                        matches!(e, TypedExpr::Ident { name: n, .. } if n == name)
+                    };
 
-                        let is_inc = (is_target(left) && is_one(right)) || (is_add && is_one(left) && is_target(right));
-                        let is_dec = is_sub && is_target(left) && is_one(right);
+                    let is_inc = (is_target(left) && is_one(right)) || (is_add && is_one(left) && is_target(right));
+                    let is_dec = is_sub && is_target(left) && is_one(right);
 
-                        if is_inc || is_dec {
-                            if let Some(Storage::Scalar(var)) = self.variables.get(name) {
+                    if is_inc || is_dec {
+                        if let Some(Storage::Scalar(var)) = self.variables.get(name) {
                                 let var = *var;
                                 let cond_val = self.translate_expr(condition, builder)?;
                                 let orig_val = builder.use_var(var);
@@ -5916,8 +5912,6 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                 }
             }
-        }
-
         let cond_val = self.translate_expr(condition, builder)?;
 
         let mut then_locals: HashMap<String, Value> = HashMap::new();

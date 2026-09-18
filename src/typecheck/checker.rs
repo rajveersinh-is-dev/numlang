@@ -818,8 +818,8 @@ impl TypeChecker {
 
                 // 3. Scalar * Array
                 if let Type::Array(ref elem_r, _) = rty {
-                    if **elem_r == lty && lty.is_numeric() {
-                        if *op == BinaryOp::Mul {
+                    if **elem_r == lty && lty.is_numeric()
+                        && *op == BinaryOp::Mul {
                             return Ok(TypedExpr::Call {
                                 callee: "vec_scale".to_string(),
                                 args: vec![typed_right, typed_left],
@@ -827,7 +827,6 @@ impl TypeChecker {
                                 span: *span,
                             });
                         }
-                    }
                 }
 
                 if lty != rty {

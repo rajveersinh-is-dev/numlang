@@ -166,7 +166,7 @@ fn block_calls_function(block: &crate::typecheck::typed_ast::TypedBlock, name: &
         TypedStmt::If { condition, then_branch, else_branch, .. } => {
             expr_calls_function(condition, name)
                 || block_calls_function(then_branch, name)
-                || else_branch.as_ref().map_or(false, |eb| block_calls_function(eb, name))
+                || else_branch.as_ref().is_some_and(|eb| block_calls_function(eb, name))
         }
         TypedStmt::While { condition, body, .. } => {
             expr_calls_function(condition, name) || block_calls_function(body, name)
