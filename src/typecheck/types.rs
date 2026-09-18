@@ -14,6 +14,7 @@ pub enum Type {
     Bool,
     Void,
     Array(Box<Type>, usize),
+    Str,
 }
 
 impl Type {
@@ -72,6 +73,7 @@ impl Type {
             Type::I64 | Type::U64 | Type::Usize | Type::F64 => 8,
             Type::Bool => 1,
             Type::Void => 0,
+            Type::Str => 8,
             Type::Array(elem, len) => elem.size_bytes() * len,
         }
     }
@@ -127,6 +129,7 @@ impl Type {
             "f32" => Some(Type::F32),
             "f64" => Some(Type::F64),
             "bool" => Some(Type::Bool),
+            "str" => Some(Type::Str),
             "void" | "()" => Some(Type::Void),
             _ => None,
         }
@@ -146,6 +149,7 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),
+            Type::Str => write!(f, "str"),
             Type::Void => write!(f, "void"),
             Type::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
         }

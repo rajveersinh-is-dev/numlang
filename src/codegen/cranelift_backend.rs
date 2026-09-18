@@ -32,6 +32,7 @@ fn type_to_clif(ty: Type) -> types::Type {
         Type::F64 => types::F64,
         Type::Bool => types::I8,
         Type::Void => types::I32,
+        Type::Str => types::I64,
         Type::Array(_, _) => types::I64, // Pointer to array
     }
 }
@@ -1229,6 +1230,12 @@ pub struct CraneliftCompiler {
     exit_process_id: FuncId,
     get_std_handle_id: FuncId,
     write_file_id: FuncId,
+    print_str_id: FuncId,
+    print_newline_id: FuncId,
+    print_i64_id: FuncId,
+    print_u64_id: FuncId,
+    print_f64_id: FuncId,
+    print_bool_id: FuncId,
 }
 
 impl CraneliftCompiler {
@@ -1307,12 +1314,54 @@ impl CraneliftCompiler {
             .declare_function("WriteFile", Linkage::Import, &wf_sig)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
+        let mut print_str_sig = module.make_signature();
+        print_str_sig.params.push(AbiParam::new(types::I64));
+        print_str_sig.params.push(AbiParam::new(types::I32));
+        let print_str_id = module
+            .declare_function("__nl_print_str", Linkage::Local, &print_str_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let print_nl_sig = module.make_signature();
+        let print_newline_id = module
+            .declare_function("__nl_print_newline", Linkage::Local, &print_nl_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let mut print_i64_sig = module.make_signature();
+        print_i64_sig.params.push(AbiParam::new(types::I64));
+        let print_i64_id = module
+            .declare_function("__nl_print_i64", Linkage::Local, &print_i64_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let mut print_u64_sig = module.make_signature();
+        print_u64_sig.params.push(AbiParam::new(types::I64));
+        let print_u64_id = module
+            .declare_function("__nl_print_u64", Linkage::Local, &print_u64_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let mut print_f64_sig = module.make_signature();
+        print_f64_sig.params.push(AbiParam::new(types::F64));
+        let print_f64_id = module
+            .declare_function("__nl_print_f64", Linkage::Local, &print_f64_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let mut print_bool_sig = module.make_signature();
+        print_bool_sig.params.push(AbiParam::new(types::I8));
+        let print_bool_id = module
+            .declare_function("__nl_print_bool", Linkage::Local, &print_bool_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         Ok(Self {
             module,
             func_ids: HashMap::new(),
             exit_process_id,
             get_std_handle_id,
             write_file_id,
+            print_str_id,
+            print_newline_id,
+            print_i64_id,
+            print_u64_id,
+            print_f64_id,
+            print_bool_id,
         })
     }
 
@@ -1349,6 +1398,9 @@ impl CraneliftCompiler {
             }
         }
 
+        // Step 3b: Emit print helpers
+        self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
+
         // Step 4: Emit final object file
         let product = self.module.finish();
         let obj_bytes = product
@@ -1356,6 +1408,500 @@ impl CraneliftCompiler {
             .map_err(|e| CodegenError::BackendError(format!("Failed to emit object: {}", e)))?;
 
         Ok(obj_bytes)
+    }
+
+
+    fn emit_print_helpers(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        self.emit_helper_print_str(ctx, fn_builder_ctx)?;
+        self.emit_helper_print_newline(ctx, fn_builder_ctx)?;
+        self.emit_helper_print_u64(ctx, fn_builder_ctx)?;
+        self.emit_helper_print_i64(ctx, fn_builder_ctx)?;
+        self.emit_helper_print_bool(ctx, fn_builder_ctx)?;
+        self.emit_helper_print_f64(ctx, fn_builder_ctx)?;
+        Ok(())
+    }
+
+    fn emit_helper_print_str(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        let write_block = builder.create_block();
+        let ret_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let ptr = builder.block_params(entry_block)[0];
+        let len = builder.block_params(entry_block)[1];
+
+        let zero32 = builder.ins().iconst(types::I32, 0);
+        let is_positive = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero32);
+        builder.ins().brif(is_positive, write_block, &[], ret_block, &[]);
+
+        builder.switch_to_block(write_block);
+        builder.seal_block(write_block);
+
+        let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
+
+        let std_out_handle = builder.ins().iconst(types::I32, -11); // STD_OUTPUT_HANDLE
+        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
+        let h_call = builder.ins().call(get_std_handle_func, &[std_out_handle]);
+        let h_stdout = builder.inst_results(h_call)[0];
+
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+        builder.ins().call(write_file_func, &[h_stdout, ptr, len, written_addr, zero64]);
+        builder.ins().jump(ret_block, &[]);
+
+        builder.switch_to_block(ret_block);
+        builder.seal_block(ret_block);
+        builder.ins().return_(&[]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_str_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_str: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_print_newline(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        ctx.func.signature = self.module.make_signature();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let nl = builder.ins().iconst(types::I8, 10);
+        let addr = builder.ins().stack_addr(types::I64, slot, 0);
+        builder.ins().store(MemFlagsData::trusted(), nl, addr, 0);
+        let len = builder.ins().iconst(types::I32, 1);
+
+        let print_str_func = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func, &[addr, len]);
+
+        builder.ins().return_(&[]);
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_newline_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_newline: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_print_bool(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I8));
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        let true_block = builder.create_block();
+        let false_block = builder.create_block();
+        let merge_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let val = builder.block_params(entry_block)[0];
+        let zero8 = builder.ins().iconst(types::I8, 0);
+        let is_true = builder.ins().icmp(IntCC::NotEqual, val, zero8);
+        builder.ins().brif(is_true, true_block, &[], false_block, &[]);
+
+        builder.switch_to_block(true_block);
+        builder.seal_block(true_block);
+        let slot_t = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let val_t = builder.ins().iconst(types::I32, 0x65757274); // "true"
+        let addr_t = builder.ins().stack_addr(types::I64, slot_t, 0);
+        builder.ins().store(MemFlagsData::trusted(), val_t, addr_t, 0);
+        let len_t = builder.ins().iconst(types::I32, 4);
+        let print_str_func_t = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_t, &[addr_t, len_t]);
+        builder.ins().jump(merge_block, &[]);
+
+        builder.switch_to_block(false_block);
+        builder.seal_block(false_block);
+        let slot_f = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let val_f = builder.ins().iconst(types::I64, 0x65736c6166); // "false"
+        let addr_f = builder.ins().stack_addr(types::I64, slot_f, 0);
+        builder.ins().store(MemFlagsData::trusted(), val_f, addr_f, 0);
+        let len_f = builder.ins().iconst(types::I32, 5);
+        let print_str_func_f = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_f, &[addr_f, len_f]);
+        builder.ins().jump(merge_block, &[]);
+
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        builder.ins().return_(&[]);
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_bool_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_bool: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_print_u64(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        let zero_block = builder.create_block();
+        let non_zero_block = builder.create_block();
+        let loop_header = builder.create_block();
+        let loop_body = builder.create_block();
+        let done_block = builder.create_block();
+        let ret_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let val = builder.block_params(entry_block)[0];
+        let slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 8));
+        let slot_base = builder.ins().stack_addr(types::I64, slot, 0);
+
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let is_zero = builder.ins().icmp(IntCC::Equal, val, zero64);
+        builder.ins().brif(is_zero, zero_block, &[], non_zero_block, &[]);
+
+        // zero block
+        builder.switch_to_block(zero_block);
+        builder.seal_block(zero_block);
+        let char_zero = builder.ins().iconst(types::I8, 48); // '0'
+        let addr_31 = builder.ins().iadd_imm_s(slot_base, 31);
+        builder.ins().store(MemFlagsData::trusted(), char_zero, addr_31, 0);
+        let one32 = builder.ins().iconst(types::I32, 1);
+        let print_str_func_z = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_z, &[addr_31, one32]);
+        builder.ins().jump(ret_block, &[]);
+
+        // non-zero block
+        builder.switch_to_block(non_zero_block);
+        builder.seal_block(non_zero_block);
+        let u_var = builder.declare_var(types::I64);
+        let idx_var = builder.declare_var(types::I32);
+        builder.def_var(u_var, val);
+        let init_idx = builder.ins().iconst(types::I32, 32);
+        builder.def_var(idx_var, init_idx);
+        builder.ins().jump(loop_header, &[]);
+
+        // loop header
+        builder.switch_to_block(loop_header);
+        let cur_u = builder.use_var(u_var);
+        let u_is_zero = builder.ins().icmp(IntCC::Equal, cur_u, zero64);
+        builder.ins().brif(u_is_zero, done_block, &[], loop_body, &[]);
+
+        // loop body
+        builder.switch_to_block(loop_body);
+        builder.seal_block(loop_body);
+        let ten = builder.ins().iconst(types::I64, 10);
+        let rem = builder.ins().urem(cur_u, ten);
+        let rem8 = builder.ins().ireduce(types::I8, rem);
+        let char_val = builder.ins().iadd_imm_s(rem8, 48);
+
+        let cur_idx = builder.use_var(idx_var);
+        let next_idx = builder.ins().iadd_imm_s(cur_idx, -1);
+        builder.def_var(idx_var, next_idx);
+        let next_idx64 = builder.ins().uextend(types::I64, next_idx);
+        let char_addr = builder.ins().iadd(slot_base, next_idx64);
+        builder.ins().store(MemFlagsData::trusted(), char_val, char_addr, 0);
+
+        let next_u = builder.ins().udiv(cur_u, ten);
+        builder.def_var(u_var, next_u);
+        builder.ins().jump(loop_header, &[]);
+        builder.seal_block(loop_header);
+
+        // done block
+        builder.switch_to_block(done_block);
+        builder.seal_block(done_block);
+        let final_idx = builder.use_var(idx_var);
+        let final_idx64 = builder.ins().uextend(types::I64, final_idx);
+        let start_addr = builder.ins().iadd(slot_base, final_idx64);
+        let thirty_two = builder.ins().iconst(types::I32, 32);
+        let len = builder.ins().isub(thirty_two, final_idx);
+        let print_str_func_nz = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_nz, &[start_addr, len]);
+        builder.ins().jump(ret_block, &[]);
+
+        // ret block
+        builder.switch_to_block(ret_block);
+        builder.seal_block(ret_block);
+        builder.ins().return_(&[]);
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_u64_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_u64: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_print_i64(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        let neg_block = builder.create_block();
+        let merge_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let val = builder.block_params(entry_block)[0];
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let is_neg = builder.ins().icmp(IntCC::SignedLessThan, val, zero64);
+        let neg_val = builder.ins().ineg(val);
+        let u_val = builder.ins().select(is_neg, neg_val, val);
+        builder.ins().brif(is_neg, neg_block, &[], merge_block, &[]);
+
+        // neg block: print '-'
+        builder.switch_to_block(neg_block);
+        builder.seal_block(neg_block);
+        let slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let minus = builder.ins().iconst(types::I8, 45); // '-'
+        let addr = builder.ins().stack_addr(types::I64, slot, 0);
+        builder.ins().store(MemFlagsData::trusted(), minus, addr, 0);
+        let len1 = builder.ins().iconst(types::I32, 1);
+        let print_str_func = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func, &[addr, len1]);
+        builder.ins().jump(merge_block, &[]);
+
+        // merge block: call __nl_print_u64 with positive / negated val
+        builder.switch_to_block(merge_block);
+        builder.seal_block(merge_block);
+        let print_u64_func = self.module.declare_func_in_func(self.print_u64_id, builder.func);
+        builder.ins().call(print_u64_func, &[u_val]);
+        builder.ins().return_(&[]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_i64_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_i64: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_print_f64(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::F64));
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        let entry_block = builder.create_block();
+        let nan_block = builder.create_block();
+        let not_nan_block = builder.create_block();
+        let neg_block = builder.create_block();
+        let check_inf_block = builder.create_block();
+        let inf_block = builder.create_block();
+        let norm_block = builder.create_block();
+        let loop_trim = builder.create_block();
+        let loop_trim_body = builder.create_block();
+        let print_frac_block = builder.create_block();
+        let ret_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+        builder.seal_block(entry_block);
+
+        let val = builder.block_params(entry_block)[0];
+        let len1 = builder.ins().iconst(types::I32, 1);
+
+        // 1. Check NaN
+        let is_nan = builder.ins().fcmp(FloatCC::NotEqual, val, val);
+        builder.ins().brif(is_nan, nan_block, &[], not_nan_block, &[]);
+
+        // nan block
+        builder.switch_to_block(nan_block);
+        builder.seal_block(nan_block);
+        let slot_nan = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let val_nan = builder.ins().iconst(types::I32, 0x4e614e); // "NaN"
+        let addr_nan = builder.ins().stack_addr(types::I64, slot_nan, 0);
+        builder.ins().store(MemFlagsData::trusted(), val_nan, addr_nan, 0);
+        let len_nan = builder.ins().iconst(types::I32, 3);
+        let print_str_func = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func, &[addr_nan, len_nan]);
+        builder.ins().jump(ret_block, &[]);
+
+        // not_nan block: check sign
+        builder.switch_to_block(not_nan_block);
+        builder.seal_block(not_nan_block);
+        let zero_f = builder.ins().f64const(0.0);
+        let is_neg = builder.ins().fcmp(FloatCC::LessThan, val, zero_f);
+        let fabs_val = builder.ins().fabs(val);
+        builder.ins().brif(is_neg, neg_block, &[], check_inf_block, &[]);
+
+        // neg block
+        builder.switch_to_block(neg_block);
+        builder.seal_block(neg_block);
+        let slot_m = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let dash = builder.ins().iconst(types::I8, 45); // '-'
+        let addr_m = builder.ins().stack_addr(types::I64, slot_m, 0);
+        builder.ins().store(MemFlagsData::trusted(), dash, addr_m, 0);
+        let print_str_func_m = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_m, &[addr_m, len1]);
+        builder.ins().jump(check_inf_block, &[]);
+
+        // check_inf_block
+        builder.switch_to_block(check_inf_block);
+        builder.seal_block(check_inf_block);
+        let inf = builder.ins().f64const(f64::INFINITY);
+        let is_inf = builder.ins().fcmp(FloatCC::Equal, fabs_val, inf);
+        builder.ins().brif(is_inf, inf_block, &[], norm_block, &[]);
+
+        // inf block
+        builder.switch_to_block(inf_block);
+        builder.seal_block(inf_block);
+        let slot_inf = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let val_inf = builder.ins().iconst(types::I32, 0x666e69); // "inf"
+        let addr_inf = builder.ins().stack_addr(types::I64, slot_inf, 0);
+        builder.ins().store(MemFlagsData::trusted(), val_inf, addr_inf, 0);
+        let len_inf = builder.ins().iconst(types::I32, 3);
+        let print_str_func_inf = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_inf, &[addr_inf, len_inf]);
+        builder.ins().jump(ret_block, &[]);
+
+        // norm_block
+        builder.switch_to_block(norm_block);
+        builder.seal_block(norm_block);
+        let int_part = builder.ins().fcvt_to_sint(types::I64, fabs_val);
+        let print_u64_func = self.module.declare_func_in_func(self.print_u64_id, builder.func);
+        builder.ins().call(print_u64_func, &[int_part]);
+
+        // print '.'
+        let slot_dot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let dot = builder.ins().iconst(types::I8, 46); // '.'
+        let addr_dot = builder.ins().stack_addr(types::I64, slot_dot, 0);
+        builder.ins().store(MemFlagsData::trusted(), dot, addr_dot, 0);
+        let print_str_func_dot = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_dot, &[addr_dot, len1]);
+
+        let int_part_f = builder.ins().fcvt_from_sint(types::F64, int_part);
+        let frac = builder.ins().fsub(fabs_val, int_part_f);
+        let scale = builder.ins().f64const(1000000.0);
+        let scaled = builder.ins().fmul(frac, scale);
+        let half = builder.ins().f64const(0.5);
+        let scaled_rnd = builder.ins().fadd(scaled, half);
+        let scaled_raw = builder.ins().fcvt_to_sint(types::I64, scaled_rnd);
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let max_frac = builder.ins().iconst(types::I64, 999999);
+        let c_lo = builder.ins().icmp(IntCC::SignedLessThan, scaled_raw, zero64);
+        let s1 = builder.ins().select(c_lo, zero64, scaled_raw);
+        let c_hi = builder.ins().icmp(IntCC::SignedGreaterThan, s1, max_frac);
+        let scaled_int = builder.ins().select(c_hi, max_frac, s1);
+
+        let frac_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let frac_base = builder.ins().stack_addr(types::I64, frac_slot, 0);
+        let divs = [100000i64, 10000, 1000, 100, 10, 1];
+        let ten = builder.ins().iconst(types::I64, 10);
+        for (i, d) in divs.iter().enumerate() {
+            let div_val = builder.ins().iconst(types::I64, *d);
+            let q = builder.ins().sdiv(scaled_int, div_val);
+            let rem = builder.ins().srem(q, ten);
+            let rem8 = builder.ins().ireduce(types::I8, rem);
+            let d_char = builder.ins().iadd_imm_s(rem8, 48);
+            let char_addr = builder.ins().iadd_imm_s(frac_base, i as i64);
+            builder.ins().store(MemFlagsData::trusted(), d_char, char_addr, 0);
+        }
+
+        let len_var = builder.declare_var(types::I32);
+        let init_len = builder.ins().iconst(types::I32, 6);
+        builder.def_var(len_var, init_len);
+        builder.ins().jump(loop_trim, &[]);
+
+        // loop_trim: while len > 1 { if buf[len - 1] == '0' { len -= 1 } else { break } }
+        builder.switch_to_block(loop_trim);
+        let cur_len = builder.use_var(len_var);
+        let one32 = builder.ins().iconst(types::I32, 1);
+        let can_trim = builder.ins().icmp(IntCC::SignedGreaterThan, cur_len, one32);
+        builder.ins().brif(can_trim, loop_trim_body, &[], print_frac_block, &[]);
+
+        // loop_trim_body
+        builder.switch_to_block(loop_trim_body);
+        builder.seal_block(loop_trim_body);
+        let last_idx = builder.ins().iadd_imm_s(cur_len, -1);
+        let last_idx64 = builder.ins().uextend(types::I64, last_idx);
+        let last_addr = builder.ins().iadd(frac_base, last_idx64);
+        let last_char = builder.ins().load(types::I8, MemFlagsData::trusted(), last_addr, 0);
+        let zero_char = builder.ins().iconst(types::I8, 48);
+        let is_zero_char = builder.ins().icmp(IntCC::Equal, last_char, zero_char);
+        let decr_len = builder.ins().iadd_imm_s(cur_len, -1);
+        let next_len = builder.ins().select(is_zero_char, decr_len, cur_len);
+        builder.def_var(len_var, next_len);
+        builder.ins().brif(is_zero_char, loop_trim, &[], print_frac_block, &[]);
+        builder.seal_block(loop_trim);
+
+        // print_frac_block
+        builder.switch_to_block(print_frac_block);
+        builder.seal_block(print_frac_block);
+        let final_len = builder.use_var(len_var);
+        let print_str_func_f = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func_f, &[frac_base, final_len]);
+        builder.ins().jump(ret_block, &[]);
+
+        // ret_block
+        builder.switch_to_block(ret_block);
+        builder.seal_block(ret_block);
+        builder.ins().return_(&[]);
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.print_f64_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_print_f64: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
     }
 
     fn compile_entry_point(
@@ -1712,6 +2258,12 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             exit_process_id: self.exit_process_id,
             get_std_handle_id: self.get_std_handle_id,
             write_file_id: self.write_file_id,
+            print_str_id: self.print_str_id,
+            print_newline_id: self.print_newline_id,
+            print_i64_id: self.print_i64_id,
+            print_u64_id: self.print_u64_id,
+            print_f64_id: self.print_f64_id,
+            print_bool_id: self.print_bool_id,
             variables,
             loop_exit_blocks: Vec::new(),
             loop_continue_blocks: Vec::new(),
@@ -1833,6 +2385,12 @@ struct FunctionTranslationState<'a> {
     exit_process_id: FuncId,
     get_std_handle_id: FuncId,
     write_file_id: FuncId,
+    print_str_id: FuncId,
+    print_newline_id: FuncId,
+    print_i64_id: FuncId,
+    print_u64_id: FuncId,
+    print_f64_id: FuncId,
+    print_bool_id: FuncId,
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     loop_continue_blocks: Vec<cranelift_codegen::ir::Block>,
@@ -1847,6 +2405,31 @@ struct FunctionTranslationState<'a> {
 }
 
 impl<'a> FunctionTranslationState<'a> {
+    fn emit_bytes_write(&mut self, bytes: &[u8], builder: &mut FunctionBuilder) -> Result<(), CodegenError> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let slot_size = bytes.len().div_ceil(8) * 8;
+        let slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            slot_size as u32,
+            8,
+        ));
+        for (i, chunk) in bytes.chunks(8).enumerate() {
+            let mut val_bytes = [0u8; 8];
+            val_bytes[..chunk.len()].copy_from_slice(chunk);
+            let val_u64 = u64::from_le_bytes(val_bytes);
+            let val = builder.ins().iconst(types::I64, val_u64 as i64);
+            let addr = builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
+            builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
+        }
+        let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
+        let msg_len = builder.ins().iconst(types::I32, bytes.len() as i64);
+        let print_str_func = self.module.declare_func_in_func(self.print_str_id, builder.func);
+        builder.ins().call(print_str_func, &[msg_addr, msg_len]);
+        Ok(())
+    }
+
     fn get_iconst(&mut self, ty: types::Type, n: i64, builder: &mut FunctionBuilder) -> Value {
         let key = (ty, n as u64);
         if let Some(&val) = self.const_pool.get(&key) {
@@ -4828,6 +5411,24 @@ impl<'a> FunctionTranslationState<'a> {
                     let v = if *b { 1 } else { 0 };
                     Ok(self.get_iconst(types::I8, v, builder))
                 }
+                TypedLiteral::Str(s) => {
+                    let bytes = s.as_bytes();
+                    let slot_size = if bytes.is_empty() { 8 } else { bytes.len().div_ceil(8) * 8 };
+                    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        slot_size as u32,
+                        8,
+                    ));
+                    for (i, chunk) in bytes.chunks(8).enumerate() {
+                        let mut val_bytes = [0u8; 8];
+                        val_bytes[..chunk.len()].copy_from_slice(chunk);
+                        let val_u64 = u64::from_le_bytes(val_bytes);
+                        let val = builder.ins().iconst(types::I64, val_u64 as i64);
+                        let addr = builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
+                        builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
+                    }
+                    Ok(builder.ins().stack_addr(types::I64, slot, 0))
+                }
             },
 
             TypedExpr::Ident { name, .. } => {
@@ -5308,6 +5909,61 @@ impl<'a> FunctionTranslationState<'a> {
 
             TypedExpr::Call { callee, args, ty, .. } => {
                 match callee.as_str() {
+                    "print" | "println" => {
+                        let is_nl = callee == "println";
+                        if args.is_empty() {
+                            let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                            builder.ins().call(print_nl_func, &[]);
+                            return Ok(builder.ins().iconst(types::I32, 0));
+                        }
+                        let arg = &args[0];
+                        if let TypedExpr::Literal { lit: TypedLiteral::Str(ref s), .. } = arg {
+                            let mut bytes = s.as_bytes().to_vec();
+                            if is_nl {
+                                bytes.push(b'\n');
+                            }
+                            self.emit_bytes_write(&bytes, builder)?;
+                            return Ok(builder.ins().iconst(types::I32, 0));
+                        }
+                        let arg_ty = arg.ty();
+                        if arg_ty == Type::Str {
+                            return Ok(builder.ins().iconst(types::I32, 0));
+                        } else if arg_ty == Type::Bool {
+                            let val = self.translate_expr(arg, builder)?;
+                            let print_bool_func = self.module.declare_func_in_func(self.print_bool_id, builder.func);
+                            builder.ins().call(print_bool_func, &[val]);
+                        } else if arg_ty.is_float() {
+                            let val = self.translate_expr(arg, builder)?;
+                            let val_f64 = if arg_ty == Type::F32 {
+                                builder.ins().fpromote(types::F64, val)
+                            } else {
+                                val
+                            };
+                            let print_f64_func = self.module.declare_func_in_func(self.print_f64_id, builder.func);
+                            builder.ins().call(print_f64_func, &[val_f64]);
+                        } else if arg_ty.is_unsigned() {
+                            let val = self.translate_expr(arg, builder)?;
+                            let val_u64 = match arg_ty {
+                                Type::U8 | Type::U16 | Type::U32 => builder.ins().uextend(types::I64, val),
+                                _ => val,
+                            };
+                            let print_u64_func = self.module.declare_func_in_func(self.print_u64_id, builder.func);
+                            builder.ins().call(print_u64_func, &[val_u64]);
+                        } else {
+                            let val = self.translate_expr(arg, builder)?;
+                            let val_i64 = match arg_ty {
+                                Type::I32 => builder.ins().sextend(types::I64, val),
+                                _ => val,
+                            };
+                            let print_i64_func = self.module.declare_func_in_func(self.print_i64_id, builder.func);
+                            builder.ins().call(print_i64_func, &[val_i64]);
+                        }
+                        if is_nl {
+                            let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                            builder.ins().call(print_nl_func, &[]);
+                        }
+                        return Ok(builder.ins().iconst(types::I32, 0));
+                    }
                     "sqrt" => {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().sqrt(arg));

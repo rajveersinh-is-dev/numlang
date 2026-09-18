@@ -85,6 +85,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Expr::Literal(Literal::Bool(false), token_spanned.span))
             }
+            Token::StringLiteral(s) => {
+                self.advance();
+                Ok(Expr::Literal(Literal::Str(s), token_spanned.span))
+            }
             Token::LBracket => {
                 self.advance();
                 let mut elements = Vec::new();

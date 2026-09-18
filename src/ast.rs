@@ -6,6 +6,7 @@ pub enum Literal {
     TypedInt(i64, String),
     Float(f64),
     Bool(bool),
+    Str(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

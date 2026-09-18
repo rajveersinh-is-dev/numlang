@@ -85,6 +85,10 @@ pub fn supercompile_program(
                         TypedLiteral::Int(i, _) => Value::Int(*i),
                         TypedLiteral::Float(f, _) => Value::Float(*f),
                         TypedLiteral::Bool(b) => Value::Bool(*b),
+                        TypedLiteral::Str(_) => Value::Symbolic(value::SymExpr::Var(
+                            "_str".to_string(),
+                            crate::typecheck::types::Type::Str,
+                        )),
                     },
                     _ => Value::Symbolic(value::SymExpr::Var(
                         "_sym".to_string(),

@@ -234,6 +234,10 @@ pub fn drive_expr(
             TypedLiteral::Int(i, _) => Value::Int(*i),
             TypedLiteral::Float(f, _) => Value::Float(*f),
             TypedLiteral::Bool(b) => Value::Bool(*b),
+            TypedLiteral::Str(_) => Value::Symbolic(super::value::SymExpr::Var(
+                "_str".to_string(),
+                crate::typecheck::types::Type::Str,
+            )),
         },
 
         TypedExpr::Ident { name, ty, .. } => {

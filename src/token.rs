@@ -117,9 +117,42 @@ pub enum Token {
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     IntLiteral(i64),
 
+    #[regex(r#""([^"\\]|\\.)*""#, parse_string_literal)]
+    StringLiteral(String),
+
     // Identifiers
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
+}
+
+fn parse_string_literal(lex: &mut logos::Lexer<Token>) -> Option<String> {
+    let s = lex.slice();
+    if s.len() < 2 {
+        return None;
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut res = String::with_capacity(inner.len());
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => res.push('\n'),
+                Some('r') => res.push('\r'),
+                Some('t') => res.push('\t'),
+                Some('\\') => res.push('\\'),
+                Some('"') => res.push('"'),
+                Some('0') => res.push('\0'),
+                Some(other) => {
+                    res.push('\\');
+                    res.push(other);
+                }
+                None => res.push('\\'),
+            }
+        } else {
+            res.push(c);
+        }
+    }
+    Some(res)
 }
 
 #[derive(Debug, Clone, PartialEq)]
