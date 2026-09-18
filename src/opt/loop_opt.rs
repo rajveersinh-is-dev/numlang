@@ -195,7 +195,13 @@ fn is_var_referenced_in_stmt(stmt: &TypedStmt, var_name: &str) -> bool {
         TypedStmt::Return(opt_expr, ..) => {
             opt_expr.as_ref().is_some_and(|e| is_var_referenced_in_expr(e, var_name))
         }
-        TypedStmt::Break(..) => false,
+        TypedStmt::Break(..) | TypedStmt::Continue(..) => false,
+        TypedStmt::For { var, lo, hi, body, .. } => {
+            var == var_name
+                || is_var_referenced_in_expr(lo, var_name)
+                || is_var_referenced_in_expr(hi, var_name)
+                || body.stmts.iter().any(|s| is_var_referenced_in_stmt(s, var_name))
+        }
     }
 }
 

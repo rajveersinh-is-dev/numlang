@@ -164,7 +164,12 @@ impl CompilerDiagnostic {
             crate::typecheck::TypeError::BreakOutsideLoop { .. } => (
                 "`break` used outside a loop".to_string(),
                 "no enclosing loop".to_string(),
-                "Use `break;` only inside a `while` loop".to_string(),
+                "Use `break;` only inside a loop".to_string(),
+            ),
+            crate::typecheck::TypeError::ContinueOutsideLoop { .. } => (
+                "`continue` used outside a loop".to_string(),
+                "no enclosing loop".to_string(),
+                "Use `continue;` only inside a loop".to_string(),
             ),
         };
 

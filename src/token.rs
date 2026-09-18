@@ -22,8 +22,14 @@ pub enum Token {
     While,
     #[token("break")]
     Break,
+    #[token("continue")]
+    Continue,
+    #[token("loop")]
+    Loop,
     #[token("for")]
     For,
+    #[token("in")]
+    In,
     #[token("true")]
     True,
     #[token("false")]
@@ -90,6 +96,10 @@ pub enum Token {
     Semi,
     #[token("->")]
     Arrow,
+    #[token("..=")]
+    DotDotEq,
+    #[token("..")]
+    DotDot,
 
     // Literals
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().ok())]

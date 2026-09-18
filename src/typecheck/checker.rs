@@ -115,6 +115,9 @@ pub enum TypeError {
 
     #[error("'break' may only be used inside a loop")]
     BreakOutsideLoop { span: Span },
+
+    #[error("'continue' may only be used inside a loop")]
+    ContinueOutsideLoop { span: Span },
 }
 
 impl TypeError {
@@ -137,6 +140,7 @@ impl TypeError {
             TypeError::IndexOutOfBounds { span, .. } => *span,
             TypeError::ArrayElementMismatch { span, .. } => *span,
             TypeError::BreakOutsideLoop { span } => *span,
+            TypeError::ContinueOutsideLoop { span } => *span,
         }
     }
 }
@@ -485,6 +489,109 @@ impl TypeChecker {
                 } else {
                     Ok(TypedStmt::Break(*span))
                 }
+            }
+
+            Stmt::Continue(span) => {
+                if self.loop_depth == 0 {
+                    Err(TypeError::ContinueOutsideLoop { span: *span })
+                } else {
+                    Ok(TypedStmt::Continue(*span))
+                }
+            }
+
+            Stmt::Loop { body, span } => {
+                let true_cond = TypedExpr::Literal {
+                    lit: TypedLiteral::Bool(true),
+                    ty: Type::Bool,
+                    span: *span,
+                };
+                self.env.enter_scope();
+                self.loop_depth += 1;
+                let mut body_stmts = Vec::new();
+                for s in &body.stmts {
+                    body_stmts.push(self.check_stmt(s)?);
+                }
+                self.loop_depth -= 1;
+                self.env.exit_scope();
+
+                Ok(TypedStmt::While {
+                    condition: true_cond,
+                    body: TypedBlock {
+                        stmts: body_stmts,
+                        span: body.span,
+                    },
+                    span: *span,
+                })
+            }
+
+            Stmt::For {
+                var,
+                lo,
+                hi,
+                inclusive,
+                body,
+                span,
+            } => {
+                let typed_lo = self.check_expr(lo, None)?;
+                let lo_ty = typed_lo.ty();
+                if !lo_ty.is_integer() {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Type::I64,
+                        found: lo_ty,
+                        span: typed_lo.span(),
+                    });
+                }
+                let typed_hi = self.check_expr(hi, Some(lo_ty.clone()))?;
+                if typed_hi.ty() != lo_ty {
+                    return Err(TypeError::TypeMismatch {
+                        expected: lo_ty,
+                        found: typed_hi.ty(),
+                        span: typed_hi.span(),
+                    });
+                }
+
+                if let TypedExpr::Literal {
+                    lit: TypedLiteral::Int(n, _),
+                    ..
+                } = &typed_hi
+                {
+                    let bound = if *inclusive { *n + 1 } else { *n };
+                    self.active_loop_bounds.insert(var.clone(), bound);
+                }
+
+                self.env.enter_scope();
+                self.loop_depth += 1;
+                let sym = Symbol {
+                    name: var.clone(),
+                    ty: lo_ty,
+                    is_mutable: false,
+                    span: *span,
+                };
+                if self.env.define_variable(sym).is_err() {
+                    return Err(TypeError::DuplicateDeclaration {
+                        name: var.clone(),
+                        span: *span,
+                    });
+                }
+                let mut body_stmts = Vec::new();
+                for s in &body.stmts {
+                    body_stmts.push(self.check_stmt(s)?);
+                }
+                self.loop_depth -= 1;
+                self.env.exit_scope();
+                self.active_loop_bounds.remove(var);
+
+                Ok(TypedStmt::For {
+                    var: var.clone(),
+                    lo: typed_lo,
+                    hi: typed_hi,
+                    inclusive: *inclusive,
+                    body: TypedBlock {
+                        stmts: body_stmts,
+                        span: body.span,
+                    },
+                    span: *span,
+                })
             }
 
             Stmt::If {
