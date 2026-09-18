@@ -202,6 +202,7 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     }
 
     cmd.arg("kernel32.lib");
+    cmd.arg("ucrt.lib");
 
     let output = cmd
         .output()

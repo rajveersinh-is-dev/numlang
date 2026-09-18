@@ -1487,6 +1487,174 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    "i64_to_f64" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "i64_to_f64".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::I64))?;
+                        if typed_arg.ty() != Type::I64 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "i64_to_f64".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::F64,
+                            span: *span,
+                        });
+                    }
+                    "f64_to_i64" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "f64_to_i64".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::F64))?;
+                        if typed_arg.ty() != Type::F64 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "f64_to_i64".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
+                    "i64_to_f32" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "i64_to_f32".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::I64))?;
+                        if typed_arg.ty() != Type::I64 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "i64_to_f32".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::F32,
+                            span: *span,
+                        });
+                    }
+                    "f32_to_f64" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "f32_to_f64".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::F32))?;
+                        if typed_arg.ty() != Type::F32 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F32,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "f32_to_f64".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::F64,
+                            span: *span,
+                        });
+                    }
+                    "f64_to_f32" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "f64_to_f32".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::F64))?;
+                        if typed_arg.ty() != Type::F64 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::F64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "f64_to_f32".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::F32,
+                            span: *span,
+                        });
+                    }
+                    "i64_to_i32" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "i64_to_i32".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::I64))?;
+                        if typed_arg.ty() != Type::I64 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "i64_to_i32".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::I32,
+                            span: *span,
+                        });
+                    }
+                    "i32_to_i64" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "i32_to_i64".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::I32))?;
+                        if typed_arg.ty() != Type::I32 {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I32,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: "i32_to_i64".to_string(),
+                            args: vec![typed_arg],
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
                     "isqrt" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {
@@ -1512,7 +1680,7 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
-                    "tzcnt" | "ctz" | "clz" | "popcnt" => {
+                    "tzcnt" | "ctz" | "clz" | "popcnt" | "bswap" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {
                                 name: callee.clone(),
@@ -2632,7 +2800,7 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
-                    "sin" | "cos" | "tan" | "exp" | "ln" => {
+                    "sin" | "cos" | "tan" | "exp" | "ln" | "log2" | "log10" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {
                                 name: callee.clone(),
@@ -2657,7 +2825,7 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
-                    "atan2" | "powf" => {
+                    "atan2" | "powf" | "pow" => {
                         if args.len() != 2 {
                             return Err(TypeError::ArityMismatch {
                                 name: callee.clone(),
