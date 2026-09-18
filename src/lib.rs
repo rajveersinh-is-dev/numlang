@@ -10,3 +10,4 @@ pub mod opt;
 pub mod explain;
 pub mod fmt;
 pub mod doc;
+pub mod mir;
