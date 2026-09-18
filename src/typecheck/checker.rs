@@ -175,6 +175,34 @@ impl TypeError {
             TypeError::EmptyMatch { span } => *span,
         }
     }
+
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            TypeError::TypeMismatch { .. } => "E001",
+            TypeError::UndeclaredVariable { .. } => "E002",
+            TypeError::UndeclaredFunction { .. } => "E003",
+            TypeError::CannotMutateImmutable { .. } => "E004",
+            TypeError::DuplicateDeclaration { .. } => "E005",
+            TypeError::InvalidConditionType { .. } => "E006",
+            TypeError::InvalidBinaryOperands { .. } => "E007",
+            TypeError::InvalidUnaryOperand { .. } => "E008",
+            TypeError::ArityMismatch { .. } => "E009",
+            TypeError::UnknownType { .. } => "E010",
+            TypeError::InvalidReturn { .. } => "E011",
+            TypeError::CannotIndexNonArray { .. } => "E012",
+            TypeError::InvalidIndexType { .. } => "E013",
+            TypeError::EmptyArrayLiteral { .. } => "E014",
+            TypeError::IndexOutOfBounds { .. } => "E015",
+            TypeError::ArrayElementMismatch { .. } => "E016",
+            TypeError::BreakOutsideLoop { .. } => "E017",
+            TypeError::ContinueOutsideLoop { .. } => "E018",
+            TypeError::NoSuchField { .. }
+            | TypeError::MissingField { .. }
+            | TypeError::CannotAccessFieldNonStruct { .. } => "E019",
+            TypeError::NonExhaustiveMatch { .. }
+            | TypeError::EmptyMatch { .. } => "E020",
+        }
+    }
 }
 
 use std::collections::HashMap;

@@ -112,6 +112,14 @@ impl<'a> Parser<'a> {
         let mut return_ty = None;
         if self.match_token(&Token::Arrow) {
             return_ty = Some(self.parse_type()?);
+        } else if !self.check(&Token::LBrace) {
+            if let Some(tok) = self.peek_token().cloned() {
+                return Err(ParseError::UnexpectedToken {
+                    found: tok.token,
+                    expected: "return type arrow '->'".to_string(),
+                    span: tok.span,
+                });
+            }
         }
 
         let body = self.parse_block()?;
@@ -164,7 +172,13 @@ impl<'a> Parser<'a> {
         let mut stmts = Vec::new();
 
         while !self.check(&Token::RBrace) && !self.is_at_end() {
-            stmts.push(self.parse_stmt()?);
+            match self.parse_stmt() {
+                Ok(s) => stmts.push(s),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
         }
 
         let close_span = self.consume(&Token::RBrace, "'}' to close block")?;
@@ -192,14 +206,14 @@ impl<'a> Parser<'a> {
                     _ => {
                         return Err(ParseError::UnexpectedToken {
                             found: t.token,
-                            expected: "variable name".to_string(),
+                            expected: "variable name after 'let'".to_string(),
                             span: t.span,
                         });
                     }
                 },
                 None => {
                     return Err(ParseError::UnexpectedEof {
-                        expected: "variable name".to_string(),
+                        expected: "variable name after 'let'".to_string(),
                         span: let_span,
                     });
                 }
