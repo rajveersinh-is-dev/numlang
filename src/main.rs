@@ -54,6 +54,12 @@ pub struct Cli {
     pub emit_ir: bool,
 
     #[arg(
+        long = "emit-mir",
+        help = "Emit Mid-Level Intermediate Representation (MIR) text"
+    )]
+    pub emit_mir: bool,
+
+    #[arg(
         long = "emit-obj",
         help = "Emit compiled native COFF object file (.obj)"
     )]
@@ -511,6 +517,12 @@ fn real_main() -> Result<()> {
     // Optimization pass (run once)
     let mut typed_program = typed_program;
     numlang::opt::optimize_program(&mut typed_program);
+
+    if cli.emit_mir {
+        let mir_program = numlang::mir::lower::lower_program(&typed_program);
+        println!("{:#?}", mir_program);
+        return Ok(());
+    }
 
     if cli.emit_ir {
         let ir_program = numlang::ir::lower::lower_to_ir(&typed_program);
