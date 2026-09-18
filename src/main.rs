@@ -129,6 +129,17 @@ pub enum Commands {
         #[arg(help = "Path to source file (.nl)")]
         file: PathBuf,
     },
+    /// Format a numlang source file
+    Fmt {
+        #[arg(help = "Path to source file (.nl)")]
+        file: PathBuf,
+
+        #[arg(long = "check", help = "Exit 1 if file is not already formatted")]
+        check: bool,
+
+        #[arg(long = "stdout", help = "Print formatted output to stdout")]
+        stdout: bool,
+    },
 }
 
 fn compile_source_to_typed(file_path: &Path) -> Result<(String, TypedProgram)> {
@@ -201,7 +212,11 @@ fn handle_run(file: &Path) -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let temp_exe = temp_dir.join(format!("numlang_run_{}_{}.exe", std::process::id(), timestamp));
+    let temp_exe = temp_dir.join(format!(
+        "numlang_run_{}_{}.exe",
+        std::process::id(),
+        timestamp
+    ));
 
     build_executable(&typed_program, &temp_exe)?;
 
@@ -280,6 +295,53 @@ fn handle_check(file: &Path) -> Result<()> {
     Ok(())
 }
 
+fn handle_fmt(file: &Path, check: bool, stdout: bool) -> Result<()> {
+    if file.extension().and_then(|e| e.to_str()) == Some("rs") {
+        let mut cmd = Command::new("rustfmt");
+        if check {
+            cmd.arg("--check");
+        } else if stdout {
+            cmd.arg("--emit").arg("stdout");
+        }
+        cmd.arg(file);
+        let status = cmd
+            .status()
+            .map_err(|e| miette::miette!("Failed to run rustfmt: {}", e))?;
+        if check && !status.success() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    let filename = file.to_string_lossy().to_string();
+    let source = fs::read_to_string(file)
+        .into_diagnostic()
+        .map_err(|e| miette::miette!("Failed to read file '{}': {}", filename, e))?;
+
+    let formatted = numlang::fmt::format_source(&source)
+        .map_err(|e| miette::miette!("Formatting error in '{}': {}", filename, e))?;
+
+    if check {
+        if source.replace("\r\n", "\n") != formatted.replace("\r\n", "\n") {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    if stdout {
+        print!("{}", formatted);
+        return Ok(());
+    }
+
+    if source.replace("\r\n", "\n") != formatted.replace("\r\n", "\n") {
+        fs::write(file, &formatted)
+            .into_diagnostic()
+            .map_err(|e| miette::miette!("Failed to write file '{}': {}", filename, e))?;
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -332,6 +394,11 @@ fn real_main() -> Result<()> {
                 return handle_build(&file, output, emit_obj);
             }
             Commands::Check { file } => return handle_check(&file),
+            Commands::Fmt {
+                file,
+                check,
+                stdout,
+            } => return handle_fmt(&file, check, stdout),
         }
     }
 
