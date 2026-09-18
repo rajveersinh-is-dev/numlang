@@ -25,11 +25,16 @@ pub enum ParseError {
 pub struct Parser<'a> {
     tokens: &'a [SpannedToken],
     cursor: usize,
+    pub errors: Vec<ParseError>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [SpannedToken]) -> Self {
-        Self { tokens, cursor: 0 }
+        Self {
+            tokens,
+            cursor: 0,
+            errors: Vec::new(),
+        }
     }
 
     pub fn is_at_end(&self) -> bool {
@@ -104,21 +109,74 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn synchronize(&mut self) {
+        let start_cursor = self.cursor;
+        while !self.is_at_end() {
+            if let Some(tok) = self.peek() {
+                match tok {
+                    Token::Semi => {
+                        self.advance();
+                        return;
+                    }
+                    Token::RBrace | Token::Fn | Token::Struct => {
+                        if self.cursor == start_cursor {
+                            self.advance();
+                        }
+                        return;
+                    }
+                    _ => {
+                        self.advance();
+                    }
+                }
+            } else {
+                return;
+            }
+        }
+    }
+
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let mut functions = Vec::new();
         let mut structs = Vec::new();
         let mut items = Vec::new();
         while !self.is_at_end() {
             if self.check(&Token::Struct) {
-                let s = self.parse_struct_def()?;
-                structs.push(s.clone());
-                items.push(crate::ast::Item::Struct(s));
+                match self.parse_struct_def() {
+                    Ok(s) => {
+                        structs.push(s.clone());
+                        items.push(crate::ast::Item::Struct(s));
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.synchronize();
+                    }
+                }
+            } else if self.check(&Token::Fn) {
+                match self.parse_function() {
+                    Ok(f) => {
+                        functions.push(f.clone());
+                        items.push(crate::ast::Item::Function(f));
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.synchronize();
+                    }
+                }
+            } else if let Some(tok) = self.peek_token().cloned() {
+                self.errors.push(ParseError::UnexpectedToken {
+                    found: tok.token,
+                    expected: "function or struct definition".to_string(),
+                    span: tok.span,
+                });
+                self.synchronize();
             } else {
-                let f = self.parse_function()?;
-                functions.push(f.clone());
-                items.push(crate::ast::Item::Function(f));
+                break;
             }
         }
+
+        if let Some(first_err) = self.errors.first() {
+            return Err(first_err.clone());
+        }
+
         Ok(Program {
             items,
             functions,

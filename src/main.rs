@@ -72,12 +72,23 @@ pub struct Cli {
     )]
     pub bench: bool,
 
+    #[arg(
+        long = "explain",
+        help = "Explain a compiler error code (e.g. --explain E001)"
+    )]
+    pub explain: Option<String>,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Explain a compiler error code (e.g. E001)
+    Explain {
+        #[arg(help = "Error code to explain (e.g. E001)")]
+        code: String,
+    },
     /// Compile and run a numlang program directly
     Run {
         #[arg(help = "Path to source file (.nl)")]
@@ -285,9 +296,24 @@ fn real_main() -> Result<()> {
         std::env::set_var("NUMLANG_BENCH", "1");
     }
 
+    if let Some(code) = &cli.explain {
+        if numlang::explain::print_explanation(code) {
+            return Ok(());
+        } else {
+            std::process::exit(1);
+        }
+    }
+
     // Handle subcommands if provided
     if let Some(command) = cli.command {
         match command {
+            Commands::Explain { code } => {
+                if numlang::explain::print_explanation(&code) {
+                    return Ok(());
+                } else {
+                    std::process::exit(1);
+                }
+            }
             Commands::Run { file, bench } => {
                 if bench {
                     std::env::set_var("NUMLANG_BENCH", "1");

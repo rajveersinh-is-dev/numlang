@@ -7,3 +7,4 @@ pub mod typecheck;
 pub mod ir;
 pub mod codegen;
 pub mod opt;
+pub mod explain;

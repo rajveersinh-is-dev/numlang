@@ -1,10 +1,10 @@
 use crate::ast::Program;
 use crate::parser::ParseError;
-use crate::token::{LexError, SpannedToken};
+use crate::token::{LexError, SpannedToken, Token};
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
-#[derive(Error, Diagnostic, Debug)]
+#[derive(Error, Diagnostic, Debug, Clone)]
 pub enum CompilerDiagnostic {
     #[error("Lexer error: unrecognized character or token")]
     #[diagnostic(
@@ -19,21 +19,26 @@ pub enum CompilerDiagnostic {
     },
 
     #[error("Syntax error: {message}")]
-    #[diagnostic(code(numlang::parser::syntax_error))]
+    #[diagnostic(
+        code(numlang::parser::syntax_error),
+        help("{help}")
+    )]
     SyntaxError {
         message: String,
+        help: String,
         #[source_code]
         src: NamedSource<String>,
         #[label("syntax error occurred here")]
         span: SourceSpan,
     },
 
-    #[error("Type error: {message}")]
+    #[error("Type error [{code}]: {message}")]
     #[diagnostic(
         code(numlang::typecheck::type_error),
         help("{help}")
     )]
     TypeError {
+        code: &'static str,
         message: String,
         help: String,
         #[source_code]
@@ -41,6 +46,9 @@ pub enum CompilerDiagnostic {
         #[label("{label}")]
         span: SourceSpan,
         label: String,
+        #[label("{secondary_label}")]
+        secondary_span: Option<SourceSpan>,
+        secondary_label: String,
     },
 }
 
@@ -56,22 +64,58 @@ impl CompilerDiagnostic {
 
     pub fn from_parse_error(err: ParseError, filename: &str, source: &str) -> Self {
         match err {
-            ParseError::UnexpectedEof { expected, span } => CompilerDiagnostic::SyntaxError {
-                message: format!("Unexpected end of input, expected {}", expected),
-                src: NamedSource::new(filename, source.to_string()),
-                span: span.into(),
-            },
+            ParseError::UnexpectedEof { expected, span } => {
+                let help = if expected.contains("variable name") {
+                    "Did you mean: let <name>: <type> = <value>?".to_string()
+                } else if expected.contains("return type") || expected.contains("->") {
+                    "Did you forget the return type arrow ->?".to_string()
+                } else {
+                    format!("Expected {}", expected)
+                };
+                CompilerDiagnostic::SyntaxError {
+                    message: format!("Unexpected end of input, expected {}", expected),
+                    help,
+                    src: NamedSource::new(filename, source.to_string()),
+                    span: span.into(),
+                }
+            }
             ParseError::UnexpectedToken {
                 found,
                 expected,
                 span,
-            } => CompilerDiagnostic::SyntaxError {
-                message: format!("Unexpected token '{:?}', expected {}", found, expected),
-                src: NamedSource::new(filename, source.to_string()),
-                span: span.into(),
-            },
+            } => {
+                let span_start = span.start;
+                let prefix = if span_start <= source.len() {
+                    &source[..span_start]
+                } else {
+                    ""
+                };
+                let trimmed_prefix = prefix.trim_end();
+
+                let help = if expected.contains("variable name")
+                    || trimmed_prefix.ends_with("let")
+                    || trimmed_prefix.ends_with("let mut")
+                {
+                    "Did you mean: let <name>: <type> = <value>?".to_string()
+                } else if expected.contains("return type")
+                    || expected.contains("->")
+                    || (found == Token::LBrace && (trimmed_prefix.ends_with(')') || expected.contains("type")))
+                {
+                    "Did you forget the return type arrow ->?".to_string()
+                } else {
+                    format!("Expected {}", expected)
+                };
+
+                CompilerDiagnostic::SyntaxError {
+                    message: format!("Unexpected token '{:?}', expected {}", found, expected),
+                    help,
+                    src: NamedSource::new(filename, source.to_string()),
+                    span: span.into(),
+                }
+            }
             ParseError::InvalidPrefix { found, span } => CompilerDiagnostic::SyntaxError {
                 message: format!("Invalid prefix operator '{:?}'", found),
+                help: "Ensure operator is valid in prefix position (e.g. '-' or '!')".to_string(),
                 src: NamedSource::new(filename, source.to_string()),
                 span: span.into(),
             },
@@ -80,12 +124,38 @@ impl CompilerDiagnostic {
 
     pub fn from_type_error(err: crate::typecheck::TypeError, filename: &str, source: &str) -> Self {
         let span = err.span();
-        let (message, label, help) = match &err {
-            crate::typecheck::TypeError::TypeMismatch { expected, found, .. } => (
-                format!("Type mismatch: expected `{}`, found `{}`", expected, found),
-                format!("expected `{}`, found `{}`", expected, found),
-                "numlang requires exact type matching without implicit conversions".to_string(),
-            ),
+        let code = err.error_code();
+        let mut secondary_span: Option<SourceSpan> = None;
+        let mut secondary_label = String::new();
+
+        let (message, label, base_help) = match &err {
+            crate::typecheck::TypeError::TypeMismatch { expected, found, .. } => {
+                let err_start = span.start;
+                if err_start <= source.len() {
+                    let prefix = &source[..err_start];
+                    if let Some(colon_pos) = prefix.rfind(':') {
+                        let between = &source[colon_pos..err_start];
+                        if !between.contains(';') && between.contains('=') {
+                            if let Some(eq_pos) = between.find('=') {
+                                let ty_str = source[colon_pos + 1..colon_pos + eq_pos].trim();
+                                if !ty_str.is_empty() {
+                                    if let Some(offset) = source[colon_pos + 1..colon_pos + eq_pos].find(ty_str) {
+                                        let s = colon_pos + 1 + offset;
+                                        let l = ty_str.len();
+                                        secondary_span = Some((s, l).into());
+                                        secondary_label = format!("declared type `{}` specified here", ty_str);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                (
+                    format!("Type mismatch: expected `{}`, found `{}`", expected, found),
+                    format!("expected `{}`, found `{}`", expected, found),
+                    "numlang requires exact type matching without implicit conversions".to_string(),
+                )
+            }
             crate::typecheck::TypeError::UndeclaredVariable { name, .. } => (
                 format!("Undeclared variable `{}`", name),
                 "not found in this scope".to_string(),
@@ -121,11 +191,18 @@ impl CompilerDiagnostic {
                 "invalid operand type".to_string(),
                 "Ensure operand type matches operator expectation".to_string(),
             ),
-            crate::typecheck::TypeError::ArityMismatch { name, expected, found, .. } => (
-                format!("Function `{}` expected {} arguments, received {}", name, expected, found),
-                format!("expected {} arguments", expected),
-                "Ensure call site passes the correct number of arguments".to_string(),
-            ),
+            crate::typecheck::TypeError::ArityMismatch { name, expected, found, .. } => {
+                let search = format!("fn {}", name);
+                if let Some(pos) = source.find(&search) {
+                    secondary_span = Some((pos, search.len()).into());
+                    secondary_label = format!("function `{}` defined here", name);
+                }
+                (
+                    format!("Function `{}` expected {} arguments, received {}", name, expected, found),
+                    format!("expected {} arguments", expected),
+                    "Ensure call site passes the correct number of arguments".to_string(),
+                )
+            }
             crate::typecheck::TypeError::UnknownType { name, .. } => (
                 format!("Unknown type `{}`", name),
                 "unrecognized type name".to_string(),
@@ -198,12 +275,17 @@ impl CompilerDiagnostic {
             ),
         };
 
+        let help = format!("{} (see 'numlang --explain {}')", base_help, code);
+
         CompilerDiagnostic::TypeError {
+            code,
             message,
             help,
             src: NamedSource::new(filename, source.to_string()),
             span: span.into(),
             label,
+            secondary_span,
+            secondary_label,
         }
     }
 }
