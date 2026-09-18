@@ -140,6 +140,14 @@ pub enum Commands {
         #[arg(long = "stdout", help = "Print formatted output to stdout")]
         stdout: bool,
     },
+    /// Generate Markdown documentation from doc-comments
+    Doc {
+        #[arg(help = "Path to source file (.nl)")]
+        file: PathBuf,
+
+        #[arg(short = 'o', long = "output", help = "Output markdown file path")]
+        output: Option<PathBuf>,
+    },
 }
 
 fn compile_source_to_typed(file_path: &Path) -> Result<(String, TypedProgram)> {
@@ -342,6 +350,39 @@ fn handle_fmt(file: &Path, check: bool, stdout: bool) -> Result<()> {
     Ok(())
 }
 
+fn handle_doc(file: &Path, output: Option<PathBuf>) -> Result<()> {
+    let filename = file.to_string_lossy().to_string();
+    let source = fs::read_to_string(file)
+        .into_diagnostic()
+        .map_err(|e| miette::miette!("Failed to read file '{}': {}", filename, e))?;
+
+    let tokens = match tokenize(&source) {
+        Ok(t) => t,
+        Err(err) => {
+            let diag = CompilerDiagnostic::from_lex_error(err, &filename, &source);
+            return Err(diag.into());
+        }
+    };
+
+    let program = match parse(&tokens) {
+        Ok(p) => p,
+        Err(err) => {
+            let diag = CompilerDiagnostic::from_parse_error(err, &filename, &source);
+            return Err(diag.into());
+        }
+    };
+
+    let markdown = numlang::doc::generate_doc(&program);
+    if let Some(out_path) = output {
+        fs::write(&out_path, &markdown)
+            .into_diagnostic()
+            .map_err(|e| miette::miette!("Failed to write doc file: {}", e))?;
+    } else {
+        print!("{}", markdown);
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -399,6 +440,7 @@ fn real_main() -> Result<()> {
                 check,
                 stdout,
             } => return handle_fmt(&file, check, stdout),
+            Commands::Doc { file, output } => return handle_doc(&file, output),
         }
     }
 

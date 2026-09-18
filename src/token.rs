@@ -3,7 +3,6 @@ use crate::span::Span;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\f\r]+")]
-#[logos(skip r"//[^\n]*")]
 pub enum Token {
     // Keywords
     #[token("fn")]
@@ -130,9 +129,28 @@ pub enum Token {
     #[regex(r#""([^"\\]|\\.)*""#, parse_string_literal)]
     StringLiteral(String),
 
+    // Doc comments (///)
+    #[regex(r"///[^\r\n]*", parse_doc_comment)]
+    DocComment(String),
+
+    // Regular comments (//)
+    #[regex(r"//[^\r\n]*", logos::skip)]
+    Comment,
+
     // Identifiers
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
+}
+
+fn parse_doc_comment(lex: &mut logos::Lexer<Token>) -> Option<String> {
+    let s = lex.slice().trim_end_matches('\r');
+    if let Some(stripped) = s.strip_prefix("/// ") {
+        Some(stripped.to_string())
+    } else if let Some(stripped) = s.strip_prefix("///") {
+        Some(stripped.to_string())
+    } else {
+        Some(s.to_string())
+    }
 }
 
 fn parse_string_literal(lex: &mut logos::Lexer<Token>) -> Option<String> {

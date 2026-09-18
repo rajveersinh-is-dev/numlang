@@ -138,9 +138,22 @@ impl<'a> Parser<'a> {
         let mut functions = Vec::new();
         let mut structs = Vec::new();
         let mut items = Vec::new();
+        let mut pending_doc_comments: Vec<String> = Vec::new();
+
         while !self.is_at_end() {
+            if let Some(Token::DocComment(doc)) = self.peek().cloned() {
+                self.advance();
+                pending_doc_comments.push(doc);
+                continue;
+            }
+
             if self.check(&Token::Struct) {
-                match self.parse_struct_def() {
+                let doc = if pending_doc_comments.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut pending_doc_comments).join("\n"))
+                };
+                match self.parse_struct_def(doc) {
                     Ok(s) => {
                         structs.push(s.clone());
                         items.push(crate::ast::Item::Struct(s));
@@ -151,7 +164,12 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else if self.check(&Token::Fn) {
-                match self.parse_function() {
+                let doc = if pending_doc_comments.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut pending_doc_comments).join("\n"))
+                };
+                match self.parse_function(doc) {
                     Ok(f) => {
                         functions.push(f.clone());
                         items.push(crate::ast::Item::Function(f));
@@ -162,6 +180,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else if let Some(tok) = self.peek_token().cloned() {
+                pending_doc_comments.clear();
                 self.errors.push(ParseError::UnexpectedToken {
                     found: tok.token,
                     expected: "function or struct definition".to_string(),

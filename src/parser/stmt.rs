@@ -3,7 +3,7 @@ use crate::parser::{ParseError, Parser};
 use crate::token::Token;
 
 impl<'a> Parser<'a> {
-    pub fn parse_struct_def(&mut self) -> Result<StructDef, ParseError> {
+    pub fn parse_struct_def(&mut self, doc_comment: Option<String>) -> Result<StructDef, ParseError> {
         let struct_span = self.consume(&Token::Struct, "'struct' keyword")?;
 
         let name = match self.peek_token().cloned() {
@@ -67,10 +67,15 @@ impl<'a> Parser<'a> {
         }
         let close_span = self.consume(&Token::RBrace, "'}' to close struct definition")?;
         let span = struct_span.merge(&close_span);
-        Ok(StructDef { name, fields, span })
+        Ok(StructDef {
+            name,
+            fields,
+            doc_comment,
+            span,
+        })
     }
 
-    pub fn parse_function(&mut self) -> Result<Function, ParseError> {
+    pub fn parse_function(&mut self, doc_comment: Option<String>) -> Result<Function, ParseError> {
         let fn_span = self.consume(&Token::Fn, "'fn' keyword")?;
 
         let name = match self.peek_token().cloned() {
@@ -130,6 +135,7 @@ impl<'a> Parser<'a> {
             params,
             return_ty,
             body,
+            doc_comment,
             span,
         })
     }
