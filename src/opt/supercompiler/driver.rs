@@ -1218,6 +1218,38 @@ fn drive_intrinsic(name: &str, args: &[Value], _ty: &Type) -> Option<Value> {
             let i = args.first()?.as_int()?;
             Some(Value::Int(i.count_ones() as i64))
         }
+        "bswap" => {
+            let i = args.first()?.as_int()?;
+            Some(Value::Int(i.swap_bytes()))
+        }
+        "i64_to_f64" => {
+            let i = args.first()?.as_int()?;
+            Some(Value::Float(i as f64))
+        }
+        "f64_to_i64" => {
+            let f = args.first()?.as_float()?;
+            Some(Value::Int(f as i64))
+        }
+        "i64_to_f32" => {
+            let i = args.first()?.as_int()?;
+            Some(Value::Float(i as f32 as f64))
+        }
+        "f32_to_f64" => {
+            let f = args.first()?.as_float()?;
+            Some(Value::Float(f as f32 as f64))
+        }
+        "f64_to_f32" => {
+            let f = args.first()?.as_float()?;
+            Some(Value::Float(f as f32 as f64))
+        }
+        "i64_to_i32" => {
+            let i = args.first()?.as_int()?;
+            Some(Value::Int(i as i32 as i64))
+        }
+        "i32_to_i64" => {
+            let i = args.first()?.as_int()?;
+            Some(Value::Int(i as i32 as i64))
+        }
         "tzcnt" | "ctz" => {
             let i = args.first()?.as_int()?;
             Some(Value::Int(i.trailing_zeros() as i64))

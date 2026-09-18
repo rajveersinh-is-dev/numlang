@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, Endianness, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
+    types, AbiParam, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
     Value,
 };
 use cranelift_codegen::settings::{self, Configurable};
@@ -1335,6 +1335,14 @@ pub struct CraneliftCompiler {
     print_u64_id: FuncId,
     print_f64_id: FuncId,
     print_bool_id: FuncId,
+    sin_id: FuncId,
+    cos_id: FuncId,
+    tan_id: FuncId,
+    exp_id: FuncId,
+    log_id: FuncId,
+    log2_id: FuncId,
+    log10_id: FuncId,
+    pow_id: FuncId,
 }
 
 impl CraneliftCompiler {
@@ -1449,6 +1457,41 @@ impl CraneliftCompiler {
             .declare_function("__nl_print_bool", Linkage::Local, &print_bool_sig)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
+        let mut sig_1f = module.make_signature();
+        sig_1f.params.push(AbiParam::new(types::F64));
+        sig_1f.returns.push(AbiParam::new(types::F64));
+
+        let sin_id = module
+            .declare_function("sin", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let cos_id = module
+            .declare_function("cos", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let tan_id = module
+            .declare_function("tan", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let exp_id = module
+            .declare_function("exp", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let log_id = module
+            .declare_function("log", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let log2_id = module
+            .declare_function("log2", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        let log10_id = module
+            .declare_function("log10", Linkage::Import, &sig_1f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let mut sig_2f = module.make_signature();
+        sig_2f.params.push(AbiParam::new(types::F64));
+        sig_2f.params.push(AbiParam::new(types::F64));
+        sig_2f.returns.push(AbiParam::new(types::F64));
+
+        let pow_id = module
+            .declare_function("pow", Linkage::Import, &sig_2f)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         Ok(Self {
             module,
             func_ids: HashMap::new(),
@@ -1462,6 +1505,14 @@ impl CraneliftCompiler {
             print_u64_id,
             print_f64_id,
             print_bool_id,
+            sin_id,
+            cos_id,
+            tan_id,
+            exp_id,
+            log_id,
+            log2_id,
+            log10_id,
+            pow_id,
         })
     }
 
@@ -2425,6 +2476,14 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             print_u64_id: self.print_u64_id,
             print_f64_id: self.print_f64_id,
             print_bool_id: self.print_bool_id,
+            sin_id: self.sin_id,
+            cos_id: self.cos_id,
+            tan_id: self.tan_id,
+            exp_id: self.exp_id,
+            log_id: self.log_id,
+            log2_id: self.log2_id,
+            log10_id: self.log10_id,
+            pow_id: self.pow_id,
             variables,
             loop_exit_blocks: Vec::new(),
             loop_continue_blocks: Vec::new(),
@@ -2558,6 +2617,14 @@ struct FunctionTranslationState<'a> {
     print_u64_id: FuncId,
     print_f64_id: FuncId,
     print_bool_id: FuncId,
+    sin_id: FuncId,
+    cos_id: FuncId,
+    tan_id: FuncId,
+    exp_id: FuncId,
+    log_id: FuncId,
+    log2_id: FuncId,
+    log10_id: FuncId,
+    pow_id: FuncId,
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     loop_continue_blocks: Vec<cranelift_codegen::ir::Block>,
@@ -2653,6 +2720,51 @@ impl<'a> FunctionTranslationState<'a> {
         } else {
             builder.ins().f32const(f)
         }
+    }
+
+    fn emit_int_pow(&mut self, base: Value, exp: Value, ty: &Type, builder: &mut FunctionBuilder) -> Value {
+        let clif_ty = type_to_clif(ty.clone());
+        let var_res = builder.declare_var(clif_ty);
+        let var_b = builder.declare_var(clif_ty);
+        let var_e = builder.declare_var(clif_ty);
+
+        let one = self.get_iconst(clif_ty, 1, builder);
+        let zero = self.get_iconst(clif_ty, 0, builder);
+        builder.def_var(var_res, one);
+        builder.def_var(var_b, base);
+        builder.def_var(var_e, exp);
+
+        let loop_header = builder.create_block();
+        let loop_body = builder.create_block();
+        let loop_exit = builder.create_block();
+
+        builder.ins().jump(loop_header, &[]);
+        builder.switch_to_block(loop_header);
+        let cur_e = builder.use_var(var_e);
+        let cond = builder.ins().icmp(IntCC::SignedGreaterThan, cur_e, zero);
+        builder.ins().brif(cond, loop_body, &[], loop_exit, &[]);
+
+        builder.switch_to_block(loop_body);
+        builder.seal_block(loop_body);
+        let is_odd = builder.ins().band_imm_s(cur_e, 1);
+        let is_odd_cond = builder.ins().icmp(IntCC::NotEqual, is_odd, zero);
+        let cur_res = builder.use_var(var_res);
+        let cur_b = builder.use_var(var_b);
+        let mult = builder.ins().imul(cur_res, cur_b);
+        let next_res = builder.ins().select(is_odd_cond, mult, cur_res);
+        builder.def_var(var_res, next_res);
+
+        let next_b = builder.ins().imul(cur_b, cur_b);
+        builder.def_var(var_b, next_b);
+        let next_e = builder.ins().sshr_imm_s(cur_e, 1);
+        builder.def_var(var_e, next_e);
+        builder.ins().jump(loop_header, &[]);
+
+        builder.seal_block(loop_header);
+        builder.switch_to_block(loop_exit);
+        builder.seal_block(loop_exit);
+
+        builder.use_var(var_res)
     }
 
     fn emit_fast_int_mul(
@@ -3495,145 +3607,6 @@ impl<'a> FunctionTranslationState<'a> {
         builder.use_var(var_u)
     }
 
-    fn emit_sin(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let inv_pi = builder.ins().f64const(std::f64::consts::FRAC_1_PI);
-        let pi = builder.ins().f64const(std::f64::consts::PI);
-        let x_scaled = builder.ins().fmul(x, inv_pi);
-        let k_f = builder.ins().nearest(x_scaled);
-        let k_pi = builder.ins().fmul(k_f, pi);
-        let r = builder.ins().fsub(x, k_pi);
-
-        let r2 = builder.ins().fmul(r, r);
-        let r3 = builder.ins().fmul(r2, r);
-
-        let c13 = builder.ins().f64const(1.605904383682161e-10);
-        let c11 = builder.ins().f64const(-2.505210838544172e-8);
-        let c9 = builder.ins().f64const(2.755731922398589e-6);
-        let c7 = builder.ins().f64const(-1.984126984126984e-4);
-        let c5 = builder.ins().f64const(8.333333333333333e-3);
-        let c3 = builder.ins().f64const(-1.6666666666666666e-1);
-
-        let p11 = builder.ins().fma(r2, c13, c11);
-        let p9 = builder.ins().fma(r2, p11, c9);
-        let p7 = builder.ins().fma(r2, p9, c7);
-        let p5 = builder.ins().fma(r2, p7, c5);
-        let p3 = builder.ins().fma(r2, p5, c3);
-
-        let poly = builder.ins().fma(r3, p3, r);
-
-        let k_i = builder.ins().fcvt_to_sint(types::I64, k_f);
-        let one_i = builder.ins().iconst(types::I64, 1);
-        let zero_i = builder.ins().iconst(types::I64, 0);
-        let is_odd = builder.ins().band(k_i, one_i);
-        let cond = builder.ins().icmp(IntCC::NotEqual, is_odd, zero_i);
-        let neg_poly = builder.ins().fneg(poly);
-        builder.ins().select(cond, neg_poly, poly)
-    }
-
-    fn emit_cos(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let half_pi = builder.ins().f64const(std::f64::consts::FRAC_PI_2);
-        let x_shifted = builder.ins().fadd(x, half_pi);
-        Self::emit_sin(builder, x_shifted)
-    }
-
-    fn emit_tan(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let s = Self::emit_sin(builder, x);
-        let c = Self::emit_cos(builder, x);
-        builder.ins().fdiv(s, c)
-    }
-
-    fn emit_exp(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let log2_e = builder.ins().f64const(std::f64::consts::LOG2_E);
-        let ln2_hi = builder.ins().f64const(0.6931471803691238);
-        let ln2_lo = builder.ins().f64const(1.9082149292705877e-10);
-
-        let x_scaled = builder.ins().fmul(x, log2_e);
-        let k_f = builder.ins().nearest(x_scaled);
-        let t_hi = builder.ins().fmul(k_f, ln2_hi);
-        let r_hi = builder.ins().fsub(x, t_hi);
-        let t_lo = builder.ins().fmul(k_f, ln2_lo);
-        let r = builder.ins().fsub(r_hi, t_lo);
-
-        let c7 = builder.ins().f64const(1.0 / 5040.0);
-        let c6 = builder.ins().f64const(1.0 / 720.0);
-        let c5 = builder.ins().f64const(1.0 / 120.0);
-        let c4 = builder.ins().f64const(1.0 / 24.0);
-        let c3 = builder.ins().f64const(1.0 / 6.0);
-        let c2 = builder.ins().f64const(0.5);
-        let c1 = builder.ins().f64const(1.0);
-        let c0 = builder.ins().f64const(1.0);
-
-        let p6 = builder.ins().fma(r, c7, c6);
-        let p5 = builder.ins().fma(r, p6, c5);
-        let p4 = builder.ins().fma(r, p5, c4);
-        let p3 = builder.ins().fma(r, p4, c3);
-        let p2 = builder.ins().fma(r, p3, c2);
-        let p1 = builder.ins().fma(r, p2, c1);
-        let poly = builder.ins().fma(r, p1, c0);
-
-        let k_i = builder.ins().fcvt_to_sint(types::I64, k_f);
-        let bias = builder.ins().iconst(types::I64, 1023);
-        let exp_bits = builder.ins().iadd(k_i, bias);
-        let sh = builder.ins().iconst(types::I64, 52);
-        let bits = builder.ins().ishl(exp_bits, sh);
-        let two_pow_k = builder.ins().bitcast(types::F64, MemFlagsData::new().with_endianness(Endianness::Little), bits);
-
-        builder.ins().fmul(poly, two_pow_k)
-    }
-
-    fn emit_ln(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let bits = builder.ins().bitcast(types::I64, MemFlagsData::new().with_endianness(Endianness::Little), x);
-        let sh52 = builder.ins().iconst(types::I64, 52);
-        let exp_shifted = builder.ins().ushr(bits, sh52);
-        let mask_7ff = builder.ins().iconst(types::I64, 0x7FF);
-        let exp_bits = builder.ins().band(exp_shifted, mask_7ff);
-        let bias = builder.ins().iconst(types::I64, 1023);
-        let k_i = builder.ins().isub(exp_bits, bias);
-        let k_f = builder.ins().fcvt_from_sint(types::F64, k_i);
-
-        let mant_mask = builder.ins().iconst(types::I64, 0x000F_FFFF_FFFF_FFFF);
-        let mant_bits = builder.ins().band(bits, mant_mask);
-        let exp_1023 = builder.ins().iconst(types::I64, 0x3FF0_0000_0000_0000);
-        let norm_bits = builder.ins().bor(mant_bits, exp_1023);
-        let m = builder.ins().bitcast(types::F64, MemFlagsData::new().with_endianness(Endianness::Little), norm_bits);
-
-        let sqrt2 = builder.ins().f64const(std::f64::consts::SQRT_2);
-        let half = builder.ins().f64const(0.5);
-        let one_f = builder.ins().f64const(1.0);
-        let cond = builder.ins().fcmp(FloatCC::GreaterThan, m, sqrt2);
-        let m_half = builder.ins().fmul(m, half);
-        let m_adj = builder.ins().select(cond, m_half, m);
-        let k_plus1 = builder.ins().fadd(k_f, one_f);
-        let k_adj = builder.ins().select(cond, k_plus1, k_f);
-
-        let num = builder.ins().fsub(m_adj, one_f);
-        let den = builder.ins().fadd(m_adj, one_f);
-        let u = builder.ins().fdiv(num, den);
-        let u2 = builder.ins().fmul(u, u);
-
-        let c13 = builder.ins().f64const(1.0 / 13.0);
-        let c11 = builder.ins().f64const(1.0 / 11.0);
-        let c9 = builder.ins().f64const(1.0 / 9.0);
-        let c7 = builder.ins().f64const(1.0 / 7.0);
-        let c5 = builder.ins().f64const(1.0 / 5.0);
-        let c3 = builder.ins().f64const(1.0 / 3.0);
-        let c1 = builder.ins().f64const(1.0);
-
-        let p11 = builder.ins().fma(u2, c13, c11);
-        let p9 = builder.ins().fma(u2, p11, c9);
-        let p7 = builder.ins().fma(u2, p9, c7);
-        let p5 = builder.ins().fma(u2, p7, c5);
-        let p3 = builder.ins().fma(u2, p5, c3);
-        let poly = builder.ins().fma(u2, p3, c1);
-
-        let two_u = builder.ins().fadd(u, u);
-        let ln_m = builder.ins().fmul(two_u, poly);
-
-        let ln2 = builder.ins().f64const(std::f64::consts::LN_2);
-        let k_ln2 = builder.ins().fmul(k_adj, ln2);
-        builder.ins().fadd(ln_m, k_ln2)
-    }
-
     fn emit_atan2(builder: &mut FunctionBuilder, y: Value, x: Value) -> Value {
         let zero = builder.ins().f64const(0.0);
         let pi = builder.ins().f64const(std::f64::consts::PI);
@@ -3672,12 +3645,6 @@ impl<'a> FunctionTranslationState<'a> {
         let y_neg = builder.ins().fcmp(FloatCC::LessThan, y, zero);
         let neg_angle = builder.ins().fneg(angle);
         builder.ins().select(y_neg, neg_angle, angle)
-    }
-
-    fn emit_powf(builder: &mut FunctionBuilder, x: Value, y: Value) -> Value {
-        let ln_x = Self::emit_ln(builder, x);
-        let y_ln_x = builder.ins().fmul(y, ln_x);
-        Self::emit_exp(builder, y_ln_x)
     }
 
     fn emit_fft(
@@ -4284,9 +4251,15 @@ impl<'a> FunctionTranslationState<'a> {
                 let a = self.resolve_array(&args[0], builder)?;
                 let x = self.get_array_element(&a, 0, builder);
                 let y = self.get_array_element(&a, 1, builder);
-                let r = Self::emit_exp(builder, x);
-                let c = Self::emit_cos(builder, y);
-                let s = Self::emit_sin(builder, y);
+                let f_exp = self.module.declare_func_in_func(self.exp_id, builder.func);
+                let call_exp = builder.ins().call(f_exp, &[x]);
+                let r = builder.inst_results(call_exp)[0];
+                let f_cos = self.module.declare_func_in_func(self.cos_id, builder.func);
+                let call_cos = builder.ins().call(f_cos, &[y]);
+                let c = builder.inst_results(call_cos)[0];
+                let f_sin = self.module.declare_func_in_func(self.sin_id, builder.func);
+                let call_sin = builder.ins().call(f_sin, &[y]);
+                let s = builder.inst_results(call_sin)[0];
                 let re = builder.ins().fmul(r, c);
                 let im = builder.ins().fmul(r, s);
                 Ok(vec![re, im])
@@ -6010,9 +5983,18 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                     BinaryOp::Pow => {
                         if operand_ty.is_float() {
-                            Ok(builder.ins().fmul(l, r))
+                            let l_f64 = if operand_ty == Type::F32 { builder.ins().fpromote(types::F64, l) } else { l };
+                            let r_f64 = if operand_ty == Type::F32 { builder.ins().fpromote(types::F64, r) } else { r };
+                            let pow_func = self.module.declare_func_in_func(self.pow_id, builder.func);
+                            let call = builder.ins().call(pow_func, &[l_f64, r_f64]);
+                            let res = builder.inst_results(call)[0];
+                            if operand_ty == Type::F32 {
+                                Ok(builder.ins().fdemote(types::F32, res))
+                            } else {
+                                Ok(res)
+                            }
                         } else {
-                            Ok(builder.ins().imul(l, r))
+                            Ok(self.emit_int_pow(l, r, &operand_ty, builder))
                         }
                     }
                     BinaryOp::BitAnd => Ok(builder.ins().band(l, r)),
@@ -6416,6 +6398,10 @@ impl<'a> FunctionTranslationState<'a> {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().popcnt(arg));
                     }
+                    "bswap" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().bswap(arg));
+                    }
                     "rotl" => {
                         let arg0 = self.translate_expr(&args[0], builder)?;
                         let arg1 = self.translate_expr(&args[1], builder)?;
@@ -6620,6 +6606,34 @@ impl<'a> FunctionTranslationState<'a> {
                     "to_float" => {
                         let a = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().fcvt_from_sint(types::F64, a));
+                    }
+                    "i64_to_f64" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fcvt_from_sint(types::F64, a));
+                    }
+                    "f64_to_i64" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fcvt_to_sint_sat(types::I64, a));
+                    }
+                    "i64_to_f32" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fcvt_from_sint(types::F32, a));
+                    }
+                    "f32_to_f64" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fpromote(types::F64, a));
+                    }
+                    "f64_to_f32" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().fdemote(types::F32, a));
+                    }
+                    "i64_to_i32" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().ireduce(types::I32, a));
+                    }
+                    "i32_to_i64" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        return Ok(builder.ins().sextend(types::I64, a));
                     }
                     "floor" => {
                         let a = self.translate_expr(&args[0], builder)?;
@@ -6863,33 +6877,82 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                     "sin" => {
                         let a = self.translate_expr(&args[0], builder)?;
-                        return Ok(Self::emit_sin(builder, a));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.sin_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "cos" => {
                         let a = self.translate_expr(&args[0], builder)?;
-                        return Ok(Self::emit_cos(builder, a));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.cos_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "tan" => {
                         let a = self.translate_expr(&args[0], builder)?;
-                        return Ok(Self::emit_tan(builder, a));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.tan_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "exp" => {
                         let a = self.translate_expr(&args[0], builder)?;
-                        return Ok(Self::emit_exp(builder, a));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.exp_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "ln" => {
                         let a = self.translate_expr(&args[0], builder)?;
-                        return Ok(Self::emit_ln(builder, a));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.log_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
+                    }
+                    "log2" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.log2_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
+                    }
+                    "log10" => {
+                        let a = self.translate_expr(&args[0], builder)?;
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let a_f64 = if is_f32 { builder.ins().fpromote(types::F64, a) } else { a };
+                        let f = self.module.declare_func_in_func(self.log10_id, builder.func);
+                        let call = builder.ins().call(f, &[a_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "atan2" => {
                         let y = self.translate_expr(&args[0], builder)?;
                         let x = self.translate_expr(&args[1], builder)?;
                         return Ok(Self::emit_atan2(builder, y, x));
                     }
-                    "powf" => {
+                    "pow" | "powf" => {
                         let x = self.translate_expr(&args[0], builder)?;
                         let y = self.translate_expr(&args[1], builder)?;
-                        return Ok(Self::emit_powf(builder, x, y));
+                        let is_f32 = args[0].ty() == Type::F32;
+                        let x_f64 = if is_f32 { builder.ins().fpromote(types::F64, x) } else { x };
+                        let y_f64 = if is_f32 { builder.ins().fpromote(types::F64, y) } else { y };
+                        let f = self.module.declare_func_in_func(self.pow_id, builder.func);
+                        let call = builder.ins().call(f, &[x_f64, y_f64]);
+                        let res = builder.inst_results(call)[0];
+                        return Ok(if is_f32 { builder.ins().fdemote(types::F32, res) } else { res });
                     }
                     "c_re" => {
                         let z = self.resolve_array(&args[0], builder)?;
