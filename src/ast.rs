@@ -3,6 +3,7 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
+    TypedInt(i64, String),
     Float(f64),
     Bool(bool),
 }

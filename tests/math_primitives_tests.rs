@@ -281,3 +281,113 @@ fn main() -> i64 {
 "#;
     assert_eq!(run_numlang_code(code), Some(100));
 }
+
+#[test]
+fn test_isqrt_tzcnt() {
+    let code = r#"
+fn main() -> i64 {
+    let sq0: i64 = isqrt(0);
+    let sq1: i64 = isqrt(1);
+    let sq2: i64 = isqrt(2);
+    let sq3: i64 = isqrt(3);
+    let sq4: i64 = isqrt(4);
+    let sq15: i64 = isqrt(15);
+    let sq16: i64 = isqrt(16);
+    let sq17: i64 = isqrt(17);
+    let sq100: i64 = isqrt(100);
+    let sq10000: i64 = isqrt(10000);
+    let sq_large: i64 = isqrt(1000000000000); // 1,000,000
+
+    let tz1: i64 = tzcnt(1);   // 0
+    let tz2: i64 = tzcnt(2);   // 1
+    let tz8: i64 = tzcnt(8);   // 3
+    let tz16: i64 = tzcnt(16); // 4
+
+    let mut score: i64 = 0;
+    if sq0 == 0 { score = score + 1; }
+    if sq1 == 1 { score = score + 2; }
+    if sq2 == 1 { score = score + 4; }
+    if sq3 == 1 { score = score + 8; }
+    if sq4 == 2 { score = score + 16; }
+    if sq15 == 3 { score = score + 32; }
+    if sq16 == 4 { score = score + 64; }
+    if sq17 == 4 { score = score + 128; }
+    if sq100 == 10 { score = score + 256; }
+    if sq10000 == 100 { score = score + 512; }
+    if sq_large == 1000000 { score = score + 1024; }
+    if tz1 == 0 {
+        if tz2 == 1 {
+            if tz8 == 3 {
+                if tz16 == 4 {
+                    score = score + 2048;
+                }
+            }
+        }
+    }
+
+    return score; // 1 + 2 + 4 + 8 + 16 + 32 + 64 + 128 + 256 + 512 + 1024 + 2048 = 4095
+}
+"#;
+    assert_eq!(run_numlang_code(code), Some(4095));
+}
+
+#[test]
+fn test_loop_opt_stein_gcd_and_newton() {
+    let code = r#"
+fn stein_gcd(u_in: i64, v_in: i64) -> i64 {
+    let mut u: i64 = u_in;
+    let mut v: i64 = v_in;
+    if u == 0 { return v; }
+    if v == 0 { return u; }
+    let mut shift: i64 = 0;
+    while ((u | v) & 1) == 0 {
+        u = u >> 1;
+        v = v >> 1;
+        shift = shift + 1;
+    }
+    while (u & 1) == 0 {
+        u = u >> 1;
+    }
+    while v != 0 {
+        while (v & 1) == 0 {
+            v = v >> 1;
+        }
+        if u > v {
+            let temp: i64 = u;
+            u = v;
+            v = temp;
+        }
+        v = v - u;
+    }
+    return u << shift;
+}
+
+fn isqrt_newton(n: i64) -> i64 {
+    if n <= 1 {
+        return n;
+    }
+    let mut x: i64 = n;
+    let mut y: i64 = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+
+fn main() -> i64 {
+    let g1: i64 = stein_gcd(12, 18);   // 6
+    let g2: i64 = stein_gcd(100, 25);  // 25
+    let g3: i64 = stein_gcd(17, 19);   // 1
+
+    let sq1: i64 = isqrt_newton(25);   // 5
+    let sq2: i64 = isqrt_newton(100);  // 10
+    let sq3: i64 = isqrt_newton(2);    // 1
+
+    return g1 + g2 + g3 + sq1 + sq2 + sq3; // 6 + 25 + 1 + 5 + 10 + 1 = 48
+}
+"#;
+    assert_eq!(run_numlang_code(code), Some(48));
+}
+
+

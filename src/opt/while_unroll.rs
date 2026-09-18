@@ -55,56 +55,112 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
         TypedExpr::Binary {
             op, left, right, ..
         } => {
+            let operand_ty = left.ty();
+            let is_unsigned = operand_ty.is_unsigned();
             let l = eval_const_expr(left, known_consts)?;
             let r = eval_const_expr(right, known_consts)?;
-            match op {
-                BinaryOp::Add => Some(l.wrapping_add(r)),
-                BinaryOp::Sub => Some(l.wrapping_sub(r)),
-                BinaryOp::Mul => Some(l.wrapping_mul(r)),
-                BinaryOp::Div => {
-                    if r != 0 {
-                        Some(l / r)
-                    } else {
-                        None
+            if is_unsigned {
+                let lu = l as u64;
+                let ru = r as u64;
+                match op {
+                    BinaryOp::Add => Some(lu.wrapping_add(ru) as i64),
+                    BinaryOp::Sub => Some(lu.wrapping_sub(ru) as i64),
+                    BinaryOp::Mul => Some(lu.wrapping_mul(ru) as i64),
+                    BinaryOp::Div => {
+                        if ru != 0 {
+                            Some((lu / ru) as i64)
+                        } else {
+                            None
+                        }
                     }
-                }
-                BinaryOp::Mod => {
-                    if r != 0 {
-                        Some(l % r)
-                    } else {
-                        None
+                    BinaryOp::Mod => {
+                        if ru != 0 {
+                            Some((lu % ru) as i64)
+                        } else {
+                            None
+                        }
                     }
-                }
-                BinaryOp::Pow => {
-                    if r >= 0 && r <= 62 {
-                        Some(l.wrapping_pow(r as u32))
-                    } else {
-                        None
+                    BinaryOp::Pow => {
+                        if ru <= 62 {
+                            Some(lu.wrapping_pow(ru as u32) as i64)
+                        } else {
+                            None
+                        }
                     }
-                }
-                BinaryOp::BitAnd => Some(l & r),
-                BinaryOp::BitOr => Some(l | r),
-                BinaryOp::BitXor => Some(l ^ r),
-                BinaryOp::Shl => {
-                    if r >= 0 && r < 64 {
-                        Some(l << r)
-                    } else {
-                        None
+                    BinaryOp::BitAnd => Some((lu & ru) as i64),
+                    BinaryOp::BitOr => Some((lu | ru) as i64),
+                    BinaryOp::BitXor => Some((lu ^ ru) as i64),
+                    BinaryOp::Shl => {
+                        if ru < 64 {
+                            Some((lu << ru) as i64)
+                        } else {
+                            None
+                        }
                     }
-                }
-                BinaryOp::Shr => {
-                    if r >= 0 && r < 64 {
-                        Some(l >> r)
-                    } else {
-                        None
+                    BinaryOp::Shr => {
+                        if ru < 64 {
+                            Some((lu >> ru) as i64)
+                        } else {
+                            None
+                        }
                     }
+                    BinaryOp::Eq => Some(if lu == ru { 1 } else { 0 }),
+                    BinaryOp::Ne => Some(if lu != ru { 1 } else { 0 }),
+                    BinaryOp::Lt => Some(if lu < ru { 1 } else { 0 }),
+                    BinaryOp::Le => Some(if lu <= ru { 1 } else { 0 }),
+                    BinaryOp::Gt => Some(if lu > ru { 1 } else { 0 }),
+                    BinaryOp::Ge => Some(if lu >= ru { 1 } else { 0 }),
                 }
-                BinaryOp::Eq => Some(if l == r { 1 } else { 0 }),
-                BinaryOp::Ne => Some(if l != r { 1 } else { 0 }),
-                BinaryOp::Lt => Some(if l < r { 1 } else { 0 }),
-                BinaryOp::Le => Some(if l <= r { 1 } else { 0 }),
-                BinaryOp::Gt => Some(if l > r { 1 } else { 0 }),
-                BinaryOp::Ge => Some(if l >= r { 1 } else { 0 }),
+            } else {
+                match op {
+                    BinaryOp::Add => Some(l.wrapping_add(r)),
+                    BinaryOp::Sub => Some(l.wrapping_sub(r)),
+                    BinaryOp::Mul => Some(l.wrapping_mul(r)),
+                    BinaryOp::Div => {
+                        if r != 0 {
+                            Some(l / r)
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::Mod => {
+                        if r != 0 {
+                            Some(l % r)
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::Pow => {
+                        if r >= 0 && r <= 62 {
+                            Some(l.wrapping_pow(r as u32))
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::BitAnd => Some(l & r),
+                    BinaryOp::BitOr => Some(l | r),
+                    BinaryOp::BitXor => Some(l ^ r),
+                    BinaryOp::Shl => {
+                        if r >= 0 && r < 64 {
+                            Some(l << r)
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::Shr => {
+                        if r >= 0 && r < 64 {
+                            Some(l >> r)
+                        } else {
+                            None
+                        }
+                    }
+                    BinaryOp::Eq => Some(if l == r { 1 } else { 0 }),
+                    BinaryOp::Ne => Some(if l != r { 1 } else { 0 }),
+                    BinaryOp::Lt => Some(if l < r { 1 } else { 0 }),
+                    BinaryOp::Le => Some(if l <= r { 1 } else { 0 }),
+                    BinaryOp::Gt => Some(if l > r { 1 } else { 0 }),
+                    BinaryOp::Ge => Some(if l >= r { 1 } else { 0 }),
+                }
             }
         }
         _ => None,

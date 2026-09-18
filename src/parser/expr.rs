@@ -68,6 +68,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(Expr::Literal(Literal::Int(n), token_spanned.span))
             }
+            Token::TypedIntLiteral((n, ref s)) => {
+                let s_clone = s.clone();
+                self.advance();
+                Ok(Expr::Literal(Literal::TypedInt(n, s_clone), token_spanned.span))
+            }
             Token::FloatLiteral(f) => {
                 self.advance();
                 Ok(Expr::Literal(Literal::Float(f), token_spanned.span))

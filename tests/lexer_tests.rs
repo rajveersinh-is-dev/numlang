@@ -69,6 +69,7 @@ fn test_tokenize_keywords() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_tokenize_literals_and_identifiers() {
     let input = "let alpha = 42; let beta = 3.14159;";
     let tokens = tokenize(input).expect("Tokenization failed");

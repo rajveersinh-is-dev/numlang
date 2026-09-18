@@ -24,8 +24,10 @@ pub enum CodegenError {
 
 fn type_to_clif(ty: Type) -> types::Type {
     match ty {
-        Type::I32 => types::I32,
-        Type::I64 => types::I64,
+        Type::U8 => types::I8,
+        Type::U16 => types::I16,
+        Type::I32 | Type::U32 => types::I32,
+        Type::I64 | Type::U64 | Type::Usize => types::I64,
         Type::F32 => types::F32,
         Type::F64 => types::F64,
         Type::Bool => types::I8,
@@ -150,7 +152,7 @@ fn is_safe_for_select(expr: &TypedExpr) -> bool {
         }
         TypedExpr::Call { callee, args, .. } => {
             match callee.as_str() {
-                "ctz" | "clz" | "popcnt" | "rotl" | "rotr" => {
+                "tzcnt" | "ctz" | "clz" | "popcnt" | "rotl" | "rotr" | "isqrt" => {
                     args.iter().all(is_safe_for_select)
                 }
                 _ => false,
@@ -355,7 +357,7 @@ fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<Stri
             op: UnaryOp::Not, ..
         } => true,
         TypedExpr::Call { callee, .. } => {
-            callee == "abs" || callee == "sqrt" || callee == "ctz" || callee == "clz" || callee == "popcnt"
+            callee == "abs" || callee == "sqrt" || callee == "isqrt" || callee == "ctz" || callee == "tzcnt" || callee == "clz" || callee == "popcnt"
         }
         TypedExpr::ArrayLiteral { elements, .. } => {
             elements.iter().all(|e| is_expr_known_non_negative(e, non_negative_vars))
@@ -892,6 +894,50 @@ fn compute_expr_upper_bound(
             }
             _ => None,
         },
+        TypedExpr::Call { callee, args, .. } => match callee.as_str() {
+            "abs" => {
+                if args.len() == 1 {
+                    compute_expr_abs_upper_bound(&args[0], var_bounds, non_negative_vars)
+                } else {
+                    None
+                }
+            }
+            "tzcnt" | "ctz" => Some(64),
+            "clz" => Some(64),
+            "popcnt" => Some(64),
+            "isqrt" => {
+                if args.len() == 1 {
+                    let ub = compute_expr_upper_bound(&args[0], var_bounds, non_negative_vars)?;
+                    Some((ub as f64).sqrt() as i64)
+                } else {
+                    None
+                }
+            }
+            "min" => {
+                if args.len() == 2 {
+                    let ub0 = compute_expr_upper_bound(&args[0], var_bounds, non_negative_vars);
+                    let ub1 = compute_expr_upper_bound(&args[1], var_bounds, non_negative_vars);
+                    match (ub0, ub1) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(b),
+                        (None, None) => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            "max" => {
+                if args.len() == 2 {
+                    let ub0 = compute_expr_upper_bound(&args[0], var_bounds, non_negative_vars)?;
+                    let ub1 = compute_expr_upper_bound(&args[1], var_bounds, non_negative_vars)?;
+                    Some(ub0.max(ub1))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
         TypedExpr::ArrayLiteral { elements, .. } => {
             let mut max_el: Option<i64> = None;
             for el in elements {
@@ -901,6 +947,39 @@ fn compute_expr_upper_bound(
             max_el
         }
         TypedExpr::Index { .. } => None,
+        _ => None,
+    }
+}
+
+fn compute_expr_abs_upper_bound(
+    expr: &TypedExpr,
+    var_bounds: &HashMap<String, i64>,
+    non_negative_vars: &HashSet<String>,
+) -> Option<i64> {
+    if is_expr_known_non_negative(expr, non_negative_vars) {
+        return compute_expr_upper_bound(expr, var_bounds, non_negative_vars);
+    }
+    match expr {
+        TypedExpr::Literal { lit: TypedLiteral::Int(val, _), .. } => {
+            Some(val.unsigned_abs() as i64)
+        }
+        TypedExpr::Ident { name, .. } => {
+            var_bounds.get(name).copied()
+        }
+        TypedExpr::Binary { op: BinaryOp::Sub, left, right, .. } => {
+            if is_expr_known_non_negative(left, non_negative_vars)
+                && is_expr_known_non_negative(right, non_negative_vars)
+            {
+                let l_bound = compute_expr_upper_bound(left, var_bounds, non_negative_vars)?;
+                let r_bound = compute_expr_upper_bound(right, var_bounds, non_negative_vars)?;
+                Some(l_bound.max(r_bound))
+            } else {
+                None
+            }
+        }
+        TypedExpr::Unary { op: UnaryOp::Neg, expr: inner, .. } => {
+            compute_expr_abs_upper_bound(inner, var_bounds, non_negative_vars)
+        }
         _ => None,
     }
 }
@@ -1145,6 +1224,8 @@ pub struct CraneliftCompiler {
     module: ObjectModule,
     func_ids: HashMap<String, FuncId>,
     exit_process_id: FuncId,
+    get_std_handle_id: FuncId,
+    write_file_id: FuncId,
 }
 
 impl CraneliftCompiler {
@@ -1203,10 +1284,32 @@ impl CraneliftCompiler {
             .declare_function("ExitProcess", Linkage::Import, &exit_sig)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
+        // Declare GetStdHandle from kernel32.lib
+        let mut gsh_sig = module.make_signature();
+        gsh_sig.params.push(AbiParam::new(types::I32));
+        gsh_sig.returns.push(AbiParam::new(types::I64));
+        let get_std_handle_id = module
+            .declare_function("GetStdHandle", Linkage::Import, &gsh_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        // Declare WriteFile from kernel32.lib
+        let mut wf_sig = module.make_signature();
+        wf_sig.params.push(AbiParam::new(types::I64));
+        wf_sig.params.push(AbiParam::new(types::I64));
+        wf_sig.params.push(AbiParam::new(types::I32));
+        wf_sig.params.push(AbiParam::new(types::I64));
+        wf_sig.params.push(AbiParam::new(types::I64));
+        wf_sig.returns.push(AbiParam::new(types::I32));
+        let write_file_id = module
+            .declare_function("WriteFile", Linkage::Import, &wf_sig)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         Ok(Self {
             module,
             func_ids: HashMap::new(),
             exit_process_id,
+            get_std_handle_id,
+            write_file_id,
         })
     }
 
@@ -1604,6 +1707,8 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             module: &mut self.module,
             func_ids: &self.func_ids,
             exit_process_id: self.exit_process_id,
+            get_std_handle_id: self.get_std_handle_id,
+            write_file_id: self.write_file_id,
             variables,
             loop_exit_blocks: Vec::new(),
             dynamically_indexed_arrays,
@@ -1722,6 +1827,8 @@ struct FunctionTranslationState<'a> {
     module: &'a mut ObjectModule,
     func_ids: &'a HashMap<String, FuncId>,
     exit_process_id: FuncId,
+    get_std_handle_id: FuncId,
+    write_file_id: FuncId,
     variables: HashMap<String, Storage>,
     loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     dynamically_indexed_arrays: HashSet<String>,
@@ -2042,280 +2149,6 @@ impl<'a> FunctionTranslationState<'a> {
         None
     }
 
-    fn match_is_bitwise_and_one(expr: &TypedExpr) -> Option<String> {
-        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
-            if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**right {
-                if let TypedExpr::Ident { name, .. } = &**left {
-                    return Some(name.clone());
-                }
-            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**left {
-                if let TypedExpr::Ident { name, .. } = &**right {
-                    return Some(name.clone());
-                }
-            }
-        }
-        None
-    }
-
-    fn match_single_trailing_zero_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<String> {
-        if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
-            let var_name = if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
-                Self::match_is_bitwise_and_one(left)?
-            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
-                Self::match_is_bitwise_and_one(right)?
-            } else {
-                return None;
-            };
-
-            if body.stmts.len() == 1 {
-                if let TypedStmt::Assign { name, value, .. } = &body.stmts[0] {
-                    if name == &var_name {
-                        if let TypedExpr::Binary { op: BinaryOp::Shr, left: s_l, right: s_r, .. } = value {
-                            if let (TypedExpr::Ident { name: src_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**s_l, &**s_r) {
-                                if src_name == &var_name {
-                                    return Some(var_name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn match_is_bitor_and_one(expr: &TypedExpr) -> Option<(String, String)> {
-        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = expr {
-            let inner = if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**right {
-                &**left
-            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. } = &**left {
-                &**right
-            } else {
-                return None;
-            };
-
-            if let TypedExpr::Binary { op: BinaryOp::BitOr, left: or_l, right: or_r, .. } = inner {
-                if let (TypedExpr::Ident { name: u_name, .. }, TypedExpr::Ident { name: v_name, .. }) = (&**or_l, &**or_r) {
-                    return Some((u_name.clone(), v_name.clone()));
-                }
-            }
-        }
-        None
-    }
-
-    fn match_dual_trailing_zero_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<(String, String, String)> {
-        if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = condition {
-            let (u_name, v_name) = if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
-                Self::match_is_bitor_and_one(left)?
-            } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
-                Self::match_is_bitor_and_one(right)?
-            } else {
-                return None;
-            };
-
-            if body.stmts.len() == 3 {
-                let mut has_u_shift = false;
-                let mut has_v_shift = false;
-                let mut shift_var_name: Option<String> = None;
-
-                for stmt in &body.stmts {
-                    if let TypedStmt::Assign { name, value, .. } = stmt {
-                        if name == &u_name {
-                            if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = value {
-                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                    if src == &u_name {
-                                        has_u_shift = true;
-                                        continue;
-                                    }
-                                }
-                            }
-                        } else if name == &v_name {
-                            if let TypedExpr::Binary { op: BinaryOp::Shr, left, right, .. } = value {
-                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                    if src == &v_name {
-                                        has_v_shift = true;
-                                        continue;
-                                    }
-                                }
-                            }
-                        } else {
-                            if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
-                                if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                    if src == name {
-                                        shift_var_name = Some(name.clone());
-                                        continue;
-                                    }
-                                } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: src, .. }) = (&**left, &**right) {
-                                    if src == name {
-                                        shift_var_name = Some(name.clone());
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if has_u_shift && has_v_shift {
-                    if let Some(s_name) = shift_var_name {
-                        return Some((u_name, v_name, s_name));
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn match_popcount_loop(condition: &TypedExpr, body: &TypedBlock) -> Option<(String, String)> {
-        let num_name = match condition {
-            TypedExpr::Binary { op: BinaryOp::Ne, left, right, .. } |
-            TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => {
-                if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**right {
-                    if let TypedExpr::Ident { name, .. } = &**left {
-                        Some(name.clone())
-                    } else { None }
-                } else if let TypedExpr::Literal { lit: TypedLiteral::Int(0, _), .. } = &**left {
-                    if let TypedExpr::Ident { name, .. } = &**right {
-                        Some(name.clone())
-                    } else { None }
-                } else { None }
-            }
-            _ => None,
-        }?;
-
-        if body.stmts.len() == 2 {
-            let mut has_num_update = false;
-            let mut count_var_name: Option<String> = None;
-
-            for stmt in &body.stmts {
-                if let TypedStmt::Assign { name, value, .. } = stmt {
-                    if name == &num_name {
-                        if let TypedExpr::Binary { op: BinaryOp::BitAnd, left, right, .. } = value {
-                            let is_sub = |e: &TypedExpr| -> bool {
-                                if let TypedExpr::Binary { op: BinaryOp::Sub, left: sub_l, right: sub_r, .. } = e {
-                                    if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**sub_l, &**sub_r) {
-                                        return s_name == &num_name;
-                                    }
-                                }
-                                false
-                            };
-                            let is_ident = |e: &TypedExpr| -> bool {
-                                if let TypedExpr::Ident { name: id_name, .. } = e {
-                                    return id_name == &num_name;
-                                }
-                                false
-                            };
-
-                            if (is_ident(left) && is_sub(right)) || (is_sub(left) && is_ident(right)) {
-                                has_num_update = true;
-                            }
-                        } else if let TypedExpr::Binary { op: BinaryOp::Shr, left: s_l, right: s_r, .. } = value {
-                            if let (TypedExpr::Ident { name: src, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**s_l, &**s_r) {
-                                if src == &num_name {
-                                    has_num_update = true;
-                                }
-                            }
-                        }
-                    } else {
-                        if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
-                            if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**left, &**right) {
-                                if s_name == name {
-                                    count_var_name = Some(name.clone());
-                                }
-                            } else if let (TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }, TypedExpr::Ident { name: s_name, .. }) = (&**left, &**right) {
-                                if s_name == name {
-                                    count_var_name = Some(name.clone());
-                                }
-                            } else if let (TypedExpr::Ident { name: s_name, .. }, TypedExpr::Binary { op: BinaryOp::BitAnd, left: b_l, right: b_r, .. }) = (&**left, &**right) {
-                                if s_name == name {
-                                    if let (TypedExpr::Ident { name: b_name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(1, _), .. }) = (&**b_l, &**b_r) {
-                                        if b_name == &num_name {
-                                            count_var_name = Some(name.clone());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if has_num_update {
-                if let Some(c_name) = count_var_name {
-                    return Some((num_name, c_name));
-                }
-            }
-        }
-        None
-    }
-
-    fn check_flag_in_block(
-        block: &TypedBlock,
-        flag: &str,
-        break_flag_vals: &mut Vec<bool>,
-        other_assigns: &mut usize,
-    ) {
-        for (idx, stmt) in block.stmts.iter().enumerate() {
-            match stmt {
-                TypedStmt::Break(..) => {
-                    let mut found = None;
-                    if idx > 0 {
-                        if let TypedStmt::Assign { name, value, .. } | TypedStmt::Let { name, value, .. } = &block.stmts[idx - 1] {
-                            if name == flag {
-                                if let TypedExpr::Literal { lit: TypedLiteral::Bool(b), .. } = value {
-                                    found = Some(*b);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(b) = found {
-                        break_flag_vals.push(b);
-                    } else {
-                        *other_assigns += 1;
-                    }
-                }
-                TypedStmt::Assign { name, .. } | TypedStmt::Let { name, .. } => {
-                    if name == flag {
-                        let is_before_break = idx + 1 < block.stmts.len() && matches!(block.stmts[idx + 1], TypedStmt::Break(..));
-                        if !is_before_break {
-                            *other_assigns += 1;
-                        }
-                    }
-                }
-                TypedStmt::If { then_branch, else_branch, .. } => {
-                    Self::check_flag_in_block(then_branch, flag, break_flag_vals, other_assigns);
-                    if let Some(eb) = else_branch {
-                        Self::check_flag_in_block(eb, flag, break_flag_vals, other_assigns);
-                    }
-                }
-                TypedStmt::While { .. } => {
-                    // Do not recurse into nested while loops
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn match_while_flag_if(
-        while_body: &TypedBlock,
-        next_stmt: &TypedStmt,
-    ) -> Option<(String, bool, TypedBlock, Option<TypedBlock>)> {
-        if let TypedStmt::If { condition, then_branch, else_branch, .. } = next_stmt {
-            if let TypedExpr::Ident { name: flag_name, .. } = condition {
-                let mut break_flag_vals = Vec::new();
-                let mut other_assigns = 0;
-                Self::check_flag_in_block(while_body, flag_name, &mut break_flag_vals, &mut other_assigns);
-                if !break_flag_vals.is_empty() && other_assigns == 0 {
-                    let first_val = break_flag_vals[0];
-                    if break_flag_vals.iter().all(|&v| v == first_val) {
-                        return Some((flag_name.clone(), first_val, then_branch.clone(), else_branch.clone()));
-                    }
-                }
-            }
-        }
-        None
-    }
-
     fn translate_block(
         &mut self,
         block: &TypedBlock,
@@ -2350,101 +2183,6 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                 }
-
-                // Fused while-if jump threading optimization
-                if i + 1 < num_stmts {
-                    if let Some((flag_name, break_val, then_branch, else_branch)) =
-                        Self::match_while_flag_if(body, &block.stmts[i + 1])
-                    {
-                        let then_block = builder.create_block();
-                        let else_block = builder.create_block();
-                        let merge_block = builder.create_block();
-
-                        let break_target = if break_val { then_block } else { else_block };
-                        let normal_target = if break_val { else_block } else { then_block };
-
-                        let body_block = builder.create_block();
-                        if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
-                            builder.ins().jump(body_block, &[]);
-                        } else {
-                            let cond_init = self.translate_expr(condition, builder)?;
-                            builder.ins().brif(cond_init, body_block, &[], normal_target, &[]);
-                        }
-
-                        let mut added_nonneg = None;
-                        if let Some(var) = get_nonneg_var_from_condition(condition, &self.known_non_negative_vars) {
-                            if self.known_non_negative_vars.insert(var.clone()) {
-                                added_nonneg = Some(var);
-                            }
-                        }
-
-                        builder.switch_to_block(body_block);
-                        self.loop_exit_blocks.push(break_target);
-                        let body_term = self.translate_block(body, builder)?;
-                        self.loop_exit_blocks.pop();
-                        if let Some(ref r_name) = added_nonneg {
-                            self.known_non_negative_vars.remove(r_name);
-                        }
-                        if !body_term {
-                            if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
-                                builder.ins().jump(body_block, &[]);
-                            } else {
-                                let cond_repeat = self.translate_expr(condition, builder)?;
-                                builder.ins().brif(cond_repeat, body_block, &[], normal_target, &[]);
-                            }
-                        }
-                        builder.seal_block(body_block);
-
-                        let is_flag_read_after = {
-                            let mut reads = HashSet::new();
-                            for s in &block.stmts[i + 2..] {
-                                Self::collect_stmt_reads(s, &mut reads);
-                            }
-                            reads.contains(&flag_name)
-                        };
-
-                        builder.switch_to_block(then_block);
-                        builder.seal_block(then_block);
-                        if is_flag_read_after {
-                            if let Some(Storage::Scalar(flag_var)) = self.variables.get(&flag_name).cloned() {
-                                let one = self.get_iconst(types::I8, 1, builder);
-                                builder.def_var(flag_var, one);
-                            }
-                        }
-                        let then_term = self.translate_block(&then_branch, builder)?;
-                        if !then_term {
-                            builder.ins().jump(merge_block, &[]);
-                        }
-
-                        builder.switch_to_block(else_block);
-                        builder.seal_block(else_block);
-                        if is_flag_read_after {
-                            if let Some(Storage::Scalar(flag_var)) = self.variables.get(&flag_name).cloned() {
-                                let zero = self.get_iconst(types::I8, 0, builder);
-                                builder.def_var(flag_var, zero);
-                            }
-                        }
-                        let else_term = if let Some(ref eb) = else_branch {
-                            let term = self.translate_block(eb, builder)?;
-                            if !term {
-                                builder.ins().jump(merge_block, &[]);
-                            }
-                            term
-                        } else {
-                            builder.ins().jump(merge_block, &[]);
-                            false
-                        };
-
-                        builder.switch_to_block(merge_block);
-                        builder.seal_block(merge_block);
-
-                        if then_term && else_term {
-                            terminated = true;
-                        }
-                        i += 2;
-                        continue;
-                    }
-                }
             }
 
             if self.translate_stmt(stmt, &block.stmts[i + 1..], builder)? {
@@ -2475,6 +2213,33 @@ impl<'a> FunctionTranslationState<'a> {
 
         builder.switch_to_block(panic_block);
         builder.seal_block(panic_block);
+
+        let msg = b"panic: array index out of bounds\n";
+        let slot_data = StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8);
+        let slot = builder.create_sized_stack_slot(slot_data);
+
+        for (i, chunk) in msg.chunks(8).enumerate() {
+            let mut val_bytes = [0u8; 8];
+            val_bytes[..chunk.len()].copy_from_slice(chunk);
+            let val_u64 = u64::from_le_bytes(val_bytes);
+            let val = builder.ins().iconst(types::I64, val_u64 as i64);
+            let addr = builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
+            builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
+        }
+
+        let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+        let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
+        let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
+
+        let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
+        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, &mut builder.func);
+        let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
+        let h_stderr = builder.inst_results(h_call)[0];
+
+        let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let write_file_func = self.module.declare_func_in_func(self.write_file_id, &mut builder.func);
+        builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
 
         let exit_code = builder.ins().iconst(types::I32, 101);
         let exit_func = self
@@ -2942,8 +2707,8 @@ impl<'a> FunctionTranslationState<'a> {
     }
 
     fn emit_sin(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let inv_pi = builder.ins().f64const(0.31830988618379067154);
-        let pi = builder.ins().f64const(3.14159265358979323846);
+        let inv_pi = builder.ins().f64const(std::f64::consts::FRAC_1_PI);
+        let pi = builder.ins().f64const(std::f64::consts::PI);
         let x_scaled = builder.ins().fmul(x, inv_pi);
         let k_f = builder.ins().nearest(x_scaled);
         let k_pi = builder.ins().fmul(k_f, pi);
@@ -2977,7 +2742,7 @@ impl<'a> FunctionTranslationState<'a> {
     }
 
     fn emit_cos(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let half_pi = builder.ins().f64const(1.57079632679489661923);
+        let half_pi = builder.ins().f64const(std::f64::consts::FRAC_PI_2);
         let x_shifted = builder.ins().fadd(x, half_pi);
         Self::emit_sin(builder, x_shifted)
     }
@@ -2989,7 +2754,7 @@ impl<'a> FunctionTranslationState<'a> {
     }
 
     fn emit_exp(builder: &mut FunctionBuilder, x: Value) -> Value {
-        let log2_e = builder.ins().f64const(1.44269504088896340736);
+        let log2_e = builder.ins().f64const(std::f64::consts::LOG2_E);
         let ln2_hi = builder.ins().f64const(0.6931471803691238);
         let ln2_lo = builder.ins().f64const(1.9082149292705877e-10);
 
@@ -3043,7 +2808,7 @@ impl<'a> FunctionTranslationState<'a> {
         let norm_bits = builder.ins().bor(mant_bits, exp_1023);
         let m = builder.ins().bitcast(types::F64, MemFlagsData::new().with_endianness(Endianness::Little), norm_bits);
 
-        let sqrt2 = builder.ins().f64const(1.4142135623730951);
+        let sqrt2 = builder.ins().f64const(std::f64::consts::SQRT_2);
         let half = builder.ins().f64const(0.5);
         let one_f = builder.ins().f64const(1.0);
         let cond = builder.ins().fcmp(FloatCC::GreaterThan, m, sqrt2);
@@ -3075,15 +2840,15 @@ impl<'a> FunctionTranslationState<'a> {
         let two_u = builder.ins().fadd(u, u);
         let ln_m = builder.ins().fmul(two_u, poly);
 
-        let ln2 = builder.ins().f64const(0.693147180559945309417);
+        let ln2 = builder.ins().f64const(std::f64::consts::LN_2);
         let k_ln2 = builder.ins().fmul(k_adj, ln2);
         builder.ins().fadd(ln_m, k_ln2)
     }
 
     fn emit_atan2(builder: &mut FunctionBuilder, y: Value, x: Value) -> Value {
         let zero = builder.ins().f64const(0.0);
-        let pi = builder.ins().f64const(3.14159265358979323846);
-        let half_pi = builder.ins().f64const(1.57079632679489661923);
+        let pi = builder.ins().f64const(std::f64::consts::PI);
+        let half_pi = builder.ins().f64const(std::f64::consts::FRAC_PI_2);
 
         let abs_y = builder.ins().fabs(y);
         let abs_x = builder.ins().fabs(x);
@@ -3131,6 +2896,7 @@ impl<'a> FunctionTranslationState<'a> {
         re_vals: &[Value],
         im_vals: &[Value],
         n: usize,
+        real_only: bool,
     ) -> (Vec<Value>, Vec<Value>) {
         assert!(n == 8 || n == 16);
         let bits = if n == 8 { 3 } else { 4 };
@@ -3150,35 +2916,47 @@ impl<'a> FunctionTranslationState<'a> {
         let mut s = 1;
         while s < n {
             let len = s * 2;
+            let is_last_stage = s * 2 == n;
             let mut group = 0;
             while group < n {
                 for j in 0..s {
                     let angle = -2.0 * std::f64::consts::PI * (j as f64) / (len as f64);
                     let wr_f = angle.cos();
                     let wi_f = angle.sin();
-                    let wr = builder.ins().f64const(wr_f);
-                    let wi = builder.ins().f64const(wi_f);
 
                     let u_idx = group + j;
                     let v_idx = group + j + s;
 
                     let rv = r[v_idx];
                     let iv = i[v_idx];
-
-                    let tr0 = builder.ins().fmul(wr, rv);
-                    let tr1 = builder.ins().fmul(wi, iv);
-                    let tr = builder.ins().fsub(tr0, tr1);
-
-                    let ti0 = builder.ins().fmul(wr, iv);
-                    let ti = builder.ins().fma(wi, rv, ti0);
-
                     let ru = r[u_idx];
                     let iu = i[u_idx];
 
+                    let (tr, ti) = if (wr_f - 1.0).abs() < 1e-12 && wi_f.abs() < 1e-12 {
+                        (rv, iv)
+                    } else if wr_f.abs() < 1e-12 && (wi_f + 1.0).abs() < 1e-12 {
+                        (iv, builder.ins().fneg(rv))
+                    } else if (wr_f + 1.0).abs() < 1e-12 && wi_f.abs() < 1e-12 {
+                        (builder.ins().fneg(rv), builder.ins().fneg(iv))
+                    } else if wr_f.abs() < 1e-12 && (wi_f - 1.0).abs() < 1e-12 {
+                        (builder.ins().fneg(iv), rv)
+                    } else {
+                        let wr = builder.ins().f64const(wr_f);
+                        let wi = builder.ins().f64const(wi_f);
+                        let tr0 = builder.ins().fmul(wr, rv);
+                        let tr1 = builder.ins().fmul(wi, iv);
+                        let tr = builder.ins().fsub(tr0, tr1);
+                        let ti0 = builder.ins().fmul(wr, iv);
+                        let ti = builder.ins().fma(wi, rv, ti0);
+                        (tr, ti)
+                    };
+
                     r[u_idx] = builder.ins().fadd(ru, tr);
-                    i[u_idx] = builder.ins().fadd(iu, ti);
                     r[v_idx] = builder.ins().fsub(ru, tr);
-                    i[v_idx] = builder.ins().fsub(iu, ti);
+                    if !(real_only && is_last_stage) {
+                        i[u_idx] = builder.ins().fadd(iu, ti);
+                        i[v_idx] = builder.ins().fsub(iu, ti);
+                    }
                 }
                 group += len;
             }
@@ -3729,7 +3507,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let im_arr = self.resolve_array(&args[1], builder)?;
                 let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
                 let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
-                let (r, i) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                let (r, i) = Self::emit_fft(builder, &re_in, &im_in, 8, false);
                 let mut res = r;
                 res.extend(i);
                 Ok(res)
@@ -3739,7 +3517,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let im_arr = self.resolve_array(&args[1], builder)?;
                 let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
                 let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
-                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 8, true);
                 Ok(r)
             }
             "fft8_im" => {
@@ -3747,7 +3525,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let im_arr = self.resolve_array(&args[1], builder)?;
                 let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
                 let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
-                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 8);
+                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 8, false);
                 Ok(i)
             }
             "fft16_re" => {
@@ -3755,7 +3533,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let im_arr = self.resolve_array(&args[1], builder)?;
                 let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
                 let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
-                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 16);
+                let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 16, true);
                 Ok(r)
             }
             "fft16_im" => {
@@ -3763,7 +3541,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let im_arr = self.resolve_array(&args[1], builder)?;
                 let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
                 let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
-                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 16);
+                let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 16, false);
                 Ok(i)
             }
             _ => panic!("Unsupported array op {}", callee),
@@ -4800,77 +4578,6 @@ impl<'a> FunctionTranslationState<'a> {
                 ..
             } => {
                 self.array_load_cache.clear();
-                // 1. Check for dual-variable trailing zero loop ((u | v) & 1 == 0)
-                if let Some((u_name, v_name, shift_name)) = Self::match_dual_trailing_zero_loop(condition, body) {
-                    if let (Some(Storage::Scalar(u_var)), Some(Storage::Scalar(v_var)), Some(Storage::Scalar(s_var))) =
-                        (self.variables.get(&u_name).cloned(), self.variables.get(&v_name).cloned(), self.variables.get(&shift_name).cloned()) {
-                        let u_val = builder.use_var(u_var);
-                        let v_val = builder.use_var(v_var);
-                        let s_val = builder.use_var(s_var);
-                        let or_val = builder.ins().bor(u_val, v_val);
-                        let tz = builder.ins().ctz(or_val);
-                        let new_u = builder.ins().sshr(u_val, tz);
-                        let new_v = builder.ins().sshr(v_val, tz);
-                        let s_ty = builder.func.dfg.value_type(s_val);
-                        let tz_ty = builder.func.dfg.value_type(tz);
-                        let tz_for_s = if s_ty != tz_ty {
-                            if s_ty == types::I64 && tz_ty == types::I32 {
-                                builder.ins().uextend(types::I64, tz)
-                            } else if s_ty == types::I32 && tz_ty == types::I64 {
-                                builder.ins().ireduce(types::I32, tz)
-                            } else {
-                                tz
-                            }
-                        } else {
-                            tz
-                        };
-                        let new_s = builder.ins().iadd(s_val, tz_for_s);
-                        builder.def_var(u_var, new_u);
-                        builder.def_var(v_var, new_v);
-                        builder.def_var(s_var, new_s);
-                        return Ok(false);
-                    }
-                }
-
-                // 2. Check for single-variable trailing zero loop (u & 1 == 0)
-                if let Some(u_name) = Self::match_single_trailing_zero_loop(condition, body) {
-                    if let Some(Storage::Scalar(u_var)) = self.variables.get(&u_name).cloned() {
-                        let u_val = builder.use_var(u_var);
-                        let tz = builder.ins().ctz(u_val);
-                        let new_u = builder.ins().sshr(u_val, tz);
-                        builder.def_var(u_var, new_u);
-                        return Ok(false);
-                    }
-                }
-
-                // 3. Check for popcount loop
-                if let Some((num_name, count_name)) = Self::match_popcount_loop(condition, body) {
-                    if let (Some(Storage::Scalar(num_var)), Some(Storage::Scalar(count_var))) =
-                        (self.variables.get(&num_name).cloned(), self.variables.get(&count_name).cloned()) {
-                        let num_val = builder.use_var(num_var);
-                        let count_val = builder.use_var(count_var);
-                        let p = builder.ins().popcnt(num_val);
-                        let count_ty = builder.func.dfg.value_type(count_val);
-                        let p_ty = builder.func.dfg.value_type(p);
-                        let p_converted = if count_ty != p_ty {
-                            if count_ty == types::I64 && p_ty == types::I32 {
-                                builder.ins().uextend(types::I64, p)
-                            } else if count_ty == types::I32 && p_ty == types::I64 {
-                                builder.ins().ireduce(types::I32, p)
-                            } else {
-                                p
-                            }
-                        } else {
-                            p
-                        };
-                        let new_count = builder.ins().iadd(count_val, p_converted);
-                        let num_ty = builder.func.dfg.value_type(num_val);
-                        let zero = builder.ins().iconst(num_ty, 0);
-                        builder.def_var(num_var, zero);
-                        builder.def_var(count_var, new_count);
-                        return Ok(false);
-                    }
-                }
 
                 let induction_info = match condition {
                     TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
@@ -5156,6 +4863,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Div => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fdiv(l, r))
+                        } else if operand_ty.is_unsigned() {
+                            Ok(builder.ins().udiv(l, r))
                         } else if let Some(d) = get_constant_int(right) {
                             let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                             let is_u32 = operand_ty == Type::I32
@@ -5207,7 +4916,9 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                     }
                     BinaryOp::Mod => {
-                        if operand_ty.is_integer() {
+                        if operand_ty.is_unsigned() {
+                            Ok(builder.ins().urem(l, r))
+                        } else if operand_ty.is_integer() {
                             if let Some(d) = get_constant_int(right) {
                                 let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                                 let is_u32 = operand_ty == Type::I32
@@ -5288,7 +4999,13 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::BitOr => Ok(builder.ins().bor(l, r)),
                     BinaryOp::BitXor => Ok(builder.ins().bxor(l, r)),
                     BinaryOp::Shl => Ok(builder.ins().ishl(l, r)),
-                    BinaryOp::Shr => Ok(builder.ins().sshr(l, r)),
+                    BinaryOp::Shr => {
+                        if operand_ty.is_unsigned() {
+                            Ok(builder.ins().ushr(l, r))
+                        } else {
+                            Ok(builder.ins().sshr(l, r))
+                        }
+                    }
                     BinaryOp::Eq => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::Equal, l, r)
@@ -5308,6 +5025,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Lt => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::LessThan, l, r)
+                        } else if operand_ty.is_unsigned() {
+                            builder.ins().icmp(IntCC::UnsignedLessThan, l, r)
                         } else {
                             builder.ins().icmp(IntCC::SignedLessThan, l, r)
                         };
@@ -5316,6 +5035,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Le => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r)
+                        } else if operand_ty.is_unsigned() {
+                            builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, l, r)
                         } else {
                             builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r)
                         };
@@ -5324,6 +5045,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Gt => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::GreaterThan, l, r)
+                        } else if operand_ty.is_unsigned() {
+                            builder.ins().icmp(IntCC::UnsignedGreaterThan, l, r)
                         } else {
                             builder.ins().icmp(IntCC::SignedGreaterThan, l, r)
                         };
@@ -5332,6 +5055,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Ge => {
                         let cmp = if operand_ty.is_float() {
                             builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r)
+                        } else if operand_ty.is_unsigned() {
+                            builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, l, r)
                         } else {
                             builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r)
                         };
@@ -5491,7 +5216,6 @@ impl<'a> FunctionTranslationState<'a> {
             }
 
             TypedExpr::Call { callee, args, ty, .. } => {
-                self.array_load_cache.clear();
                 match callee.as_str() {
                     "sqrt" => {
                         let arg = self.translate_expr(&args[0], builder)?;
@@ -5524,9 +5248,37 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         }
                     }
-                    "ctz" => {
+                    "tzcnt" | "ctz" => {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().ctz(arg));
+                    }
+                    "isqrt" => {
+                        let arg = self.translate_expr(&args[0], builder)?;
+                        let zero_i = self.get_iconst(types::I64, 0, builder);
+                        let is_le_zero = builder.ins().icmp(IntCC::SignedLessThanOrEqual, arg, zero_i);
+
+                        let arg_f = builder.ins().fcvt_from_sint(types::F64, arg);
+                        let sq_f = builder.ins().sqrt(arg_f);
+                        let r0 = builder.ins().fcvt_to_sint(types::I64, sq_f);
+
+                        // Clamp: if arg <= 0, r = 0, else r0
+                        let r_init = builder.ins().select(is_le_zero, zero_i, r0);
+
+                        // Branchless correction 1: if (r + 1) * (r + 1) <= arg, r = r + 1
+                        let one_i = self.get_iconst(types::I64, 1, builder);
+                        let r_p1 = builder.ins().iadd(r_init, one_i);
+                        let r_p1_sq = builder.ins().imul(r_p1, r_p1);
+                        let under = builder.ins().icmp(IntCC::SignedLessThanOrEqual, r_p1_sq, arg);
+                        let r_step1 = builder.ins().select(under, r_p1, r_init);
+
+                        // Branchless correction 2: if r * r > arg, r = r - 1
+                        let r_step1_sq = builder.ins().imul(r_step1, r_step1);
+                        let over = builder.ins().icmp(IntCC::SignedGreaterThan, r_step1_sq, arg);
+                        let r_m1 = builder.ins().isub(r_step1, one_i);
+                        let r_final = builder.ins().select(over, r_m1, r_step1);
+
+                        // Final safety: if arg <= 0, return 0
+                        return Ok(builder.ins().select(is_le_zero, zero_i, r_final));
                     }
                     "clz" => {
                         let arg = self.translate_expr(&args[0], builder)?;
@@ -6050,6 +5802,7 @@ impl<'a> FunctionTranslationState<'a> {
                     _ => {}
                 }
 
+                self.array_load_cache.clear();
                 let func_id = *self
                     .func_ids
                     .get(callee)
@@ -6316,7 +6069,13 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::BitOr => Ok(builder.ins().bor(l, r)),
                     BinaryOp::BitXor => Ok(builder.ins().bxor(l, r)),
                     BinaryOp::Shl => Ok(builder.ins().ishl(l, r)),
-                    BinaryOp::Shr => Ok(builder.ins().sshr(l, r)),
+                    BinaryOp::Shr => {
+                        if operand_ty.is_unsigned() {
+                            Ok(builder.ins().ushr(l, r))
+                        } else {
+                            Ok(builder.ins().sshr(l, r))
+                        }
+                    }
                     BinaryOp::Eq => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fcmp(FloatCC::Equal, l, r))
@@ -6334,6 +6093,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Lt => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fcmp(FloatCC::LessThan, l, r))
+                        } else if operand_ty.is_unsigned() {
+                            Ok(builder.ins().icmp(IntCC::UnsignedLessThan, l, r))
                         } else {
                             Ok(builder.ins().icmp(IntCC::SignedLessThan, l, r))
                         }
@@ -6341,6 +6102,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Le => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r))
+                        } else if operand_ty.is_unsigned() {
+                            Ok(builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, l, r))
                         } else {
                             Ok(builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r))
                         }
@@ -6348,6 +6111,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Gt => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fcmp(FloatCC::GreaterThan, l, r))
+                        } else if operand_ty.is_unsigned() {
+                            Ok(builder.ins().icmp(IntCC::UnsignedGreaterThan, l, r))
                         } else {
                             Ok(builder.ins().icmp(IntCC::SignedGreaterThan, l, r))
                         }
@@ -6355,6 +6120,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Ge => {
                         if operand_ty.is_float() {
                             Ok(builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r))
+                        } else if operand_ty.is_unsigned() {
+                            Ok(builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, l, r))
                         } else {
                             Ok(builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r))
                         }
@@ -6368,8 +6135,17 @@ impl<'a> FunctionTranslationState<'a> {
 }
 
 pub fn compile_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
-    let mut optimized = program.clone();
-    crate::opt::optimize_program(&mut optimized);
-    let compiler = CraneliftCompiler::new()?;
-    compiler.compile_program(&optimized)
+    compile_to_obj_with_opt(program, true)
 }
+
+pub fn compile_to_obj_with_opt(program: &TypedProgram, should_optimize: bool) -> Result<Vec<u8>, CodegenError> {
+    let compiler = CraneliftCompiler::new()?;
+    if should_optimize {
+        let mut optimized = program.clone();
+        crate::opt::optimize_program(&mut optimized);
+        compiler.compile_program(&optimized)
+    } else {
+        compiler.compile_program(program)
+    }
+}
+

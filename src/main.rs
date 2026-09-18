@@ -157,7 +157,7 @@ fn compile_source_to_typed(file_path: &Path) -> Result<(String, TypedProgram)> {
 }
 
 fn build_executable(typed_program: &TypedProgram, out_exe: &Path) -> Result<()> {
-    let obj_bytes = numlang::codegen::compile_to_obj(typed_program)
+    let obj_bytes = numlang::codegen::compile_to_obj_with_opt(typed_program, false)
         .map_err(|e| miette::miette!("Codegen error: {}", e))?;
 
     let temp_dir = std::env::temp_dir();
@@ -182,7 +182,8 @@ fn build_executable(typed_program: &TypedProgram, out_exe: &Path) -> Result<()> 
 }
 
 fn handle_run(file: &Path) -> Result<()> {
-    let (_, typed_program) = compile_source_to_typed(file)?;
+    let (_, mut typed_program) = compile_source_to_typed(file)?;
+    numlang::opt::optimize_program(&mut typed_program);
 
     let temp_dir = std::env::temp_dir();
     let timestamp = std::time::SystemTime::now()
@@ -212,21 +213,50 @@ fn handle_run(file: &Path) -> Result<()> {
 }
 
 fn handle_build(file: &Path, output: Option<PathBuf>, emit_obj: Option<PathBuf>) -> Result<()> {
-    let (_, typed_program) = compile_source_to_typed(file)?;
+    let (_, mut typed_program) = compile_source_to_typed(file)?;
+    numlang::opt::optimize_program(&mut typed_program);
 
-    if let Some(obj_path) = emit_obj {
-        let obj_bytes = numlang::codegen::compile_to_obj(&typed_program)
-            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
-        fs::write(&obj_path, obj_bytes)
+    let obj_bytes = numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
+        .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+
+    if let Some(ref obj_path) = emit_obj {
+        fs::write(obj_path, &obj_bytes)
             .into_diagnostic()
             .map_err(|e| miette::miette!("Failed to write object file: {}", e))?;
         println!("numlang: emitted object file: {}", obj_path.display());
-        return Ok(());
     }
 
-    let out_exe = output.unwrap_or_else(|| file.with_extension("exe"));
-    build_executable(&typed_program, &out_exe)?;
-    println!("numlang: generated executable: {}", out_exe.display());
+    if output.is_some() || emit_obj.is_none() {
+        let out_exe = output.unwrap_or_else(|| file.with_extension("exe"));
+        let temp_dir = std::env::temp_dir();
+        let obj_file = if let Some(ref obj_path) = emit_obj {
+            obj_path.clone()
+        } else {
+            temp_dir.join(format!(
+                "numlang_build_{}_{}.obj",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ))
+        };
+
+        if emit_obj.is_none() {
+            fs::write(&obj_file, &obj_bytes)
+                .into_diagnostic()
+                .map_err(|e| miette::miette!("Failed to write temporary object file: {}", e))?;
+        }
+
+        let link_res = numlang::codegen::link_executable(&obj_file, &out_exe);
+        if emit_obj.is_none() {
+            let _ = fs::remove_file(&obj_file);
+        }
+
+        link_res.map_err(|e| miette::miette!("Linker error: {}", e))?;
+        println!("numlang: generated executable: {}", out_exe.display());
+    }
+
     Ok(())
 }
 
@@ -240,6 +270,15 @@ fn handle_check(file: &Path) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(real_main)
+        .map_err(|e| miette::miette!("Failed to spawn thread: {}", e))?
+        .join()
+        .map_err(|_| miette::miette!("Main thread panicked"))?
+}
+
+fn real_main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.bench {
@@ -334,29 +373,60 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Intermediate Representation (IR) Lowering
-    let mut opt_typed = typed_program.clone();
-    numlang::opt::optimize_program(&mut opt_typed);
-    let ir_program = numlang::ir::lower::lower_to_ir(&opt_typed);
+    // Optimization pass (run once)
+    let mut typed_program = typed_program;
+    numlang::opt::optimize_program(&mut typed_program);
 
     if cli.emit_ir {
+        let ir_program = numlang::ir::lower::lower_to_ir(&typed_program);
         print!("{}", numlang::ir::format_ir(&ir_program));
         return Ok(());
     }
 
-    if let Some(obj_path) = &cli.emit_obj {
-        let obj_bytes = numlang::codegen::compile_to_obj(&typed_program)
-            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
-        fs::write(obj_path, obj_bytes)
-            .into_diagnostic()
-            .map_err(|e| miette::miette!("Failed to write object file: {}", e))?;
-        println!("numlang: emitted object file: {}", obj_path.display());
-        return Ok(());
-    }
+    let should_emit_obj = cli.emit_obj.is_some();
+    let should_link_exe = cli.output.is_some();
 
-    if let Some(out_exe) = &cli.output {
-        build_executable(&typed_program, out_exe)?;
-        println!("numlang: generated executable: {}", out_exe.display());
+    if should_emit_obj || should_link_exe {
+        let obj_bytes = numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+
+        if let Some(ref obj_path) = cli.emit_obj {
+            fs::write(obj_path, &obj_bytes)
+                .into_diagnostic()
+                .map_err(|e| miette::miette!("Failed to write object file: {}", e))?;
+            println!("numlang: emitted object file: {}", obj_path.display());
+        }
+
+        if let Some(ref out_exe) = cli.output {
+            let temp_dir = std::env::temp_dir();
+            let obj_file = if let Some(ref obj_path) = cli.emit_obj {
+                obj_path.clone()
+            } else {
+                temp_dir.join(format!(
+                    "numlang_build_{}_{}.obj",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                ))
+            };
+
+            if cli.emit_obj.is_none() {
+                fs::write(&obj_file, &obj_bytes)
+                    .into_diagnostic()
+                    .map_err(|e| miette::miette!("Failed to write temporary object file: {}", e))?;
+            }
+
+            let link_res = numlang::codegen::link_executable(&obj_file, out_exe);
+            if cli.emit_obj.is_none() {
+                let _ = fs::remove_file(&obj_file);
+            }
+
+            link_res.map_err(|e| miette::miette!("Linker error: {}", e))?;
+            println!("numlang: generated executable: {}", out_exe.display());
+        }
+
         return Ok(());
     }
 

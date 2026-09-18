@@ -604,8 +604,24 @@ impl TypeChecker {
                 Literal::Int(n) => {
                     let ty = match expected_hint {
                         Some(Type::I32) => Type::I32,
+                        Some(Type::U8) => Type::U8,
+                        Some(Type::U16) => Type::U16,
+                        Some(Type::U32) => Type::U32,
+                        Some(Type::U64) => Type::U64,
+                        Some(Type::Usize) => Type::Usize,
                         _ => Type::I64,
                     };
+                    Ok(TypedExpr::Literal {
+                        lit: TypedLiteral::Int(*n, ty.clone()),
+                        ty,
+                        span: *span,
+                    })
+                }
+                Literal::TypedInt(n, ref suffix) => {
+                    let ty = Type::from_name(suffix).ok_or_else(|| TypeError::UnknownType {
+                        name: suffix.clone(),
+                        span: *span,
+                    })?;
                     Ok(TypedExpr::Literal {
                         lit: TypedLiteral::Int(*n, ty.clone()),
                         ty,
@@ -851,7 +867,7 @@ impl TypeChecker {
                     | BinaryOp::BitXor
                     | BinaryOp::Shl
                     | BinaryOp::Shr => {
-                        if !matches!(lty, Type::I64 | Type::I32) {
+                        if !lty.is_integer() {
                             return Err(TypeError::InvalidBinaryOperands {
                                 op: *op,
                                 left: lty,
@@ -1065,7 +1081,32 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
-                    "ctz" | "clz" | "popcnt" => {
+                    "isqrt" => {
+                        if args.len() != 1 {
+                            return Err(TypeError::ArityMismatch {
+                                name: "isqrt".to_string(),
+                                expected: 1,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let typed_arg = self.check_expr(&args[0], Some(Type::I64))?;
+                        if !typed_arg.ty().is_integer() {
+                            return Err(TypeError::TypeMismatch {
+                                expected: Type::I64,
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        let ty = typed_arg.ty();
+                        return Ok(TypedExpr::Call {
+                            callee: "isqrt".to_string(),
+                            args: vec![typed_arg],
+                            ty,
+                            span: *span,
+                        });
+                    }
+                    "tzcnt" | "ctz" | "clz" | "popcnt" => {
                         if args.len() != 1 {
                             return Err(TypeError::ArityMismatch {
                                 name: callee.clone(),
