@@ -2,6 +2,8 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
+    I8,
+    I16,
     I32,
     I64,
     U8,
@@ -21,7 +23,9 @@ impl Type {
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
-            Type::I32
+            Type::I8
+                | Type::I16
+                | Type::I32
                 | Type::I64
                 | Type::U8
                 | Type::U16
@@ -36,7 +40,9 @@ impl Type {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Type::I32
+            Type::I8
+                | Type::I16
+                | Type::I32
                 | Type::I64
                 | Type::U8
                 | Type::U16
@@ -54,7 +60,7 @@ impl Type {
     }
 
     pub fn is_signed(&self) -> bool {
-        matches!(self, Type::I32 | Type::I64)
+        matches!(self, Type::I8 | Type::I16 | Type::I32 | Type::I64)
     }
 
     pub fn is_float(&self) -> bool {
@@ -67,8 +73,8 @@ impl Type {
 
     pub fn size_bytes(&self) -> usize {
         match self {
-            Type::U8 => 1,
-            Type::U16 => 2,
+            Type::I8 | Type::U8 => 1,
+            Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::Usize | Type::F64 => 8,
             Type::Bool => 1,
@@ -91,6 +97,25 @@ impl Type {
             _ => None,
         }
     }
+
+    pub fn wrap_int(&self, val: i64) -> i64 {
+        match self {
+            Type::I8 => (val as i8) as i64,
+            Type::I16 => (val as i16) as i64,
+            Type::I32 => (val as i32) as i64,
+            Type::U8 => (val as u8) as i64,
+            Type::U16 => (val as u16) as i64,
+            Type::U32 => (val as u32) as i64,
+            _ => val,
+        }
+    }
+}
+
+pub fn wrap_int_by_type(val: i64, ty: Option<&Type>) -> i64 {
+    ty.map_or(val, |t| t.wrap_int(val))
+}
+
+impl Type {
 
     pub fn from_name(name: &str) -> Option<Type> {
         let s = name.trim();
@@ -119,6 +144,8 @@ impl Type {
         }
 
         match s {
+            "i8" => Some(Type::I8),
+            "i16" => Some(Type::I16),
             "i32" => Some(Type::I32),
             "i64" => Some(Type::I64),
             "u8" => Some(Type::U8),
@@ -139,6 +166,8 @@ impl Type {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Type::I8 => write!(f, "i8"),
+            Type::I16 => write!(f, "i16"),
             Type::I32 => write!(f, "i32"),
             Type::I64 => write!(f, "i64"),
             Type::U8 => write!(f, "u8"),

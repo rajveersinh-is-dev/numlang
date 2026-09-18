@@ -105,3 +105,69 @@ fn main() -> i64 {
         stderr
     );
 }
+
+#[test]
+fn test_signed_i8_and_i16_types() {
+    let code = r#"
+fn main() -> i64 {
+    let x: i8 = -128i8;
+    let y: i8 = 127i8;
+    let z: i16 = 32767i16;
+    let w: i16 = -32768i16;
+    if x == -128i8 {
+        if y == 127i8 {
+            if z == 32767i16 {
+                if w == -32768i16 {
+                    return 55;
+                }
+            }
+        }
+    }
+    return 0;
+}
+"#;
+    let (code, _stdout, _stderr) = run_numlang_code(code);
+    assert_eq!(code, Some(55));
+}
+
+#[test]
+fn test_signed_i8_i16_overflow_wrapping() {
+    let code = r#"
+fn main() -> i64 {
+    let max_i8: i8 = 127i8;
+    let wrapped_i8: i8 = max_i8 + 1i8;
+    let max_i16: i16 = 32767i16;
+    let wrapped_i16: i16 = max_i16 + 1i16;
+    if wrapped_i8 == -128i8 {
+        if wrapped_i16 == -32768i16 {
+            return 88;
+        }
+    }
+    return 0;
+}
+"#;
+    let (code, _stdout, _stderr) = run_numlang_code(code);
+    assert_eq!(code, Some(88));
+}
+
+#[test]
+fn test_i8_i16_arithmetic_and_print() {
+    let code = r#"
+fn main() -> i64 {
+    let a: i8 = 10i8;
+    let b: i8 = -20i8;
+    let c: i8 = a + b;
+    let d: i16 = 1000i16;
+    let e: i16 = -500i16;
+    let f: i16 = d / e;
+    println(c);
+    println(f);
+    return 0;
+}
+"#;
+    let (code, stdout, _stderr) = run_numlang_code(code);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("-10"));
+    assert!(stdout.contains("-2"));
+}
+

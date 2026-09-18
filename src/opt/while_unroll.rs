@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::span::Span;
-use crate::typecheck::types::Type;
+use crate::typecheck::types::{wrap_int_by_type, Type};
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedLiteral, TypedProgram, TypedStmt,
 };
@@ -45,21 +45,21 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
             ..
         } => Some(if *b { 1 } else { 0 }),
         TypedExpr::Ident { name, .. } => known_consts.get(name).copied(),
-        TypedExpr::Unary { op, expr, .. } => {
+        TypedExpr::Unary { op, expr, ty, .. } => {
             let val = eval_const_expr(expr, known_consts)?;
             match op {
-                UnaryOp::Neg => Some(-val),
+                UnaryOp::Neg => Some(wrap_int_by_type(val.wrapping_neg(), Some(ty))),
                 UnaryOp::Not => Some(if val == 0 { 1 } else { 0 }),
             }
         }
         TypedExpr::Binary {
-            op, left, right, ..
+            op, left, right, ty, ..
         } => {
             let operand_ty = left.ty();
             let is_unsigned = operand_ty.is_unsigned();
             let l = eval_const_expr(left, known_consts)?;
             let r = eval_const_expr(right, known_consts)?;
-            if is_unsigned {
+            let res = if is_unsigned {
                 let lu = l as u64;
                 let ru = r as u64;
                 match op {
@@ -92,12 +92,12 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
                             None
                         }
                     }
-                    BinaryOp::Eq => Some(if lu == ru { 1 } else { 0 }),
-                    BinaryOp::Ne => Some(if lu != ru { 1 } else { 0 }),
-                    BinaryOp::Lt => Some(if lu < ru { 1 } else { 0 }),
-                    BinaryOp::Le => Some(if lu <= ru { 1 } else { 0 }),
-                    BinaryOp::Gt => Some(if lu > ru { 1 } else { 0 }),
-                    BinaryOp::Ge => Some(if lu >= ru { 1 } else { 0 }),
+                    BinaryOp::Eq => return Some(if lu == ru { 1 } else { 0 }),
+                    BinaryOp::Ne => return Some(if lu != ru { 1 } else { 0 }),
+                    BinaryOp::Lt => return Some(if lu < ru { 1 } else { 0 }),
+                    BinaryOp::Le => return Some(if lu <= ru { 1 } else { 0 }),
+                    BinaryOp::Gt => return Some(if lu > ru { 1 } else { 0 }),
+                    BinaryOp::Ge => return Some(if lu >= ru { 1 } else { 0 }),
                 }
             } else {
                 match op {
@@ -106,14 +106,14 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
                     BinaryOp::Mul => Some(l.wrapping_mul(r)),
                     BinaryOp::Div => {
                         if r != 0 {
-                            Some(l / r)
+                            Some(l.wrapping_div(r))
                         } else {
                             None
                         }
                     }
                     BinaryOp::Mod => {
                         if r != 0 {
-                            Some(l % r)
+                            Some(l.wrapping_rem(r))
                         } else {
                             None
                         }
@@ -142,14 +142,15 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
                             None
                         }
                     }
-                    BinaryOp::Eq => Some(if l == r { 1 } else { 0 }),
-                    BinaryOp::Ne => Some(if l != r { 1 } else { 0 }),
-                    BinaryOp::Lt => Some(if l < r { 1 } else { 0 }),
-                    BinaryOp::Le => Some(if l <= r { 1 } else { 0 }),
-                    BinaryOp::Gt => Some(if l > r { 1 } else { 0 }),
-                    BinaryOp::Ge => Some(if l >= r { 1 } else { 0 }),
+                    BinaryOp::Eq => return Some(if l == r { 1 } else { 0 }),
+                    BinaryOp::Ne => return Some(if l != r { 1 } else { 0 }),
+                    BinaryOp::Lt => return Some(if l < r { 1 } else { 0 }),
+                    BinaryOp::Le => return Some(if l <= r { 1 } else { 0 }),
+                    BinaryOp::Gt => return Some(if l > r { 1 } else { 0 }),
+                    BinaryOp::Ge => return Some(if l >= r { 1 } else { 0 }),
                 }
-            }
+            };
+            res.map(|v| wrap_int_by_type(v, Some(ty)))
         }
         _ => None,
     }

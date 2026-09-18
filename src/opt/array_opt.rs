@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use crate::ast::BinaryOp;
-use crate::typecheck::types::Type;
+use crate::typecheck::types::{wrap_int_by_type, Type};
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
 };
@@ -350,6 +350,7 @@ fn fold_constants(expr: &mut TypedExpr) {
                     _ => None,
                 };
                 if let Some(val) = res {
+                    let val = wrap_int_by_type(val, Some(ty));
                     *expr = TypedExpr::Literal {
                         lit: TypedLiteral::Int(val, ty.clone()),
                         ty: ty.clone(),
@@ -371,8 +372,9 @@ fn fold_constants(expr: &mut TypedExpr) {
             } = &**inner
             {
                 if let crate::ast::UnaryOp::Neg = op {
+                    let val = wrap_int_by_type(val.wrapping_neg(), Some(ty));
                     *expr = TypedExpr::Literal {
-                        lit: TypedLiteral::Int(-val, ty.clone()),
+                        lit: TypedLiteral::Int(val, ty.clone()),
                         ty: ty.clone(),
                         span: *span,
                     };
