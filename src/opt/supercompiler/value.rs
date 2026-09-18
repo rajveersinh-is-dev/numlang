@@ -4,7 +4,7 @@
 //! or a symbolic expression that could not be evaluated at compile time.
 
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::typecheck::types::Type;
+use crate::typecheck::types::{wrap_int_by_type, Type};
 
 /// A value produced during symbolic driving.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,9 +80,9 @@ pub fn fold_binary_typed(op: BinaryOp, left: Value, right: Value, operand_ty: Op
     if let (Some(l), Some(r)) = (left.as_int(), right.as_int()) {
         if matches!(left, Value::Int(_)) && matches!(right, Value::Int(_)) {
             if operand_ty.is_some_and(|t| t.is_unsigned()) {
-                return fold_uint_binary(op, l as u64, r as u64);
+                return fold_uint_binary(op, l as u64, r as u64, operand_ty);
             } else {
-                return fold_int_binary(op, l, r);
+                return fold_int_binary(op, l, r, operand_ty);
             }
         }
     }
@@ -116,16 +116,17 @@ pub fn fold_binary_typed(op: BinaryOp, left: Value, right: Value, operand_ty: Op
     Value::Symbolic(SymExpr::BinOp(op, Box::new(lsym), Box::new(rsym), ty))
 }
 
-fn fold_uint_binary(op: BinaryOp, l: u64, r: u64) -> Value {
+fn fold_uint_binary(op: BinaryOp, l: u64, r: u64, ty: Option<&Type>) -> Value {
+    let wrap = |v: i64| Value::Int(wrap_int_by_type(v, ty));
     match op {
-        BinaryOp::Add => Value::Int(l.wrapping_add(r) as i64),
-        BinaryOp::Sub => Value::Int(l.wrapping_sub(r) as i64),
-        BinaryOp::Mul => Value::Int(l.wrapping_mul(r) as i64),
+        BinaryOp::Add => wrap(l.wrapping_add(r) as i64),
+        BinaryOp::Sub => wrap(l.wrapping_sub(r) as i64),
+        BinaryOp::Mul => wrap(l.wrapping_mul(r) as i64),
         BinaryOp::Div => {
-            Value::Int(l.checked_div(r).unwrap_or(0) as i64)
+            wrap(l.checked_div(r).unwrap_or(0) as i64)
         }
         BinaryOp::Mod => {
-            Value::Int(l.checked_rem(r).unwrap_or(0) as i64)
+            wrap(l.checked_rem(r).unwrap_or(0) as i64)
         }
         BinaryOp::Pow => {
             if r > 62 {
@@ -133,21 +134,21 @@ fn fold_uint_binary(op: BinaryOp, l: u64, r: u64) -> Value {
                 for _ in 0..r {
                     acc = acc.wrapping_mul(l);
                 }
-                Value::Int(acc as i64)
+                wrap(acc as i64)
             } else {
-                Value::Int(l.wrapping_pow(r as u32) as i64)
+                wrap(l.wrapping_pow(r as u32) as i64)
             }
         }
-        BinaryOp::BitAnd => Value::Int((l & r) as i64),
-        BinaryOp::BitOr  => Value::Int((l | r) as i64),
-        BinaryOp::BitXor => Value::Int((l ^ r) as i64),
+        BinaryOp::BitAnd => wrap((l & r) as i64),
+        BinaryOp::BitOr  => wrap((l | r) as i64),
+        BinaryOp::BitXor => wrap((l ^ r) as i64),
         BinaryOp::Shl => {
-            if r >= 64 { Value::Int(0) }
-            else { Value::Int((l << r) as i64) }
+            if r >= 64 { wrap(0) }
+            else { wrap((l << r) as i64) }
         }
         BinaryOp::Shr => {
-            if r >= 64 { Value::Int(0) }
-            else { Value::Int((l >> r) as i64) }
+            if r >= 64 { wrap(0) }
+            else { wrap((l >> r) as i64) }
         }
         BinaryOp::Eq => Value::Bool(l == r),
         BinaryOp::Ne => Value::Bool(l != r),
@@ -158,40 +159,41 @@ fn fold_uint_binary(op: BinaryOp, l: u64, r: u64) -> Value {
     }
 }
 
-fn fold_int_binary(op: BinaryOp, l: i64, r: i64) -> Value {
+fn fold_int_binary(op: BinaryOp, l: i64, r: i64, ty: Option<&Type>) -> Value {
+    let wrap = |v: i64| Value::Int(wrap_int_by_type(v, ty));
     match op {
-        BinaryOp::Add => Value::Int(l.wrapping_add(r)),
-        BinaryOp::Sub => Value::Int(l.wrapping_sub(r)),
-        BinaryOp::Mul => Value::Int(l.wrapping_mul(r)),
+        BinaryOp::Add => wrap(l.wrapping_add(r)),
+        BinaryOp::Sub => wrap(l.wrapping_sub(r)),
+        BinaryOp::Mul => wrap(l.wrapping_mul(r)),
         BinaryOp::Div => {
-            if r == 0 { Value::Int(0) } else { Value::Int(l.wrapping_div(r)) }
+            if r == 0 { wrap(0) } else { wrap(l.wrapping_div(r)) }
         }
         BinaryOp::Mod => {
-            if r == 0 { Value::Int(0) } else { Value::Int(l.wrapping_rem(r)) }
+            if r == 0 { wrap(0) } else { wrap(l.wrapping_rem(r)) }
         }
         BinaryOp::Pow => {
             // Integer exponentiation (fast path for small exponent)
-            if r < 0 { return Value::Int(0); }
+            if r < 0 { return wrap(0); }
             if r > 62 {
                 // May overflow — compute anyway
                 let mut acc: i64 = 1;
                 for _ in 0..r {
                     acc = acc.wrapping_mul(l);
                 }
-                return Value::Int(acc);
+                return wrap(acc);
             }
-            Value::Int(l.wrapping_pow(r as u32))
+            wrap(l.wrapping_pow(r as u32))
         }
-        BinaryOp::BitAnd => Value::Int(l & r),
-        BinaryOp::BitOr  => Value::Int(l | r),
-        BinaryOp::BitXor => Value::Int(l ^ r),
+        BinaryOp::BitAnd => wrap(l & r),
+        BinaryOp::BitOr  => wrap(l | r),
+        BinaryOp::BitXor => wrap(l ^ r),
         BinaryOp::Shl => {
-            if !(0..64).contains(&r) { Value::Int(0) }
-            else { Value::Int(l << r) }
+            if !(0..64).contains(&r) { wrap(0) }
+            else { wrap(l << r) }
         }
         BinaryOp::Shr => {
-            if !(0..64).contains(&r) { Value::Int(0) }
-            else { Value::Int(l >> r) }
+            if !(0..64).contains(&r) { wrap(0) }
+            else { wrap(l >> r) }
         }
         BinaryOp::Eq => Value::Bool(l == r),
         BinaryOp::Ne => Value::Bool(l != r),
@@ -226,9 +228,13 @@ fn fold_float_binary(op: BinaryOp, l: f64, r: f64) -> Value {
 }
 
 pub fn fold_unary(op: UnaryOp, val: Value) -> Value {
+    fold_unary_typed(op, val, None)
+}
+
+pub fn fold_unary_typed(op: UnaryOp, val: Value, ty: Option<&Type>) -> Value {
     match op {
         UnaryOp::Neg => match val {
-            Value::Int(i)   => Value::Int(i.wrapping_neg()),
+            Value::Int(i)   => Value::Int(wrap_int_by_type(i.wrapping_neg(), ty)),
             Value::Float(f) => Value::Float(-f),
             other => {
                 let s = value_to_sym(other, Type::I64);
@@ -238,7 +244,7 @@ pub fn fold_unary(op: UnaryOp, val: Value) -> Value {
         },
         UnaryOp::Not => match val {
             Value::Bool(b) => Value::Bool(!b),
-            Value::Int(i)  => Value::Int(!i),
+            Value::Int(i)  => Value::Int(wrap_int_by_type(!i, ty)),
             other => {
                 let s = value_to_sym(other, Type::Bool);
                 let ty = s.ty();

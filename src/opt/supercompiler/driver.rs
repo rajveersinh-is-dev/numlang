@@ -14,7 +14,7 @@ use crate::typecheck::types::Type;
 use super::env::Env;
 use super::generalization::generalize_loop;
 use super::termination::{detect_embedding, LoopSnapshot};
-use super::value::{fold_binary, fold_binary_typed, fold_unary, Value};
+use super::value::{fold_binary, fold_binary_typed, fold_unary_typed, Value};
 use std::collections::HashMap;
 
 /// Hard cap on call stack depth.
@@ -250,9 +250,9 @@ pub fn drive_expr(
             }
         }
 
-        TypedExpr::Unary { op, expr, .. } => {
+        TypedExpr::Unary { op, expr, ty, .. } => {
             let val = drive_expr(expr, program, env);
-            fold_unary(*op, val)
+            fold_unary_typed(*op, val, Some(ty))
         }
 
         TypedExpr::Binary { op, left, right, .. } => {

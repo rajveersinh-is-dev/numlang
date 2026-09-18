@@ -129,7 +129,7 @@ impl CompilerDiagnostic {
             crate::typecheck::TypeError::UnknownType { name, .. } => (
                 format!("Unknown type `{}`", name),
                 "unrecognized type name".to_string(),
-                "Supported primitive types are: i32, i64, f32, f64, bool, void".to_string(),
+                "Supported primitive types are: i8, i16, i32, i64, u8, u16, u32, u64, usize, f32, f64, bool, void".to_string(),
             ),
             crate::typecheck::TypeError::InvalidReturn { expected, found, .. } => (
                 format!("Function return type mismatch: expected `{}`, found `{}`", expected, found),

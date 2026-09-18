@@ -304,37 +304,35 @@ fn block_terminates_with_return(block: &TypedBlock) -> bool {
 }
 
 fn default_expr_for_type(ty: &Type, span: Span) -> TypedExpr {
-    match ty {
-        Type::I64 => TypedExpr::Literal {
-            lit: TypedLiteral::Int(0, Type::I64),
-            ty: Type::I64,
+    if ty.is_integer() {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(0, ty.clone()),
+            ty: ty.clone(),
             span,
-        },
-        Type::I32 => TypedExpr::Literal {
-            lit: TypedLiteral::Int(0, Type::I32),
-            ty: Type::I32,
-            span,
-        },
-        Type::F64 => TypedExpr::Literal {
-            lit: TypedLiteral::Float(0.0, Type::F64),
-            ty: Type::F64,
-            span,
-        },
-        Type::F32 => TypedExpr::Literal {
-            lit: TypedLiteral::Float(0.0, Type::F32),
-            ty: Type::F32,
-            span,
-        },
-        Type::Bool => TypedExpr::Literal {
-            lit: TypedLiteral::Bool(false),
-            ty: Type::Bool,
-            span,
-        },
-        _ => TypedExpr::Literal {
-            lit: TypedLiteral::Int(0, Type::I64),
-            ty: Type::I64,
-            span,
-        },
+        }
+    } else {
+        match ty {
+            Type::F64 => TypedExpr::Literal {
+                lit: TypedLiteral::Float(0.0, Type::F64),
+                ty: Type::F64,
+                span,
+            },
+            Type::F32 => TypedExpr::Literal {
+                lit: TypedLiteral::Float(0.0, Type::F32),
+                ty: Type::F32,
+                span,
+            },
+            Type::Bool => TypedExpr::Literal {
+                lit: TypedLiteral::Bool(false),
+                ty: Type::Bool,
+                span,
+            },
+            _ => TypedExpr::Literal {
+                lit: TypedLiteral::Int(0, Type::I64),
+                ty: Type::I64,
+                span,
+            },
+        }
     }
 }
 

@@ -710,6 +710,8 @@ impl TypeChecker {
             Expr::Literal(lit, span) => match lit {
                 Literal::Int(n) => {
                     let ty = match expected_hint {
+                        Some(Type::I8) => Type::I8,
+                        Some(Type::I16) => Type::I16,
                         Some(Type::I32) => Type::I32,
                         Some(Type::U8) => Type::U8,
                         Some(Type::U16) => Type::U16,

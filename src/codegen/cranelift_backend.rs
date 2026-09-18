@@ -24,8 +24,8 @@ pub enum CodegenError {
 
 fn type_to_clif(ty: Type) -> types::Type {
     match ty {
-        Type::U8 => types::I8,
-        Type::U16 => types::I16,
+        Type::I8 | Type::U8 => types::I8,
+        Type::I16 | Type::U16 => types::I16,
         Type::I32 | Type::U32 => types::I32,
         Type::I64 | Type::U64 | Type::Usize => types::I64,
         Type::F32 => types::F32,
@@ -4992,8 +4992,12 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         let mut idx_val = self.translate_expr(index, builder)?;
-                        if index.ty() == Type::I32 {
-                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        if index.ty().size_bytes() < 8 {
+                            idx_val = if index.ty().is_signed() {
+                                builder.ins().sextend(types::I64, idx_val)
+                            } else {
+                                builder.ins().uextend(types::I64, idx_val)
+                            };
                         }
                         if !*is_safe {
                             self.emit_bounds_check(idx_val, len, builder);
@@ -5022,8 +5026,12 @@ impl<'a> FunctionTranslationState<'a> {
                         }
 
                         let mut idx_val = self.translate_expr(index, builder)?;
-                        if index.ty() == Type::I32 {
-                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        if index.ty().size_bytes() < 8 {
+                            idx_val = if index.ty().is_signed() {
+                                builder.ins().sextend(types::I64, idx_val)
+                            } else {
+                                builder.ins().uextend(types::I64, idx_val)
+                            };
                         }
 
                         if !*is_safe {
@@ -5557,6 +5565,8 @@ impl<'a> FunctionTranslationState<'a> {
                             Ok(builder.ins().fdiv(l, r))
                         } else if operand_ty.is_unsigned() {
                             Ok(builder.ins().udiv(l, r))
+                        } else if matches!(operand_ty, Type::I8 | Type::I16) {
+                            Ok(builder.ins().sdiv(l, r))
                         } else if let Some(d) = get_constant_int(right) {
                             let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
                             let is_u32 = operand_ty == Type::I32
@@ -5610,6 +5620,8 @@ impl<'a> FunctionTranslationState<'a> {
                     BinaryOp::Mod => {
                         if operand_ty.is_unsigned() {
                             Ok(builder.ins().urem(l, r))
+                        } else if matches!(operand_ty, Type::I8 | Type::I16) {
+                            Ok(builder.ins().srem(l, r))
                         } else if operand_ty.is_integer() {
                             if let Some(d) = get_constant_int(right) {
                                 let is_nonneg = is_expr_known_non_negative(left, &self.known_non_negative_vars);
@@ -5804,8 +5816,12 @@ impl<'a> FunctionTranslationState<'a> {
                                 }
 
                                 let mut idx_val = self.translate_expr(index, builder)?;
-                                if index.ty() == Type::I32 {
-                                    idx_val = builder.ins().uextend(types::I64, idx_val);
+                                if index.ty().size_bytes() < 8 {
+                                    idx_val = if index.ty().is_signed() {
+                                        builder.ins().sextend(types::I64, idx_val)
+                                    } else {
+                                        builder.ins().uextend(types::I64, idx_val)
+                                    };
                                 }
                                 if !*is_safe {
                                     self.emit_bounds_check(idx_val, len, builder);
@@ -5840,9 +5856,13 @@ impl<'a> FunctionTranslationState<'a> {
                                         let offset = (c as i32) * (elem_size as i32);
                                         builder.ins().stack_load(types::I64, clif_ty, slot, offset)
                                     } else {
-                                        let mut idx_val = self.translate_expr(index, builder)?;
-                                        if index.ty() == Type::I32 {
-                                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                                         let mut idx_val = self.translate_expr(index, builder)?;
+                                        if index.ty().size_bytes() < 8 {
+                                            idx_val = if index.ty().is_signed() {
+                                                builder.ins().sextend(types::I64, idx_val)
+                                            } else {
+                                                builder.ins().uextend(types::I64, idx_val)
+                                            };
                                         }
                                         if !*is_safe {
                                             self.emit_bounds_check(idx_val, len, builder);
@@ -5860,8 +5880,12 @@ impl<'a> FunctionTranslationState<'a> {
                                     }
                                 } else {
                                     let mut idx_val = self.translate_expr(index, builder)?;
-                                    if index.ty() == Type::I32 {
-                                        idx_val = builder.ins().uextend(types::I64, idx_val);
+                                    if index.ty().size_bytes() < 8 {
+                                        idx_val = if index.ty().is_signed() {
+                                            builder.ins().sextend(types::I64, idx_val)
+                                        } else {
+                                            builder.ins().uextend(types::I64, idx_val)
+                                        };
                                     }
                                     if !*is_safe {
                                         self.emit_bounds_check(idx_val, len, builder);
@@ -5891,8 +5915,12 @@ impl<'a> FunctionTranslationState<'a> {
                         let elem_size = ty.size_bytes() as i64;
                         let clif_ty = type_to_clif(ty.clone());
                         let mut idx_val = self.translate_expr(index, builder)?;
-                        if index.ty() == Type::I32 {
-                            idx_val = builder.ins().uextend(types::I64, idx_val);
+                        if index.ty().size_bytes() < 8 {
+                            idx_val = if index.ty().is_signed() {
+                                builder.ins().sextend(types::I64, idx_val)
+                            } else {
+                                builder.ins().uextend(types::I64, idx_val)
+                            };
                         }
                         let offset = match elem_size {
                             1 => idx_val,
@@ -5952,7 +5980,7 @@ impl<'a> FunctionTranslationState<'a> {
                         } else {
                             let val = self.translate_expr(arg, builder)?;
                             let val_i64 = match arg_ty {
-                                Type::I32 => builder.ins().sextend(types::I64, val),
+                                Type::I8 | Type::I16 | Type::I32 => builder.ins().sextend(types::I64, val),
                                 _ => val,
                             };
                             let print_i64_func = self.module.declare_func_in_func(self.print_i64_id, builder.func);
@@ -5987,9 +6015,13 @@ impl<'a> FunctionTranslationState<'a> {
                         if arg_ty.is_float() {
                             return Ok(builder.ins().fcvt_to_sint(types::I64, arg));
                         } else {
-                            let clif_ty = type_to_clif(arg_ty);
-                            if clif_ty == types::I32 {
-                                return Ok(builder.ins().sextend(types::I64, arg));
+                            let clif_ty = type_to_clif(arg_ty.clone());
+                            if clif_ty != types::I64 {
+                                if arg_ty.is_unsigned() {
+                                    return Ok(builder.ins().uextend(types::I64, arg));
+                                } else {
+                                    return Ok(builder.ins().sextend(types::I64, arg));
+                                }
                             } else {
                                 return Ok(arg);
                             }
@@ -6746,6 +6778,13 @@ impl<'a> FunctionTranslationState<'a> {
                         let operand_ty = left.ty();
                         let l = self.eval_pure_select_expr(left, locals, builder)?;
                         let r = self.eval_pure_select_expr(right, locals, builder)?;
+                        if matches!(operand_ty, Type::I8 | Type::I16) {
+                            return if *op == BinaryOp::Div {
+                                Ok(builder.ins().sdiv(l, r))
+                            } else {
+                                Ok(builder.ins().srem(l, r))
+                            };
+                        }
                         // Treat variable as non-negative when it already appears in
                         // the known_non_negative_vars set, OR when it is a local
                         // produced by a prior branch assignment (all locals here are
