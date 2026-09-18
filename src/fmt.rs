@@ -328,6 +328,15 @@ fn format_stmt(
 }
 
 fn format_struct(s: &StructDef, out: &mut String) {
+    if let Some(ref doc) = s.doc_comment {
+        for line in doc.lines() {
+            if line.is_empty() {
+                out.push_str("///\n");
+            } else {
+                out.push_str(&format!("/// {}\n", line));
+            }
+        }
+    }
     if s.fields.is_empty() {
         out.push_str(&format!("struct {} {{}}\n", s.name));
     } else {
@@ -344,6 +353,15 @@ fn format_function(
     inferred_types: &HashMap<Span, Type>,
     out: &mut String,
 ) {
+    if let Some(ref doc) = f.doc_comment {
+        for line in doc.lines() {
+            if line.is_empty() {
+                out.push_str("///\n");
+            } else {
+                out.push_str(&format!("/// {}\n", line));
+            }
+        }
+    }
     let params_str = f
         .params
         .iter()

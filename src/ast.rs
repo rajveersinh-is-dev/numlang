@@ -207,6 +207,7 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_ty: Option<String>,
     pub body: Block,
+    pub doc_comment: Option<String>,
     pub span: Span,
 }
 
@@ -214,6 +215,7 @@ pub struct Function {
 pub struct StructDef {
     pub name: String,
     pub fields: Vec<(String, String)>,
+    pub doc_comment: Option<String>,
     pub span: Span,
 }
 

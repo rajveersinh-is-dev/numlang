@@ -9,3 +9,4 @@ pub mod codegen;
 pub mod opt;
 pub mod explain;
 pub mod fmt;
+pub mod doc;
