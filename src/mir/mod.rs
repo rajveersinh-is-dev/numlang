@@ -3,14 +3,14 @@ use crate::typecheck::types::Type;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BasicBlockId(pub usize);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Projection {
     Deref,
     Field(String),
     Index(Box<Place>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Place {
     pub local: String,
     pub projections: Vec<Projection>,
@@ -82,4 +82,5 @@ pub struct BasicBlock {
 pub mod alias;
 pub mod dominance;
 pub mod lower;
+pub mod mem2reg;
 pub mod memory_ssa;

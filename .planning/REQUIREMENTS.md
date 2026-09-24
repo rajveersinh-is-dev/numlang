@@ -15,10 +15,10 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 
 ### 2. Points-To & Field-Sensitive Alias Analysis (ALIAS)
 
-- [ ] **ALIAS-01**: Implement `AliasAnalysis` and `AliasResult` (`NoAlias`, `MustAlias`, `MayAlias`) in `src/mir/alias.rs`.
-- [ ] **ALIAS-02**: Statically prove disjointness for distinct stack locals and non-overlapping root allocations.
-- [ ] **ALIAS-03**: Implement field-sensitive path queries ensuring distinct struct fields (`p.x` vs `p.y`) report `NoAlias`.
-- [ ] **ALIAS-04**: Disjoint constant array index analysis (`arr[0]` vs `arr[1]` report `NoAlias`).
+- [x] **ALIAS-01**: Implement `AliasAnalysis` and `AliasResult` (`NoAlias`, `MustAlias`, `MayAlias`) in `src/mir/alias.rs`.
+- [x] **ALIAS-02**: Statically prove disjointness for distinct stack locals and non-overlapping root allocations.
+- [x] **ALIAS-03**: Implement field-sensitive path queries ensuring distinct struct fields (`p.x` vs `p.y`) report `NoAlias`.
+- [x] **ALIAS-04**: Disjoint constant array index analysis (`arr[0]` vs `arr[1]` report `NoAlias`).
 
 ### 3. Mem2Reg SSA Promotion Engine (M2R)
 
@@ -47,10 +47,10 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 | MSSA-01 | Phase 2.1 | Complete |
 | MSSA-02 | Phase 2.1 | Complete |
 | MSSA-03 | Phase 2.1 | Complete |
-| ALIAS-01 | Phase 2.2 | Pending |
-| ALIAS-02 | Phase 2.2 | Pending |
-| ALIAS-03 | Phase 2.2 | Pending |
-| ALIAS-04 | Phase 2.2 | Pending |
+| ALIAS-01 | Phase 2.2 | Complete |
+| ALIAS-02 | Phase 2.2 | Complete |
+| ALIAS-03 | Phase 2.2 | Complete |
+| ALIAS-04 | Phase 2.2 | Complete |
 | M2R-01 | Phase 2.3 | Pending |
 | M2R-02 | Phase 2.3 | Pending |
 | M2R-03 | Phase 2.3 | Pending |
