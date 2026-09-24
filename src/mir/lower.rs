@@ -55,6 +55,7 @@ pub struct MirBuilder {
     current_block: Option<BasicBlockId>,
     next_block_id: usize,
     next_temp_id: usize,
+    loop_stack: Vec<(BasicBlockId, BasicBlockId)>,
 }
 
 impl MirBuilder {
@@ -66,6 +67,7 @@ impl MirBuilder {
             current_block: None,
             next_block_id: 0,
             next_temp_id: 0,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -253,19 +255,31 @@ impl MirBuilder {
                     else_target: merge_block.clone(),
                 };
 
+                self.loop_stack.push((cond_block.clone(), merge_block.clone()));
                 self.current_block = Some(body_block);
                 self.lower_block(body);
                 if self.blocks[self.current_block.clone().unwrap().0].terminator == Terminator::Unreachable {
-                    self.blocks[self.current_block.clone().unwrap().0].terminator = Terminator::Branch { target: cond_block.clone() };
+                    self.blocks[self.current_block.clone().unwrap().0].terminator = Terminator::Branch { target: cond_block };
                 }
+                self.loop_stack.pop();
 
                 self.current_block = Some(merge_block);
             }
             TypedStmt::Break(_) => {
-                // To be implemented properly if loop context is passed
+                if let Some((_, merge_target)) = self.loop_stack.last() {
+                    let current = self.current_block.clone().unwrap().0;
+                    self.blocks[current].terminator = Terminator::Branch { target: merge_target.clone() };
+                    let unreachable_block = self.new_block();
+                    self.current_block = Some(unreachable_block);
+                }
             }
             TypedStmt::Continue(_) => {
-                // To be implemented properly if loop context is passed
+                if let Some((cond_target, _)) = self.loop_stack.last() {
+                    let current = self.current_block.clone().unwrap().0;
+                    self.blocks[current].terminator = Terminator::Branch { target: cond_target.clone() };
+                    let unreachable_block = self.new_block();
+                    self.current_block = Some(unreachable_block);
+                }
             }
             TypedStmt::For { .. } => {
                 // Desugared to While loop before lowering
