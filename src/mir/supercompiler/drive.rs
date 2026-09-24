@@ -312,6 +312,17 @@ impl<'a> SupercompilerDriver<'a> {
                     .unwrap_or_else(|| self.interner.intern_var(inner.clone(), Type::I64));
                 self.interner.intern_unary(*op, in_term, Type::I64)
             }
+            Rvalue::Call(callee, args) => {
+                let arg_terms: Vec<SymTermId> = args
+                    .iter()
+                    .map(|p| {
+                        state
+                            .get_value(p)
+                            .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64))
+                    })
+                    .collect();
+                self.interner.intern_call(callee.clone(), arg_terms, Type::I64)
+            }
             Rvalue::Phi(incoming) => {
                 let mut phi_ops = Vec::new();
                 for (b, p) in incoming {
@@ -353,7 +364,7 @@ impl<'a> SupercompilerDriver<'a> {
                 if state_embeds(&anc_state, &next_state, &self.active_places, &self.interner) {
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
-                    if let Some(solved_state) = self.try_solve_loop_recurrence(&anc_state, &next_state) {
+                    if let Some(solved_state) = self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack) {
                         self.stats.loops_collapsed += 1;
                         let next_node = self.alloc_node(solved_state);
                         self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
@@ -379,6 +390,7 @@ impl<'a> SupercompilerDriver<'a> {
         &mut self,
         anc: &SymbolicState,
         curr: &SymbolicState,
+        ancestor_stack: &[ProcessNodeId],
     ) -> Option<SymbolicState> {
         let mut solved_state = curr.clone();
         let mut any_solved = false;
@@ -404,28 +416,51 @@ impl<'a> SupercompilerDriver<'a> {
         });
 
         for place in &self.active_places {
-            if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
+            // Collect historical values of this place from loop header ancestors
+            let mut history = Vec::new();
+            for &anc_id in ancestor_stack {
+                let a_state = &self.nodes[anc_id.0].state;
+                if a_state.block == curr.block {
+                    if let Some(t) = a_state.get_value(place) {
+                        if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
+                            history.push(*val);
+                        }
+                    }
+                }
+            }
+            if let Some(t_curr) = curr.get_value(place) {
+                if let SymTerm::ConstInt(val, _) = self.interner.get(t_curr) {
+                    history.push(*val);
+                }
+            }
+
+            if history.len() >= 3 {
+                if let Some(closed_form) = solve_recurrence(&history, n_term, &mut self.interner) {
+                    solved_state.set_value(place.clone(), closed_form);
+                    any_solved = true;
+                }
+            } else if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
                 if t_anc != t_curr {
-                    // Check if both are integer constants to form sample points
                     if let (
                         SymTerm::ConstInt(v0, _),
                         SymTerm::ConstInt(v1, _),
                     ) = (self.interner.get(t_anc), self.interner.get(t_curr))
                     {
                         let step = v1 - v0;
-                        let samples = vec![
-                            *v0,
-                            *v1,
-                            v1 + step,
-                            v1 + step + step,
-                            v1 + step + step + step,
-                        ];
-
-                        if let Some(closed_form) =
-                            solve_recurrence(&samples, n_term, &mut self.interner)
-                        {
-                            solved_state.set_value(place.clone(), closed_form);
-                            any_solved = true;
+                        if step != 0 {
+                            let samples = vec![
+                                *v0,
+                                *v1,
+                                v1 + step,
+                                v1 + step + step,
+                                v1 + step + step + step,
+                            ];
+                            if let Some(closed_form) =
+                                solve_recurrence(&samples, n_term, &mut self.interner)
+                            {
+                                solved_state.set_value(place.clone(), closed_form);
+                                any_solved = true;
+                            }
                         }
                     }
                 }

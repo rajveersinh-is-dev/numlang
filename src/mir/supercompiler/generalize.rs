@@ -66,6 +66,15 @@ fn msg_helper(
             }
             interner.intern_constructor(n1.clone(), common_f, ty1.clone())
         }
+        (SymTerm::Call(c1, a1, ty1), SymTerm::Call(c2, a2, _))
+            if c1 == c2 && a1.len() == a2.len() =>
+        {
+            let mut common_a = Vec::with_capacity(a1.len());
+            for (&a, &b) in a1.iter().zip(a2.iter()) {
+                common_a.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_call(c1.clone(), common_a, ty1.clone())
+        }
         _ => {
             // Generalize to fresh variable
             let var_name = format!("_gen_{}", *next_var_id);

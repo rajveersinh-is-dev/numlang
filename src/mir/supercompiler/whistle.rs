@@ -25,6 +25,9 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
         SymTerm::Constructor(_, fields2, _) => {
             fields2.iter().any(|&f| is_embedded(t1, f, interner))
         }
+        SymTerm::Call(_, args2, _) => {
+            args2.iter().any(|&a| is_embedded(t1, a, interner))
+        }
         SymTerm::Select(c2, th2, el2, _) => {
             is_embedded(t1, *c2, interner)
                 || is_embedded(t1, *th2, interner)
@@ -53,6 +56,14 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
                 && f1
                     .iter()
                     .zip(f2.iter())
+                    .all(|(&a, &b)| is_embedded(a, b, interner))
+        }
+        (SymTerm::Call(c1, a1, _), SymTerm::Call(c2, a2, _)) => {
+            c1 == c2
+                && a1.len() == a2.len()
+                && a1
+                    .iter()
+                    .zip(a2.iter())
                     .all(|(&a, &b)| is_embedded(a, b, interner))
         }
         (SymTerm::Select(c1, th1, el1, _), SymTerm::Select(c2, th2, el2, _)) => {
