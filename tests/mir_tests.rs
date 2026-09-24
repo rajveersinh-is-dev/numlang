@@ -218,3 +218,113 @@ fn test_memory_ssa_while_loop_phi() {
     assert!(displayed.contains("MemoryPhi"));
 }
 
+#[test]
+fn test_alias_distinct_locals_and_struct_fields() {
+    use numlang::mir::alias::{AliasAnalysis, AliasResult};
+    use numlang::mir::{Place, Projection};
+
+    let source = "
+    struct Point { x: i32, y: i32 }
+    fn main() -> i32 {
+        let p: Point = Point { x: 10, y: 20 };
+        let q: Point = Point { x: 30, y: 40 };
+        return p.x + q.y;
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+    let aa = AliasAnalysis::new(f);
+
+    let p_x = Place {
+        local: "p".to_string(),
+        projections: vec![Projection::Field("x".to_string())],
+    };
+    let p_y = Place {
+        local: "p".to_string(),
+        projections: vec![Projection::Field("y".to_string())],
+    };
+    let q_x = Place {
+        local: "q".to_string(),
+        projections: vec![Projection::Field("x".to_string())],
+    };
+
+    // ALIAS-02: Distinct stack locals are NoAlias
+    assert_eq!(aa.alias(&p_x, &q_x), AliasResult::NoAlias);
+
+    // ALIAS-03: Field-sensitive disjointness: p.x vs p.y is NoAlias
+    assert_eq!(aa.alias(&p_x, &p_y), AliasResult::NoAlias);
+
+    // Same place is MustAlias
+    assert_eq!(aa.alias(&p_x, &p_x), AliasResult::MustAlias);
+
+    // Prefix/sub-path overlap (p vs p.x) is MayAlias
+    let p_base = Place {
+        local: "p".to_string(),
+        projections: vec![],
+    };
+    assert_eq!(aa.alias(&p_base, &p_x), AliasResult::MayAlias);
+}
+
+#[test]
+fn test_alias_array_constant_and_dynamic_indices() {
+    use numlang::mir::alias::{AliasAnalysis, AliasResult};
+    use numlang::mir::{Place, Projection};
+
+    let source = "
+    fn main() -> i32 {
+        let arr: [i32; 4] = [1, 2, 3, 4];
+        let idx0: i32 = 0;
+        let idx1: i32 = 1;
+        let dyn_i: i32 = 2;
+        let dyn_j: i32 = 3;
+        return arr[idx0] + arr[idx1] + arr[dyn_i] + arr[dyn_j];
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+    let aa = AliasAnalysis::new(f);
+
+    let arr_0 = Place {
+        local: "arr".to_string(),
+        projections: vec![Projection::Index(Box::new(Place {
+            local: "idx0".to_string(),
+            projections: vec![],
+        }))],
+    };
+    let arr_1 = Place {
+        local: "arr".to_string(),
+        projections: vec![Projection::Index(Box::new(Place {
+            local: "idx1".to_string(),
+            projections: vec![],
+        }))],
+    };
+    let arr_0_dup = Place {
+        local: "arr".to_string(),
+        projections: vec![Projection::Index(Box::new(Place {
+            local: "idx0".to_string(),
+            projections: vec![],
+        }))],
+    };
+
+    // ALIAS-04: Constant distinct array indices arr[0] vs arr[1] are NoAlias
+    assert_eq!(aa.alias(&arr_0, &arr_1), AliasResult::NoAlias);
+
+    // Identical constant indices are MustAlias
+    assert_eq!(aa.alias(&arr_0, &arr_0_dup), AliasResult::MustAlias);
+
+    // Dynamic indices without known constants
+    let arr_dyn1 = Place {
+        local: "arr".to_string(),
+        projections: vec![Projection::Index(Box::new(Place {
+            local: "dyn_k".to_string(),
+            projections: vec![],
+        }))],
+    };
+    let arr_dyn2 = Place {
+        local: "arr".to_string(),
+        projections: vec![Projection::Index(Box::new(Place {
+            local: "dyn_m".to_string(),
+            projections: vec![],
+        }))],
+    };
+    assert_eq!(aa.alias(&arr_dyn1, &arr_dyn2), AliasResult::MayAlias);
+}
+
