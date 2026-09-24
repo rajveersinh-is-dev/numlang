@@ -66,6 +66,12 @@ pub struct Cli {
     pub emit_memory_ssa: bool,
 
     #[arg(
+        long = "emit-supercompiled-mir",
+        help = "Emit supercompiled MIR SSA representation"
+    )]
+    pub emit_supercompiled_mir: bool,
+
+    #[arg(
         long = "emit-obj",
         help = "Emit compiled native COFF object file (.obj)"
     )]
@@ -536,6 +542,13 @@ fn real_main() -> Result<()> {
             let mssa = numlang::mir::memory_ssa::MemorySSA::build(func);
             println!("{}", mssa.display(func));
         }
+        return Ok(());
+    }
+
+    if cli.emit_supercompiled_mir {
+        let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
+        numlang::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+        println!("{:#?}", mir_program);
         return Ok(());
     }
 
