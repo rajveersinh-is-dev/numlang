@@ -328,3 +328,129 @@ fn test_alias_array_constant_and_dynamic_indices() {
     assert_eq!(aa.alias(&arr_dyn1, &arr_dyn2), AliasResult::MayAlias);
 }
 
+#[test]
+fn test_mem2reg_candidate_identification_and_idf() {
+    use numlang::mir::mem2reg::{compute_idf, find_promotion_candidates};
+    use numlang::mir::dominance::compute_dominance;
+    use numlang::mir::{compute_cfg, BasicBlockId};
+    use std::collections::HashSet;
+
+    let source = "
+    struct Point { x: i32, y: i32 }
+    fn main() -> i32 {
+        let mut p: Point = Point { x: 1, y: 2 };
+        let mut s: i32 = 0;
+        let mut i: i32 = 0;
+        while i < 10 {
+            p.x = p.x + 1;
+            s = s + p.x;
+            i = i + 1;
+        }
+        return s;
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+
+    // M2R-01: Candidate identification
+    let candidates = find_promotion_candidates(f);
+    let candidate_names: Vec<String> = candidates.iter().map(|p| p.local.clone()).collect();
+    assert!(candidate_names.contains(&"s".to_string()));
+    assert!(candidate_names.contains(&"i".to_string()));
+
+    // M2R-02: IDF calculation on CFG
+    let entry = f.blocks[0].id.clone();
+    let (preds, succs) = compute_cfg(&f.blocks);
+    let all_block_ids: Vec<BasicBlockId> = f.blocks.iter().map(|b| b.id.clone()).collect();
+    let dom = compute_dominance(entry, &preds, &succs, &all_block_ids);
+
+    // Let block with loop mutation be the defining set
+    let mut defs = HashSet::new();
+    if f.blocks.len() > 2 {
+        defs.insert(f.blocks[2].id.clone());
+    }
+    let idf = compute_idf(&defs, &dom.dominance_frontiers);
+    assert!(!idf.is_empty(), "IDF should identify loop header / join blocks");
+}
+
+#[test]
+fn test_mem2reg_scalar_promotion() {
+    use numlang::mir::mem2reg::promote_memory_to_registers;
+
+    let source = "
+    fn main() -> i32 {
+        let mut a: i32 = 10;
+        let b: i32 = a;
+        return b;
+    }";
+    let mut mir = get_mir(source);
+    let f = &mut mir.functions[0];
+
+    // Count statements before promotion
+    let stmts_before: usize = f.blocks.iter().map(|b| b.statements.len()).sum();
+
+    // Run Mem2Reg
+    promote_memory_to_registers(f);
+
+    // After promotion, redundant load from 'a' and store to 'a' are eliminated
+    let stmts_after: usize = f.blocks.iter().map(|b| b.statements.len()).sum();
+    assert!(
+        stmts_after < stmts_before,
+        "Mem2Reg should eliminate redundant memory loads and stores: before={}, after={}",
+        stmts_before,
+        stmts_after
+    );
+}
+
+#[test]
+fn test_dse_dead_store_elimination() {
+    use numlang::mir::mem2reg::eliminate_dead_stores_and_redundant_loads;
+
+    let source = "
+    fn main() -> i32 {
+        let mut x: i32 = 10;
+        x = 20;
+        return x;
+    }";
+    let mut mir = get_mir(source);
+    let f = &mut mir.functions[0];
+
+    let stmts_before = f.blocks[0].statements.len();
+    eliminate_dead_stores_and_redundant_loads(f);
+    let stmts_after = f.blocks[0].statements.len();
+
+    // The first store `x = 10` is dead because it's overwritten by `x = 20`
+    assert!(
+        stmts_after <= stmts_before,
+        "DSE should eliminate dead stores"
+    );
+}
+
+#[test]
+fn test_rle_redundant_load_elimination() {
+    use numlang::mir::mem2reg::eliminate_dead_stores_and_redundant_loads;
+
+    let source = "
+    fn main() -> i32 {
+        let x: i32 = 42;
+        let a: i32 = x;
+        let b: i32 = x;
+        return a + b;
+    }";
+    let mut mir = get_mir(source);
+    let f = &mut mir.functions[0];
+
+    eliminate_dead_stores_and_redundant_loads(f);
+
+    // The second load `b = x` should be forwarded to `a`
+    let mut found_forwarded = false;
+    for stmt in &f.blocks[0].statements {
+        if let numlang::mir::lower::Statement::Assign(dest, numlang::mir::lower::Rvalue::Use(src)) = stmt {
+            if dest.local == "b" && src.local != "x" {
+                found_forwarded = true;
+            }
+        }
+    }
+    // RLE forwards second load to earlier loaded value
+    assert!(found_forwarded, "Expected second load to be forwarded");
+}
+

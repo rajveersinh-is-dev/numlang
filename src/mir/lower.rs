@@ -12,6 +12,7 @@ pub enum Rvalue {
     Call(String, Vec<Place>),
     Array(Vec<Place>),
     Struct(String, Vec<(String, Place)>),
+    Phi(Vec<(BasicBlockId, Place)>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

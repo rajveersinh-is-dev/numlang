@@ -474,6 +474,11 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
                 reads.push(p.clone());
             }
         }
+        Rvalue::Phi(incoming) => {
+            for (_, p) in incoming {
+                reads.push(p.clone());
+            }
+        }
     }
 
     reads
@@ -541,6 +546,13 @@ fn format_rvalue(rv: &Rvalue) -> String {
                 .map(|(k, v)| format!("{}: {}", k, format_place(v)))
                 .collect();
             format!("{} {{ {} }}", name, fields_str.join(", "))
+        }
+        Rvalue::Phi(incoming) => {
+            let inc_str: Vec<String> = incoming
+                .iter()
+                .map(|(b, p)| format!("[bb{}: {}]", b.0, format_place(p)))
+                .collect();
+            format!("phi({})", inc_str.join(", "))
         }
     }
 }
