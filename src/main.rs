@@ -60,6 +60,12 @@ pub struct Cli {
     pub emit_mir: bool,
 
     #[arg(
+        long = "emit-memory-ssa",
+        help = "Emit MemorySSA token graph representation text"
+    )]
+    pub emit_memory_ssa: bool,
+
+    #[arg(
         long = "emit-obj",
         help = "Emit compiled native COFF object file (.obj)"
     )]
@@ -521,6 +527,15 @@ fn real_main() -> Result<()> {
     if cli.emit_mir {
         let mir_program = numlang::mir::lower::lower_program(&typed_program);
         println!("{:#?}", mir_program);
+        return Ok(());
+    }
+
+    if cli.emit_memory_ssa {
+        let mir_program = numlang::mir::lower::lower_program(&typed_program);
+        for func in &mir_program.functions {
+            let mssa = numlang::mir::memory_ssa::MemorySSA::build(func);
+            println!("{}", mssa.display(func));
+        }
         return Ok(());
     }
 

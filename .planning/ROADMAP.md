@@ -1,4 +1,4 @@
-﻿# Roadmap: NumLang (v2.0 Phase 2: MemorySSA & Alias Analysis)
+# Roadmap: NumLang (v2.0 Phase 2: MemorySSA & Alias Analysis)
 
 ## Overview
 
@@ -6,7 +6,7 @@ Elevating NumLang's MIR with an industrial-grade MemorySSA, field-sensitive alia
 
 ## Phases
 
-### Phase 2.1: MemorySSA Core & Graph Construction
+### Phase 2.1: MemorySSA Core & Graph Construction [COMPLETE]
 - **Goal**: Model memory states as versioned SSA tokens attached to MIR statements.
 - **Scope**:
   - `src/mir/memory_ssa.rs`: `MemoryVersionId`, `MemoryAccess` (`MemoryDef`, `MemoryUse`), `MemoryPhi`.
@@ -14,7 +14,7 @@ Elevating NumLang's MIR with an industrial-grade MemorySSA, field-sensitive alia
   - Insert `MemoryPhi` nodes at basic block join points with multiple reaching memory versions.
 - **Verification**: Unit tests verifying correct memory version propagation across branching blocks.
 
-### Phase 2.2: Points-To & Field-Sensitive Alias Analysis
+### Phase 2.2: Points-To & Field-Sensitive Alias Analysis [COMPLETE]
 - **Goal**: Statically prove disjointness between independent variables and struct fields.
 - **Scope**:
   - `src/mir/alias.rs`: `AliasAnalysis` engine with `NoAlias`, `MustAlias`, `MayAlias`.
@@ -23,7 +23,7 @@ Elevating NumLang's MIR with an industrial-grade MemorySSA, field-sensitive alia
   - Array constant index analysis: `arr[0]` vs `arr[1]` provably `NoAlias`.
 - **Verification**: Alias query tests validating precision and soundness.
 
-### Phase 2.3: Mem2Reg Promotion Engine & Memory Optimizations
+### Phase 2.3: Mem2Reg Promotion Engine & Memory Optimizations [COMPLETE]
 - **Goal**: Promote non-escaping memory stack allocations to pure SSA virtual registers.
 - **Scope**:
   - `src/mir/mem2reg.rs`: Candidate identification for non-escaped locals and struct fields.
@@ -32,7 +32,7 @@ Elevating NumLang's MIR with an industrial-grade MemorySSA, field-sensitive alia
   - Redundant Load Elimination (RLE) and Dead Store Elimination (DSE).
 - **Verification**: Tests checking that memory loads and stores are removed, replaced by pure SSA register uses.
 
-### Phase 2.4: CLI Tooling, Integration & Verification Gate
+### Phase 2.4: CLI Tooling, Integration & Verification Gate [COMPLETE]
 - **Goal**: Full compiler integration, developer visibility, and zero-defect quality gate.
 - **Scope**:
   - Add `--emit-memory-ssa` to `src/main.rs` for visual inspection of memory tokens.
