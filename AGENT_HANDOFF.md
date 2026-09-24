@@ -37,7 +37,7 @@ This document enables any AI agent or human contributor to instantly take over d
 | `└── mod.rs` | Public supercompiler entry points (`supercompile_mir_program`, `supercompile_mir_function`). |
 | `src/codegen/` | Cranelift JIT/AOT native code generation and Windows PE linker (`cranelift_backend.rs`, `linker.rs`). |
 | `src/main.rs` | Compiler CLI entry point and pipeline driver. |
-| `tests/` | 41 integration test suites. |
+| `tests/` | 42 integration test suites. |
 
 ---
 
@@ -54,17 +54,40 @@ This document enables any AI agent or human contributor to instantly take over d
 
 ---
 
-## 4. Next Milestone: Phase 4 (Coupled Recurrences & Interprocedural Fusion)
+## 4. Completed: Phase 4 (Coupled Recurrences & Interprocedural Fusion)
 
-- **Goal**: Expand supercompiler to handle multi-variable coupled linear recurrences and interprocedural process-tree exploration.
+- **Status**: Completed (100% tests passing, 0 Clippy warnings).
+- **Deliverables**:
+  - **Coupled Multi-Variable Linear Recurrence Solvers** (`src/mir/supercompiler/generalize.rs`):
+    - `solve_order2_recurrence`: Solves $s_k = c_1 s_{k-1} + c_2 s_{k-2}$ via $2 \times 2$ matrix system and Cramer's rule.
+      - Constant iterations ($N$ known): computes exact value in $O(\log N)$ via `mat_pow_2x2`.
+      - Integer characteristic roots: derives closed form $A \cdot r_1^n + B \cdot r_2^n$.
+      - Irrational characteristic roots (Fibonacci, Lucas): detects $c_1=1, c_2=1$ and emits `__numlang_fib` intrinsic term.
+    - `solve_order3_recurrence`: Solves $s_k = c_1 s_{k-1} + c_2 s_{k-2} + c_3 s_{k-3}$ (e.g. Tribonacci) via $3 \times 3$ Cramer's rule and $O(\log N)$ `mat_pow_3x3`.
+  - **Interprocedural Process-Tree Driving & Inlining** (`src/mir/supercompiler/drive.rs`, `src/mir/supercompiler/mod.rs`):
+    - `try_drive_interprocedural_call`: specializes and executes callee functions with argument terms, extracting unified return terms and importing them back into caller state.
+    - `TermInterner::import_from`: imports folded/algebraic terms across interprocedural driver instances.
+    - Cross-procedural loop fusion: interprocedurally driven calls allow caller and callee loop nests to fuse and collapse to $O(1)$ closed forms.
+  - **Reflexive Comparison Simplifications** (`src/mir/supercompiler/term.rs`, `src/mir/supercompiler/state.rs`):
+    - Handled $x < x \to \text{false}$, $x > x \to \text{false}$, $x \le x \to \text{true}$, $x \ge x \to \text{true}$ to resolve loop boundary conditions when induction variables hit upper bounds.
+  - **Cranelift Native MIR Codegen for Recurrences** (`src/codegen/cranelift_backend.rs`):
+    - Native SSA loop generation for `__numlang_fib` intrinsic calls in `compile_mir_function`.
+  - **Integration Test Suite** (`tests/coupled_recurrence_and_fusion_tests.rs`):
+    - 7/7 tests passing covering direct order-2 Fibonacci, integer roots, Tribonacci, interprocedural inlining, triangular loop fusion, and native execution of both concrete and symbolic coupled recurrences.
+
+---
+
+## 5. Next Milestone: Phase 5 (Empirical Benchmark Suite vs State-of-the-Art)
+
+- **Goal**: Empirically prove NumLang's supercompiler performance and asymptotic advantages over classical supercompilers (HSc, Refal-5) and optimizing production compilers (`clang -O3`, `rustc -O`).
 - **Key Objectives**:
-  1. **Coupled Multi-Variable Linear Recurrences**:
-     - Handle systems of recurrence equations such as Fibonacci:
-       $a_{k+1} = a_k + b_k$, $b_{k+1} = a_k$.
-     - Transition matrix diagonalization and $O(\log n)$ matrix exponentiation or Binet closed form.
-  2. **Interprocedural Process-Tree Inlining & Specialization**:
-     - Drive through function calls when arguments have constant or partially-known symbolic shapes.
-     - Cross-function deforestation (eliminating intermediate allocated structures passed across function boundaries).
-  3. **Verification**:
-     - Tests asserting Fibonacci and mutual recursion collapse to logarithmic or constant time execution.
+  1. Build automated benchmark harness with cycle/nanosecond timing and memory allocation profiling.
+  2. Implement canonical benchmark programs:
+     - Ackermann function with constant/small arguments (deforestation & constant folding).
+     - Fibonacci / Tribonacci loops ($O(N)$ transformed to $O(1)$ / $O(\log N)$).
+     - Triangular & polynomial summations ($\sum i$, $\sum i^2$, $\sum i^3$).
+     - Multi-pass array transformations (map-filter-reduce fusion).
+     - String / sequence pattern matching with KMP-like DFA synthesis.
+  3. Generate comparative markdown reports and speedup charts showing speedup ratios against Clang, GCC, Rust, and HSc.
+
 

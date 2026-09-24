@@ -91,6 +91,9 @@ impl PathConstraintStore {
             SymTerm::Binary(BinaryOp::Lt, l, r, _) => {
                 let left_lead = self.find_leader(*l);
                 let right_lead = self.find_leader(*r);
+                if left_lead == right_lead {
+                    return Some(false);
+                }
                 let (l_min, l_max) = self.integer_bounds.get(&left_lead).copied().unwrap_or((None, None));
                 let (r_min, r_max) = self.integer_bounds.get(&right_lead).copied().unwrap_or((None, None));
 
@@ -103,6 +106,30 @@ impl PathConstraintStore {
                     if min_l >= max_r {
                         return Some(false);
                     }
+                }
+                None
+            }
+            SymTerm::Binary(BinaryOp::Gt, l, r, _) => {
+                let left_lead = self.find_leader(*l);
+                let right_lead = self.find_leader(*r);
+                if left_lead == right_lead {
+                    return Some(false);
+                }
+                None
+            }
+            SymTerm::Binary(BinaryOp::Le, l, r, _) => {
+                let left_lead = self.find_leader(*l);
+                let right_lead = self.find_leader(*r);
+                if left_lead == right_lead {
+                    return Some(true);
+                }
+                None
+            }
+            SymTerm::Binary(BinaryOp::Ge, l, r, _) => {
+                let left_lead = self.find_leader(*l);
+                let right_lead = self.find_leader(*r);
+                if left_lead == right_lead {
+                    return Some(true);
                 }
                 None
             }

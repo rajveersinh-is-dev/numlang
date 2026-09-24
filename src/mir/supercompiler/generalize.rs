@@ -265,7 +265,283 @@ pub fn solve_recurrence(
         }
     }
 
+    // Order-2 linear recurrence: s_k = c1 * s_{k-1} + c2 * s_{k-2} (Fibonacci, Lucas, coupled systems)
+    if let Some(res) = solve_order2_recurrence(samples, num_iters, interner) {
+        return Some(res);
+    }
+
+    // Order-3 linear recurrence: s_k = c1 * s_{k-1} + c2 * s_{k-2} + c3 * s_{k-3} (Tribonacci)
+    if let Some(res) = solve_order3_recurrence(samples, num_iters, interner) {
+        return Some(res);
+    }
+
     None
+}
+
+/// Solves constant-coefficient linear recurrence of order 2:
+/// s_k = c1 * s_{k-1} + c2 * s_{k-2}
+pub fn solve_order2_recurrence(
+    samples: &[i64],
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> Option<SymTermId> {
+    if samples.len() < 4 {
+        return None;
+    }
+    let s0 = samples[0];
+    let s1 = samples[1];
+    let s2 = samples[2];
+    let s3 = samples[3];
+
+    // s2 = c1 * s1 + c2 * s0
+    // s3 = c1 * s2 + c2 * s1
+    let det = s1.wrapping_mul(s1).wrapping_sub(s0.wrapping_mul(s2));
+    if det == 0 {
+        return None;
+    }
+
+    let num_c1 = s2.wrapping_mul(s1).wrapping_sub(s3.wrapping_mul(s0));
+    let num_c2 = s1.wrapping_mul(s3).wrapping_sub(s2.wrapping_mul(s2));
+
+    if num_c1 % det != 0 || num_c2 % det != 0 {
+        return None;
+    }
+
+    let c1 = num_c1 / det;
+    let c2 = num_c2 / det;
+
+    // Verify against all remaining samples
+    for k in 4..samples.len() {
+        let expected = c1
+            .wrapping_mul(samples[k - 1])
+            .wrapping_add(c2.wrapping_mul(samples[k - 2]));
+        if samples[k] != expected {
+            return None;
+        }
+    }
+
+    // Case 1: Constant number of iterations -> exact matrix exponentiation
+    let iter_term = interner.get(num_iters).clone();
+    if let SymTerm::ConstInt(n, _) = iter_term {
+        if n < 0 {
+            return None;
+        }
+        let n_idx = n as usize;
+        if n_idx < samples.len() {
+            return Some(interner.intern_int(samples[n_idx]));
+        }
+        let m = [[c1, c2], [1, 0]];
+        let m_pow = mat_pow_2x2(m, n - 1);
+        let s_n = m_pow[0][0]
+            .wrapping_mul(s1)
+            .wrapping_add(m_pow[0][1].wrapping_mul(s0));
+        return Some(interner.intern_int(s_n));
+    }
+
+    // Case 2: Integer characteristic roots r^2 - c1*r - c2 = 0
+    let disc = c1.wrapping_mul(c1).wrapping_add(4i64.wrapping_mul(c2));
+    if disc >= 0 {
+        let d = (disc as f64).sqrt().round() as i64;
+        if d * d == disc && (c1 + d) % 2 == 0 {
+            let r1 = (c1 + d) / 2;
+            let r2 = (c1 - d) / 2;
+            if r1 != r2 {
+                let num_a = s1.wrapping_sub(s0.wrapping_mul(r2));
+                let den_a = r1 - r2;
+                if den_a != 0 && num_a % den_a == 0 {
+                    let a = num_a / den_a;
+                    let b = s0 - a;
+                    let a_term = interner.intern_int(a);
+                    let b_term = interner.intern_int(b);
+                    let r1_term = interner.intern_int(r1);
+                    let r2_term = interner.intern_int(r2);
+                    let pow1 = interner.intern_binary(BinaryOp::Pow, r1_term, num_iters, Type::I64);
+                    let pow2 = interner.intern_binary(BinaryOp::Pow, r2_term, num_iters, Type::I64);
+                    let part1 = interner.intern_binary(BinaryOp::Mul, a_term, pow1, Type::I64);
+                    let part2 = interner.intern_binary(BinaryOp::Mul, b_term, pow2, Type::I64);
+                    return Some(interner.intern_binary(BinaryOp::Add, part1, part2, Type::I64));
+                }
+            }
+        }
+    }
+
+    // Fibonacci pattern: c1 = 1, c2 = 1, s0 = 0, s1 = 1
+    if c1 == 1 && c2 == 1 && s0 == 0 && s1 == 1 {
+        return Some(interner.intern_call(
+            "__numlang_fib".to_string(),
+            vec![num_iters],
+            Type::I64,
+        ));
+    }
+    // Shifted Fibonacci pattern (e.g. b in fib loop): c1 = 1, c2 = 1, s0 = 1, s1 = 1 (F(k+1))
+    if c1 == 1 && c2 == 1 && s0 == 1 && s1 == 1 {
+        let one = interner.intern_int(1);
+        let n_plus_1 = interner.intern_binary(BinaryOp::Add, num_iters, one, Type::I64);
+        return Some(interner.intern_call(
+            "__numlang_fib".to_string(),
+            vec![n_plus_1],
+            Type::I64,
+        ));
+    }
+
+    None
+}
+
+fn mat_pow_2x2(mut m: [[i64; 2]; 2], mut exp: i64) -> [[i64; 2]; 2] {
+    let mut res = [[1, 0], [0, 1]];
+    while exp > 0 {
+        if exp & 1 == 1 {
+            res = mat_mul_2x2(res, m);
+        }
+        m = mat_mul_2x2(m, m);
+        exp >>= 1;
+    }
+    res
+}
+
+fn mat_mul_2x2(a: [[i64; 2]; 2], b: [[i64; 2]; 2]) -> [[i64; 2]; 2] {
+    [
+        [
+            a[0][0].wrapping_mul(b[0][0]).wrapping_add(a[0][1].wrapping_mul(b[1][0])),
+            a[0][0].wrapping_mul(b[0][1]).wrapping_add(a[0][1].wrapping_mul(b[1][1])),
+        ],
+        [
+            a[1][0].wrapping_mul(b[0][0]).wrapping_add(a[1][1].wrapping_mul(b[1][0])),
+            a[1][0].wrapping_mul(b[0][1]).wrapping_add(a[1][1].wrapping_mul(b[1][1])),
+        ],
+    ]
+}
+
+/// Solves constant-coefficient linear recurrence of order 3:
+/// s_k = c1 * s_{k-1} + c2 * s_{k-2} + c3 * s_{k-3} (e.g. Tribonacci)
+pub fn solve_order3_recurrence(
+    samples: &[i64],
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> Option<SymTermId> {
+    if samples.len() < 6 {
+        return None;
+    }
+    let s = samples;
+    let a = [
+        [s[2], s[1], s[0]],
+        [s[3], s[2], s[1]],
+        [s[4], s[3], s[2]],
+    ];
+    let b = [s[3], s[4], s[5]];
+
+    let det = det_3x3(a);
+    if det == 0 {
+        return None;
+    }
+
+    let c1_num = det_3x3([
+        [b[0], a[0][1], a[0][2]],
+        [b[1], a[1][1], a[1][2]],
+        [b[2], a[2][1], a[2][2]],
+    ]);
+    let c2_num = det_3x3([
+        [a[0][0], b[0], a[0][2]],
+        [a[1][0], b[1], a[1][2]],
+        [a[2][0], b[2], a[2][2]],
+    ]);
+    let c3_num = det_3x3([
+        [a[0][0], a[0][1], b[0]],
+        [a[1][0], a[1][1], b[1]],
+        [a[2][0], a[2][1], b[2]],
+    ]);
+
+    if c1_num % det != 0 || c2_num % det != 0 || c3_num % det != 0 {
+        return None;
+    }
+
+    let c1 = c1_num / det;
+    let c2 = c2_num / det;
+    let c3 = c3_num / det;
+
+    // Verify against remaining samples
+    for k in 6..samples.len() {
+        let expected = c1
+            .wrapping_mul(s[k - 1])
+            .wrapping_add(c2.wrapping_mul(s[k - 2]))
+            .wrapping_add(c3.wrapping_mul(s[k - 3]));
+        if s[k] != expected {
+            return None;
+        }
+    }
+
+    let iter_term = interner.get(num_iters).clone();
+    if let SymTerm::ConstInt(n, _) = iter_term {
+        if n < 0 {
+            return None;
+        }
+        let n_idx = n as usize;
+        if n_idx < samples.len() {
+            return Some(interner.intern_int(samples[n_idx]));
+        }
+        let m = [
+            [c1, c2, c3],
+            [1, 0, 0],
+            [0, 1, 0],
+        ];
+        let m_pow = mat_pow_3x3(m, n - 2);
+        let s_n = m_pow[0][0]
+            .wrapping_mul(s[2])
+            .wrapping_add(m_pow[0][1].wrapping_mul(s[1]))
+            .wrapping_add(m_pow[0][2].wrapping_mul(s[0]));
+        return Some(interner.intern_int(s_n));
+    }
+
+    None
+}
+
+fn det_3x3(m: [[i64; 3]; 3]) -> i64 {
+    m[0][0]
+        .wrapping_mul(
+            m[1][1]
+                .wrapping_mul(m[2][2])
+                .wrapping_sub(m[1][2].wrapping_mul(m[2][1])),
+        )
+        .wrapping_sub(
+            m[0][1].wrapping_mul(
+                m[1][0]
+                    .wrapping_mul(m[2][2])
+                    .wrapping_sub(m[1][2].wrapping_mul(m[2][0])),
+            ),
+        )
+        .wrapping_add(
+            m[0][2].wrapping_mul(
+                m[1][0]
+                    .wrapping_mul(m[2][1])
+                    .wrapping_sub(m[1][1].wrapping_mul(m[2][0])),
+            ),
+        )
+}
+
+#[allow(clippy::needless_range_loop)]
+fn mat_mul_3x3(a: [[i64; 3]; 3], b: [[i64; 3]; 3]) -> [[i64; 3]; 3] {
+    let mut res = [[0i64; 3]; 3];
+    for r in 0..3 {
+        for c in 0..3 {
+            res[r][c] = a[r][0]
+                .wrapping_mul(b[0][c])
+                .wrapping_add(a[r][1].wrapping_mul(b[1][c]))
+                .wrapping_add(a[r][2].wrapping_mul(b[2][c]));
+        }
+    }
+    res
+}
+
+fn mat_pow_3x3(mut m: [[i64; 3]; 3], mut exp: i64) -> [[i64; 3]; 3] {
+    let mut res = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    while exp > 0 {
+        if exp & 1 == 1 {
+            res = mat_mul_3x3(res, m);
+        }
+        m = mat_mul_3x3(m, m);
+        exp >>= 1;
+    }
+    res
 }
 
 /// Computes closed form for a linear induction variable: v_n = init + n * step

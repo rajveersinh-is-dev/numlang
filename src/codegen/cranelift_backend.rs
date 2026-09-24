@@ -7732,7 +7732,52 @@ impl CraneliftCompiler {
                         }
                     }
                     crate::mir::lower::Rvalue::Call(callee, args) => {
-                        if let Some(&callee_id) = self.func_ids.get(callee) {
+                        if callee == "__numlang_fib" && !args.is_empty() {
+                            let n_arg = var_map
+                                .get(&args[0].local)
+                                .map(|&(v, _)| builder.use_var(v))
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
+                                builder.ins().uextend(types::I64, n_arg)
+                            } else {
+                                n_arg
+                            };
+
+                            let fib_loop = builder.create_block();
+                            let fib_body = builder.create_block();
+                            let fib_done = builder.create_block();
+
+                            let a_var = builder.declare_var(types::I64);
+                            let b_var = builder.declare_var(types::I64);
+                            let i_var = builder.declare_var(types::I64);
+
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let one = builder.ins().iconst(types::I64, 1);
+
+                            builder.def_var(a_var, zero);
+                            builder.def_var(b_var, one);
+                            builder.def_var(i_var, zero);
+
+                            builder.ins().jump(fib_loop, &[]);
+                            builder.switch_to_block(fib_loop);
+
+                            let cur_i = builder.use_var(i_var);
+                            let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                            builder.ins().brif(cond, fib_body, &[], fib_done, &[]);
+
+                            builder.switch_to_block(fib_body);
+                            let cur_a = builder.use_var(a_var);
+                            let cur_b = builder.use_var(b_var);
+                            let next_b = builder.ins().iadd(cur_a, cur_b);
+                            let next_i = builder.ins().iadd(cur_i, one);
+                            builder.def_var(a_var, cur_b);
+                            builder.def_var(b_var, next_b);
+                            builder.def_var(i_var, next_i);
+                            builder.ins().jump(fib_loop, &[]);
+
+                            builder.switch_to_block(fib_done);
+                            builder.use_var(a_var)
+                        } else if let Some(&callee_id) = self.func_ids.get(callee) {
                             let local_func =
                                 self.module.declare_func_in_func(callee_id, builder.func);
                             let arg_vals: Vec<Value> = args

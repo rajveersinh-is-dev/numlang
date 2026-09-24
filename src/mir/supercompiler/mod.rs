@@ -31,8 +31,9 @@ pub enum SupercompileLevel {
 /// Supercompiles an entire MIR program across all functions and returns aggregated stats.
 pub fn supercompile_mir_program(program: &mut MirProgram) -> SupercompilerStats {
     let mut total_stats = SupercompilerStats::default();
+    let funcs_snapshot = program.functions.clone();
     for func in &mut program.functions {
-        let (new_func, stats) = supercompile_mir_function_with_stats(func);
+        let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
         *func = new_func;
         total_stats.nodes_explored += stats.nodes_explored;
         total_stats.branches_pruned += stats.branches_pruned;
@@ -50,6 +51,17 @@ pub fn supercompile_mir_function(func: &MirFunction) -> MirFunction {
 /// Supercompiles a single MIR function and returns its performance metrics.
 pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func);
+    let tree = driver.run();
+    let stats = tree.stats.clone();
+    (residualize_process_tree(&tree, func), stats)
+}
+
+/// Supercompiles a single MIR function with context of all other functions in the program.
+pub fn supercompile_mir_function_with_program(
+    func: &MirFunction,
+    program_funcs: &[MirFunction],
+) -> (MirFunction, SupercompilerStats) {
+    let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
     let tree = driver.run();
     let stats = tree.stats.clone();
     (residualize_process_tree(&tree, func), stats)

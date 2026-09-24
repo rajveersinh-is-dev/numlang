@@ -106,6 +106,8 @@ pub struct SupercompilerDriver<'a> {
     max_depth: usize,
     active_places: Vec<Place>,
     stats: SupercompilerStats,
+    program_funcs: HashMap<String, &'a MirFunction>,
+    call_stack: Vec<String>,
 }
 
 impl<'a> SupercompilerDriver<'a> {
@@ -137,7 +139,28 @@ impl<'a> SupercompilerDriver<'a> {
             max_depth: 128,
             active_places,
             stats: SupercompilerStats::default(),
+            program_funcs: HashMap::new(),
+            call_stack: Vec::new(),
         }
+    }
+
+    pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
+        self.program_funcs = funcs
+            .iter()
+            .filter(|f| f.name != self.func.name)
+            .map(|f| (f.name.clone(), f))
+            .collect();
+        self
+    }
+
+    pub fn with_program_functions_map(mut self, map: HashMap<String, &'a MirFunction>) -> Self {
+        self.program_funcs = map;
+        self
+    }
+
+    pub fn with_call_stack(mut self, stack: Vec<String>) -> Self {
+        self.call_stack = stack;
+        self
     }
 
     pub fn run(mut self) -> ProcessTree {
@@ -163,7 +186,20 @@ impl<'a> SupercompilerDriver<'a> {
             initial_state.set_value(p, term);
         }
 
-        let root_id = self.alloc_node(initial_state.clone());
+        self.run_with_initial_state(initial_state)
+    }
+
+    pub fn run_with_initial_state(mut self, initial_state: SymbolicState) -> ProcessTree {
+        if self.func.blocks.is_empty() {
+            return ProcessTree {
+                nodes: Vec::new(),
+                root: ProcessNodeId(0),
+                interner: self.interner,
+                stats: self.stats,
+            };
+        }
+
+        let root_id = self.alloc_node(initial_state);
         let mut ancestor_stack = Vec::new();
 
         self.drive_node(root_id, &mut ancestor_stack, 0);
@@ -321,7 +357,17 @@ impl<'a> SupercompilerDriver<'a> {
                             .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64))
                     })
                     .collect();
-                self.interner.intern_call(callee.clone(), arg_terms, Type::I64)
+
+                let mut inlined_res = None;
+                if let Some(callee_func) = self.program_funcs.get(callee).copied() {
+                    if !self.call_stack.contains(callee) && self.call_stack.len() < 8 {
+                        inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms);
+                    }
+                }
+
+                inlined_res.unwrap_or_else(|| {
+                    self.interner.intern_call(callee.clone(), arg_terms, Type::I64)
+                })
             }
             Rvalue::Phi(incoming) => {
                 let mut phi_ops = Vec::new();
@@ -356,15 +402,42 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
-        // 2. Whistle test: does an ancestor loop header embed next_state?
+        // 2. Whistle test: does an ancestor loop header embed next_state or have repeated visits?
         let is_loop_header = self.loop_headers.contains(&next_state.block);
         if is_loop_header {
+            let header_visits = ancestor_stack
+                .iter()
+                .filter(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
+                .count();
+
+            if header_visits >= 3 {
+                if let Some(&first_anc_id) = ancestor_stack
+                    .iter()
+                    .find(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
+                {
+                    let anc_state = self.nodes[first_anc_id.0].state.clone();
+                    if let Some(solved_state) =
+                        self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack)
+                    {
+                        self.stats.loops_collapsed += 1;
+                        let next_node = self.alloc_node(solved_state);
+                        self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
+                        ancestor_stack.push(from_id);
+                        self.drive_node(next_node, ancestor_stack, depth + 1);
+                        ancestor_stack.pop();
+                        return;
+                    }
+                }
+            }
+
             for &anc_id in ancestor_stack.iter().rev() {
                 let anc_state = self.nodes[anc_id.0].state.clone();
                 if state_embeds(&anc_state, &next_state, &self.active_places, &self.interner) {
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
-                    if let Some(solved_state) = self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack) {
+                    if let Some(solved_state) =
+                        self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack)
+                    {
                         self.stats.loops_collapsed += 1;
                         let next_node = self.alloc_node(solved_state);
                         self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
@@ -398,9 +471,35 @@ impl<'a> SupercompilerDriver<'a> {
         let mut bound_term = None;
         if let Some(block) = self.block_map.get(&curr.block) {
             if let Terminator::BranchIf { condition, .. } = &block.terminator {
-                if let Some(cond_t) = curr.get_value(condition) {
-                    if let SymTerm::Binary(_, _, r, _) = self.interner.get(cond_t) {
-                        bound_term = Some(*r);
+                // First look for the statement defining condition in this block
+                for stmt in &block.statements {
+                    if let Statement::Assign(dest, Rvalue::BinaryOp(_op, _l, r)) = stmt {
+                        if dest == condition {
+                            let mut resolved_r = curr
+                                .get_value(r)
+                                .unwrap_or_else(|| self.interner.intern_var(r.clone(), Type::I64));
+                            if let SymTerm::Var(p, _) = self.interner.get(resolved_r) {
+                                if let Some(concrete_t) = curr.get_value(p) {
+                                    resolved_r = concrete_t;
+                                }
+                            }
+                            bound_term = Some(resolved_r);
+                            break;
+                        }
+                    }
+                }
+                // Fallback to curr.get_value(condition)
+                if bound_term.is_none() {
+                    if let Some(cond_t) = curr.get_value(condition) {
+                        if let SymTerm::Binary(_, _, r, _) = self.interner.get(cond_t).clone() {
+                            let mut resolved_r = r;
+                            if let SymTerm::Var(p, _) = self.interner.get(r) {
+                                if let Some(concrete_t) = curr.get_value(p) {
+                                    resolved_r = concrete_t;
+                                }
+                            }
+                            bound_term = Some(resolved_r);
+                        }
                     }
                 }
             }
@@ -469,6 +568,64 @@ impl<'a> SupercompilerDriver<'a> {
 
         if any_solved {
             Some(solved_state)
+        } else {
+            None
+        }
+    }
+
+    fn try_drive_interprocedural_call(
+        &mut self,
+        callee: &'a MirFunction,
+        args: &[SymTermId],
+    ) -> Option<SymTermId> {
+        if callee.blocks.is_empty() || callee.params.len() != args.len() {
+            return None;
+        }
+
+        let entry_id = callee.blocks[0].id.clone();
+        let mut initial_state = SymbolicState::new(entry_id, MemoryVersionId::LIVE_ON_ENTRY);
+
+        // Bind parameters to argument terms
+        for ((param_name, _), &arg_term) in callee.params.iter().zip(args.iter()) {
+            let p = Place {
+                local: param_name.clone(),
+                projections: vec![],
+            };
+            initial_state.set_value(p, arg_term);
+        }
+
+        let mut child_call_stack = self.call_stack.clone();
+        child_call_stack.push(callee.name.clone());
+
+        let mut child_driver = SupercompilerDriver::new(callee)
+            .with_program_functions_map(self.program_funcs.clone())
+            .with_call_stack(child_call_stack);
+
+        // Seed child interner with current terms
+        child_driver.interner = self.interner.clone();
+
+        let child_tree = child_driver.run_with_initial_state(initial_state);
+
+        let mut return_terms = Vec::new();
+        for node in &child_tree.nodes {
+            if let Some(ret) = node.return_term {
+                return_terms.push(ret);
+            }
+        }
+
+        if return_terms.len() == 1 {
+            let child_ret = return_terms[0];
+            Some(self.interner.import_from(&child_tree.interner, child_ret))
+        } else if !return_terms.is_empty() {
+            let first = return_terms[0];
+            let all_same = return_terms.iter().all(|&t| {
+                child_tree.interner.get(t) == child_tree.interner.get(first)
+            });
+            if all_same {
+                Some(self.interner.import_from(&child_tree.interner, first))
+            } else {
+                None
+            }
         } else {
             None
         }
