@@ -72,6 +72,18 @@ pub struct Cli {
     pub emit_supercompiled_mir: bool,
 
     #[arg(
+        long = "emit-process-tree",
+        help = "Emit supercompiler process tree graph"
+    )]
+    pub emit_process_tree: bool,
+
+    #[arg(
+        long = "supercompile-stats",
+        help = "Display metrics and statistics from supercompilation"
+    )]
+    pub supercompile_stats: bool,
+
+    #[arg(
         long = "emit-obj",
         help = "Emit compiled native COFF object file (.obj)"
     )]
@@ -549,6 +561,22 @@ fn real_main() -> Result<()> {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
         numlang::mir::supercompiler::supercompile_mir_program(&mut mir_program);
         println!("{:#?}", mir_program);
+        return Ok(());
+    }
+
+    if cli.emit_process_tree {
+        let mir_program = numlang::mir::lower::lower_program(&typed_program);
+        for func in &mir_program.functions {
+            let tree = numlang::mir::supercompiler::build_process_tree(func);
+            println!("Function `{}`:\n{}", func.name, tree.display());
+        }
+        return Ok(());
+    }
+
+    if cli.supercompile_stats {
+        let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
+        let stats = numlang::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+        println!("{}", stats);
         return Ok(());
     }
 

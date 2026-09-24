@@ -195,6 +195,45 @@ pub fn solve_recurrence(
         }
     }
 
+    // Degree 3: Cubic sequence
+    if samples.len() >= 5 {
+        let s3 = samples[3];
+        let s4 = samples[4];
+        let d1_2 = s3.wrapping_sub(s2);
+        let d1_3 = s4.wrapping_sub(s3);
+        let d2_0 = d1_1.wrapping_sub(d1_0);
+        let d2_1 = d1_2.wrapping_sub(d1_1);
+        let d2_2 = d1_3.wrapping_sub(d1_2);
+        let d3_0 = d2_1.wrapping_sub(d2_0);
+        let d3_1 = d2_2.wrapping_sub(d2_1);
+
+        if d3_0 == d3_1 {
+            let s0_term = interner.intern_int(s0);
+            let d1_term = interner.intern_int(d1_0);
+            let d2_term = interner.intern_int(d2_0);
+            let d3_term = interner.intern_int(d3_0);
+            let one_term = interner.intern_int(1);
+            let two_term = interner.intern_int(2);
+            let six_term = interner.intern_int(6);
+
+            let linear_part = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
+            let k_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one_term, Type::I64);
+            let k_minus_2 = interner.intern_binary(BinaryOp::Sub, num_iters, two_term, Type::I64);
+
+            let k_times_k1 = interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
+            let tri_part = interner.intern_binary(BinaryOp::Div, k_times_k1, two_term, Type::I64);
+            let quad_part = interner.intern_binary(BinaryOp::Mul, tri_part, d2_term, Type::I64);
+
+            let k_times_k1_k2 = interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
+            let cubic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
+            let cubic_part = interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64);
+
+            let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
+            let sum2 = interner.intern_binary(BinaryOp::Add, sum1, quad_part, Type::I64);
+            return Some(interner.intern_binary(BinaryOp::Add, sum2, cubic_part, Type::I64));
+        }
+    }
+
     // Geometric sequence: s_{k+1} = s_k * ratio
     if s0 != 0 && s1 != 0 {
         let ratio = s1 / s0;
@@ -218,4 +257,46 @@ pub fn solve_recurrence(
     }
 
     None
+}
+
+/// Computes closed form for a linear induction variable: v_n = init + n * step
+pub fn solve_symbolic_linear_induction(
+    init: SymTermId,
+    step: SymTermId,
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> SymTermId {
+    let n_times_step = interner.intern_binary(BinaryOp::Mul, num_iters, step, Type::I64);
+    interner.intern_binary(BinaryOp::Add, init, n_times_step, Type::I64)
+}
+
+/// Computes closed form for an accumulator of a linear variable:
+/// s_n = init + n * base + (n * (n - 1) / 2) * step
+pub fn solve_symbolic_accumulator(
+    init: SymTermId,
+    base: SymTermId,
+    step: SymTermId,
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> SymTermId {
+    let n_times_base = interner.intern_binary(BinaryOp::Mul, num_iters, base, Type::I64);
+    let one = interner.intern_int(1);
+    let two = interner.intern_int(2);
+    let n_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one, Type::I64);
+    let n_times_n1 = interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
+    let tri = interner.intern_binary(BinaryOp::Div, n_times_n1, two, Type::I64);
+    let quad = interner.intern_binary(BinaryOp::Mul, tri, step, Type::I64);
+    let sum1 = interner.intern_binary(BinaryOp::Add, init, n_times_base, Type::I64);
+    interner.intern_binary(BinaryOp::Add, sum1, quad, Type::I64)
+}
+
+/// Computes closed form for a geometric variable: s_n = init * ratio^n
+pub fn solve_symbolic_geometric(
+    init: SymTermId,
+    ratio: SymTermId,
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> SymTermId {
+    let pow = interner.intern_binary(BinaryOp::Pow, ratio, num_iters, Type::I64);
+    interner.intern_binary(BinaryOp::Mul, init, pow, Type::I64)
 }

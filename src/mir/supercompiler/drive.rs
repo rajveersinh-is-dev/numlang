@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use super::generalize::solve_recurrence;
 use super::state::SymbolicState;
@@ -29,10 +30,70 @@ pub struct ProcessNode {
     pub return_term: Option<SymTermId>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SupercompilerStats {
+    pub nodes_explored: usize,
+    pub branches_pruned: usize,
+    pub loops_collapsed: usize,
+    pub knots_tied: usize,
+}
+
+impl fmt::Display for SupercompilerStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}",
+            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ProcessTree {
     pub nodes: Vec<ProcessNode>,
     pub root: ProcessNodeId,
     pub interner: TermInterner,
+    pub stats: SupercompilerStats,
+}
+
+impl ProcessTree {
+    pub fn display(&self) -> String {
+        let mut out = String::new();
+        out.push_str("Process Tree:\n");
+        for node in &self.nodes {
+            out.push_str(&format!(
+                "  Node #{}: block = BasicBlockId({})\n",
+                node.id.0, node.state.block.0
+            ));
+            if let Some(ret) = node.return_term {
+                out.push_str(&format!("    Return: {}\n", ret));
+            }
+            for edge in &node.edges {
+                match edge {
+                    ProcessEdge::Step(next) => {
+                        out.push_str(&format!("    -> Step to Node #{}\n", next.0));
+                    }
+                    ProcessEdge::BranchTrue(next, cond) => {
+                        out.push_str(&format!(
+                            "    -> BranchTrue to Node #{} [condition: {}]\n",
+                            next.0, cond
+                        ));
+                    }
+                    ProcessEdge::BranchFalse(next, cond) => {
+                        out.push_str(&format!(
+                            "    -> BranchFalse to Node #{} [condition: !{}]\n",
+                            next.0, cond
+                        ));
+                    }
+                    ProcessEdge::Knot(anc) => {
+                        out.push_str(&format!("    -> Knot to Ancestor Node #{}\n", anc.0));
+                    }
+                }
+            }
+        }
+        out.push_str(&format!("  Stats: {}\n", self.stats));
+        out
+    }
 }
 
 pub struct SupercompilerDriver<'a> {
@@ -44,6 +105,7 @@ pub struct SupercompilerDriver<'a> {
     next_node_id: usize,
     max_depth: usize,
     active_places: Vec<Place>,
+    stats: SupercompilerStats,
 }
 
 impl<'a> SupercompilerDriver<'a> {
@@ -74,6 +136,7 @@ impl<'a> SupercompilerDriver<'a> {
             next_node_id: 0,
             max_depth: 128,
             active_places,
+            stats: SupercompilerStats::default(),
         }
     }
 
@@ -83,6 +146,7 @@ impl<'a> SupercompilerDriver<'a> {
                 nodes: Vec::new(),
                 root: ProcessNodeId(0),
                 interner: self.interner,
+                stats: self.stats,
             };
         }
 
@@ -104,10 +168,13 @@ impl<'a> SupercompilerDriver<'a> {
 
         self.drive_node(root_id, &mut ancestor_stack, 0);
 
+        self.stats.nodes_explored = self.nodes.len();
+
         ProcessTree {
             nodes: self.nodes,
             root: root_id,
             interner: self.interner,
+            stats: self.stats,
         }
     }
 
@@ -172,12 +239,14 @@ impl<'a> SupercompilerDriver<'a> {
 
                 match evaluated {
                     Some(true) => {
+                        self.stats.branches_pruned += 1;
                         let mut next_state = working_state;
                         next_state.block = then_target.clone();
                         next_state.path_constraints.add_condition(cond_term, true, &self.interner);
                         self.handle_transition(node_id, next_state, ancestor_stack, depth);
                     }
                     Some(false) => {
+                        self.stats.branches_pruned += 1;
                         let mut next_state = working_state;
                         next_state.block = else_target.clone();
                         next_state.path_constraints.add_condition(cond_term, false, &self.interner);
@@ -270,6 +339,7 @@ impl<'a> SupercompilerDriver<'a> {
             let anc_state = &self.nodes[anc_id.0].state;
             if is_instance_of(anc_state, &next_state, &self.active_places) {
                 // Knot tied! Fold back to ancestor loop header
+                self.stats.knots_tied += 1;
                 self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
                 return;
             }
@@ -284,6 +354,7 @@ impl<'a> SupercompilerDriver<'a> {
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
                     if let Some(solved_state) = self.try_solve_loop_recurrence(&anc_state, &next_state) {
+                        self.stats.loops_collapsed += 1;
                         let next_node = self.alloc_node(solved_state);
                         self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
                         ancestor_stack.push(from_id);
@@ -312,6 +383,26 @@ impl<'a> SupercompilerDriver<'a> {
         let mut solved_state = curr.clone();
         let mut any_solved = false;
 
+        let mut bound_term = None;
+        if let Some(block) = self.block_map.get(&curr.block) {
+            if let Terminator::BranchIf { condition, .. } = &block.terminator {
+                if let Some(cond_t) = curr.get_value(condition) {
+                    if let SymTerm::Binary(_, _, r, _) = self.interner.get(cond_t) {
+                        bound_term = Some(*r);
+                    }
+                }
+            }
+        }
+        let n_term = bound_term.unwrap_or_else(|| {
+            self.interner.intern_var(
+                Place {
+                    local: "n".to_string(),
+                    projections: vec![],
+                },
+                Type::I64,
+            )
+        });
+
         for place in &self.active_places {
             if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
                 if t_anc != t_curr {
@@ -322,14 +413,13 @@ impl<'a> SupercompilerDriver<'a> {
                     ) = (self.interner.get(t_anc), self.interner.get(t_curr))
                     {
                         let step = v1 - v0;
-                        let samples = vec![*v0, *v1, v1 + step, v1 + step + step];
-                        let n_term = self.interner.intern_var(
-                            Place {
-                                local: "n".to_string(),
-                                projections: vec![],
-                            },
-                            Type::I64,
-                        );
+                        let samples = vec![
+                            *v0,
+                            *v1,
+                            v1 + step,
+                            v1 + step + step,
+                            v1 + step + step + step,
+                        ];
 
                         if let Some(closed_form) =
                             solve_recurrence(&samples, n_term, &mut self.interner)

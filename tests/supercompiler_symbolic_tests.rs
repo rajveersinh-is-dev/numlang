@@ -216,3 +216,154 @@ fn test_cli_emit_supercompiled_mir() {
         stdout
     );
 }
+
+#[test]
+fn test_recurrence_solver_cubic_and_geometric() {
+    let mut interner = TermInterner::new();
+    let n_place = Place {
+        local: "n".to_string(),
+        projections: vec![],
+    };
+    let n = interner.intern_var(n_place, Type::I64);
+
+    // Cubic sequence: k^3 => [0, 1, 8, 27, 64]
+    let cubic_samples = vec![0, 1, 8, 27, 64];
+    let cubic_sol = solve_recurrence(&cubic_samples, n, &mut interner);
+    assert!(cubic_sol.is_some());
+
+    // Geometric sequence: 3 * 2^k => [3, 6, 12, 24]
+    let geo_samples = vec![3, 6, 12, 24];
+    let geo_sol = solve_recurrence(&geo_samples, n, &mut interner);
+    assert!(geo_sol.is_some());
+}
+
+#[test]
+fn test_symbolic_closed_form_helpers() {
+    use numlang::mir::supercompiler::generalize::{
+        solve_symbolic_accumulator, solve_symbolic_geometric, solve_symbolic_linear_induction,
+    };
+
+    let mut interner = TermInterner::new();
+    let init = interner.intern_int(0);
+    let step = interner.intern_int(1);
+    let n_place = Place {
+        local: "n".to_string(),
+        projections: vec![],
+    };
+    let n = interner.intern_var(n_place, Type::I64);
+
+    // Linear induction
+    let lin = solve_symbolic_linear_induction(init, step, n, &mut interner);
+    assert_ne!(lin, init);
+
+    // Accumulator
+    let acc = solve_symbolic_accumulator(init, init, step, n, &mut interner);
+    assert_ne!(acc, init);
+
+    // Geometric
+    let ratio = interner.intern_int(2);
+    let start = interner.intern_int(5);
+    let geo = solve_symbolic_geometric(start, ratio, n, &mut interner);
+    assert_ne!(geo, start);
+}
+
+#[test]
+fn test_cli_emit_process_tree() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join(format!(
+        "test_cli_emit_pt_{}_{}.nl",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+
+    let code = r#"
+    fn test_tree(a: i64) -> i64 {
+        if a > 10 {
+            return 100;
+        } else {
+            return 200;
+        }
+    }
+    "#;
+
+    fs::write(&test_file, code).expect("Failed to write test file");
+
+    let bin = env!("CARGO_BIN_EXE_numlang");
+    let output = Command::new(bin)
+        .arg("--emit-process-tree")
+        .arg(&test_file)
+        .output()
+        .expect("Failed to execute numlang with --emit-process-tree");
+
+    let _ = fs::remove_file(&test_file);
+
+    assert!(
+        output.status.success(),
+        "Command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Process Tree:"),
+        "Output should contain Process Tree header: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Node #0:"),
+        "Output should contain root node: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_cli_supercompile_stats() {
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join(format!(
+        "test_cli_sc_stats_{}_{}.nl",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+
+    let code = r#"
+    fn compute(n: i64) -> i64 {
+        let mut sum: i64 = 0;
+        let mut i: i64 = 0;
+        while i < n {
+            sum = sum + i;
+            i = i + 1;
+        }
+        return sum;
+    }
+    "#;
+
+    fs::write(&test_file, code).expect("Failed to write test file");
+
+    let bin = env!("CARGO_BIN_EXE_numlang");
+    let output = Command::new(bin)
+        .arg("--supercompile-stats")
+        .arg(&test_file)
+        .output()
+        .expect("Failed to execute numlang with --supercompile-stats");
+
+    let _ = fs::remove_file(&test_file);
+
+    assert!(
+        output.status.success(),
+        "Command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("nodes:"),
+        "Output should contain stats: {}",
+        stdout
+    );
+}
