@@ -259,5 +259,27 @@ fn emit_term_eval(
             ));
             place
         }
+        SymTerm::Call(callee, args, ty) => {
+            let mut arg_places = Vec::new();
+            for &a in args {
+                arg_places.push(emit_term_eval(a, interner, stmts, locals, next_temp_id));
+            }
+            let temp_name = format!("_sc_{}", *next_temp_id);
+            *next_temp_id += 1;
+            locals.push(MirLocalDecl {
+                name: temp_name.clone(),
+                ty: ty.clone(),
+                mutable: false,
+            });
+            let place = Place {
+                local: temp_name,
+                projections: vec![],
+            };
+            stmts.push(Statement::Assign(
+                place.clone(),
+                Rvalue::Call(callee.clone(), arg_places),
+            ));
+            place
+        }
     }
 }

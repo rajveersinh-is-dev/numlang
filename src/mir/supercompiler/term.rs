@@ -27,6 +27,7 @@ pub enum SymTerm {
     Constructor(String, Vec<SymTermId>, Type),
     Select(SymTermId, SymTermId, SymTermId, Type), // condition, then, else
     Phi(Vec<(BasicBlockId, SymTermId)>, Type),
+    Call(String, Vec<SymTermId>, Type),
 }
 
 impl SymTerm {
@@ -42,6 +43,7 @@ impl SymTerm {
             SymTerm::Constructor(_, _, ty) => ty,
             SymTerm::Select(_, _, _, ty) => ty,
             SymTerm::Phi(_, ty) => ty,
+            SymTerm::Call(_, _, ty) => ty,
         }
     }
 
@@ -249,6 +251,15 @@ impl TermInterner {
         self.intern(SymTerm::Constructor(name, fields, ty))
     }
 
+    pub fn intern_call(
+        &mut self,
+        callee: String,
+        args: Vec<SymTermId>,
+        ty: Type,
+    ) -> SymTermId {
+        self.intern(SymTerm::Call(callee, args, ty))
+    }
+
     fn intern(&mut self, term: SymTerm) -> SymTermId {
         if let Some(&id) = self.lookup.get(&term) {
             return id;
@@ -265,6 +276,9 @@ impl TermInterner {
             SymTerm::Unary(_, inner, _) => 1 + self.sizes[inner.0],
             SymTerm::Constructor(_, fields, _) => {
                 1 + fields.iter().map(|f| self.sizes[f.0]).sum::<usize>()
+            }
+            SymTerm::Call(_, args, _) => {
+                1 + args.iter().map(|a| self.sizes[a.0]).sum::<usize>()
             }
             SymTerm::Select(c, t, e, _) => {
                 1 + self.sizes[c.0] + self.sizes[t.0] + self.sizes[e.0]
@@ -301,6 +315,10 @@ impl TermInterner {
             SymTerm::Constructor(name, fields, _) => {
                 let f_str: Vec<String> = fields.iter().map(|f| self.format_term(*f)).collect();
                 format!("{} {{{}}}", name, f_str.join(", "))
+            }
+            SymTerm::Call(callee, args, _) => {
+                let a_str: Vec<String> = args.iter().map(|a| self.format_term(*a)).collect();
+                format!("{}({})", callee, a_str.join(", "))
             }
             SymTerm::Select(c, t, e, _) => {
                 format!(

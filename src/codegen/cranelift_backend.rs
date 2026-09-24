@@ -7491,11 +7491,480 @@ impl<'a> FunctionTranslationState<'a> {
     }
 }
 
+impl CraneliftCompiler {
+    pub fn compile_mir_function(
+        &mut self,
+        func: &crate::mir::lower::MirFunction,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let func_id = *self
+            .func_ids
+            .get(&func.name)
+            .ok_or_else(|| CodegenError::BackendError(format!("Function {} not declared", func.name)))?;
+
+        let mut sig = self.module.make_signature();
+        if func.return_ty != Type::Void {
+            sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+        }
+        for (_, p_ty) in &func.params {
+            sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
+        }
+
+        ctx.func.signature = sig;
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+
+        if func.blocks.is_empty() {
+            let entry = builder.create_block();
+            builder.switch_to_block(entry);
+            builder.seal_block(entry);
+            builder.ins().return_(&[]);
+            let config = self.module.target_config();
+            builder.finalize(config);
+            self.module
+                .define_function(func_id, ctx)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            self.module.clear_context(ctx);
+            return Ok(());
+        }
+
+        // Map basic blocks
+        let mut block_map: HashMap<crate::mir::BasicBlockId, cranelift_codegen::ir::Block> =
+            HashMap::new();
+        for b in &func.blocks {
+            let clif_b = builder.create_block();
+            block_map.insert(b.id.clone(), clif_b);
+        }
+
+        // Declare variables for locals and parameters
+        let mut var_map: HashMap<String, (Variable, types::Type)> = HashMap::new();
+        for local in &func.locals {
+            let clif_ty = type_to_clif(local.ty.clone());
+            let var = builder.declare_var(clif_ty);
+            var_map.insert(local.name.clone(), (var, clif_ty));
+        }
+        for (p_name, p_ty) in &func.params {
+            if !var_map.contains_key(p_name) {
+                let clif_ty = type_to_clif(p_ty.clone());
+                let var = builder.declare_var(clif_ty);
+                var_map.insert(p_name.clone(), (var, clif_ty));
+            }
+        }
+
+        // Pre-declare any temporaries referenced in statements/terminators
+        for b in &func.blocks {
+            for stmt in &b.statements {
+                let crate::mir::lower::Statement::Assign(place, rval) = stmt;
+                if !var_map.contains_key(&place.local) {
+                    let var = builder.declare_var(types::I64);
+                    var_map.insert(place.local.clone(), (var, types::I64));
+                }
+                match rval {
+                    crate::mir::lower::Rvalue::Use(p) => {
+                        if !var_map.contains_key(&p.local) {
+                            let var = builder.declare_var(types::I64);
+                            var_map.insert(p.local.clone(), (var, types::I64));
+                        }
+                    }
+                    crate::mir::lower::Rvalue::BinaryOp(_, l, r) => {
+                        if !var_map.contains_key(&l.local) {
+                            let var = builder.declare_var(types::I64);
+                            var_map.insert(l.local.clone(), (var, types::I64));
+                        }
+                        if !var_map.contains_key(&r.local) {
+                            let var = builder.declare_var(types::I64);
+                            var_map.insert(r.local.clone(), (var, types::I64));
+                        }
+                    }
+                    crate::mir::lower::Rvalue::UnaryOp(_, p) => {
+                        if !var_map.contains_key(&p.local) {
+                            let var = builder.declare_var(types::I64);
+                            var_map.insert(p.local.clone(), (var, types::I64));
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Call(_, args) => {
+                        for p in args {
+                            if !var_map.contains_key(&p.local) {
+                                let var = builder.declare_var(types::I64);
+                                var_map.insert(p.local.clone(), (var, types::I64));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match &b.terminator {
+                crate::mir::Terminator::Return { value: Some(p) }
+                    if !var_map.contains_key(&p.local) =>
+                {
+                    let var = builder.declare_var(types::I64);
+                    var_map.insert(p.local.clone(), (var, types::I64));
+                }
+                crate::mir::Terminator::BranchIf { condition, .. }
+                    if !var_map.contains_key(&condition.local) =>
+                {
+                    let var = builder.declare_var(types::I8);
+                    var_map.insert(condition.local.clone(), (var, types::I8));
+                }
+                _ => {}
+            }
+        }
+
+        let entry_block = block_map[&func.blocks[0].id];
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+
+        for (i, (param_name, _)) in func.params.iter().enumerate() {
+            let val = builder.block_params(entry_block)[i];
+            if let Some(&(var, _)) = var_map.get(param_name) {
+                builder.def_var(var, val);
+            }
+        }
+
+        // Emit blocks
+        for b in &func.blocks {
+            let clif_b = block_map[&b.id];
+            builder.switch_to_block(clif_b);
+
+            for stmt in &b.statements {
+                let crate::mir::lower::Statement::Assign(place, rval) = stmt;
+                let val = match rval {
+                    crate::mir::lower::Rvalue::Constant(lit) => match lit {
+                        TypedLiteral::Int(v, ty) => {
+                            builder.ins().iconst(type_to_clif(ty.clone()), *v)
+                        }
+                        TypedLiteral::Float(f, ty) => {
+                            if *ty == Type::F32 {
+                                builder.ins().f32const(*f as f32)
+                            } else {
+                                builder.ins().f64const(*f)
+                            }
+                        }
+                        TypedLiteral::Bool(bv) => {
+                            builder.ins().iconst(types::I8, if *bv { 1 } else { 0 })
+                        }
+                        TypedLiteral::Str(_) => builder.ins().iconst(types::I64, 0),
+                    },
+                    crate::mir::lower::Rvalue::Use(p) => {
+                        if let Some(&(var, _)) = var_map.get(&p.local) {
+                            builder.use_var(var)
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        }
+                    }
+                    crate::mir::lower::Rvalue::BinaryOp(op, l, r) => {
+                        let mut lv = var_map
+                            .get(&l.local)
+                            .map(|&(v, _)| builder.use_var(v))
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let mut rv = var_map
+                            .get(&r.local)
+                            .map(|&(v, _)| builder.use_var(v))
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let l_ty = builder.func.dfg.value_type(lv);
+                        let r_ty = builder.func.dfg.value_type(rv);
+                        if l_ty.is_int() && r_ty.is_int() && l_ty != r_ty {
+                            if l_ty.bits() > r_ty.bits() {
+                                rv = builder.ins().uextend(l_ty, rv);
+                            } else {
+                                lv = builder.ins().uextend(r_ty, lv);
+                            }
+                        }
+                        if l_ty.is_float() {
+                            match op {
+                                BinaryOp::Add => builder.ins().fadd(lv, rv),
+                                BinaryOp::Sub => builder.ins().fsub(lv, rv),
+                                BinaryOp::Mul => builder.ins().fmul(lv, rv),
+                                BinaryOp::Div => builder.ins().fdiv(lv, rv),
+                                BinaryOp::Eq => builder.ins().fcmp(FloatCC::Equal, lv, rv),
+                                BinaryOp::Ne => builder.ins().fcmp(FloatCC::NotEqual, lv, rv),
+                                BinaryOp::Lt => builder.ins().fcmp(FloatCC::LessThan, lv, rv),
+                                BinaryOp::Le => builder.ins().fcmp(FloatCC::LessThanOrEqual, lv, rv),
+                                BinaryOp::Gt => builder.ins().fcmp(FloatCC::GreaterThan, lv, rv),
+                                BinaryOp::Ge => builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lv, rv),
+                                _ => builder.ins().fadd(lv, rv),
+                            }
+                        } else {
+                            match op {
+                                BinaryOp::Add => builder.ins().iadd(lv, rv),
+                                BinaryOp::Sub => builder.ins().isub(lv, rv),
+                                BinaryOp::Mul => builder.ins().imul(lv, rv),
+                                BinaryOp::Div => builder.ins().sdiv(lv, rv),
+                                BinaryOp::Mod => builder.ins().srem(lv, rv),
+                                BinaryOp::Eq => builder.ins().icmp(IntCC::Equal, lv, rv),
+                                BinaryOp::Ne => builder.ins().icmp(IntCC::NotEqual, lv, rv),
+                                BinaryOp::Lt => {
+                                    builder.ins().icmp(IntCC::SignedLessThan, lv, rv)
+                                }
+                                BinaryOp::Le => {
+                                    builder.ins().icmp(IntCC::SignedLessThanOrEqual, lv, rv)
+                                }
+                                BinaryOp::Gt => {
+                                    builder.ins().icmp(IntCC::SignedGreaterThan, lv, rv)
+                                }
+                                BinaryOp::Ge => {
+                                    builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, lv, rv)
+                                }
+                                BinaryOp::BitAnd => builder.ins().band(lv, rv),
+                                BinaryOp::BitOr => builder.ins().bor(lv, rv),
+                                BinaryOp::BitXor => builder.ins().bxor(lv, rv),
+                                BinaryOp::Shl => builder.ins().ishl(lv, rv),
+                                BinaryOp::Shr => builder.ins().sshr(lv, rv),
+                                BinaryOp::Pow => builder.ins().imul(lv, rv),
+                            }
+                        }
+                    }
+                    crate::mir::lower::Rvalue::UnaryOp(op, p) => {
+                        let v = var_map
+                            .get(&p.local)
+                            .map(|&(var, _)| builder.use_var(var))
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let v_ty = builder.func.dfg.value_type(v);
+                        match op {
+                            UnaryOp::Neg => {
+                                if v_ty.is_float() {
+                                    builder.ins().fneg(v)
+                                } else {
+                                    builder.ins().ineg(v)
+                                }
+                            }
+                            UnaryOp::Not => builder.ins().bnot(v),
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Call(callee, args) => {
+                        if let Some(&callee_id) = self.func_ids.get(callee) {
+                            let local_func =
+                                self.module.declare_func_in_func(callee_id, builder.func);
+                            let arg_vals: Vec<Value> = args
+                                .iter()
+                                .map(|p| {
+                                    var_map
+                                        .get(&p.local)
+                                        .map(|&(v, _)| builder.use_var(v))
+                                        .unwrap_or_else(|| {
+                                            builder.ins().iconst(types::I64, 0)
+                                        })
+                                })
+                                .collect();
+                            let call_inst = builder.ins().call(local_func, &arg_vals);
+                            let res = builder.inst_results(call_inst);
+                            if res.is_empty() {
+                                builder.ins().iconst(types::I32, 0)
+                            } else {
+                                res[0]
+                            }
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        }
+                    }
+                    _ => builder.ins().iconst(types::I64, 0),
+                };
+
+                if let Some(&(var, var_ty)) = var_map.get(&place.local) {
+                    let val_ty = builder.func.dfg.value_type(val);
+                    let coerced_val = if var_ty == val_ty {
+                        val
+                    } else if var_ty.is_int() && val_ty.is_int() {
+                        if var_ty.bits() > val_ty.bits() {
+                            builder.ins().uextend(var_ty, val)
+                        } else {
+                            builder.ins().ireduce(var_ty, val)
+                        }
+                    } else if var_ty.is_float() && val_ty.is_float() {
+                        if var_ty == types::F64 && val_ty == types::F32 {
+                            builder.ins().fpromote(types::F64, val)
+                        } else if var_ty == types::F32 && val_ty == types::F64 {
+                            builder.ins().fdemote(types::F32, val)
+                        } else {
+                            val
+                        }
+                    } else {
+                        val
+                    };
+                    builder.def_var(var, coerced_val);
+                }
+            }
+
+            match &b.terminator {
+                crate::mir::Terminator::Return { value } => {
+                    if let Some(p) = value {
+                        let val = var_map
+                            .get(&p.local)
+                            .map(|&(v, _)| builder.use_var(v))
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        let ret_ty = if func.return_ty != Type::Void {
+                            type_to_clif(func.return_ty.clone())
+                        } else {
+                            types::I32
+                        };
+                        let val_ty = builder.func.dfg.value_type(val);
+                        let coerced_val = if ret_ty == val_ty {
+                            val
+                        } else if ret_ty.is_int() && val_ty.is_int() {
+                            if ret_ty.bits() > val_ty.bits() {
+                                builder.ins().uextend(ret_ty, val)
+                            } else {
+                                builder.ins().ireduce(ret_ty, val)
+                            }
+                        } else if ret_ty.is_float() && val_ty.is_float() {
+                            if ret_ty == types::F64 && val_ty == types::F32 {
+                                builder.ins().fpromote(types::F64, val)
+                            } else if ret_ty == types::F32 && val_ty == types::F64 {
+                                builder.ins().fdemote(types::F32, val)
+                            } else {
+                                val
+                            }
+                        } else {
+                            val
+                        };
+                        builder.ins().return_(&[coerced_val]);
+                    } else if func.return_ty != Type::Void {
+                        let ret_ty = type_to_clif(func.return_ty.clone());
+                        let dummy = if ret_ty.is_float() {
+                            if ret_ty == types::F32 {
+                                builder.ins().f32const(0.0)
+                            } else {
+                                builder.ins().f64const(0.0)
+                            }
+                        } else {
+                            builder.ins().iconst(ret_ty, 0)
+                        };
+                        builder.ins().return_(&[dummy]);
+                    } else {
+                        builder.ins().return_(&[]);
+                    }
+                }
+                crate::mir::Terminator::Branch { target } => {
+                    if let Some(&target_block) = block_map.get(target) {
+                        builder.ins().jump(target_block, &[]);
+                    }
+                }
+                crate::mir::Terminator::BranchIf {
+                    condition,
+                    then_target,
+                    else_target,
+                } => {
+                    let cond_val = var_map
+                        .get(&condition.local)
+                        .map(|&(v, _)| builder.use_var(v))
+                        .unwrap_or_else(|| builder.ins().iconst(types::I8, 0));
+                    if let (Some(&then_b), Some(&else_b)) =
+                        (block_map.get(then_target), block_map.get(else_target))
+                    {
+                        builder.ins().brif(cond_val, then_b, &[], else_b, &[]);
+                    }
+                }
+                crate::mir::Terminator::Switch {
+                    value,
+                    targets,
+                    default,
+                } => {
+                    let switch_val = var_map
+                        .get(&value.local)
+                        .map(|&(v, _)| builder.use_var(v))
+                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                    if let Some(&def_b) = block_map.get(default) {
+                        for (case_val, target_bb) in targets {
+                            if let Some(&target_block) = block_map.get(target_bb) {
+                                let next_block = builder.create_block();
+                                let c_val = builder.ins().iconst(types::I64, *case_val);
+                                let is_match = builder.ins().icmp(IntCC::Equal, switch_val, c_val);
+                                builder.ins().brif(is_match, target_block, &[], next_block, &[]);
+                                builder.switch_to_block(next_block);
+                            }
+                        }
+                        builder.ins().jump(def_b, &[]);
+                    }
+                }
+                crate::mir::Terminator::Unreachable => {
+                    builder.ins().trap(TrapCode::user(1).unwrap());
+                    if func.return_ty != Type::Void {
+                        let ret_ty = type_to_clif(func.return_ty.clone());
+                        let dummy = if ret_ty.is_float() {
+                            if ret_ty == types::F32 {
+                                builder.ins().f32const(0.0)
+                            } else {
+                                builder.ins().f64const(0.0)
+                            }
+                        } else {
+                            builder.ins().iconst(ret_ty, 0)
+                        };
+                        builder.ins().return_(&[dummy]);
+                    } else {
+                        builder.ins().return_(&[]);
+                    }
+                }
+            }
+        }
+
+        builder.seal_all_blocks();
+        let config = self.module.target_config();
+        builder.finalize(config);
+        self.module
+            .define_function(func_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in {}: {:#?}", func.name, e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    pub fn compile_mir_program(
+        mut self,
+        mir: &crate::mir::lower::MirProgram,
+    ) -> Result<Vec<u8>, CodegenError> {
+        self.struct_layouts = compute_struct_layouts(&mir.structs);
+
+        // Step 1: Declare all functions
+        for func in &mir.functions {
+            let mut sig = self.module.make_signature();
+            if func.return_ty != Type::Void {
+                sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+            }
+            for (_, p_ty) in &func.params {
+                sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
+            }
+            let func_id = self
+                .module
+                .declare_function(&func.name, Linkage::Export, &sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            self.func_ids.insert(func.name.clone(), func_id);
+        }
+
+        // Step 2: Define each function body
+        let mut fn_builder_ctx = FunctionBuilderContext::new();
+        let mut ctx = self.module.make_context();
+
+        for func in &mir.functions {
+            self.compile_mir_function(func, &mut ctx, &mut fn_builder_ctx)?;
+        }
+
+        // Step 3: Emit entry wrapper if main exists and benchmarking mode is disabled
+        if std::env::var("NUMLANG_BENCH").is_err() {
+            if let Some(&main_id) = self.func_ids.get("main") {
+                self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
+            }
+        }
+
+        // Step 3b: Emit print helpers
+        self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
+
+        // Step 4: Emit final object file
+        let product = self.module.finish();
+        let obj_bytes = product
+            .emit()
+            .map_err(|e| CodegenError::BackendError(format!("Failed to emit object: {}", e)))?;
+
+        Ok(obj_bytes)
+    }
+}
+
 pub fn compile_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     compile_to_obj_with_opt(program, true)
 }
 
-pub fn compile_to_obj_with_opt(program: &TypedProgram, should_optimize: bool) -> Result<Vec<u8>, CodegenError> {
+pub fn compile_to_obj_with_opt(
+    program: &TypedProgram,
+    should_optimize: bool,
+) -> Result<Vec<u8>, CodegenError> {
     let compiler = CraneliftCompiler::new()?;
     if should_optimize {
         let mut optimized = program.clone();
@@ -7506,5 +7975,16 @@ pub fn compile_to_obj_with_opt(program: &TypedProgram, should_optimize: bool) ->
         unopt.desugar_for_loops();
         compiler.compile_program(&unopt)
     }
+}
+
+pub fn compile_mir_to_obj(mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>, CodegenError> {
+    let compiler = CraneliftCompiler::new()?;
+    compiler.compile_mir_program(mir)
+}
+
+pub fn compile_supercompiled_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
+    let mut mir_program = crate::mir::lower::lower_program(program);
+    crate::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+    compile_mir_to_obj(&mir_program)
 }
 

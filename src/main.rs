@@ -108,6 +108,18 @@ pub struct Cli {
     )]
     pub explain: Option<String>,
 
+    #[arg(
+        long = "supercompile",
+        help = "Supercompile MIR and compile directly via Cranelift"
+    )]
+    pub supercompile: bool,
+
+    #[arg(
+        long = "use-mir",
+        help = "Compile MIR directly via Cranelift without AST codegen"
+    )]
+    pub use_mir: bool,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -129,6 +141,18 @@ pub enum Commands {
             help = "Run with high-resolution in-process benchmarking entry"
         )]
         bench: bool,
+
+        #[arg(
+            long = "supercompile",
+            help = "Supercompile MIR and compile directly via Cranelift"
+        )]
+        supercompile: bool,
+
+        #[arg(
+            long = "use-mir",
+            help = "Compile MIR directly via Cranelift without AST codegen"
+        )]
+        use_mir: bool,
     },
     /// Compile and link a numlang program into a native executable
     Build {
@@ -153,6 +177,18 @@ pub enum Commands {
             help = "Build with high-resolution in-process benchmarking entry"
         )]
         bench: bool,
+
+        #[arg(
+            long = "supercompile",
+            help = "Supercompile MIR and compile directly via Cranelift"
+        )]
+        supercompile: bool,
+
+        #[arg(
+            long = "use-mir",
+            help = "Compile MIR directly via Cranelift without AST codegen"
+        )]
+        use_mir: bool,
     },
     /// Check a numlang program for syntax and type errors
     Check {
@@ -216,9 +252,23 @@ fn compile_source_to_typed(file_path: &Path) -> Result<(String, TypedProgram)> {
     Ok((source, typed_program))
 }
 
-fn build_executable(typed_program: &TypedProgram, out_exe: &Path) -> Result<()> {
-    let obj_bytes = numlang::codegen::compile_to_obj_with_opt(typed_program, false)
-        .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+fn build_executable(
+    typed_program: &TypedProgram,
+    out_exe: &Path,
+    supercompile: bool,
+    use_mir: bool,
+) -> Result<()> {
+    let obj_bytes = if supercompile {
+        numlang::codegen::compile_supercompiled_to_obj(typed_program)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    } else if use_mir {
+        let mir = numlang::mir::lower::lower_program(typed_program);
+        numlang::codegen::compile_mir_to_obj(&mir)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    } else {
+        numlang::codegen::compile_to_obj_with_opt(typed_program, false)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    };
 
     let temp_dir = std::env::temp_dir();
     let obj_file = temp_dir.join(format!(
@@ -241,7 +291,7 @@ fn build_executable(typed_program: &TypedProgram, out_exe: &Path) -> Result<()> 
     Ok(())
 }
 
-fn handle_run(file: &Path) -> Result<()> {
+fn handle_run(file: &Path, supercompile: bool, use_mir: bool) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
 
@@ -256,7 +306,7 @@ fn handle_run(file: &Path) -> Result<()> {
         timestamp
     ));
 
-    build_executable(&typed_program, &temp_exe)?;
+    build_executable(&typed_program, &temp_exe, supercompile, use_mir)?;
 
     let status = Command::new(&temp_exe)
         .status()
@@ -276,12 +326,27 @@ fn handle_run(file: &Path) -> Result<()> {
     Ok(())
 }
 
-fn handle_build(file: &Path, output: Option<PathBuf>, emit_obj: Option<PathBuf>) -> Result<()> {
+fn handle_build(
+    file: &Path,
+    output: Option<PathBuf>,
+    emit_obj: Option<PathBuf>,
+    supercompile: bool,
+    use_mir: bool,
+) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
 
-    let obj_bytes = numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
-        .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+    let obj_bytes = if supercompile {
+        numlang::codegen::compile_supercompiled_to_obj(&typed_program)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    } else if use_mir {
+        let mir = numlang::mir::lower::lower_program(&typed_program);
+        numlang::codegen::compile_mir_to_obj(&mir)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    } else {
+        numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
+            .map_err(|e| miette::miette!("Codegen error: {}", e))?
+    };
 
     if let Some(ref obj_path) = emit_obj {
         fs::write(obj_path, &obj_bytes)
@@ -447,22 +512,29 @@ fn real_main() -> Result<()> {
                     std::process::exit(1);
                 }
             }
-            Commands::Run { file, bench } => {
+            Commands::Run {
+                file,
+                bench,
+                supercompile,
+                use_mir,
+            } => {
                 if bench {
                     std::env::set_var("NUMLANG_BENCH", "1");
                 }
-                return handle_run(&file);
+                return handle_run(&file, supercompile, use_mir);
             }
             Commands::Build {
                 file,
                 output,
                 emit_obj,
                 bench,
+                supercompile,
+                use_mir,
             } => {
                 if bench {
                     std::env::set_var("NUMLANG_BENCH", "1");
                 }
-                return handle_build(&file, output, emit_obj);
+                return handle_build(&file, output, emit_obj, supercompile, use_mir);
             }
             Commands::Check { file } => return handle_check(&file),
             Commands::Fmt {
@@ -590,8 +662,17 @@ fn real_main() -> Result<()> {
     let should_link_exe = cli.output.is_some();
 
     if should_emit_obj || should_link_exe {
-        let obj_bytes = numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
-            .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+        let obj_bytes = if cli.supercompile {
+            numlang::codegen::compile_supercompiled_to_obj(&typed_program)
+                .map_err(|e| miette::miette!("Codegen error: {}", e))?
+        } else if cli.use_mir {
+            let mir = numlang::mir::lower::lower_program(&typed_program);
+            numlang::codegen::compile_mir_to_obj(&mir)
+                .map_err(|e| miette::miette!("Codegen error: {}", e))?
+        } else {
+            numlang::codegen::compile_to_obj_with_opt(&typed_program, false)
+                .map_err(|e| miette::miette!("Codegen error: {}", e))?
+        };
 
         if let Some(ref obj_path) = cli.emit_obj {
             fs::write(obj_path, &obj_bytes)
