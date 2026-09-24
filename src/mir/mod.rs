@@ -84,3 +84,4 @@ pub mod dominance;
 pub mod lower;
 pub mod mem2reg;
 pub mod memory_ssa;
+pub mod supercompiler;
