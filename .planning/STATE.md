@@ -1,4 +1,4 @@
-﻿---
+---
 milestone: v2.0-phase2
 name: "MemorySSA & Alias Analysis"
 status: planning
@@ -8,14 +8,14 @@ status: planning
 
 ## Current Position
 
-Phase: Not started (Ready for Phase 2.1)
-Plan: —
-Status: Planning complete, ready to plan Phase 2.1
-Last activity: 2026-09-24 — Milestone v2.0 Phase 2 initialized
+Phase: Phase 2.2 (Points-To & Field-Sensitive Alias Analysis)
+Plan: Ready to plan Phase 2.2
+Status: Phase 2.1 complete, proceeding to Phase 2.2
+Last activity: 2026-09-24 — Phase 2.1 MemorySSA Core completed
 
 ## Progress
 
-- [ ] Phase 2.1: MemorySSA Core & Graph Construction
+- [x] Phase 2.1: MemorySSA Core & Graph Construction
 - [ ] Phase 2.2: Points-To & Field-Sensitive Alias Analysis
 - [ ] Phase 2.3: Mem2Reg Promotion Engine & Memory Optimizations
 - [ ] Phase 2.4: CLI Tooling, Integration & Verification Gate

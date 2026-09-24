@@ -1,4 +1,4 @@
-﻿# Requirements: NumLang (v2.0 Phase 2: MemorySSA, Alias Analysis & Mem2Reg)
+# Requirements: NumLang (v2.0 Phase 2: MemorySSA, Alias Analysis & Mem2Reg)
 
 **Defined:** 2026-09-24
 **Core Value:** Eliminate memory bottlenecks by promoting stack variables and struct fields into pure SSA registers, unlocking maximum supercompilation and optimization factors.
@@ -9,9 +9,9 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 
 ### 1. MemorySSA Representation (MSSA)
 
-- [ ] **MSSA-01**: Define `MemoryVersionId` and `MemoryAccess` (`MemoryDef`, `MemoryUse`, `MemoryPhi`) in `src/mir/memory_ssa.rs`.
-- [ ] **MSSA-02**: Build the MemorySSA graph across basic blocks, connecting statement memory effects to reaching versions.
-- [ ] **MSSA-03**: Place `MemoryPhi` nodes at CFG join blocks that merge multiple reaching memory versions.
+- [x] **MSSA-01**: Define `MemoryVersionId` and `MemoryAccess` (`MemoryDef`, `MemoryUse`, `MemoryPhi`) in `src/mir/memory_ssa.rs`.
+- [x] **MSSA-02**: Build the MemorySSA graph across basic blocks, connecting statement memory effects to reaching versions.
+- [x] **MSSA-03**: Place `MemoryPhi` nodes at CFG join blocks that merge multiple reaching memory versions.
 
 ### 2. Points-To & Field-Sensitive Alias Analysis (ALIAS)
 
@@ -44,9 +44,9 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |---|---|---|
-| MSSA-01 | Phase 2.1 | Pending |
-| MSSA-02 | Phase 2.1 | Pending |
-| MSSA-03 | Phase 2.1 | Pending |
+| MSSA-01 | Phase 2.1 | Complete |
+| MSSA-02 | Phase 2.1 | Complete |
+| MSSA-03 | Phase 2.1 | Complete |
 | ALIAS-01 | Phase 2.2 | Pending |
 | ALIAS-02 | Phase 2.2 | Pending |
 | ALIAS-03 | Phase 2.2 | Pending |

@@ -79,6 +79,7 @@ pub struct BasicBlock {
     pub terminator: Terminator,
 }
 
+pub mod alias;
 pub mod dominance;
 pub mod lower;
 pub mod memory_ssa;
