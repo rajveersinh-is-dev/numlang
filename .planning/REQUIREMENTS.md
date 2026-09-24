@@ -22,16 +22,16 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 
 ### 3. Mem2Reg SSA Promotion Engine (M2R)
 
-- [ ] **M2R-01**: Identify promote-candidate non-aliased local variables and struct fields.
-- [ ] **M2R-02**: Compute iterated dominance frontiers (IDF) using `src/mir/dominance.rs` for optimal $\phi$-placement.
-- [ ] **M2R-03**: Execute dominator-tree variable renaming, replacing loads with SSA registers and eliminating stores.
-- [ ] **M2R-04**: Implement Redundant Load Elimination (RLE) and Dead Store Elimination (DSE) over memory places.
+- [x] **M2R-01**: Identify promote-candidate non-aliased local variables and struct fields.
+- [x] **M2R-02**: Compute iterated dominance frontiers (IDF) using `src/mir/dominance.rs` for optimal $\phi$-placement.
+- [x] **M2R-03**: Execute dominator-tree variable renaming, replacing loads with SSA registers and eliminating stores.
+- [x] **M2R-04**: Implement Redundant Load Elimination (RLE) and Dead Store Elimination (DSE) over memory places.
 
 ### 4. CLI & Comprehensive Testing (TEST)
 
-- [ ] **TEST-01**: Add `--emit-memory-ssa` flag to `src/main.rs` to visualize MemorySSA tokens.
-- [ ] **TEST-02**: Create `tests/memory_ssa_tests.rs` covering basic promotion, loop $\phi$-handling, field alias queries, and DSE/RLE.
-- [ ] **TEST-03**: Verify zero Clippy warnings (`-- -D warnings`) and 100% green pass rate across all 37+ test suites.
+- [x] **TEST-01**: Add `--emit-memory-ssa` flag to `src/main.rs` to visualize MemorySSA tokens.
+- [x] **TEST-02**: Create `tests/memory_ssa_tests.rs` covering basic promotion, loop $\phi$-handling, field alias queries, and DSE/RLE.
+- [x] **TEST-03**: Verify zero Clippy warnings (`-- -D warnings`) and 100% green pass rate across all 38 test suites.
 
 ## Out of Scope
 
@@ -51,10 +51,10 @@ Requirements for this milestone cycle. Each maps to roadmap phases.
 | ALIAS-02 | Phase 2.2 | Complete |
 | ALIAS-03 | Phase 2.2 | Complete |
 | ALIAS-04 | Phase 2.2 | Complete |
-| M2R-01 | Phase 2.3 | Pending |
-| M2R-02 | Phase 2.3 | Pending |
-| M2R-03 | Phase 2.3 | Pending |
-| M2R-04 | Phase 2.3 | Pending |
-| TEST-01 | Phase 2.4 | Pending |
-| TEST-02 | Phase 2.4 | Pending |
-| TEST-03 | Phase 2.4 | Pending |
+| M2R-01 | Phase 2.3 | Complete |
+| M2R-02 | Phase 2.3 | Complete |
+| M2R-03 | Phase 2.3 | Complete |
+| M2R-04 | Phase 2.3 | Complete |
+| TEST-01 | Phase 2.4 | Complete |
+| TEST-02 | Phase 2.4 | Complete |
+| TEST-03 | Phase 2.4 | Complete |
