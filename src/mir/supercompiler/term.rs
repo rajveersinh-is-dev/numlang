@@ -195,6 +195,18 @@ impl TermInterner {
             BinaryOp::Ne if left == right => {
                 return self.intern_bool(false);
             }
+            BinaryOp::Lt if left == right => {
+                return self.intern_bool(false);
+            }
+            BinaryOp::Gt if left == right => {
+                return self.intern_bool(false);
+            }
+            BinaryOp::Le if left == right => {
+                return self.intern_bool(true);
+            }
+            BinaryOp::Ge if left == right => {
+                return self.intern_bool(true);
+            }
             _ => {}
         }
 
@@ -258,6 +270,47 @@ impl TermInterner {
         ty: Type,
     ) -> SymTermId {
         self.intern(SymTerm::Call(callee, args, ty))
+    }
+
+    pub fn import_from(&mut self, other: &TermInterner, id: SymTermId) -> SymTermId {
+        let term = other.get(id).clone();
+        match term {
+            SymTerm::ConstInt(val, ty) => self.intern(SymTerm::ConstInt(val, ty)),
+            SymTerm::ConstFloat(bits, ty) => self.intern(SymTerm::ConstFloat(bits, ty)),
+            SymTerm::ConstBool(b) => self.intern(SymTerm::ConstBool(b)),
+            SymTerm::ConstStr(s) => self.intern(SymTerm::ConstStr(s)),
+            SymTerm::Var(p, ty) => self.intern(SymTerm::Var(p, ty)),
+            SymTerm::Binary(op, l, r, ty) => {
+                let l_new = self.import_from(other, l);
+                let r_new = self.import_from(other, r);
+                self.intern_binary(op, l_new, r_new, ty)
+            }
+            SymTerm::Unary(op, inner, ty) => {
+                let inner_new = self.import_from(other, inner);
+                self.intern_unary(op, inner_new, ty)
+            }
+            SymTerm::Constructor(name, fields, ty) => {
+                let fields_new = fields.iter().map(|&f| self.import_from(other, f)).collect();
+                self.intern_constructor(name, fields_new, ty)
+            }
+            SymTerm::Select(c, t, e, ty) => {
+                let c_new = self.import_from(other, c);
+                let t_new = self.import_from(other, t);
+                let e_new = self.import_from(other, e);
+                self.intern_select(c_new, t_new, e_new, ty)
+            }
+            SymTerm::Phi(incoming, ty) => {
+                let incoming_new = incoming
+                    .iter()
+                    .map(|(b, t)| (b.clone(), self.import_from(other, *t)))
+                    .collect();
+                self.intern_phi(incoming_new, ty)
+            }
+            SymTerm::Call(callee, args, ty) => {
+                let args_new = args.iter().map(|&a| self.import_from(other, a)).collect();
+                self.intern_call(callee, args_new, ty)
+            }
+        }
     }
 
     fn intern(&mut self, term: SymTerm) -> SymTermId {
