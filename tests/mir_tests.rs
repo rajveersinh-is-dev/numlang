@@ -121,3 +121,100 @@ fn test_mir_ssa_correctness() {
     let temp_count = f.locals.iter().filter(|l| l.name.starts_with("_t")).count();
     assert!(temp_count > 0, "Expected temp variables to be generated for complex expressions");
 }
+
+#[test]
+fn test_memory_ssa_linear_versioning() {
+    use numlang::mir::memory_ssa::{MemorySSA, MemoryVersionId};
+
+    let source = "
+    fn main() -> i32 {
+        let a: i32 = 10;
+        let b: i32 = 20;
+        let c: i32 = a + b;
+        return c;
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+    let mssa = MemorySSA::build(f);
+
+    // Entry block should start with v0
+    let entry_id = f.blocks[0].id.clone();
+    assert_eq!(
+        mssa.block_entry_versions.get(&entry_id),
+        Some(&MemoryVersionId::LIVE_ON_ENTRY)
+    );
+
+    // Statements should have defs with monotonically increasing versions
+    let mut prev_ver = MemoryVersionId::LIVE_ON_ENTRY;
+    for idx in 0..f.blocks[0].statements.len() {
+        if let Some(def) = mssa.get_stmt_def(&entry_id, idx) {
+            assert_eq!(def.incoming, prev_ver);
+            assert!(def.id.0 > prev_ver.0);
+            prev_ver = def.id;
+        }
+    }
+
+    let displayed = mssa.display(f);
+    assert!(displayed.contains("MemoryDef"));
+    assert!(displayed.contains("MemoryUse"));
+}
+
+#[test]
+fn test_memory_ssa_branch_phi() {
+    use numlang::mir::memory_ssa::MemorySSA;
+
+    let source = "
+    fn main() -> i32 {
+        let mut x: i32 = 0;
+        let cond: bool = true;
+        if cond {
+            x = 10;
+        } else {
+            x = 20;
+        }
+        return x;
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+    let mssa = MemorySSA::build(f);
+
+    // There should be a join block after the if-else with a MemoryPhi
+    assert!(
+        !mssa.block_phis.is_empty(),
+        "Expected at least one MemoryPhi at join block"
+    );
+
+    let phi = mssa.block_phis.values().next().unwrap();
+    assert!(
+        phi.incoming.len() >= 2,
+        "Phi must have at least 2 incoming edges, got {}",
+        phi.incoming.len()
+    );
+}
+
+#[test]
+fn test_memory_ssa_while_loop_phi() {
+    use numlang::mir::memory_ssa::MemorySSA;
+
+    let source = "
+    fn main() -> i32 {
+        let mut x: i32 = 0;
+        while x < 10 {
+            x = x + 1;
+        }
+        return x;
+    }";
+    let mir = get_mir(source);
+    let f = &mir.functions[0];
+    let mssa = MemorySSA::build(f);
+
+    // While loop header block must have a MemoryPhi merging pre-header entry and loop body back-edge
+    assert!(
+        !mssa.block_phis.is_empty(),
+        "Expected MemoryPhi at loop header"
+    );
+
+    let displayed = mssa.display(f);
+    assert!(displayed.contains("MemoryPhi"));
+}
+
