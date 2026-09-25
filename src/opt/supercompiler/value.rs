@@ -20,6 +20,11 @@ pub enum Value {
         fields: Vec<Value>,
         ty: Type,
     },
+    Closure {
+        params: Vec<String>,
+        body: crate::typecheck::typed_ast::TypedExpr,
+        captured: std::collections::HashMap<String, Value>,
+    },
     Symbolic(SymExpr),
     Void,
 }
@@ -73,6 +78,7 @@ impl Value {
             Value::Int(_) | Value::Float(_) | Value::Bool(_) => true,
             Value::Array(elems, _) => elems.iter().all(|e| e.is_concrete()),
             Value::Constructor { fields, .. } => fields.iter().all(|f| f.is_concrete()),
+            Value::Closure { captured, .. } => captured.values().all(|v| v.is_concrete()),
             _ => false,
         }
     }
@@ -105,6 +111,7 @@ impl Value {
             Value::Symbolic(s) => s.contains_opaque(),
             Value::Array(elems, _) => elems.iter().any(|e| e.is_symbolic_opaque()),
             Value::Constructor { fields, .. } => fields.iter().any(|f| f.is_symbolic_opaque()),
+            Value::Closure { captured, .. } => captured.values().any(|v| v.is_symbolic_opaque()),
             _ => false,
         }
     }
@@ -475,6 +482,7 @@ pub fn value_to_typed_expr(v: &Value) -> TypedExpr {
             ty: ty.clone(),
             span: DUMMY_SPAN,
         },
+        Value::Closure { body, .. } => body.clone(),
     }
 }
 

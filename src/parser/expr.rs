@@ -306,6 +306,56 @@ impl<'a> Parser<'a> {
                     span,
                 })
             }
+            Token::Pipe => {
+                let start = token_spanned.span;
+                self.advance(); // consume first |
+                let mut params = Vec::new();
+                let mut param_tys = Vec::new();
+                while !self.check(&Token::Pipe) && !self.is_at_end() {
+                    let name = self.expect_ident("lambda parameter")?;
+                    let ty = if self.match_token(&Token::Colon) {
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
+                    params.push(name);
+                    param_tys.push(ty);
+                    if !self.match_token(&Token::Comma) {
+                        break;
+                    }
+                }
+                self.consume(&Token::Pipe, "closing '|' in lambda")?;
+                let body = self.parse_expr(0)?;
+                let span = start.merge(&body.span());
+                Ok(Expr::Lambda {
+                    params,
+                    param_tys,
+                    body: Box::new(body),
+                    span,
+                })
+            }
+            Token::Box_ => {
+                self.advance();
+                self.consume(&Token::LParen, "'(' after box")?;
+                let inner = self.parse_expr(0)?;
+                let end_span = self.consume(&Token::RParen, "')' after box argument")?;
+                let span = token_spanned.span.merge(&end_span);
+                Ok(Expr::Box {
+                    inner: Box::new(inner),
+                    span,
+                })
+            }
+            Token::Deref_ => {
+                self.advance();
+                self.consume(&Token::LParen, "'(' after deref")?;
+                let inner = self.parse_expr(0)?;
+                let end_span = self.consume(&Token::RParen, "')' after deref argument")?;
+                let span = token_spanned.span.merge(&end_span);
+                Ok(Expr::Deref {
+                    inner: Box::new(inner),
+                    span,
+                })
+            }
             other => Err(ParseError::InvalidPrefix {
                 found: other,
                 span: token_spanned.span,

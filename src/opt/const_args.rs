@@ -216,6 +216,18 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(arg, function_names, calls);
             }
         }
+        TypedExpr::Lambda { body, .. } => {
+            collect_calls_in_expr(body, function_names, calls);
+        }
+        TypedExpr::CallIndirect { callee, args, .. } => {
+            collect_calls_in_expr(callee, function_names, calls);
+            for arg in args {
+                collect_calls_in_expr(arg, function_names, calls);
+            }
+        }
+        TypedExpr::Box { inner, .. } | TypedExpr::Deref { inner, .. } => {
+            collect_calls_in_expr(inner, function_names, calls);
+        }
         TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => {}
     }
 }
@@ -348,6 +360,18 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
             for arg in args {
                 replace_in_expr(arg, replacements);
             }
+        }
+        TypedExpr::Lambda { body, .. } => {
+            replace_in_expr(body, replacements);
+        }
+        TypedExpr::CallIndirect { callee, args, .. } => {
+            replace_in_expr(callee, replacements);
+            for arg in args {
+                replace_in_expr(arg, replacements);
+            }
+        }
+        TypedExpr::Box { inner, .. } | TypedExpr::Deref { inner, .. } => {
+            replace_in_expr(inner, replacements);
         }
         TypedExpr::Literal { .. } => {}
     }

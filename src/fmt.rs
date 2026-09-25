@@ -213,6 +213,23 @@ pub fn format_expr_at(expr: &Expr, depth: usize) -> String {
             s.push_str(&format!("{close_indent}}}"));
             s
         }
+        Expr::Lambda { params, param_tys, body, .. } => {
+            let mut p_strs = Vec::new();
+            for (i, p) in params.iter().enumerate() {
+                if let Some(Some(ref ty)) = param_tys.get(i) {
+                    p_strs.push(format!("{p}: {ty}"));
+                } else {
+                    p_strs.push(p.clone());
+                }
+            }
+            format!("|{}| {}", p_strs.join(", "), format_expr_at(body, depth))
+        }
+        Expr::Box { inner, .. } => {
+            format!("box({})", format_expr_at(inner, depth))
+        }
+        Expr::Deref { inner, .. } => {
+            format!("deref({})", format_expr_at(inner, depth))
+        }
     }
 }
 

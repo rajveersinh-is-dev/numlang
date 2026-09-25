@@ -485,6 +485,13 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
                 reads.push(p.clone());
             }
         }
+        Rvalue::FnPtr(_) => {}
+        Rvalue::ClosureAlloc { captured, .. } => {
+            reads.extend(captured.iter().cloned());
+        }
+        Rvalue::Alloc(p) | Rvalue::Load(p) => {
+            reads.push(p.clone());
+        }
     }
 
     reads
@@ -496,6 +503,11 @@ fn collect_terminator_reads(term: &Terminator) -> Vec<Place> {
         Terminator::BranchIf { condition, .. } => vec![condition.clone()],
         Terminator::Switch { value, .. } => vec![value.clone()],
         Terminator::Return { value } => value.iter().cloned().collect(),
+        Terminator::IndirectCall { callee, args, .. } => {
+            let mut r = vec![callee.clone()];
+            r.extend(args.iter().cloned());
+            r
+        }
     }
 }
 
@@ -568,5 +580,12 @@ fn format_rvalue(rv: &Rvalue) -> String {
                 .collect();
             format!("phi({})", inc_str.join(", "))
         }
+        Rvalue::FnPtr(name) => format!("fn_ptr({})", name),
+        Rvalue::ClosureAlloc { fn_name, captured } => {
+            let cap_str: Vec<String> = captured.iter().map(format_place).collect();
+            format!("closure_alloc({}, [{}])", fn_name, cap_str.join(", "))
+        }
+        Rvalue::Alloc(p) => format!("alloc({})", format_place(p)),
+        Rvalue::Load(p) => format!("load({})", format_place(p)),
     }
 }

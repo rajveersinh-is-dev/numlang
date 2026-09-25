@@ -105,6 +105,13 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
                 places.push(p.clone());
             }
         }
+        Rvalue::FnPtr(_) => {}
+        Rvalue::ClosureAlloc { captured, .. } => {
+            places.extend(captured.iter().cloned());
+        }
+        Rvalue::Alloc(p) | Rvalue::Load(p) => {
+            places.push(p.clone());
+        }
     }
     places
 }
@@ -417,6 +424,19 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
             }
         }
         Rvalue::Constant(_) => {}
+        Rvalue::FnPtr(_) => {}
+        Rvalue::ClosureAlloc { captured, .. } => {
+            for p in captured {
+                if let Some(r) = replacements.get(p) {
+                    *p = r.clone();
+                }
+            }
+        }
+        Rvalue::Alloc(p) | Rvalue::Load(p) => {
+            if let Some(r) = replacements.get(p) {
+                *p = r.clone();
+            }
+        }
     }
 }
 

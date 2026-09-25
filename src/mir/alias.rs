@@ -202,6 +202,13 @@ fn collect_reads_for_alias(rv: &Rvalue, dest: &Place) -> Vec<Place> {
                 reads.push(p.clone());
             }
         }
+        Rvalue::FnPtr(_) => {}
+        Rvalue::ClosureAlloc { captured, .. } => {
+            reads.extend(captured.iter().cloned());
+        }
+        Rvalue::Alloc(p) | Rvalue::Load(p) => {
+            reads.push(p.clone());
+        }
     }
 
     reads

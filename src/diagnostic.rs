@@ -288,6 +288,11 @@ impl CompilerDiagnostic {
                 format!("expected {} arguments, found {}", expected, found),
                 "Provide the correct number of payload arguments for this variant".to_string(),
             ),
+            crate::typecheck::TypeError::NotCallable { ty, .. } => (
+                format!("Type `{}` is not callable", ty),
+                "not callable".to_string(),
+                "Only functions and closures can be called".to_string(),
+            ),
         };
 
         let help = format!("{} (see 'numlang --explain {}')", base_help, code);

@@ -34,7 +34,8 @@ fn type_to_clif(ty: Type) -> types::Type {
         Type::Void => types::I32,
         Type::Str => types::I64,
         Type::Array(_, _) => types::I64, // Pointer to array
-        Type::Struct(_) | Type::Enum(_) | Type::Ptr(_) => types::I64,   // Pointer to struct, enum, or heap ptr
+        Type::Struct(_) | Type::Enum(_) | Type::Ptr(_) | Type::Fn(..) | Type::Closure(..) | Type::Box(_) => types::I64,
+        Type::Param(_) => types::I64,
     }
 }
 
@@ -102,7 +103,9 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
                 (8, 8)
             }
         }
-        Type::Enum(_) | Type::Ptr(_) => (8, 8),
+        Type::Enum(_) | Type::Ptr(_) | Type::Fn(..) | Type::Box(_) => (8, 8),
+        Type::Closure(..) => (16, 8),
+        Type::Param(_) => (0, 1),
     }
 }
 
@@ -427,6 +430,18 @@ fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<String
             for a in args {
                 collect_dynamic_arrays_in_expr(a, dynamic);
             }
+        }
+        TypedExpr::Lambda { body, .. } => {
+            collect_dynamic_arrays_in_expr(body, dynamic);
+        }
+        TypedExpr::CallIndirect { callee, args, .. } => {
+            collect_dynamic_arrays_in_expr(callee, dynamic);
+            for a in args {
+                collect_dynamic_arrays_in_expr(a, dynamic);
+            }
+        }
+        TypedExpr::Box { inner, .. } | TypedExpr::Deref { inner, .. } => {
+            collect_dynamic_arrays_in_expr(inner, dynamic);
         }
         TypedExpr::Ident { .. } | TypedExpr::Literal { .. } => {}
     }
@@ -7580,6 +7595,76 @@ impl<'a> FunctionTranslationState<'a> {
 
                 Ok(slot_addr)
             }
+
+            TypedExpr::Lambda { .. } => {
+                // If unlifted/unspecialized lambda reaches codegen, allocate a 16-byte slot
+                // (fn_ptr + env_ptr)
+                let slot_data = StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    16,
+                    8,
+                );
+                let slot = builder.create_sized_stack_slot(slot_data);
+                let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                let zero = self.get_iconst(types::I64, 0, builder);
+                builder.ins().store(MemFlagsData::trusted(), zero, slot_addr, 0);
+                builder.ins().store(MemFlagsData::trusted(), zero, slot_addr, 8);
+                Ok(slot_addr)
+            }
+
+            TypedExpr::CallIndirect { callee, args, ty, .. } => {
+                let callee_val = self.translate_expr(callee, builder)?;
+                let mut sig = self.module.make_signature();
+                if *ty != Type::Void {
+                    sig.returns.push(AbiParam::new(type_to_clif(ty.clone())));
+                }
+                let mut arg_vals = Vec::new();
+                for a in args {
+                    sig.params.push(AbiParam::new(type_to_clif(a.ty())));
+                    arg_vals.push(self.translate_expr(a, builder)?);
+                }
+                let sig_ref = builder.import_signature(sig);
+                let call_inst = builder.ins().call_indirect(sig_ref, callee_val, &arg_vals);
+                let results = builder.inst_results(call_inst);
+                if results.is_empty() {
+                    Ok(self.get_iconst(types::I64, 0, builder))
+                } else {
+                    Ok(results[0])
+                }
+            }
+
+            TypedExpr::Box { inner, ty, .. } => {
+                let inner_val = self.translate_expr(inner, builder)?;
+                let inner_ty = match ty {
+                    Type::Box(t) => (**t).clone(),
+                    _ => inner.ty(),
+                };
+                let size = inner_ty.size_bytes().max(8) as u32;
+                let slot_data = StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    size,
+                    8,
+                );
+                let slot = builder.create_sized_stack_slot(slot_data);
+                let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                if let Type::Struct(sname) = &inner_ty {
+                    let sub_layout = self.struct_layouts.get(sname).unwrap();
+                    Self::emit_copy_bytes(builder, inner_val, slot_addr, sub_layout.total_size as usize);
+                } else {
+                    builder.ins().store(MemFlagsData::trusted(), inner_val, slot_addr, 0);
+                }
+                Ok(slot_addr)
+            }
+
+            TypedExpr::Deref { inner, ty, .. } => {
+                let ptr_val = self.translate_expr(inner, builder)?;
+                if ty.is_struct() {
+                    Ok(ptr_val)
+                } else {
+                    let clif_ty = type_to_clif(ty.clone());
+                    Ok(builder.ins().load(clif_ty, MemFlagsData::trusted(), ptr_val, 0))
+                }
+            }
         }
     }
 
@@ -8576,6 +8661,10 @@ impl CraneliftCompiler {
                 crate::mir::Terminator::Unreachable => {
                     builder.ins().trap(TrapCode::user(1).unwrap());
                 }
+                crate::mir::Terminator::IndirectCall { next, .. } => {
+                    let next_block = *block_map.get(next).unwrap();
+                    builder.ins().jump(next_block, &[]);
+                }
             }
         }
 
@@ -8674,7 +8763,9 @@ pub fn compile_mir_to_obj(mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>
 }
 
 pub fn compile_supercompiled_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
-    let mut mir_program = crate::mir::lower::lower_program(program);
+    let mut typed = program.clone();
+    crate::opt::supercompiler::supercompile_program(&mut typed, None);
+    let mut mir_program = crate::mir::lower::lower_program(&typed);
     crate::mir::supercompiler::supercompile_mir_program(&mut mir_program);
     compile_mir_to_obj(&mir_program)
 }

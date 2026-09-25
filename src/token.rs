@@ -39,6 +39,10 @@ pub enum Token {
     Enum,
     #[token("match")]
     Match,
+    #[token("box")]
+    Box_,
+    #[token("deref")]
+    Deref_,
 
     // Mathematical & Logical Operators
     #[token("+")]

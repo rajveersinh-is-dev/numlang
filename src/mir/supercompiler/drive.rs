@@ -394,6 +394,17 @@ impl<'a> SupercompilerDriver<'a> {
                     ancestor_stack.pop();
                 }
             }
+            Terminator::IndirectCall { next, dest, .. } => {
+                let mut next_state = working_state;
+                next_state.block = next.clone();
+                let dest_term = self.interner.intern_var(dest.clone(), Type::I64);
+                next_state.set_value(dest.clone(), dest_term);
+                let next_node = self.alloc_node(next_state);
+                self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
+                ancestor_stack.push(node_id);
+                self.drive_node(next_node, ancestor_stack, depth + 1);
+                ancestor_stack.pop();
+            }
             Terminator::Unreachable => {}
         }
     }

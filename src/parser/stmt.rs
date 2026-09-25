@@ -185,6 +185,20 @@ impl<'a> Parser<'a> {
             }
         };
 
+        let type_params = if self.match_token(&Token::Lt) {
+            let mut tps = Vec::new();
+            while !self.check(&Token::Gt) && !self.is_at_end() {
+                tps.push(self.expect_ident("type parameter")?);
+                if !self.match_token(&Token::Comma) {
+                    break;
+                }
+            }
+            self.consume(&Token::Gt, "'>' after type parameters")?;
+            tps
+        } else {
+            Vec::new()
+        };
+
         self.consume(&Token::LParen, "'(' after function name")?;
         let mut params = Vec::new();
         if !self.check(&Token::RParen) {
@@ -217,6 +231,7 @@ impl<'a> Parser<'a> {
 
         Ok(Function {
             name,
+            type_params,
             params,
             return_ty,
             body,
@@ -506,9 +521,40 @@ impl<'a> Parser<'a> {
     pub fn parse_type(&mut self) -> Result<String, ParseError> {
         match self.peek_token().cloned() {
             Some(t) => match t.token {
+                Token::Fn => {
+                    self.advance();
+                    self.consume(&Token::LParen, "'(' in fn type")?;
+                    let mut arg_tys = Vec::new();
+                    if !self.check(&Token::RParen) {
+                        loop {
+                            arg_tys.push(self.parse_type()?);
+                            if self.match_token(&Token::Comma) {
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(&Token::RParen, "')' in fn type")?;
+                    self.consume(&Token::Arrow, "'->' in fn type")?;
+                    let ret_ty = self.parse_type()?;
+                    Ok(format!("fn({}) -> {}", arg_tys.join(", "), ret_ty))
+                }
                 Token::Ident(id) => {
                     self.advance();
-                    Ok(id)
+                    if self.match_token(&Token::Lt) {
+                        let mut type_args = Vec::new();
+                        while !self.check(&Token::Gt) && !self.is_at_end() {
+                            type_args.push(self.parse_type()?);
+                            if !self.match_token(&Token::Comma) {
+                                break;
+                            }
+                        }
+                        self.consume(&Token::Gt, "'>' after generic type arguments")?;
+                        Ok(format!("{}<{}>", id, type_args.join(", ")))
+                    } else {
+                        Ok(id)
+                    }
                 }
                 Token::LBracket => {
                     self.advance();
@@ -540,12 +586,12 @@ impl<'a> Parser<'a> {
                 }
                 _ => Err(ParseError::UnexpectedToken {
                     found: t.token,
-                    expected: "type identifier or array type".to_string(),
+                    expected: "type identifier, fn type, or array type".to_string(),
                     span: t.span,
                 }),
             },
             None => Err(ParseError::UnexpectedEof {
-                expected: "type identifier or array type".to_string(),
+                expected: "type identifier, fn type, or array type".to_string(),
                 span: self.previous_span(),
             }),
         }

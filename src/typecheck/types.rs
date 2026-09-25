@@ -1,6 +1,13 @@
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureType {
+    pub params: Vec<Type>,
+    pub ret: Box<Type>,
+    pub captured: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     I8,
     I16,
@@ -20,6 +27,14 @@ pub enum Type {
     Struct(String),
     Enum(String),
     Ptr(Box<Type>),
+    /// Function type: fn(arg_types...) -> return_type
+    Fn(Vec<Type>, Box<Type>),
+    /// Closure type: fn(arg_types...) -> return_type + captured environment
+    Closure(Box<ClosureType>),
+    /// Type parameter, used in generic function signatures
+    Param(String),
+    /// Owned heap allocation: Box<T>
+    Box(Box<Type>),
 }
 
 impl Type {
@@ -82,6 +97,22 @@ impl Type {
         matches!(self, Type::Array(_, _))
     }
 
+    pub fn is_compatible_with(&self, other: &Type) -> bool {
+        if self == other {
+            return true;
+        }
+        match (self, other) {
+            (Type::Closure(c1), Type::Fn(args2, ret2))
+            | (Type::Fn(args2, ret2), Type::Closure(c1)) => {
+                &c1.params == args2 && &c1.ret == ret2
+            }
+            (Type::Closure(c1), Type::Closure(c2)) => {
+                c1.params == c2.params && c1.ret == c2.ret
+            }
+            _ => false,
+        }
+    }
+
     pub fn size_bytes(&self) -> usize {
         match self {
             Type::I8 | Type::U8 => 1,
@@ -95,6 +126,10 @@ impl Type {
             Type::Struct(_) => 8,
             Type::Enum(_) => 8,
             Type::Ptr(_) => 8,
+            Type::Fn(..) => 8,
+            Type::Closure(..) => 16,
+            Type::Param(_) => 0,
+            Type::Box(_) => 8,
         }
     }
 
@@ -130,7 +165,6 @@ pub fn wrap_int_by_type(val: i64, ty: Option<&Type>) -> i64 {
 }
 
 impl Type {
-
     pub fn from_name(name: &str) -> Option<Type> {
         let s = name.trim();
         if s.starts_with('[') && s.ends_with(']') {
@@ -154,6 +188,59 @@ impl Type {
                 let elem = Type::from_name(elem_str.trim())?;
                 let len = len_str.trim().parse::<usize>().ok()?;
                 return Some(Type::Array(Box::new(elem), len));
+            }
+        }
+
+        // Check for Box<T>
+        if s.starts_with("Box<") && s.ends_with('>') {
+            let inner = &s[4..s.len() - 1].trim();
+            let inner_ty = Type::from_name(inner)?;
+            return Some(Type::Box(Box::new(inner_ty)));
+        }
+
+        // Check for fn(...) -> ...
+        if s.starts_with("fn(") {
+            let mut depth = 0;
+            let mut arrow_idx = None;
+            let bytes = s.as_bytes();
+            for i in 0..bytes.len().saturating_sub(1) {
+                match bytes[i] {
+                    b'(' | b'<' | b'[' => depth += 1,
+                    b')' | b'>' | b']' => depth -= 1,
+                    b'-' if depth == 0 && bytes[i + 1] == b'>' => {
+                        arrow_idx = Some(i);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(arrow) = arrow_idx {
+                let full_params = s[..arrow].trim();
+                let ret_part = s[arrow + 2..].trim();
+                if full_params.starts_with("fn(") && full_params.ends_with(')') {
+                    let inside = full_params[3..full_params.len() - 1].trim();
+                    let mut param_tys = Vec::new();
+                    if !inside.is_empty() {
+                        let mut p_depth = 0;
+                        let mut last = 0;
+                        for (idx, ch) in inside.char_indices() {
+                            match ch {
+                                '(' | '<' | '[' => p_depth += 1,
+                                ')' | '>' | ']' => p_depth -= 1,
+                                ',' if p_depth == 0 => {
+                                    let piece = inside[last..idx].trim();
+                                    param_tys.push(Type::from_name(piece)?);
+                                    last = idx + 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                        let piece = inside[last..].trim();
+                        param_tys.push(Type::from_name(piece)?);
+                    }
+                    let ret_ty = Type::from_name(ret_part)?;
+                    return Some(Type::Fn(param_tys, Box::new(ret_ty)));
+                }
             }
         }
 
@@ -206,6 +293,24 @@ impl fmt::Display for Type {
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Ptr(inner) => write!(f, "*{}", inner),
+            Type::Fn(args, ret) => {
+                write!(f, "fn(")?;
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", a)?;
+                }
+                write!(f, ") -> {}", ret)
+            }
+            Type::Closure(c) => {
+                write!(f, "closure(")?;
+                for (i, a) in c.params.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", a)?;
+                }
+                write!(f, ") -> {}", c.ret)
+            }
+            Type::Param(name) => write!(f, "{}", name),
+            Type::Box(inner) => write!(f, "Box<{}>", inner),
         }
     }
 }

@@ -167,6 +167,12 @@ pub enum TypeError {
         found: usize,
         span: Span,
     },
+
+    #[error("Type '{ty}' is not callable")]
+    NotCallable {
+        ty: Type,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -198,6 +204,7 @@ impl TypeError {
             TypeError::NoSuchVariant { span, .. } => *span,
             TypeError::CannotMatchNonEnum { span, .. } => *span,
             TypeError::PayloadArityMismatch { span, .. } => *span,
+            TypeError::NotCallable { span, .. } => *span,
         }
     }
 
@@ -229,6 +236,7 @@ impl TypeError {
             TypeError::NoSuchVariant { .. }
             | TypeError::CannotMatchNonEnum { .. }
             | TypeError::PayloadArityMismatch { .. } => "E021",
+            TypeError::NotCallable { .. } => "E022",
         }
     }
 }
@@ -651,7 +659,7 @@ impl TypeChecker {
                 let typed_value = self.check_expr(value, declared_ty.clone())?;
                 let final_ty = match declared_ty {
                     Some(dt) => {
-                        if typed_value.ty() != dt {
+                        if !typed_value.ty().is_compatible_with(&dt) {
                             return Err(TypeError::TypeMismatch {
                                 expected: dt,
                                 found: typed_value.ty(),
@@ -715,7 +723,7 @@ impl TypeChecker {
                 }
 
                 let typed_value = self.check_expr(value, Some(sym.ty.clone()))?;
-                if typed_value.ty() != sym.ty {
+                if !typed_value.ty().is_compatible_with(&sym.ty) {
                     return Err(TypeError::TypeMismatch {
                         expected: sym.ty,
                         found: typed_value.ty(),
@@ -877,7 +885,7 @@ impl TypeChecker {
                 Some(expr) => {
                     let typed_expr =
                         self.check_expr(expr, Some(self.current_fn_return_ty.clone()))?;
-                    if typed_expr.ty() != self.current_fn_return_ty {
+                    if !typed_expr.ty().is_compatible_with(&self.current_fn_return_ty) {
                         return Err(TypeError::InvalidReturn {
                             expected: self.current_fn_return_ty.clone(),
                             found: typed_expr.ty(),
@@ -3281,6 +3289,52 @@ impl TypeChecker {
                     _ => {}
                 }
 
+                // Check if callee is a local variable holding a closure or function pointer
+                if let Some(sym) = self.env.lookup_variable(callee).cloned() {
+                    let (param_types, ret_ty): (Vec<Type>, Type) = match &sym.ty {
+                        Type::Fn(param_types, ret_ty) => (param_types.clone(), (**ret_ty).clone()),
+                        Type::Closure(c) => (c.params.clone(), (*c.ret).clone()),
+                        other => {
+                            return Err(TypeError::NotCallable {
+                                ty: other.clone(),
+                                span: *span,
+                            });
+                        }
+                    };
+
+                    if args.len() != param_types.len() {
+                        return Err(TypeError::ArityMismatch {
+                            name: callee.clone(),
+                            expected: param_types.len(),
+                            found: args.len(),
+                            span: *span,
+                        });
+                    }
+                    let mut typed_args = Vec::new();
+                    for (arg, param_ty) in args.iter().zip(&param_types) {
+                        let typed_arg = self.check_expr(arg, Some(param_ty.clone()))?;
+                        if !typed_arg.ty().is_compatible_with(param_ty) {
+                            return Err(TypeError::TypeMismatch {
+                                expected: param_ty.clone(),
+                                found: typed_arg.ty(),
+                                span: typed_arg.span(),
+                            });
+                        }
+                        typed_args.push(typed_arg);
+                    }
+                    let callee_expr = Box::new(TypedExpr::Ident {
+                        name: callee.clone(),
+                        ty: sym.ty.clone(),
+                        span: *span,
+                    });
+                    return Ok(TypedExpr::CallIndirect {
+                        callee: callee_expr,
+                        args: typed_args,
+                        ty: ret_ty,
+                        span: *span,
+                    });
+                }
+
                 let sig = match self.env.lookup_function(callee).cloned() {
                     Some(s) => s,
                     None => {
@@ -3323,7 +3377,7 @@ impl TypeChecker {
                 let mut typed_args = Vec::new();
                 for (arg, param_ty) in args.iter().zip(&sig.param_types) {
                     let typed_arg = self.check_expr(arg, Some(param_ty.clone()))?;
-                    if typed_arg.ty() != *param_ty {
+                    if !typed_arg.ty().is_compatible_with(param_ty) {
                         return Err(TypeError::TypeMismatch {
                             expected: param_ty.clone(),
                             found: typed_arg.ty(),
@@ -3724,7 +3778,182 @@ impl TypeChecker {
                     span: *span,
                 })
             }
+
+            Expr::Lambda {
+                params,
+                param_tys,
+                body,
+                span,
+            } => {
+                // If expected_hint gives us (param_types, ret_hint)
+                let (hint_param_tys, hint_ret_ty): (Option<Vec<Type>>, Option<Type>) = match &expected_hint {
+                    Some(Type::Fn(pts, ret)) => (Some(pts.clone()), Some((**ret).clone())),
+                    Some(Type::Closure(c)) => (Some(c.params.clone()), Some((*c.ret).clone())),
+                    _ => (None, None),
+                };
+
+                let mut resolved_params = Vec::new();
+                for (i, p_name) in params.iter().enumerate() {
+                    let ty = if let Some(Some(ref ty_str)) = param_tys.get(i) {
+                        self.resolve_type(ty_str, *span)?
+                    } else if let Some(ref h_pts) = hint_param_tys {
+                        h_pts.get(i).cloned().unwrap_or(Type::I64)
+                    } else {
+                        Type::I64
+                    };
+                    resolved_params.push((p_name.clone(), ty));
+                }
+
+                // Determine captured variables from outer scope
+                let mut captured_names = std::collections::HashSet::new();
+                let mut free_vars = Vec::new();
+                collect_free_variables(body, &mut free_vars);
+                let param_set: std::collections::HashSet<_> = params.iter().cloned().collect();
+                let mut captured = Vec::new();
+                for fv in free_vars {
+                    if !param_set.contains(&fv) && captured_names.insert(fv.clone()) {
+                        if let Some(sym) = self.env.lookup_variable(&fv) {
+                            captured.push((fv, sym.ty.clone()));
+                        }
+                    }
+                }
+
+                self.env.enter_scope();
+                for (p_name, p_ty) in &resolved_params {
+                    let sym = Symbol {
+                        name: p_name.clone(),
+                        ty: p_ty.clone(),
+                        is_mutable: false,
+                        span: *span,
+                    };
+                    if self.env.define_variable(sym).is_err() {
+                        self.env.exit_scope();
+                        return Err(TypeError::DuplicateDeclaration {
+                            name: p_name.clone(),
+                            span: *span,
+                        });
+                    }
+                }
+
+                let typed_body = self.check_expr(body, hint_ret_ty)?;
+                self.env.exit_scope();
+
+                let body_ty = typed_body.ty();
+                let p_types: Vec<Type> = resolved_params.iter().map(|(_, t)| t.clone()).collect();
+                let closure_ty = Type::Closure(Box::new(crate::typecheck::types::ClosureType {
+                    params: p_types,
+                    ret: Box::new(body_ty),
+                    captured: captured.clone(),
+                }));
+
+                Ok(TypedExpr::Lambda {
+                    params: resolved_params,
+                    body: Box::new(typed_body),
+                    captured,
+                    ty: closure_ty,
+                    span: *span,
+                })
+            }
+
+            Expr::Box { inner, span } => {
+                let inner_hint = match &expected_hint {
+                    Some(Type::Box(inner_t)) => Some((**inner_t).clone()),
+                    _ => None,
+                };
+                let typed_inner = self.check_expr(inner, inner_hint)?;
+                let inner_ty = typed_inner.ty();
+                Ok(TypedExpr::Box {
+                    inner: Box::new(typed_inner),
+                    ty: Type::Box(Box::new(inner_ty)),
+                    span: *span,
+                })
+            }
+
+            Expr::Deref { inner, span } => {
+                let inner_hint = expected_hint.map(|h| Type::Box(Box::new(h)));
+                let typed_inner = self.check_expr(inner, inner_hint)?;
+                let elem_ty = match typed_inner.ty() {
+                    Type::Box(t) => *t,
+                    other => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: Type::Box(Box::new(Type::I64)),
+                            found: other,
+                            span: *span,
+                        });
+                    }
+                };
+                Ok(TypedExpr::Deref {
+                    inner: Box::new(typed_inner),
+                    ty: elem_ty,
+                    span: *span,
+                })
+            }
         }
+    }
+}
+
+fn collect_free_variables(expr: &Expr, free: &mut Vec<String>) {
+    match expr {
+        Expr::Ident(name, _) => {
+            free.push(name.clone());
+        }
+        Expr::Unary { expr, .. } => {
+            collect_free_variables(expr, free);
+        }
+        Expr::Binary { left, right, .. } => {
+            collect_free_variables(left, free);
+            collect_free_variables(right, free);
+        }
+        Expr::Call { args, .. } => {
+            for arg in args {
+                collect_free_variables(arg, free);
+            }
+        }
+        Expr::ArrayLiteral { elements, .. } => {
+            for el in elements {
+                collect_free_variables(el, free);
+            }
+        }
+        Expr::Index { target, index, .. } => {
+            collect_free_variables(target, free);
+            collect_free_variables(index, free);
+        }
+        Expr::StructLiteral { fields, .. } => {
+            for (_, expr) in fields {
+                collect_free_variables(expr, free);
+            }
+        }
+        Expr::FieldAccess { target, .. } => {
+            collect_free_variables(target, free);
+        }
+        Expr::Match { scrutinee, arms, .. } => {
+            collect_free_variables(scrutinee, free);
+            for arm in arms {
+                collect_free_variables(&arm.body, free);
+            }
+        }
+        Expr::EnumConstructor { args, .. } => {
+            for arg in args {
+                collect_free_variables(arg, free);
+            }
+        }
+        Expr::Lambda { params, body, .. } => {
+            let mut inner_free = Vec::new();
+            collect_free_variables(body, &mut inner_free);
+            let param_set: std::collections::HashSet<_> = params.iter().collect();
+            for f in inner_free {
+                if !param_set.contains(&f) {
+                    free.push(f);
+                }
+            }
+        }
+        Expr::Box { inner, .. } | Expr::Deref { inner, .. } => {
+            collect_free_variables(inner, free);
+        }
+        Expr::Group(inner, _) => {
+            collect_free_variables(inner, free);
+        }
+        Expr::Literal(..) => {}
     }
 }
 

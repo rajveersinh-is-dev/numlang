@@ -109,6 +109,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn expect_ident(&mut self, desc: &str) -> Result<String, ParseError> {
+        match self.peek_token().cloned() {
+            Some(tok) => match tok.token {
+                Token::Ident(name) => {
+                    self.advance();
+                    Ok(name)
+                }
+                other => Err(ParseError::UnexpectedToken {
+                    found: other,
+                    expected: desc.to_string(),
+                    span: tok.span,
+                }),
+            },
+            None => Err(ParseError::UnexpectedEof {
+                expected: desc.to_string(),
+                span: self.previous_span(),
+            }),
+        }
+    }
+
     pub fn synchronize(&mut self) {
         let start_cursor = self.cursor;
         while !self.is_at_end() {
