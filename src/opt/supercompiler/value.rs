@@ -46,6 +46,25 @@ impl SymExpr {
             SymExpr::Index(_, _, t) => t.clone(),
         }
     }
+
+    pub fn contains_opaque(&self) -> bool {
+        match self {
+            SymExpr::Var(name, _) => {
+                if name.starts_with("__lit_") || name.starts_with("__litf_") || name.starts_with("__litb_") {
+                    false
+                } else {
+                    name.starts_with('_')
+                }
+            }
+            SymExpr::BinOp(_, l, r, _) => l.contains_opaque() || r.contains_opaque(),
+            SymExpr::UnOp(_, inner, _) => inner.contains_opaque(),
+            SymExpr::Call(_, args, _) => args.iter().any(|a| a.contains_opaque()),
+            SymExpr::If(c, th, el, _) => {
+                c.contains_opaque() || th.contains_opaque() || el.contains_opaque()
+            }
+            SymExpr::Index(arr, idx, _) => arr.contains_opaque() || idx.contains_opaque(),
+        }
+    }
 }
 
 impl Value {
@@ -78,6 +97,15 @@ impl Value {
             Value::Bool(b) => Some(*b),
             Value::Int(i) => Some(*i != 0),
             _ => None,
+        }
+    }
+
+    pub fn is_symbolic_opaque(&self) -> bool {
+        match self {
+            Value::Symbolic(s) => s.contains_opaque(),
+            Value::Array(elems, _) => elems.iter().any(|e| e.is_symbolic_opaque()),
+            Value::Constructor { fields, .. } => fields.iter().any(|f| f.is_symbolic_opaque()),
+            _ => false,
         }
     }
 }
@@ -319,3 +347,134 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         _ => false,
     }
 }
+
+use crate::typecheck::typed_ast::{TypedExpr, TypedLiteral};
+use crate::span::Span;
+
+pub const DUMMY_SPAN: Span = Span { start: 0, end: 0 };
+
+/// Convert a SymExpr into a TypedExpr for residualization.
+pub fn sym_to_expr(s: &SymExpr) -> TypedExpr {
+    match s {
+        SymExpr::Var(name, ty) => {
+            if let Some(rest) = name.strip_prefix("__lit_") {
+                if let Ok(val) = rest.parse::<i64>() {
+                    return TypedExpr::Literal {
+                        lit: TypedLiteral::Int(val, ty.clone()),
+                        ty: ty.clone(),
+                        span: DUMMY_SPAN,
+                    };
+                }
+            } else if let Some(rest) = name.strip_prefix("__litf_") {
+                if let Ok(bits) = rest.parse::<u64>() {
+                    return TypedExpr::Literal {
+                        lit: TypedLiteral::Float(f64::from_bits(bits), ty.clone()),
+                        ty: ty.clone(),
+                        span: DUMMY_SPAN,
+                    };
+                }
+            } else if let Some(rest) = name.strip_prefix("__litb_") {
+                if let Ok(b) = rest.parse::<bool>() {
+                    return TypedExpr::Literal {
+                        lit: TypedLiteral::Bool(b),
+                        ty: ty.clone(),
+                        span: DUMMY_SPAN,
+                    };
+                }
+            }
+            TypedExpr::Ident {
+                name: name.clone(),
+                ty: ty.clone(),
+                span: DUMMY_SPAN,
+            }
+        }
+        SymExpr::BinOp(op, l, r, ty) => TypedExpr::Binary {
+            op: *op,
+            left: Box::new(sym_to_expr(l)),
+            right: Box::new(sym_to_expr(r)),
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+        SymExpr::UnOp(op, inner, ty) => TypedExpr::Unary {
+            op: *op,
+            expr: Box::new(sym_to_expr(inner)),
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+        SymExpr::Call(name, args, ty) => TypedExpr::Call {
+            callee: name.clone(),
+            args: args.iter().map(sym_to_expr).collect(),
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+        SymExpr::If(cond, then, else_, ty) => TypedExpr::Match {
+            scrutinee: Box::new(sym_to_expr(cond)),
+            arms: vec![
+                crate::typecheck::typed_ast::TypedMatchArm {
+                    patterns: vec![crate::typecheck::typed_ast::TypedMatchPattern::Literal(
+                        TypedLiteral::Bool(true),
+                    )],
+                    body: sym_to_expr(then),
+                    span: DUMMY_SPAN,
+                },
+                crate::typecheck::typed_ast::TypedMatchArm {
+                    patterns: vec![crate::typecheck::typed_ast::TypedMatchPattern::Literal(
+                        TypedLiteral::Bool(false),
+                    )],
+                    body: sym_to_expr(else_),
+                    span: DUMMY_SPAN,
+                },
+            ],
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+        SymExpr::Index(arr, idx, ty) => TypedExpr::Index {
+            target: Box::new(sym_to_expr(arr)),
+            index: Box::new(sym_to_expr(idx)),
+            is_safe: false,
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+    }
+}
+
+/// Convert any Value (concrete or symbolic) to a TypedExpr.
+pub fn value_to_typed_expr(v: &Value) -> TypedExpr {
+    match v {
+        Value::Int(i) => TypedExpr::Literal {
+            lit: TypedLiteral::Int(*i, crate::typecheck::types::Type::I64),
+            ty: crate::typecheck::types::Type::I64,
+            span: DUMMY_SPAN,
+        },
+        Value::Float(f) => TypedExpr::Literal {
+            lit: TypedLiteral::Float(*f, crate::typecheck::types::Type::F64),
+            ty: crate::typecheck::types::Type::F64,
+            span: DUMMY_SPAN,
+        },
+        Value::Bool(b) => TypedExpr::Literal {
+            lit: TypedLiteral::Bool(*b),
+            ty: crate::typecheck::types::Type::Bool,
+            span: DUMMY_SPAN,
+        },
+        Value::Symbolic(s) => sym_to_expr(s),
+        Value::Void => TypedExpr::Literal {
+            lit: TypedLiteral::Int(0, crate::typecheck::types::Type::I64),
+            ty: crate::typecheck::types::Type::Void,
+            span: DUMMY_SPAN,
+        },
+        Value::Array(elems, elem_ty) => TypedExpr::ArrayLiteral {
+            elements: elems.iter().map(value_to_typed_expr).collect(),
+            ty: crate::typecheck::types::Type::Array(Box::new(elem_ty.clone()), elems.len()),
+            span: DUMMY_SPAN,
+        },
+        Value::Constructor { enum_name, variant_name, tag, fields, ty } => TypedExpr::EnumConstructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            args: fields.iter().map(value_to_typed_expr).collect(),
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
+    }
+}
+
