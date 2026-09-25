@@ -325,9 +325,10 @@ impl<'a> SupercompilerDriver<'a> {
                 targets,
                 default,
             } => {
+                let val_res = self.resolve_place(value, &working_state);
                 let val_term = working_state
-                    .get_value(value)
-                    .unwrap_or_else(|| self.interner.intern_var(value.clone(), Type::I64));
+                    .get_value(&val_res)
+                    .unwrap_or_else(|| self.interner.intern_var(val_res, Type::I64));
                 let lead_val = working_state.path_constraints.find_leader(val_term);
 
                 if let SymTerm::ConstInt(tag, _) = self.interner.get(lead_val) {
@@ -409,13 +410,46 @@ impl<'a> SupercompilerDriver<'a> {
         }
     }
 
+    fn resolve_place(&self, p: &Place, state: &SymbolicState) -> Place {
+        let mut curr_place = p.clone();
+        for _ in 0..10 {
+            if let Some(&base_term_id) = state.env.get(&Place { local: curr_place.local.clone(), projections: vec![] }) {
+                let root_id = state.path_constraints.find_leader(base_term_id);
+                if let SymTerm::Var(base_place, _) = self.interner.get(root_id) {
+                    if base_place.local != curr_place.local || !base_place.projections.is_empty() {
+                        let mut new_proj = base_place.projections.clone();
+                        new_proj.extend(curr_place.projections.clone());
+                        curr_place = Place {
+                            local: base_place.local.clone(),
+                            projections: new_proj,
+                        };
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+        curr_place
+    }
+
+    fn get_dest_type(&self, dest: &Place) -> Type {
+        self.func
+            .locals
+            .iter()
+            .find(|l| l.name == dest.local)
+            .map(|l| l.ty.clone())
+            .unwrap_or(Type::I64)
+    }
+
     fn drive_statement(&mut self, stmt: &Statement, state: &mut SymbolicState) {
         let Statement::Assign(dest, rval) = stmt;
+        let dest_ty = self.get_dest_type(dest);
         let term = match rval {
             Rvalue::Use(p) => {
-                if let Some(Projection::Payload(i)) = p.projections.first() {
+                let resolved_p = self.resolve_place(p, state);
+                if let Some(Projection::Payload(i)) = resolved_p.projections.first() {
                     let base_place = Place {
-                        local: p.local.clone(),
+                        local: resolved_p.local.clone(),
                         projections: vec![],
                     };
                     if let Some(base_term_id) = state.get_value(&base_place) {
@@ -424,34 +458,36 @@ impl<'a> SupercompilerDriver<'a> {
                             if let Some(&f_term) = fields.get(*i) {
                                 f_term
                             } else {
-                                state.get_value(p).unwrap_or_else(|| {
-                                    self.interner.intern_var(p.clone(), Type::I64)
+                                state.get_value(&resolved_p).unwrap_or_else(|| {
+                                    self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
                                 })
                             }
                         } else {
-                            state.get_value(p).unwrap_or_else(|| {
-                                self.interner.intern_var(p.clone(), Type::I64)
+                            state.get_value(&resolved_p).unwrap_or_else(|| {
+                                self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
                             })
                         }
                     } else {
-                        state.get_value(p).unwrap_or_else(|| {
-                            self.interner.intern_var(p.clone(), Type::I64)
+                        state.get_value(&resolved_p).unwrap_or_else(|| {
+                            self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
                         })
                     }
                 } else {
-                    state.get_value(p).unwrap_or_else(|| {
-                        self.interner.intern_var(p.clone(), Type::I64)
+                    state.get_value(&resolved_p).unwrap_or_else(|| {
+                        self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
                     })
                 }
             }
             Rvalue::Constant(lit) => self.interner.intern_const(lit.clone()),
             Rvalue::BinaryOp(op, l, r) => {
+                let l_res = self.resolve_place(l, state);
+                let r_res = self.resolve_place(r, state);
                 let l_term = state
-                    .get_value(l)
-                    .unwrap_or_else(|| self.interner.intern_var(l.clone(), Type::I64));
+                    .get_value(&l_res)
+                    .unwrap_or_else(|| self.interner.intern_var(l_res, Type::I64));
                 let r_term = state
-                    .get_value(r)
-                    .unwrap_or_else(|| self.interner.intern_var(r.clone(), Type::I64));
+                    .get_value(&r_res)
+                    .unwrap_or_else(|| self.interner.intern_var(r_res, Type::I64));
                 let res_ty = match op {
                     BinaryOp::Eq
                     | BinaryOp::Ne
@@ -459,23 +495,25 @@ impl<'a> SupercompilerDriver<'a> {
                     | BinaryOp::Le
                     | BinaryOp::Gt
                     | BinaryOp::Ge => Type::Bool,
-                    _ => Type::I64,
+                    _ => dest_ty.clone(),
                 };
                 self.interner.intern_binary(*op, l_term, r_term, res_ty)
             }
             Rvalue::UnaryOp(op, inner) => {
+                let in_res = self.resolve_place(inner, state);
                 let in_term = state
-                    .get_value(inner)
-                    .unwrap_or_else(|| self.interner.intern_var(inner.clone(), Type::I64));
+                    .get_value(&in_res)
+                    .unwrap_or_else(|| self.interner.intern_var(in_res, Type::I64));
                 let res_ty = match op {
                     UnaryOp::Not => Type::Bool,
-                    _ => Type::I64,
+                    _ => dest_ty.clone(),
                 };
                 self.interner.intern_unary(*op, in_term, res_ty)
             }
             Rvalue::Discriminant(p) => {
+                let resolved_p = self.resolve_place(p, state);
                 let base_place = Place {
-                    local: p.local.clone(),
+                    local: resolved_p.local.clone(),
                     projections: vec![],
                 };
                 if let Some(base_term_id) = state.get_value(&base_place) {
@@ -483,10 +521,11 @@ impl<'a> SupercompilerDriver<'a> {
                     if let SymTerm::Constructor(_, tag, _, _) = self.interner.get(root_id) {
                         self.interner.intern_int(*tag as i64)
                     } else {
-                        self.interner.intern_var(dest.clone(), Type::I64)
+                        self.interner.intern_discriminant(root_id)
                     }
                 } else {
-                    self.interner.intern_var(dest.clone(), Type::I64)
+                    let var_id = self.interner.intern_var(base_place, Type::I64);
+                    self.interner.intern_discriminant(var_id)
                 }
             }
             Rvalue::EnumVariant {
@@ -498,9 +537,10 @@ impl<'a> SupercompilerDriver<'a> {
                 let f_terms: Vec<SymTermId> = fields
                     .iter()
                     .map(|p| {
+                        let p_res = self.resolve_place(p, state);
                         state
-                            .get_value(p)
-                            .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64))
+                            .get_value(&p_res)
+                            .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
                     })
                     .collect();
                 self.interner.intern_constructor(
@@ -514,9 +554,10 @@ impl<'a> SupercompilerDriver<'a> {
                 let arg_terms: Vec<SymTermId> = args
                     .iter()
                     .map(|p| {
+                        let p_res = self.resolve_place(p, state);
                         state
-                            .get_value(p)
-                            .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64))
+                            .get_value(&p_res)
+                            .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
                     })
                     .collect();
 
@@ -528,36 +569,39 @@ impl<'a> SupercompilerDriver<'a> {
                 }
 
                 inlined_res.unwrap_or_else(|| {
-                    self.interner.intern_call(callee.clone(), arg_terms, Type::I64)
+                    self.interner.intern_call(callee.clone(), arg_terms, dest_ty.clone())
                 })
             }
             Rvalue::Phi(incoming) => {
                 let mut phi_ops = Vec::new();
                 for (b, p) in incoming {
-                    if let Some(t) = state.get_value(p) {
+                    let p_res = self.resolve_place(p, state);
+                    if let Some(t) = state.get_value(&p_res) {
                         phi_ops.push((b.clone(), t));
                     }
                 }
-                self.interner.intern_phi(phi_ops, Type::I64)
+                self.interner.intern_phi(phi_ops, dest_ty.clone())
             }
             Rvalue::Alloc(inner_place) => {
+                let in_res = self.resolve_place(inner_place, state);
                 let inner_term = state
-                    .get_value(inner_place)
-                    .unwrap_or_else(|| self.interner.intern_var(inner_place.clone(), Type::I64));
+                    .get_value(&in_res)
+                    .unwrap_or_else(|| self.interner.intern_var(in_res, Type::I64));
                 state.next_heap_id += 1;
-                let addr_term = self.interner.intern_ref(inner_term, Type::Ptr(Box::new(Type::I64)));
+                let addr_term = self.interner.intern_ref(inner_term, dest_ty.clone());
                 state.symbolic_heap.insert(addr_term, inner_term);
                 addr_term
             }
             Rvalue::Load(ptr_place) => {
+                let ptr_res = self.resolve_place(ptr_place, state);
                 let ptr_term = state
-                    .get_value(ptr_place)
-                    .unwrap_or_else(|| self.interner.intern_var(ptr_place.clone(), Type::Ptr(Box::new(Type::I64))));
+                    .get_value(&ptr_res)
+                    .unwrap_or_else(|| self.interner.intern_var(ptr_res, Type::Ptr(Box::new(dest_ty.clone()))));
                 state.symbolic_heap.get(&ptr_term).copied().unwrap_or_else(|| {
-                    self.interner.intern_deref(ptr_term, Type::I64)
+                    self.interner.intern_deref(ptr_term, dest_ty.clone())
                 })
             }
-            _ => self.interner.intern_var(dest.clone(), Type::I64),
+            _ => self.interner.intern_var(dest.clone(), dest_ty),
         };
 
         state.set_value(dest.clone(), term);

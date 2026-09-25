@@ -459,8 +459,87 @@ impl MirBuilder {
                     self.current_block = Some(unreachable_block);
                 }
             }
-            TypedStmt::For { .. } => {
-                // Desugared to While loop before lowering
+            TypedStmt::For {
+                var,
+                lo,
+                hi,
+                inclusive,
+                body,
+                ..
+            } => {
+                let var_ty = lo.ty();
+                self.locals.push(MirLocalDecl {
+                    name: var.clone(),
+                    ty: var_ty.clone(),
+                    mutable: true,
+                });
+                let var_place = Place {
+                    local: var.clone(),
+                    projections: vec![],
+                };
+                self.lower_expr(lo, Some(var_place.clone()));
+
+                let hi_place = self.lower_expr(hi, None);
+
+                let cond_block = self.new_block();
+                let body_block = self.new_block();
+                let step_block = self.new_block();
+                let merge_block = self.new_block();
+
+                let current = self.current_block.clone().unwrap().0;
+                self.blocks[current].terminator =
+                    Terminator::Branch { target: cond_block.clone() };
+
+                // Cond block: evaluate var < hi (or <=)
+                self.current_block = Some(cond_block.clone());
+                let op = if *inclusive {
+                    BinaryOp::Le
+                } else {
+                    BinaryOp::Lt
+                };
+                let cond_place = self.new_temp(Type::Bool);
+                self.blocks[cond_block.0].statements.push(Statement::Assign(
+                    cond_place.clone(),
+                    Rvalue::BinaryOp(op, var_place.clone(), hi_place),
+                ));
+                self.blocks[cond_block.0].terminator = Terminator::BranchIf {
+                    condition: cond_place,
+                    then_target: body_block.clone(),
+                    else_target: merge_block.clone(),
+                };
+
+                // Body block: continue jumps to step_block, break jumps to merge_block
+                self.loop_stack.push((step_block.clone(), merge_block.clone()));
+                self.current_block = Some(body_block);
+                self.lower_block(body);
+                if let Some(curr) = self.current_block.clone() {
+                    if self.blocks[curr.0].terminator == Terminator::Unreachable {
+                        self.blocks[curr.0].terminator =
+                            Terminator::Branch { target: step_block.clone() };
+                    }
+                }
+                self.loop_stack.pop();
+
+                // Step block: var = var + 1
+                self.current_block = Some(step_block.clone());
+                let one_place = self.new_temp(var_ty.clone());
+                self.blocks[step_block.0].statements.push(Statement::Assign(
+                    one_place.clone(),
+                    Rvalue::Constant(TypedLiteral::Int(1, var_ty.clone())),
+                ));
+                let inc_place = self.new_temp(var_ty);
+                self.blocks[step_block.0].statements.push(Statement::Assign(
+                    inc_place.clone(),
+                    Rvalue::BinaryOp(BinaryOp::Add, var_place.clone(), one_place),
+                ));
+                self.blocks[step_block.0].statements.push(Statement::Assign(
+                    var_place,
+                    Rvalue::Use(inc_place),
+                ));
+                self.blocks[step_block.0].terminator =
+                    Terminator::Branch { target: cond_block };
+
+                self.current_block = Some(merge_block);
             }
         }
     }

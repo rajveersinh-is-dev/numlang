@@ -162,6 +162,7 @@ impl<'a> TranslationValidator<'a> {
                 let commutative = is_commutative && self.terms_equivalent(*l1, *r2) && self.terms_equivalent(*r1, *l2);
                 direct || commutative
             }
+            (SymTerm::Discriminant(a, _), SymTerm::Discriminant(b, _)) => self.terms_equivalent(*a, *b),
             _ => false,
         }
     }
@@ -257,6 +258,10 @@ impl<'a> TranslationValidator<'a> {
                 }
                 let op = self.interner.intern_int(0);
                 evaluated_args.into_iter().next().unwrap_or(op)
+            }
+            Rvalue::Discriminant(p) => {
+                let pt = self.eval_place(p, env);
+                self.interner.intern_discriminant(pt)
             }
             _ => self.interner.intern_int(0),
         }
