@@ -8422,15 +8422,35 @@ impl CraneliftCompiler {
                         } else if let Some(&callee_id) = self.func_ids.get(callee) {
                             let local_func =
                                 self.module.declare_func_in_func(callee_id, builder.func);
+                            let sig = builder.func.dfg.ext_funcs[local_func].signature;
+                            let expected_params = builder.func.dfg.signatures[sig].params.clone();
                             let arg_vals: Vec<Value> = args
                                 .iter()
-                                .map(|p| {
-                                    var_map
+                                .enumerate()
+                                .map(|(i, p)| {
+                                    let v = var_map
                                         .get(&p.local)
                                         .map(|&(v, _)| builder.use_var(v))
                                         .unwrap_or_else(|| {
                                             builder.ins().iconst(types::I64, 0)
-                                        })
+                                        });
+                                    let v_ty = builder.func.dfg.value_type(v);
+                                    let expected_ty = if i < expected_params.len() {
+                                        expected_params[i].value_type
+                                    } else {
+                                        v_ty
+                                    };
+                                    if v_ty == expected_ty {
+                                        v
+                                    } else if v_ty.is_int() && expected_ty.is_int() {
+                                        if expected_ty.bits() > v_ty.bits() {
+                                            builder.ins().uextend(expected_ty, v)
+                                        } else {
+                                            builder.ins().ireduce(expected_ty, v)
+                                        }
+                                    } else {
+                                        v
+                                    }
                                 })
                                 .collect();
                             let call_inst = builder.ins().call(local_func, &arg_vals);

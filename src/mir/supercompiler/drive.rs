@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::BinaryOp;
+use crate::ast::{BinaryOp, UnaryOp};
 use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
 use super::state::SymbolicState;
 use super::term::{SymTerm, SymTermId, TermInterner};
@@ -452,13 +452,26 @@ impl<'a> SupercompilerDriver<'a> {
                 let r_term = state
                     .get_value(r)
                     .unwrap_or_else(|| self.interner.intern_var(r.clone(), Type::I64));
-                self.interner.intern_binary(*op, l_term, r_term, Type::I64)
+                let res_ty = match op {
+                    BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge => Type::Bool,
+                    _ => Type::I64,
+                };
+                self.interner.intern_binary(*op, l_term, r_term, res_ty)
             }
             Rvalue::UnaryOp(op, inner) => {
                 let in_term = state
                     .get_value(inner)
                     .unwrap_or_else(|| self.interner.intern_var(inner.clone(), Type::I64));
-                self.interner.intern_unary(*op, in_term, Type::I64)
+                let res_ty = match op {
+                    UnaryOp::Not => Type::Bool,
+                    _ => Type::I64,
+                };
+                self.interner.intern_unary(*op, in_term, res_ty)
             }
             Rvalue::Discriminant(p) => {
                 let base_place = Place {
