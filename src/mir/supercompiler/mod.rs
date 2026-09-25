@@ -4,21 +4,37 @@
 //! detects growth via fast homeomorphic embedding, solves recurrence closed forms ($O(N) \to O(1)$),
 //! and residualizes back into optimized SSA Control Flow Graphs.
 
+pub mod distill;
 pub mod drive;
 pub mod fusion;
 pub mod generalize;
+pub mod mrsc;
 pub mod residualize;
 pub mod state;
 pub mod term;
 pub mod whistle;
 
+pub use distill::DistillationEngine;
 pub use drive::{
     ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerDriver, SupercompilerStats,
 };
 pub use fusion::{find_fusion_candidates, fuse_loops, fuse_map_filter, FusionCandidate};
+pub use mrsc::{
+    MinCodeSizeObjective, MinDynamicBranchObjective, MultiResultEngine, ParetoObjective,
+    ResidualObjective,
+};
 use residualize::residualize_process_tree;
 
 use crate::mir::lower::{MirFunction, MirProgram};
+
+/// Operating mode for the supercompiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SupercompileMode {
+    #[default]
+    Classic,
+    Distill,
+    Mrsc,
+}
 
 /// Configuration level for supercompilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -32,6 +48,15 @@ pub enum SupercompileLevel {
 
 /// Supercompiles an entire MIR program across all functions and returns aggregated stats.
 pub fn supercompile_mir_program(program: &mut MirProgram) -> SupercompilerStats {
+    supercompile_mir_program_with_mode(program, SupercompileMode::Classic, "size")
+}
+
+/// Supercompiles an entire MIR program with explicit mode (Classic, Distill, MRSC) and objective.
+pub fn supercompile_mir_program_with_mode(
+    program: &mut MirProgram,
+    mode: SupercompileMode,
+    objective: &str,
+) -> SupercompilerStats {
     let mut total_stats = SupercompilerStats::default();
 
     // Pass 1: Phase 6 Higher-Order Deforestation & Stream Fusion
@@ -49,15 +74,54 @@ pub fn supercompile_mir_program(program: &mut MirProgram) -> SupercompilerStats 
         if func_is_impure(func) {
             continue;
         }
-        let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
-        let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-        if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
-            *func = new_func;
+
+        match mode {
+            SupercompileMode::Classic => {
+                let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
+                let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
+                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                    *func = new_func;
+                }
+                total_stats.nodes_explored += stats.nodes_explored;
+                total_stats.branches_pruned += stats.branches_pruned;
+                total_stats.loops_collapsed += stats.loops_collapsed;
+                total_stats.knots_tied += stats.knots_tied;
+            }
+            SupercompileMode::Distill => {
+                let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
+                let mut tree = driver.run();
+                let mut interner_clone = tree.interner.clone();
+                let mut distill = DistillationEngine::new(func, &mut interner_clone);
+                let folds = distill.distill_process_tree(&mut tree);
+                let stats = tree.stats.clone();
+                let new_func = residualize_process_tree(&tree, func);
+                let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
+                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                    *func = new_func;
+                }
+                total_stats.nodes_explored += stats.nodes_explored;
+                total_stats.branches_pruned += stats.branches_pruned;
+                total_stats.loops_collapsed += stats.loops_collapsed + folds;
+                total_stats.knots_tied += stats.knots_tied;
+            }
+            SupercompileMode::Mrsc => {
+                let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
+                let (best_res, best_tree, _) = match objective {
+                    "branch" => mrsc_engine.explore_and_select(&MinDynamicBranchObjective),
+                    "pareto" => mrsc_engine.explore_and_select(&ParetoObjective),
+                    _ => mrsc_engine.explore_and_select(&MinCodeSizeObjective),
+                };
+                let stats = best_tree.stats.clone();
+                let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
+                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                    *func = best_res;
+                }
+                total_stats.nodes_explored += stats.nodes_explored;
+                total_stats.branches_pruned += stats.branches_pruned;
+                total_stats.loops_collapsed += stats.loops_collapsed;
+                total_stats.knots_tied += stats.knots_tied;
+            }
         }
-        total_stats.nodes_explored += stats.nodes_explored;
-        total_stats.branches_pruned += stats.branches_pruned;
-        total_stats.loops_collapsed += stats.loops_collapsed;
-        total_stats.knots_tied += stats.knots_tied;
     }
 
     total_stats

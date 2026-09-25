@@ -115,6 +115,21 @@ pub struct Cli {
     pub supercompile: bool,
 
     #[arg(
+        long = "mode",
+        value_enum,
+        default_value_t = SupercompileCliMode::Classic,
+        help = "Supercompiler mode (classic | distill | mrsc)"
+    )]
+    pub mode: SupercompileCliMode,
+
+    #[arg(
+        long = "mrsc-objective",
+        default_value = "size",
+        help = "MRSC optimization objective (size | branch | pareto)"
+    )]
+    pub mrsc_objective: String,
+
+    #[arg(
         long = "use-mir",
         help = "Compile MIR directly via Cranelift without AST codegen"
     )]
@@ -137,6 +152,24 @@ pub struct Cli {
 
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
+pub enum SupercompileCliMode {
+    #[default]
+    Classic,
+    Distill,
+    Mrsc,
+}
+
+impl From<SupercompileCliMode> for numlang::mir::supercompiler::SupercompileMode {
+    fn from(m: SupercompileCliMode) -> Self {
+        match m {
+            SupercompileCliMode::Classic => numlang::mir::supercompiler::SupercompileMode::Classic,
+            SupercompileCliMode::Distill => numlang::mir::supercompiler::SupercompileMode::Distill,
+            SupercompileCliMode::Mrsc => numlang::mir::supercompiler::SupercompileMode::Mrsc,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
@@ -178,6 +211,21 @@ pub enum Commands {
             help = "Supercompile MIR and compile directly via Cranelift"
         )]
         supercompile: bool,
+
+        #[arg(
+            long = "mode",
+            value_enum,
+            default_value_t = SupercompileCliMode::Classic,
+            help = "Supercompiler mode (classic | distill | mrsc)"
+        )]
+        mode: SupercompileCliMode,
+
+        #[arg(
+            long = "mrsc-objective",
+            default_value = "size",
+            help = "MRSC optimization objective (size | branch | pareto)"
+        )]
+        mrsc_objective: String,
 
         #[arg(
             long = "use-mir",
@@ -229,6 +277,21 @@ pub enum Commands {
             help = "Supercompile MIR and compile directly via Cranelift"
         )]
         supercompile: bool,
+
+        #[arg(
+            long = "mode",
+            value_enum,
+            default_value_t = SupercompileCliMode::Classic,
+            help = "Supercompiler mode (classic | distill | mrsc)"
+        )]
+        mode: SupercompileCliMode,
+
+        #[arg(
+            long = "mrsc-objective",
+            default_value = "size",
+            help = "MRSC optimization objective (size | branch | pareto)"
+        )]
+        mrsc_objective: String,
 
         #[arg(
             long = "use-mir",
@@ -313,12 +376,15 @@ fn compile_source_to_typed(file_path: &Path) -> Result<(String, TypedProgram)> {
     Ok((source, typed_program))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_program_to_obj_bytes(
     typed_program: &TypedProgram,
     supercompile: bool,
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
+    mode: numlang::mir::supercompiler::SupercompileMode,
+    mrsc_objective: &str,
 ) -> Result<Vec<u8>> {
     let opt: numlang::codegen::OptLevel = opt_level
         .parse()
@@ -326,8 +392,8 @@ fn compile_program_to_obj_bytes(
 
     match backend {
         Backend::Cranelift => {
-            if supercompile {
-                numlang::codegen::compile_supercompiled_to_obj(typed_program)
+            if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
+                numlang::codegen::compile_supercompiled_to_obj_with_mode(typed_program, mode, mrsc_objective)
                     .map_err(|e| miette::miette!("Codegen error: {}", e))
             } else if use_mir {
                 let mir = numlang::mir::lower::lower_program(typed_program);
@@ -340,8 +406,8 @@ fn compile_program_to_obj_bytes(
         }
         Backend::Llvm => {
             let mut mir = numlang::mir::lower::lower_program(typed_program);
-            if supercompile {
-                numlang::mir::supercompiler::supercompile_mir_program(&mut mir);
+            if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
+                numlang::mir::supercompiler::supercompile_mir_program_with_mode(&mut mir, mode, mrsc_objective);
             }
             let mut compiler = numlang::codegen::LlvmCompiler::new(opt);
             compiler
@@ -351,6 +417,7 @@ fn compile_program_to_obj_bytes(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_executable(
     typed_program: &TypedProgram,
     out_exe: &Path,
@@ -358,6 +425,8 @@ fn build_executable(
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
+    mode: numlang::mir::supercompiler::SupercompileMode,
+    mrsc_objective: &str,
 ) -> Result<()> {
     let obj_bytes = compile_program_to_obj_bytes(
         typed_program,
@@ -365,6 +434,8 @@ fn build_executable(
         use_mir,
         backend,
         opt_level,
+        mode,
+        mrsc_objective,
     )?;
 
     let temp_dir = std::env::temp_dir();
@@ -394,6 +465,8 @@ fn handle_run(
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
+    mode: numlang::mir::supercompiler::SupercompileMode,
+    mrsc_objective: &str,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -416,6 +489,8 @@ fn handle_run(
         use_mir,
         backend,
         opt_level,
+        mode,
+        mrsc_objective,
     )?;
 
     let status = Command::new(&temp_exe)
@@ -436,6 +511,7 @@ fn handle_run(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_build(
     file: &Path,
     output: Option<PathBuf>,
@@ -444,6 +520,8 @@ fn handle_build(
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
+    mode: numlang::mir::supercompiler::SupercompileMode,
+    mrsc_objective: &str,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -454,6 +532,8 @@ fn handle_build(
         use_mir,
         backend,
         opt_level,
+        mode,
+        mrsc_objective,
     )?;
 
     if let Some(ref obj_path) = emit_obj {
@@ -624,6 +704,8 @@ fn real_main() -> Result<()> {
                 file,
                 bench,
                 supercompile,
+                mode,
+                mrsc_objective,
                 use_mir,
                 backend,
                 opt_level,
@@ -631,7 +713,15 @@ fn real_main() -> Result<()> {
                 if bench {
                     std::env::set_var("NUMLANG_BENCH", "1");
                 }
-                return handle_run(&file, supercompile, use_mir, backend, &opt_level);
+                return handle_run(
+                    &file,
+                    supercompile,
+                    use_mir,
+                    backend,
+                    &opt_level,
+                    mode.into(),
+                    &mrsc_objective,
+                );
             }
             Commands::Build {
                 file,
@@ -639,6 +729,8 @@ fn real_main() -> Result<()> {
                 emit_obj,
                 bench,
                 supercompile,
+                mode,
+                mrsc_objective,
                 use_mir,
                 backend,
                 opt_level,
@@ -654,6 +746,8 @@ fn real_main() -> Result<()> {
                     use_mir,
                     backend,
                     &opt_level,
+                    mode.into(),
+                    &mrsc_objective,
                 );
             }
             Commands::Check { file } => return handle_check(&file),
@@ -751,7 +845,11 @@ fn real_main() -> Result<()> {
 
     if cli.emit_supercompiled_mir {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        numlang::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+        numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+            &mut mir_program,
+            cli.mode.into(),
+            &cli.mrsc_objective,
+        );
         println!("{:#?}", mir_program);
         return Ok(());
     }
@@ -767,7 +865,11 @@ fn real_main() -> Result<()> {
 
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        let stats = numlang::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+        let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+            &mut mir_program,
+            cli.mode.into(),
+            &cli.mrsc_objective,
+        );
         println!("{}", stats);
         return Ok(());
     }
@@ -788,6 +890,8 @@ fn real_main() -> Result<()> {
             cli.use_mir,
             cli.backend,
             &cli.opt_level,
+            cli.mode.into(),
+            &cli.mrsc_objective,
         )?;
 
         if let Some(ref obj_path) = cli.emit_obj {

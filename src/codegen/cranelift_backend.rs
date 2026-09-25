@@ -8834,11 +8834,20 @@ pub fn compile_mir_to_obj(mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>
 }
 
 pub fn compile_supercompiled_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
+    compile_supercompiled_to_obj_with_mode(program, crate::mir::supercompiler::SupercompileMode::Classic, "size")
+}
+
+pub fn compile_supercompiled_to_obj_with_mode(
+    program: &TypedProgram,
+    mode: crate::mir::supercompiler::SupercompileMode,
+    objective: &str,
+) -> Result<Vec<u8>, CodegenError> {
     let mut typed = program.clone();
     crate::opt::monomorphize::monomorphize(&mut typed);
     crate::opt::supercompiler::supercompile_program(&mut typed, None);
     let mut mir_program = crate::mir::lower::lower_program(&typed);
-    crate::mir::supercompiler::supercompile_mir_program(&mut mir_program);
+    crate::mir::supercompiler::supercompile_mir_program_with_mode(&mut mir_program, mode, objective);
     compile_mir_to_obj(&mir_program)
 }
+
 
