@@ -1,0 +1,25 @@
+{
+  "title": "NumLang: A Formally Verified, Self-Applicable Process-Tree Supercompiler for Systems Languages",
+  "description": "Artifact evaluation package and complete source distribution for NumLang, featuring an SSA process-tree supercompiler, Lean 4 formal machine-checked proofs of soundness and termination, and a comprehensive 10-benchmark literature evaluation suite comparing against GHC, Rust, and Clang.",
+  "creators": [
+    {
+      "name": "NumLang Research Group",
+      "affiliation": "Programming Languages & Systems Laboratory"
+    }
+  ],
+  "access_right": "open",
+  "license": "MIT",
+  "keywords": [
+    "supercompilation",
+    "partial evaluation",
+    "futamura projections",
+    "lean 4",
+    "formal verification",
+    "cranelift",
+    "compiler optimization",
+    "recurrence solving",
+    "stream fusion",
+    "deforestation"
+  ],
+  "upload_type": "software"
+}
