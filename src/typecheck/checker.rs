@@ -2,8 +2,8 @@ use crate::ast::{BinaryOp, Expr, Function, Literal, MatchPattern, Program, Stmt,
 use crate::span::Span;
 use crate::typecheck::symtab::{FunctionSig, ScopeEnvironment, Symbol};
 use crate::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchArm, TypedMatchPattern,
-    TypedParam, TypedProgram, TypedStmt, TypedStructDef,
+    TypedBlock, TypedEnumDef, TypedEnumVariant, TypedExpr, TypedFunction, TypedLiteral,
+    TypedMatchArm, TypedMatchPattern, TypedParam, TypedProgram, TypedStmt, TypedStructDef,
 };
 use crate::typecheck::types::Type;
 use thiserror::Error;
@@ -145,6 +145,28 @@ pub enum TypeError {
 
     #[error("Match expression must have at least one arm")]
     EmptyMatch { span: Span },
+
+    #[error("Enum '{enum_name}' has no variant '{variant_name}'")]
+    NoSuchVariant {
+        enum_name: String,
+        variant_name: String,
+        span: Span,
+    },
+
+    #[error("Cannot match variant pattern on non-enum type '{found}'")]
+    CannotMatchNonEnum {
+        found: Type,
+        span: Span,
+    },
+
+    #[error("Variant '{enum_name}::{variant_name}' expected {expected} payload arguments, found {found}")]
+    PayloadArityMismatch {
+        enum_name: String,
+        variant_name: String,
+        expected: usize,
+        found: usize,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -173,6 +195,9 @@ impl TypeError {
             TypeError::CannotAccessFieldNonStruct { span, .. } => *span,
             TypeError::NonExhaustiveMatch { span } => *span,
             TypeError::EmptyMatch { span } => *span,
+            TypeError::NoSuchVariant { span, .. } => *span,
+            TypeError::CannotMatchNonEnum { span, .. } => *span,
+            TypeError::PayloadArityMismatch { span, .. } => *span,
         }
     }
 
@@ -201,6 +226,9 @@ impl TypeError {
             | TypeError::CannotAccessFieldNonStruct { .. } => "E019",
             TypeError::NonExhaustiveMatch { .. }
             | TypeError::EmptyMatch { .. } => "E020",
+            TypeError::NoSuchVariant { .. }
+            | TypeError::CannotMatchNonEnum { .. }
+            | TypeError::PayloadArityMismatch { .. } => "E021",
         }
     }
 }
@@ -218,12 +246,31 @@ pub struct StructInfo {
     pub span: Span,
 }
 
+#[derive(Debug, Clone)]
+pub struct EnumInfo {
+    pub name: String,
+    pub variants: Vec<EnumVariantInfo>,
+    pub variant_indices: HashMap<String, usize>,
+    pub max_payload_size: u32,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariantInfo {
+    pub name: String,
+    pub tag: usize,
+    pub payload: Vec<Type>,
+    pub span: Span,
+}
+
 pub struct TypeChecker {
     env: ScopeEnvironment,
     current_fn_return_ty: Type,
     active_loop_bounds: HashMap<String, i64>,
     loop_depth: usize,
     pub struct_infos: HashMap<String, StructInfo>,
+    pub enum_infos: HashMap<String, EnumInfo>,
+    pub variant_to_enum: HashMap<String, Vec<String>>,
 }
 
 impl Default for TypeChecker {
@@ -240,6 +287,8 @@ impl TypeChecker {
             active_loop_bounds: HashMap::new(),
             loop_depth: 0,
             struct_infos: HashMap::new(),
+            enum_infos: HashMap::new(),
+            variant_to_enum: HashMap::new(),
         }
     }
 
@@ -247,6 +296,7 @@ impl TypeChecker {
         &self,
         ty_str: &str,
         known_structs: &[crate::ast::StructDef],
+        known_enums: &[crate::ast::EnumDef],
         span: Span,
     ) -> Result<Type, TypeError> {
         let ty = Type::from_name(ty_str).ok_or_else(|| TypeError::UnknownType {
@@ -255,16 +305,22 @@ impl TypeChecker {
         })?;
         match &ty {
             Type::Struct(sname) => {
-                if !known_structs.iter().any(|st| &st.name == sname) {
+                if known_enums.iter().any(|en| &en.name == sname) || self.enum_infos.contains_key(sname) {
+                    return Ok(Type::Enum(sname.clone()));
+                }
+                if !known_structs.iter().any(|st| &st.name == sname) && !self.struct_infos.contains_key(sname) {
                     return Err(TypeError::UnknownType {
                         name: sname.clone(),
                         span,
                     });
                 }
             }
-            Type::Array(elem, _) => {
+            Type::Array(elem, len) => {
                 if let Type::Struct(sname) = &**elem {
-                    if !known_structs.iter().any(|st| &st.name == sname) {
+                    if known_enums.iter().any(|en| &en.name == sname) || self.enum_infos.contains_key(sname) {
+                        return Ok(Type::Array(Box::new(Type::Enum(sname.clone())), *len));
+                    }
+                    if !known_structs.iter().any(|st| &st.name == sname) && !self.struct_infos.contains_key(sname) {
                         return Err(TypeError::UnknownType {
                             name: sname.clone(),
                             span,
@@ -284,6 +340,9 @@ impl TypeChecker {
         })?;
         match &ty {
             Type::Struct(sname) => {
+                if self.enum_infos.contains_key(sname) {
+                    return Ok(Type::Enum(sname.clone()));
+                }
                 if !self.struct_infos.contains_key(sname) {
                     return Err(TypeError::UnknownType {
                         name: sname.clone(),
@@ -291,8 +350,11 @@ impl TypeChecker {
                     });
                 }
             }
-            Type::Array(elem, _) => {
+            Type::Array(elem, len) => {
                 if let Type::Struct(sname) = &**elem {
+                    if self.enum_infos.contains_key(sname) {
+                        return Ok(Type::Array(Box::new(Type::Enum(sname.clone())), *len));
+                    }
                     if !self.struct_infos.contains_key(sname) {
                         return Err(TypeError::UnknownType {
                             name: sname.clone(),
@@ -307,17 +369,37 @@ impl TypeChecker {
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, TypeError> {
-        // Pass 0: Collect and validate all struct definitions
-        let mut typed_structs = Vec::new();
+        // Pass 0a: Validate unique names for structs and enums
         for s in &program.structs {
-            if self.struct_infos.contains_key(&s.name) {
+            if self.struct_infos.contains_key(&s.name) || self.enum_infos.contains_key(&s.name) {
                 return Err(TypeError::DuplicateDeclaration {
                     name: s.name.clone(),
                     span: s.span,
                 });
             }
         }
+        for e in &program.enums {
+            if self.struct_infos.contains_key(&e.name) || self.enum_infos.contains_key(&e.name) {
+                return Err(TypeError::DuplicateDeclaration {
+                    name: e.name.clone(),
+                    span: e.span,
+                });
+            }
+            // Pre-register enum name
+            self.enum_infos.insert(
+                e.name.clone(),
+                EnumInfo {
+                    name: e.name.clone(),
+                    variants: Vec::new(),
+                    variant_indices: HashMap::new(),
+                    max_payload_size: 0,
+                    span: e.span,
+                },
+            );
+        }
 
+        // Pass 0b: Collect and validate all struct definitions
+        let mut typed_structs = Vec::new();
         for s in &program.structs {
             let mut fields = Vec::new();
             let mut field_indices = HashMap::new();
@@ -334,16 +416,22 @@ impl TypeChecker {
                 }
                 field_indices.insert(f_name.clone(), idx);
 
-                let f_ty = self.resolve_type_in_struct(f_ty_str, &program.structs, s.span)?;
+                let f_ty = self.resolve_type_in_struct(f_ty_str, &program.structs, &program.enums, s.span)?;
 
                 let f_size = match &f_ty {
                     Type::Struct(dep) => {
                         self.struct_infos.get(dep).map_or(8, |i| i.total_size)
                     }
+                    Type::Enum(dep) => {
+                        self.enum_infos.get(dep).map_or(8, |i| 8 + i.max_payload_size)
+                    }
                     Type::Array(elem, len) => {
                         let elem_size = match &**elem {
                             Type::Struct(dep) => {
                                 self.struct_infos.get(dep).map_or(8, |i| i.total_size as usize)
+                            }
+                            Type::Enum(dep) => {
+                                self.enum_infos.get(dep).map_or(8, |i| (8 + i.max_payload_size) as usize)
                             }
                             _ => elem.size_bytes(),
                         };
@@ -376,6 +464,77 @@ impl TypeChecker {
                 name: s.name.clone(),
                 fields,
                 span: s.span,
+            });
+        }
+
+        // Pass 0c: Collect and validate all enum definitions
+        let mut typed_enums = Vec::new();
+        for e in &program.enums {
+            let mut variants = Vec::new();
+            let mut variant_indices = HashMap::new();
+            let mut max_payload_size: u32 = 0;
+
+            for (tag, v) in e.variants.iter().enumerate() {
+                if variant_indices.contains_key(&v.name) {
+                    return Err(TypeError::DuplicateDeclaration {
+                        name: v.name.clone(),
+                        span: v.span,
+                    });
+                }
+                variant_indices.insert(v.name.clone(), tag);
+
+                let mut payload_types = Vec::new();
+                let mut variant_payload_size: u32 = 0;
+                for p_str in &v.payload {
+                    let p_ty = self.resolve_type(p_str, v.span)?;
+                    let p_size = match &p_ty {
+                        Type::Struct(sname) => {
+                            self.struct_infos.get(sname).map_or(8, |i| i.total_size)
+                        }
+                        Type::Enum(ename) => {
+                            self.enum_infos.get(ename).map_or(8, |i| 8 + i.max_payload_size)
+                        }
+                        _ => p_ty.size_bytes() as u32,
+                    };
+                    variant_payload_size += p_size;
+                    payload_types.push(p_ty);
+                }
+                max_payload_size = max_payload_size.max(variant_payload_size);
+
+                self.variant_to_enum
+                    .entry(v.name.clone())
+                    .or_default()
+                    .push(e.name.clone());
+
+                variants.push(EnumVariantInfo {
+                    name: v.name.clone(),
+                    tag,
+                    payload: payload_types,
+                    span: v.span,
+                });
+            }
+
+            let info = EnumInfo {
+                name: e.name.clone(),
+                variants: variants.clone(),
+                variant_indices,
+                max_payload_size,
+                span: e.span,
+            };
+            self.enum_infos.insert(e.name.clone(), info);
+
+            typed_enums.push(TypedEnumDef {
+                name: e.name.clone(),
+                variants: variants
+                    .into_iter()
+                    .map(|vi| TypedEnumVariant {
+                        name: vi.name,
+                        tag: vi.tag,
+                        payload: vi.payload,
+                        span: vi.span,
+                    })
+                    .collect(),
+                span: e.span,
             });
         }
 
@@ -419,6 +578,7 @@ impl TypeChecker {
         Ok(TypedProgram {
             functions: typed_functions,
             structs: typed_structs,
+            enums: typed_enums,
         })
     }
 
@@ -1021,16 +1181,44 @@ impl TypeChecker {
             },
 
             Expr::Ident(name, span) => {
-                let sym = self
-                    .env
-                    .lookup_variable(name)
-                    .ok_or_else(|| TypeError::UndeclaredVariable {
+                if let Some(sym) = self.env.lookup_variable(name) {
+                    return Ok(TypedExpr::Ident {
                         name: name.clone(),
+                        ty: sym.ty.clone(),
                         span: *span,
-                    })?;
-                Ok(TypedExpr::Ident {
+                    });
+                }
+
+                if let Some(candidates) = self.variant_to_enum.get(name) {
+                    let en = if let Some(Type::Enum(ref expected_en)) = expected_hint {
+                        if candidates.contains(expected_en) {
+                            expected_en.clone()
+                        } else {
+                            candidates[0].clone()
+                        }
+                    } else {
+                        candidates[0].clone()
+                    };
+
+                    if let Some(enum_info) = self.enum_infos.get(&en) {
+                        if let Some(&var_idx) = enum_info.variant_indices.get(name) {
+                            let var_info = &enum_info.variants[var_idx];
+                            if var_info.payload.is_empty() {
+                                return Ok(TypedExpr::EnumConstructor {
+                                    enum_name: en.clone(),
+                                    variant_name: name.clone(),
+                                    tag: var_info.tag,
+                                    args: Vec::new(),
+                                    ty: Type::Enum(en),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                Err(TypeError::UndeclaredVariable {
                     name: name.clone(),
-                    ty: sym.ty.clone(),
                     span: *span,
                 })
             }
@@ -3065,14 +3253,35 @@ impl TypeChecker {
                     _ => {}
                 }
 
-                let sig = self
-                    .env
-                    .lookup_function(callee)
-                    .cloned()
-                    .ok_or_else(|| TypeError::UndeclaredFunction {
-                        name: callee.clone(),
-                        span: *span,
-                    })?;
+                let sig = match self.env.lookup_function(callee).cloned() {
+                    Some(s) => s,
+                    None => {
+                        if let Some(candidates) = self.variant_to_enum.get(callee) {
+                            let en = if let Some(Type::Enum(ref expected_en)) = expected_hint {
+                                if candidates.contains(expected_en) {
+                                    expected_en.clone()
+                                } else {
+                                    candidates[0].clone()
+                                }
+                            } else {
+                                candidates[0].clone()
+                            };
+                            return self.check_expr(
+                                &Expr::EnumConstructor {
+                                    enum_name: Some(en),
+                                    variant_name: callee.clone(),
+                                    args: args.clone(),
+                                    span: *span,
+                                },
+                                expected_hint,
+                            );
+                        }
+                        return Err(TypeError::UndeclaredFunction {
+                            name: callee.clone(),
+                            span: *span,
+                        });
+                    }
+                };
 
                 if args.len() != sig.param_types.len() {
                     return Err(TypeError::ArityMismatch {
@@ -3211,7 +3420,7 @@ impl TypeChecker {
                 let typed_scrutinee = self.check_expr(scrutinee, None)?;
                 let scrutinee_ty = typed_scrutinee.ty();
 
-                if !scrutinee_ty.is_integer() && scrutinee_ty != Type::Bool {
+                if !scrutinee_ty.is_integer() && scrutinee_ty != Type::Bool && !scrutinee_ty.is_enum() {
                     return Err(TypeError::TypeMismatch {
                         expected: Type::I64,
                         found: scrutinee_ty,
@@ -3224,14 +3433,76 @@ impl TypeChecker {
                 let mut has_wildcard = false;
                 let mut seen_bool_true = false;
                 let mut seen_bool_false = false;
+                let mut seen_variants = std::collections::HashSet::new();
 
                 for arm in arms {
                     let mut typed_patterns = Vec::new();
+                    let mut arm_bindings: Vec<(String, Type)> = Vec::new();
                     for pat in &arm.patterns {
                         match pat {
                             MatchPattern::Wildcard => {
                                 has_wildcard = true;
                                 typed_patterns.push(TypedMatchPattern::Wildcard);
+                            }
+                            MatchPattern::Variant {
+                                enum_name,
+                                variant_name,
+                                bindings,
+                                span: pat_span,
+                            } => {
+                                if !scrutinee_ty.is_enum() {
+                                    return Err(TypeError::CannotMatchNonEnum {
+                                        found: scrutinee_ty.clone(),
+                                        span: *pat_span,
+                                    });
+                                }
+                                let s_enum_name = match &scrutinee_ty {
+                                    Type::Enum(n) => n.clone(),
+                                    _ => unreachable!(),
+                                };
+                                if let Some(ref specified_en) = enum_name {
+                                    if specified_en != &s_enum_name {
+                                        return Err(TypeError::TypeMismatch {
+                                            expected: scrutinee_ty.clone(),
+                                            found: Type::Enum(specified_en.clone()),
+                                            span: *pat_span,
+                                        });
+                                    }
+                                }
+                                let enum_info = self.enum_infos.get(&s_enum_name).cloned().ok_or_else(|| TypeError::UnknownType {
+                                    name: s_enum_name.clone(),
+                                    span: *pat_span,
+                                })?;
+                                let &var_idx = enum_info.variant_indices.get(variant_name).ok_or_else(|| TypeError::NoSuchVariant {
+                                    enum_name: s_enum_name.clone(),
+                                    variant_name: variant_name.clone(),
+                                    span: *pat_span,
+                                })?;
+                                let var_info = &enum_info.variants[var_idx];
+                                if bindings.len() != var_info.payload.len() {
+                                    return Err(TypeError::PayloadArityMismatch {
+                                        enum_name: s_enum_name.clone(),
+                                        variant_name: variant_name.clone(),
+                                        expected: var_info.payload.len(),
+                                        found: bindings.len(),
+                                        span: *pat_span,
+                                    });
+                                }
+                                seen_variants.insert(var_info.tag);
+                                let mut typed_bindings = Vec::new();
+                                for (b_name, p_ty) in bindings.iter().zip(&var_info.payload) {
+                                    typed_bindings.push((b_name.clone(), p_ty.clone()));
+                                }
+                                if arm_bindings.is_empty() {
+                                    arm_bindings = typed_bindings.clone();
+                                }
+                                typed_patterns.push(TypedMatchPattern::Variant {
+                                    enum_name: s_enum_name,
+                                    variant_name: variant_name.clone(),
+                                    tag: var_info.tag,
+                                    bindings: typed_bindings,
+                                    span: *pat_span,
+                                });
                             }
                             MatchPattern::Literal(lit) => {
                                 match lit {
@@ -3283,7 +3554,26 @@ impl TypeChecker {
                         }
                     }
 
+                    self.env.enter_scope();
+                    for (b_name, p_ty) in &arm_bindings {
+                        if b_name != "_" {
+                            let sym = Symbol {
+                                name: b_name.clone(),
+                                ty: p_ty.clone(),
+                                is_mutable: false,
+                                span: arm.span,
+                            };
+                            if self.env.define_variable(sym).is_err() {
+                                return Err(TypeError::DuplicateDeclaration {
+                                    name: b_name.clone(),
+                                    span: arm.span,
+                                });
+                            }
+                        }
+                    }
                     let typed_body = self.check_expr(&arm.body, expected_hint.clone())?;
+                    self.env.exit_scope();
+
                     let body_ty = typed_body.ty();
 
                     if let Some(ref expected) = common_body_ty {
@@ -3305,7 +3595,14 @@ impl TypeChecker {
                     });
                 }
 
-                let is_exhaustive = has_wildcard || (scrutinee_ty == Type::Bool && seen_bool_true && seen_bool_false);
+                let is_exhaustive = has_wildcard
+                    || (scrutinee_ty == Type::Bool && seen_bool_true && seen_bool_false)
+                    || match &scrutinee_ty {
+                        Type::Enum(en) => {
+                            self.enum_infos.get(en).is_some_and(|info| seen_variants.len() == info.variants.len())
+                        }
+                        _ => false,
+                    };
                 if !is_exhaustive {
                     return Err(TypeError::NonExhaustiveMatch { span: *span });
                 }
@@ -3315,6 +3612,87 @@ impl TypeChecker {
                     scrutinee: Box::new(typed_scrutinee),
                     arms: typed_arms,
                     ty: ret_ty,
+                    span: *span,
+                })
+            }
+
+            Expr::EnumConstructor {
+                enum_name,
+                variant_name,
+                args,
+                span,
+            } => {
+                let en = if let Some(ref name) = enum_name {
+                    name.clone()
+                } else if let Some(candidates) = self.variant_to_enum.get(variant_name) {
+                    if let Some(Type::Enum(ref expected_en)) = expected_hint {
+                        if candidates.contains(expected_en) {
+                            expected_en.clone()
+                        } else if candidates.len() == 1 {
+                            candidates[0].clone()
+                        } else {
+                            return Err(TypeError::NoSuchVariant {
+                                enum_name: expected_en.clone(),
+                                variant_name: variant_name.clone(),
+                                span: *span,
+                            });
+                        }
+                    } else if candidates.len() == 1 {
+                        candidates[0].clone()
+                    } else {
+                        return Err(TypeError::UndeclaredVariable {
+                            name: variant_name.clone(),
+                            span: *span,
+                        });
+                    }
+                } else {
+                    return Err(TypeError::UndeclaredVariable {
+                        name: variant_name.clone(),
+                        span: *span,
+                    });
+                };
+
+                let enum_info = self.enum_infos.get(&en).cloned().ok_or_else(|| TypeError::UnknownType {
+                    name: en.clone(),
+                    span: *span,
+                })?;
+
+                let &var_idx = enum_info.variant_indices.get(variant_name).ok_or_else(|| TypeError::NoSuchVariant {
+                    enum_name: en.clone(),
+                    variant_name: variant_name.clone(),
+                    span: *span,
+                })?;
+
+                let var_info = &enum_info.variants[var_idx];
+                if args.len() != var_info.payload.len() {
+                    return Err(TypeError::PayloadArityMismatch {
+                        enum_name: en.clone(),
+                        variant_name: variant_name.clone(),
+                        expected: var_info.payload.len(),
+                        found: args.len(),
+                        span: *span,
+                    });
+                }
+
+                let mut typed_args = Vec::new();
+                for (arg_expr, expected_ty) in args.iter().zip(&var_info.payload) {
+                    let typed_arg = self.check_expr(arg_expr, Some(expected_ty.clone()))?;
+                    if typed_arg.ty() != *expected_ty {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected_ty.clone(),
+                            found: typed_arg.ty(),
+                            span: typed_arg.span(),
+                        });
+                    }
+                    typed_args.push(typed_arg);
+                }
+
+                Ok(TypedExpr::EnumConstructor {
+                    enum_name: en.clone(),
+                    variant_name: variant_name.clone(),
+                    tag: var_info.tag,
+                    args: typed_args,
+                    ty: Type::Enum(en),
                     span: *span,
                 })
             }

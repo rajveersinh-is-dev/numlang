@@ -472,6 +472,7 @@ fn format_place_str(p: &Place) -> String {
             crate::mir::Projection::Deref => s = format!("(*{})", s),
             crate::mir::Projection::Field(f) => s = format!("{}.{}", s, f),
             crate::mir::Projection::Index(idx) => s = format!("{}[{}]", s, format_place_str(idx)),
+            crate::mir::Projection::Payload(idx) => s = format!("{}.payload_{}", s, idx),
         }
     }
     s

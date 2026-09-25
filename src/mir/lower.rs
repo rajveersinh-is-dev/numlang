@@ -12,6 +12,12 @@ pub enum Rvalue {
     Call(String, Vec<Place>),
     Array(Vec<Place>),
     Struct(String, Vec<(String, Place)>),
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+        tag: usize,
+        fields: Vec<Place>,
+    },
     Phi(Vec<(BasicBlockId, Place)>),
 }
 
@@ -48,6 +54,7 @@ pub struct MirFunction {
 pub struct MirProgram {
     pub functions: Vec<MirFunction>,
     pub structs: Vec<crate::typecheck::typed_ast::TypedStructDef>,
+    pub enums: Vec<crate::typecheck::typed_ast::TypedEnumDef>,
 }
 
 pub struct MirBuilder {
@@ -165,6 +172,30 @@ impl MirBuilder {
                 if let Some(arm) = arms.first() {
                     let _ = self.lower_expr(&arm.body, Some(place.clone()));
                 }
+                place
+            }
+            TypedExpr::EnumConstructor {
+                enum_name,
+                variant_name,
+                tag,
+                args,
+                ..
+            } => {
+                let mut field_places = Vec::new();
+                for arg in args {
+                    field_places.push(self.lower_expr(arg, None));
+                }
+                self.blocks[self.current_block.clone().unwrap().0]
+                    .statements
+                    .push(Statement::Assign(
+                        place.clone(),
+                        Rvalue::EnumVariant {
+                            enum_name: enum_name.clone(),
+                            variant_name: variant_name.clone(),
+                            tag: *tag,
+                            fields: field_places,
+                        },
+                    ));
                 place
             }
         }
@@ -337,5 +368,6 @@ pub fn lower_program(program: &TypedProgram) -> MirProgram {
     MirProgram {
         functions: mir_funcs,
         structs: program.structs.clone(),
+        enums: program.enums.clone(),
     }
 }

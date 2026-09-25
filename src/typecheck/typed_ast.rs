@@ -71,12 +71,27 @@ pub enum TypedExpr {
         ty: Type,
         span: Span,
     },
+    EnumConstructor {
+        enum_name: String,
+        variant_name: String,
+        tag: usize,
+        args: Vec<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedMatchPattern {
     Literal(TypedLiteral),
     Wildcard,
+    Variant {
+        enum_name: String,
+        variant_name: String,
+        tag: usize,
+        bindings: Vec<(String, Type)>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +114,7 @@ impl TypedExpr {
             TypedExpr::StructLiteral { ty, .. } => ty.clone(),
             TypedExpr::FieldAccess { ty, .. } => ty.clone(),
             TypedExpr::Match { ty, .. } => ty.clone(),
+            TypedExpr::EnumConstructor { ty, .. } => ty.clone(),
         }
     }
 
@@ -114,6 +130,7 @@ impl TypedExpr {
             TypedExpr::StructLiteral { span, .. } => *span,
             TypedExpr::FieldAccess { span, .. } => *span,
             TypedExpr::Match { span, .. } => *span,
+            TypedExpr::EnumConstructor { span, .. } => *span,
         }
     }
 }
@@ -217,10 +234,26 @@ pub struct TypedStructDef {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedEnumDef {
+    pub name: String,
+    pub variants: Vec<TypedEnumVariant>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypedEnumVariant {
+    pub name: String,
+    pub tag: usize,
+    pub payload: Vec<Type>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TypedProgram {
     pub functions: Vec<TypedFunction>,
     pub structs: Vec<TypedStructDef>,
+    pub enums: Vec<TypedEnumDef>,
 }
 
 impl TypedProgram {

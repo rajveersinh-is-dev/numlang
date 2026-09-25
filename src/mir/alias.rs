@@ -191,6 +191,9 @@ fn collect_reads_for_alias(rv: &Rvalue, dest: &Place) -> Vec<Place> {
                 reads.push(p.clone());
             }
         }
+        Rvalue::EnumVariant { fields, .. } => {
+            reads.extend(fields.iter().cloned());
+        }
         Rvalue::Phi(incoming) => {
             for (_, p) in incoming {
                 reads.push(p.clone());

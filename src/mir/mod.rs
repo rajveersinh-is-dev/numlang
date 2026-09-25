@@ -8,6 +8,7 @@ pub enum Projection {
     Deref,
     Field(String),
     Index(Box<Place>),
+    Payload(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

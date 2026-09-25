@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOp, Block, Expr, Function, Item, Literal, MatchPattern, Program, Stmt, StructDef,
+    BinaryOp, Block, EnumDef, Expr, Function, Item, Literal, MatchPattern, Program, Stmt, StructDef,
     UnaryOp,
 };
 use crate::parser::parse;
@@ -67,6 +67,23 @@ pub fn format_pattern(pattern: &MatchPattern) -> String {
     match pattern {
         MatchPattern::Literal(lit) => format_literal(lit),
         MatchPattern::Wildcard => "_".to_string(),
+        MatchPattern::Variant {
+            enum_name,
+            variant_name,
+            bindings,
+            ..
+        } => {
+            let prefix = if let Some(ref en) = enum_name {
+                format!("{}::{}", en, variant_name)
+            } else {
+                variant_name.clone()
+            };
+            if bindings.is_empty() {
+                prefix
+            } else {
+                format!("{}({})", prefix, bindings.join(", "))
+            }
+        }
     }
 }
 
@@ -78,6 +95,28 @@ pub fn format_expr_at(expr: &Expr, depth: usize) -> String {
     match expr {
         Expr::Literal(lit, _) => format_literal(lit),
         Expr::Ident(name, _) => name.clone(),
+        Expr::EnumConstructor {
+            enum_name,
+            variant_name,
+            args,
+            ..
+        } => {
+            let prefix = if let Some(ref en) = enum_name {
+                format!("{}::{}", en, variant_name)
+            } else {
+                variant_name.clone()
+            };
+            if args.is_empty() {
+                prefix
+            } else {
+                let args_str = args
+                    .iter()
+                    .map(|a| format_expr_at(a, depth))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{}({})", prefix, args_str)
+            }
+        }
         Expr::Unary { op, expr, .. } => {
             let op_str = match op {
                 UnaryOp::Neg => "-",
@@ -378,6 +417,30 @@ fn format_function(
     out.push_str("}\n");
 }
 
+fn format_enum(e: &EnumDef, out: &mut String) {
+    if let Some(ref doc) = e.doc_comment {
+        for line in doc.lines() {
+            if line.is_empty() {
+                out.push_str("///\n");
+            } else {
+                out.push_str(&format!("/// {}\n", line));
+            }
+        }
+    }
+    out.push_str(&format!("enum {} {{\n", e.name));
+    for v in &e.variants {
+        out.push_str("    ");
+        out.push_str(&v.name);
+        if !v.payload.is_empty() {
+            out.push('(');
+            out.push_str(&v.payload.join(", "));
+            out.push(')');
+        }
+        out.push_str(",\n");
+    }
+    out.push_str("}\n");
+}
+
 pub fn format_program(program: &Program, inferred_types: &HashMap<Span, Type>) -> String {
     let mut out = String::new();
 
@@ -389,6 +452,7 @@ pub fn format_program(program: &Program, inferred_types: &HashMap<Span, Type>) -
             match item {
                 Item::Function(f) => format_function(f, inferred_types, &mut out),
                 Item::Struct(s) => format_struct(s, &mut out),
+                Item::Enum(e) => format_enum(e, &mut out),
             }
         }
     } else {
@@ -399,6 +463,13 @@ pub fn format_program(program: &Program, inferred_types: &HashMap<Span, Type>) -
             }
             first = false;
             format_struct(s, &mut out);
+        }
+        for e in &program.enums {
+            if !first {
+                out.push('\n');
+            }
+            first = false;
+            format_enum(e, &mut out);
         }
         for f in &program.functions {
             if !first {

@@ -81,12 +81,24 @@ pub enum Expr {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    EnumConstructor {
+        enum_name: Option<String>,
+        variant_name: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchPattern {
     Literal(Literal),
     Wildcard,
+    Variant {
+        enum_name: Option<String>,
+        variant_name: String,
+        bindings: Vec<String>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +122,7 @@ impl Expr {
             Expr::StructLiteral { span, .. } => *span,
             Expr::FieldAccess { span, .. } => *span,
             Expr::Match { span, .. } => *span,
+            Expr::EnumConstructor { span, .. } => *span,
         }
     }
 }
@@ -220,9 +233,25 @@ pub struct StructDef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub doc_comment: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload: Vec<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Function(Function),
     Struct(StructDef),
+    Enum(EnumDef),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -230,4 +259,5 @@ pub struct Program {
     pub items: Vec<Item>,
     pub functions: Vec<Function>,
     pub structs: Vec<StructDef>,
+    pub enums: Vec<EnumDef>,
 }

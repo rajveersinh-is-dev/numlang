@@ -35,6 +35,8 @@ pub enum Token {
     False,
     #[token("struct")]
     Struct,
+    #[token("enum")]
+    Enum,
     #[token("match")]
     Match,
 
@@ -93,6 +95,8 @@ pub enum Token {
     RBracket,
     #[token(",")]
     Comma,
+    #[token("::")]
+    ColonColon,
     #[token(":")]
     Colon,
     #[token(";")]
