@@ -108,7 +108,7 @@ pub fn supercompile_program(
         // If we got a concrete result and no symbolic operations occurred, replace the body.
         if result.is_concrete() && !env.has_symbolic {
             func.body = residualize_return(&result);
-        } else if !result.is_symbolic_opaque() {
+        } else if matches!(result, Value::Symbolic(_)) && !result.is_symbolic_opaque() {
             // Partial specialization: replace body with a residual expression
             // that contains the folded-concrete parts and symbolic holes.
             let residual_expr = value_to_typed_expr(&result);
@@ -152,12 +152,6 @@ fn supercompile_main(program: &mut TypedProgram) {
 
     if result.is_concrete() && !env.has_symbolic {
         program.functions[main_idx].body = residualize_return(&result);
-    } else if !result.is_symbolic_opaque() {
-        let residual_expr = value_to_typed_expr(&result);
-        program.functions[main_idx].body = TypedBlock {
-            stmts: vec![TypedStmt::Return(Some(residual_expr), DUMMY_SPAN)],
-            span: DUMMY_SPAN,
-        };
     }
 }
 
