@@ -4,3 +4,5 @@ Cargo.lock
 *.obj
 !src/codegen/entry_bench.obj
 *.exe
+proof/.lake/
+fuzz_report.json

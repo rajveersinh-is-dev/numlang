@@ -138,3 +138,136 @@ pub fn generate_random_program(seed: u64) -> String {
 
     out
 }
+
+/// Generate a rich, deep randomized program containing:
+/// - deeply nested loops (while, for)
+/// - conditionals (nested if/else)
+/// - match expressions
+/// - coupled recurrence variables
+pub fn generate_deep_random_program(seed: u64) -> String {
+    let mut rng = SimpleRng::new(seed);
+    let mut out = String::new();
+
+    let c1 = rng.next_range(1, 5);
+    let c2 = rng.next_range(1, 10);
+    out.push_str(&format!(
+        r#"fn rec_fn(n: i64, a: i64) -> i64 {{
+    if n <= 0 {{
+        return a;
+    }} else {{
+        return rec_fn(n - 1, (a * {} + {}) % 1000);
+    }}
+}}
+
+"#,
+        c1, c2
+    ));
+
+    let c3 = rng.next_range(1, 6);
+    let c4 = rng.next_range(1, 10);
+    out.push_str(&format!(
+        r#"fn coupled_fn(init_x: i64, init_y: i64, steps: i64) -> i64 {{
+    let mut x: i64 = init_x;
+    let mut y: i64 = init_y;
+    let mut i: i64 = 0;
+    let bound: i64 = if steps > 8 {{ 8 }} else {{ if steps < 1 {{ 1 }} else {{ steps }} }};
+    while i < bound {{
+        let nx: i64 = (x * {} + y * {} + 3) % 1000;
+        let ny: i64 = (x * 2 - y + {}) % 1000;
+        x = nx;
+        y = ny;
+        i = i + 1;
+    }}
+    return (x + y) % 256;
+}}
+
+"#,
+        c3, c4, c1
+    ));
+
+    let m1 = rng.next_range(2, 6);
+    let m2 = rng.next_range(1, 12);
+    out.push_str(&format!(
+        r#"fn match_fn(val: i64) -> i64 {{
+    let mode: i64 = val % 4;
+    let res: i64 = match mode {{
+        0 => val * {} + 5,
+        1 => val - {},
+        2 => val * 2 + 1,
+        _ => val + 10,
+    }};
+    return res % 500;
+}}
+
+"#,
+        m1, m2
+    ));
+
+    let f1 = rng.next_range(1, 5);
+    let f2 = rng.next_range(1, 10);
+    out.push_str(&format!(
+        r#"fn for_loop_fn(start: i64, iters: i64) -> i64 {{
+    let mut acc: i64 = start;
+    let hi: i64 = if iters > 10 {{ 10 }} else {{ if iters < 1 {{ 1 }} else {{ iters }} }};
+    for i in 0..hi {{
+        if (i % 2) == 0 {{
+            acc = acc + i * {};
+        }} else {{
+            acc = acc - (i + {});
+        }}
+    }}
+    return acc % 500;
+}}
+
+"#,
+        f1, f2
+    ));
+
+    out.push_str("fn main() -> i64 {\n");
+    let init_a = rng.next_range(1, 50);
+    let init_b = rng.next_range(1, 50);
+    out.push_str(&format!("    let mut a: i64 = {};\n", init_a));
+    out.push_str(&format!("    let mut b: i64 = {};\n", init_b));
+
+    let steps = rng.next_range(4, 9);
+    for _ in 0..steps {
+        match rng.next_range(0, 5) {
+            0 => {
+                let depth = rng.next_range(1, 5);
+                out.push_str(&format!("    a = rec_fn({}, a);\n", depth));
+            }
+            1 => {
+                let iters = rng.next_range(1, 6);
+                out.push_str(&format!("    b = coupled_fn(a, b, {});\n", iters));
+            }
+            2 => {
+                out.push_str("    a = match_fn(a);\n");
+            }
+            3 => {
+                let iters = rng.next_range(1, 8);
+                out.push_str(&format!("    b = for_loop_fn(b, {});\n", iters));
+            }
+            _ => {
+                if rng.next_bool() {
+                    out.push_str("    b = (a + b) % 300;\n");
+                } else {
+                    out.push_str("    a = (a * 2 + 1) % 400;\n");
+                }
+            }
+        }
+    }
+
+    out.push_str(
+        r#"    let final_val: i64 = (a + b) % 256;
+    if final_val < 0 {
+        return final_val + 256;
+    } else {
+        return final_val;
+    }
+}
+"#,
+    );
+
+    out
+}
+
