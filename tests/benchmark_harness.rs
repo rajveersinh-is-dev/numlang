@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+static BENCH_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn find_vcvars64() -> Option<PathBuf> {
     let candidates = [
@@ -190,8 +193,12 @@ fn expected_matvec(iters: i64) -> i32 {
 
 #[test]
 fn test_comparative_benchmarks() {
-    let test_dir = std::env::temp_dir().join("numlang_comparative_benchmarks");
-    fs::create_dir_all(&test_dir).unwrap();
+    let id = BENCH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tid = std::thread::current().id();
+    let test_dir = std::env::temp_dir().join(format!(
+        "nl_bench_{:?}_{}", tid, id
+    ));
+    fs::create_dir_all(&test_dir).expect("Failed to create bench test_dir");
 
     let benchmarks = vec![
         (
