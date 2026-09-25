@@ -22,7 +22,7 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
             is_embedded(t1, *l2, interner) || is_embedded(t1, *r2, interner)
         }
         SymTerm::Unary(_, inner2, _) => is_embedded(t1, *inner2, interner),
-        SymTerm::Constructor(_, fields2, _) => {
+        SymTerm::Constructor(_, _, fields2, _) => {
             fields2.iter().any(|&f| is_embedded(t1, f, interner))
         }
         SymTerm::Call(_, args2, _) => {
@@ -50,8 +50,9 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
         (SymTerm::Unary(op1, in1, _), SymTerm::Unary(op2, in2, _)) => {
             op1 == op2 && is_embedded(*in1, *in2, interner)
         }
-        (SymTerm::Constructor(n1, f1, _), SymTerm::Constructor(n2, f2, _)) => {
+        (SymTerm::Constructor(n1, t1, f1, _), SymTerm::Constructor(n2, t2, f2, _)) => {
             n1 == n2
+                && t1 == t2
                 && f1.len() == f2.len()
                 && f1
                     .iter()

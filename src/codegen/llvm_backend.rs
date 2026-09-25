@@ -542,6 +542,24 @@ impl LlvmCompiler {
                         )));
                     }
                 }
+                Projection::Payload(idx) => {
+                    let i64_type = self.context.i64_type();
+                    let base_ptr = builder
+                        .build_load(
+                            i64_type.ptr_type(inkwell::AddressSpace::default()),
+                            current_ptr,
+                            "load_enum_ptr",
+                        )
+                        .unwrap()
+                        .into_pointer_value();
+                    let offset = self.context.i64_type().const_int((1 + idx) as u64, false);
+                    unsafe {
+                        current_ptr = builder
+                            .build_gep(i64_type, base_ptr, &[offset], "payload_ptr")
+                            .unwrap();
+                    }
+                    current_ty = Type::I64;
+                }
             }
         }
 
@@ -748,7 +766,46 @@ impl LlvmCompiler {
                             None
                         }
                     }
-                    Rvalue::EnumVariant { .. } => None,
+                    Rvalue::Discriminant(p) => {
+                        let ptr_val = self.eval_place_val(p, builder, struct_types, local_allocas)?;
+                        let i64_type = self.context.i64_type();
+                        let tag_ptr = builder
+                            .build_pointer_cast(
+                                ptr_val.into_pointer_value(),
+                                i64_type.ptr_type(inkwell::AddressSpace::default()),
+                                "tag_ptr",
+                            )
+                            .unwrap();
+                        let tag_val = builder.build_load(i64_type, tag_ptr, "tag").unwrap();
+                        Some(tag_val)
+                    }
+                    Rvalue::EnumVariant { tag, fields, .. } => {
+                        let i64_type = self.context.i64_type();
+                        let total_words = 1 + fields.len();
+                        let arr_type = i64_type.array_type(total_words as u32);
+                        let slot = builder.build_alloca(arr_type, "enum_slot").unwrap();
+                        let slot_ptr = builder
+                            .build_pointer_cast(
+                                slot,
+                                i64_type.ptr_type(inkwell::AddressSpace::default()),
+                                "enum_ptr",
+                            )
+                            .unwrap();
+                        builder
+                            .build_store(slot_ptr, i64_type.const_int(*tag as u64, false))
+                            .unwrap();
+                        for (idx, field_p) in fields.iter().enumerate() {
+                            let field_val = self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
+                            let field_offset = self.context.i64_type().const_int((1 + idx) as u64, false);
+                            let field_ptr = unsafe {
+                                builder
+                                    .build_gep(i64_type, slot_ptr, &[field_offset], "field_ptr")
+                                    .unwrap()
+                            };
+                            builder.build_store(field_ptr, field_val).unwrap();
+                        }
+                        Some(slot_ptr.as_basic_value_enum())
+                    }
                 };
 
                 if let Some(val) = value_to_store {

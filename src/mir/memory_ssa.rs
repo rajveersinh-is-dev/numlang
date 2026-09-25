@@ -477,6 +477,9 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         Rvalue::EnumVariant { fields, .. } => {
             reads.extend(fields.iter().cloned());
         }
+        Rvalue::Discriminant(p) => {
+            reads.push(p.clone());
+        }
         Rvalue::Phi(incoming) => {
             for (_, p) in incoming {
                 reads.push(p.clone());
@@ -554,6 +557,9 @@ fn format_rvalue(rv: &Rvalue) -> String {
         Rvalue::EnumVariant { enum_name, variant_name, fields, .. } => {
             let fields_str: Vec<String> = fields.iter().map(format_place).collect();
             format!("{}::{}({})", enum_name, variant_name, fields_str.join(", "))
+        }
+        Rvalue::Discriminant(p) => {
+            format!("discriminant({})", format_place(p))
         }
         Rvalue::Phi(incoming) => {
             let inc_str: Vec<String> = incoming

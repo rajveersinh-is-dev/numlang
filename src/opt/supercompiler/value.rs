@@ -13,6 +13,13 @@ pub enum Value {
     Float(f64),
     Bool(bool),
     Array(Vec<Value>, Type), // element type
+    Constructor {
+        enum_name: String,
+        variant_name: String,
+        tag: usize,
+        fields: Vec<Value>,
+        ty: Type,
+    },
     Symbolic(SymExpr),
     Void,
 }
@@ -43,7 +50,12 @@ impl SymExpr {
 
 impl Value {
     pub fn is_concrete(&self) -> bool {
-        matches!(self, Value::Int(_) | Value::Float(_) | Value::Bool(_))
+        match self {
+            Value::Int(_) | Value::Float(_) | Value::Bool(_) => true,
+            Value::Array(elems, _) => elems.iter().all(|e| e.is_concrete()),
+            Value::Constructor { fields, .. } => fields.iter().all(|f| f.is_concrete()),
+            _ => false,
+        }
     }
 
     pub fn as_int(&self) -> Option<i64> {
@@ -281,6 +293,28 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Void, Value::Void) => true,
         (Value::Array(xs, _), Value::Array(ys, _)) => {
             xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(a, b)| values_equal(a, b))
+        }
+        (
+            Value::Constructor {
+                enum_name: e1,
+                variant_name: v1,
+                tag: t1,
+                fields: f1,
+                ..
+            },
+            Value::Constructor {
+                enum_name: e2,
+                variant_name: v2,
+                tag: t2,
+                fields: f2,
+                ..
+            },
+        ) => {
+            e1 == e2
+                && v1 == v2
+                && t1 == t2
+                && f1.len() == f2.len()
+                && f1.iter().zip(f2.iter()).all(|(a, b)| values_equal(a, b))
         }
         _ => false,
     }

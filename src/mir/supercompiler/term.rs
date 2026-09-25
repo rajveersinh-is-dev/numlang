@@ -24,7 +24,7 @@ pub enum SymTerm {
     Var(Place, Type),
     Binary(BinaryOp, SymTermId, SymTermId, Type),
     Unary(UnaryOp, SymTermId, Type),
-    Constructor(String, Vec<SymTermId>, Type),
+    Constructor(String, usize, Vec<SymTermId>, Type),
     Select(SymTermId, SymTermId, SymTermId, Type), // condition, then, else
     Phi(Vec<(BasicBlockId, SymTermId)>, Type),
     Call(String, Vec<SymTermId>, Type),
@@ -40,7 +40,7 @@ impl SymTerm {
             SymTerm::Var(_, ty) => ty,
             SymTerm::Binary(_, _, _, ty) => ty,
             SymTerm::Unary(_, _, ty) => ty,
-            SymTerm::Constructor(_, _, ty) => ty,
+            SymTerm::Constructor(_, _, _, ty) => ty,
             SymTerm::Select(_, _, _, ty) => ty,
             SymTerm::Phi(_, ty) => ty,
             SymTerm::Call(_, _, ty) => ty,
@@ -257,10 +257,11 @@ impl TermInterner {
     pub fn intern_constructor(
         &mut self,
         name: String,
+        tag: usize,
         fields: Vec<SymTermId>,
         ty: Type,
     ) -> SymTermId {
-        self.intern(SymTerm::Constructor(name, fields, ty))
+        self.intern(SymTerm::Constructor(name, tag, fields, ty))
     }
 
     pub fn intern_call(
@@ -289,9 +290,9 @@ impl TermInterner {
                 let inner_new = self.import_from(other, inner);
                 self.intern_unary(op, inner_new, ty)
             }
-            SymTerm::Constructor(name, fields, ty) => {
+            SymTerm::Constructor(name, tag, fields, ty) => {
                 let fields_new = fields.iter().map(|&f| self.import_from(other, f)).collect();
-                self.intern_constructor(name, fields_new, ty)
+                self.intern_constructor(name, tag, fields_new, ty)
             }
             SymTerm::Select(c, t, e, ty) => {
                 let c_new = self.import_from(other, c);
@@ -327,7 +328,7 @@ impl TermInterner {
             | SymTerm::Var(_, _) => 1,
             SymTerm::Binary(_, l, r, _) => 1 + self.sizes[l.0] + self.sizes[r.0],
             SymTerm::Unary(_, inner, _) => 1 + self.sizes[inner.0],
-            SymTerm::Constructor(_, fields, _) => {
+            SymTerm::Constructor(_, _, fields, _) => {
                 1 + fields.iter().map(|f| self.sizes[f.0]).sum::<usize>()
             }
             SymTerm::Call(_, args, _) => {
@@ -365,9 +366,9 @@ impl TermInterner {
             SymTerm::Unary(op, inner, _) => {
                 format!("({:?} {})", op, self.format_term(*inner))
             }
-            SymTerm::Constructor(name, fields, _) => {
+            SymTerm::Constructor(name, tag, fields, _) => {
                 let f_str: Vec<String> = fields.iter().map(|f| self.format_term(*f)).collect();
-                format!("{} {{{}}}", name, f_str.join(", "))
+                format!("{}#{} {{{}}}", name, tag, f_str.join(", "))
             }
             SymTerm::Call(callee, args, _) => {
                 let a_str: Vec<String> = args.iter().map(|a| self.format_term(*a)).collect();

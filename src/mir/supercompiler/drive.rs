@@ -320,10 +320,68 @@ impl<'a> SupercompilerDriver<'a> {
                     }
                 }
             }
-            Terminator::Switch { default, .. } => {
-                let mut next_state = working_state;
-                next_state.block = default.clone();
-                self.handle_transition(node_id, next_state, ancestor_stack, depth);
+            Terminator::Switch {
+                value,
+                targets,
+                default,
+            } => {
+                let val_term = working_state
+                    .get_value(value)
+                    .unwrap_or_else(|| self.interner.intern_var(value.clone(), Type::I64));
+                let lead_val = working_state.path_constraints.find_leader(val_term);
+
+                if let SymTerm::ConstInt(tag, _) = self.interner.get(lead_val) {
+                    let mut matched = false;
+                    for (case_val, target_bb) in targets {
+                        if case_val == tag {
+                            self.stats.branches_pruned += targets.len() - 1;
+                            let mut next_state = working_state.clone();
+                            next_state.block = target_bb.clone();
+                            self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if !matched {
+                        self.stats.branches_pruned += targets.len();
+                        let mut next_state = working_state;
+                        next_state.block = default.clone();
+                        self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                    }
+                } else {
+                    for (case_val, target_bb) in targets {
+                        let mut arm_state = working_state.clone();
+                        arm_state.block = target_bb.clone();
+                        let case_term = self.interner.intern_int(*case_val);
+                        let cond_eq = self.interner.intern_binary(
+                            BinaryOp::Eq,
+                            val_term,
+                            case_term,
+                            Type::Bool,
+                        );
+                        arm_state
+                            .path_constraints
+                            .add_condition(cond_eq, true, &self.interner);
+
+                        let arm_node = self.alloc_node(arm_state);
+                        self.nodes[node_id.0]
+                            .edges
+                            .push(ProcessEdge::BranchTrue(arm_node, cond_eq));
+                        ancestor_stack.push(node_id);
+                        self.drive_node(arm_node, ancestor_stack, depth + 1);
+                        ancestor_stack.pop();
+                    }
+
+                    let mut def_state = working_state;
+                    def_state.block = default.clone();
+                    let def_node = self.alloc_node(def_state);
+                    self.nodes[node_id.0]
+                        .edges
+                        .push(ProcessEdge::Step(def_node));
+                    ancestor_stack.push(node_id);
+                    self.drive_node(def_node, ancestor_stack, depth + 1);
+                    ancestor_stack.pop();
+                }
             }
             Terminator::Unreachable => {}
         }
@@ -332,9 +390,38 @@ impl<'a> SupercompilerDriver<'a> {
     fn drive_statement(&mut self, stmt: &Statement, state: &mut SymbolicState) {
         let Statement::Assign(dest, rval) = stmt;
         let term = match rval {
-            Rvalue::Use(p) => state
-                .get_value(p)
-                .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64)),
+            Rvalue::Use(p) => {
+                if let Some(Projection::Payload(i)) = p.projections.first() {
+                    let base_place = Place {
+                        local: p.local.clone(),
+                        projections: vec![],
+                    };
+                    if let Some(base_term_id) = state.get_value(&base_place) {
+                        let root_id = state.path_constraints.find_leader(base_term_id);
+                        if let SymTerm::Constructor(_, _, fields, _) = self.interner.get(root_id) {
+                            if let Some(&f_term) = fields.get(*i) {
+                                f_term
+                            } else {
+                                state.get_value(p).unwrap_or_else(|| {
+                                    self.interner.intern_var(p.clone(), Type::I64)
+                                })
+                            }
+                        } else {
+                            state.get_value(p).unwrap_or_else(|| {
+                                self.interner.intern_var(p.clone(), Type::I64)
+                            })
+                        }
+                    } else {
+                        state.get_value(p).unwrap_or_else(|| {
+                            self.interner.intern_var(p.clone(), Type::I64)
+                        })
+                    }
+                } else {
+                    state.get_value(p).unwrap_or_else(|| {
+                        self.interner.intern_var(p.clone(), Type::I64)
+                    })
+                }
+            }
             Rvalue::Constant(lit) => self.interner.intern_const(lit.clone()),
             Rvalue::BinaryOp(op, l, r) => {
                 let l_term = state
@@ -350,6 +437,43 @@ impl<'a> SupercompilerDriver<'a> {
                     .get_value(inner)
                     .unwrap_or_else(|| self.interner.intern_var(inner.clone(), Type::I64));
                 self.interner.intern_unary(*op, in_term, Type::I64)
+            }
+            Rvalue::Discriminant(p) => {
+                let base_place = Place {
+                    local: p.local.clone(),
+                    projections: vec![],
+                };
+                if let Some(base_term_id) = state.get_value(&base_place) {
+                    let root_id = state.path_constraints.find_leader(base_term_id);
+                    if let SymTerm::Constructor(_, tag, _, _) = self.interner.get(root_id) {
+                        self.interner.intern_int(*tag as i64)
+                    } else {
+                        self.interner.intern_var(dest.clone(), Type::I64)
+                    }
+                } else {
+                    self.interner.intern_var(dest.clone(), Type::I64)
+                }
+            }
+            Rvalue::EnumVariant {
+                enum_name,
+                variant_name,
+                tag,
+                fields,
+            } => {
+                let f_terms: Vec<SymTermId> = fields
+                    .iter()
+                    .map(|p| {
+                        state
+                            .get_value(p)
+                            .unwrap_or_else(|| self.interner.intern_var(p.clone(), Type::I64))
+                    })
+                    .collect();
+                self.interner.intern_constructor(
+                    variant_name.clone(),
+                    *tag,
+                    f_terms,
+                    Type::Enum(enum_name.clone()),
+                )
             }
             Rvalue::Call(callee, args) => {
                 let arg_terms: Vec<SymTermId> = args

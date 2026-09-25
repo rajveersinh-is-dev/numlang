@@ -97,6 +97,9 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
         Rvalue::EnumVariant { fields, .. } => {
             places.extend(fields.iter().cloned());
         }
+        Rvalue::Discriminant(p) => {
+            places.push(p.clone());
+        }
         Rvalue::Phi(incoming) => {
             for (_, p) in incoming {
                 places.push(p.clone());
@@ -399,6 +402,11 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
                 if let Some(r) = replacements.get(p) {
                     *p = r.clone();
                 }
+            }
+        }
+        Rvalue::Discriminant(p) => {
+            if let Some(r) = replacements.get(p) {
+                *p = r.clone();
             }
         }
         Rvalue::Phi(incoming) => {

@@ -52,6 +52,20 @@ pub fn value_to_expr(v: &Value) -> TypedExpr {
                 span: DUMMY_SPAN,
             }
         }
+        Value::Constructor {
+            enum_name,
+            variant_name,
+            tag,
+            fields,
+            ty,
+        } => TypedExpr::EnumConstructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            args: fields.iter().map(value_to_expr).collect(),
+            ty: ty.clone(),
+            span: DUMMY_SPAN,
+        },
     }
 }
 

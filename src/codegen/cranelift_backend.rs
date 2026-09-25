@@ -7948,6 +7948,20 @@ impl CraneliftCompiler {
                             }
                         }
                     }
+                    crate::mir::lower::Rvalue::Discriminant(p) => {
+                        if !var_map.contains_key(&p.local) {
+                            let var = builder.declare_var(types::I64);
+                            var_map.insert(p.local.clone(), (var, types::I64));
+                        }
+                    }
+                    crate::mir::lower::Rvalue::EnumVariant { fields, .. } => {
+                        for p in fields {
+                            if !var_map.contains_key(&p.local) {
+                                let var = builder.declare_var(types::I64);
+                                var_map.insert(p.local.clone(), (var, types::I64));
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -7963,6 +7977,12 @@ impl CraneliftCompiler {
                 {
                     let var = builder.declare_var(types::I8);
                     var_map.insert(condition.local.clone(), (var, types::I8));
+                }
+                crate::mir::Terminator::Switch { value, .. }
+                    if !var_map.contains_key(&value.local) =>
+                {
+                    let var = builder.declare_var(types::I64);
+                    var_map.insert(value.local.clone(), (var, types::I64));
                 }
                 _ => {}
             }
@@ -8005,7 +8025,14 @@ impl CraneliftCompiler {
                     },
                     crate::mir::lower::Rvalue::Use(p) => {
                         if !p.projections.is_empty() {
-                            if let Some(crate::mir::Projection::Index(idx_place)) = p.projections.first() {
+                            if let Some(crate::mir::Projection::Payload(idx)) = p.projections.first() {
+                                let ptr_val = var_map
+                                    .get(&p.local)
+                                    .map(|&(v, _)| builder.use_var(v))
+                                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                                let offset = (8 + idx * 8) as i32;
+                                builder.ins().load(types::I64, MemFlagsData::trusted(), ptr_val, offset)
+                            } else if let Some(crate::mir::Projection::Index(idx_place)) = p.projections.first() {
                                 let p_name = crate::mir::supercompiler::fusion::resolve_alias(&p.local, &aliases);
                                 if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(p_name).or_else(|| array_slots.get(&p.local)) {
                                     let elem_size = elem_ty.size_bytes().max(1);
@@ -8205,6 +8232,43 @@ impl CraneliftCompiler {
                             }
                         }
                         builder.ins().iconst(types::I64, 0)
+                    }
+                    crate::mir::lower::Rvalue::Discriminant(p) => {
+                        let ptr_val = var_map
+                            .get(&p.local)
+                            .map(|&(v, _)| builder.use_var(v))
+                            .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                        builder.ins().load(types::I64, MemFlagsData::trusted(), ptr_val, 0)
+                    }
+                    crate::mir::lower::Rvalue::EnumVariant {
+                        enum_name,
+                        tag,
+                        fields,
+                        ..
+                    } => {
+                        let total_size = self
+                            .enum_layouts
+                            .get(enum_name)
+                            .map(|l| l.total_size)
+                            .unwrap_or((8 + fields.len() * 8) as u32);
+                        let slot_data = StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            total_size,
+                            8,
+                        );
+                        let slot = builder.create_sized_stack_slot(slot_data);
+                        let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                        let tag_val = builder.ins().iconst(types::I64, *tag as i64);
+                        builder.ins().store(MemFlagsData::trusted(), tag_val, slot_addr, 0);
+                        for (i, f_place) in fields.iter().enumerate() {
+                            let f_val = var_map
+                                .get(&f_place.local)
+                                .map(|&(v, _)| builder.use_var(v))
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let offset = (8 + i * 8) as i32;
+                            builder.ins().store(MemFlagsData::trusted(), f_val, slot_addr, offset);
+                        }
+                        slot_addr
                     }
                     _ => builder.ins().iconst(types::I64, 0),
                 };
