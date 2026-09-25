@@ -34,7 +34,7 @@ fn type_to_clif(ty: Type) -> types::Type {
         Type::Void => types::I32,
         Type::Str => types::I64,
         Type::Array(_, _) => types::I64, // Pointer to array
-        Type::Struct(_) => types::I64,   // Pointer to struct on stack
+        Type::Struct(_) | Type::Enum(_) => types::I64,   // Pointer to struct or enum on stack
     }
 }
 
@@ -68,6 +68,22 @@ impl StructLayout {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EnumLayout {
+    pub name: String,
+    pub total_size: u32,
+    pub align: u32,
+    pub variants: HashMap<String, EnumVariantLayout>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariantLayout {
+    pub name: String,
+    pub tag: usize,
+    pub field_offsets: Vec<u32>,
+    pub payload_size: u32,
+}
+
 fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u32, u32) {
     match ty {
         Type::I8 | Type::U8 | Type::Bool => (1, 1),
@@ -86,6 +102,7 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
                 (8, 8)
             }
         }
+        Type::Enum(_) => (8, 8),
     }
 }
 
@@ -114,6 +131,52 @@ fn compute_struct_layouts(struct_defs: &[crate::typecheck::typed_ast::TypedStruc
             fields,
             ordered_fields,
         });
+    }
+    layouts
+}
+
+fn compute_enum_layouts(
+    enum_defs: &[crate::typecheck::typed_ast::TypedEnumDef],
+    struct_layouts: &HashMap<String, StructLayout>,
+) -> HashMap<String, EnumLayout> {
+    let mut layouts: HashMap<String, EnumLayout> = HashMap::new();
+    for edef in enum_defs {
+        let mut max_variant_size: u32 = 8;
+        let mut variants = HashMap::new();
+
+        for variant in &edef.variants {
+            let mut curr_offset: u32 = 8;
+            let mut field_offsets = Vec::new();
+            for field_ty in &variant.payload {
+                let (fsz, fal) = compute_type_layout(field_ty, struct_layouts);
+                let fal = fal.max(1);
+                curr_offset = (curr_offset + fal - 1) & !(fal - 1);
+                field_offsets.push(curr_offset);
+                curr_offset += fsz;
+            }
+            let payload_size = curr_offset - 8;
+            max_variant_size = max_variant_size.max(curr_offset);
+            variants.insert(
+                variant.name.clone(),
+                EnumVariantLayout {
+                    name: variant.name.clone(),
+                    tag: variant.tag,
+                    field_offsets,
+                    payload_size,
+                },
+            );
+        }
+
+        let total_size = ((max_variant_size + 7) & !7).max(8);
+        layouts.insert(
+            edef.name.clone(),
+            EnumLayout {
+                name: edef.name.clone(),
+                total_size,
+                align: 8,
+                variants,
+            },
+        );
     }
     layouts
 }
@@ -358,6 +421,11 @@ fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<String
             collect_dynamic_arrays_in_expr(scrutinee, dynamic);
             for arm in arms {
                 collect_dynamic_arrays_in_expr(&arm.body, dynamic);
+            }
+        }
+        TypedExpr::EnumConstructor { args, .. } => {
+            for a in args {
+                collect_dynamic_arrays_in_expr(a, dynamic);
             }
         }
         TypedExpr::Ident { .. } | TypedExpr::Literal { .. } => {}
@@ -1326,6 +1394,7 @@ pub struct CraneliftCompiler {
     module: ObjectModule,
     func_ids: HashMap<String, FuncId>,
     pub struct_layouts: HashMap<String, StructLayout>,
+    pub enum_layouts: HashMap<String, EnumLayout>,
     exit_process_id: FuncId,
     get_std_handle_id: FuncId,
     write_file_id: FuncId,
@@ -1496,6 +1565,7 @@ impl CraneliftCompiler {
             module,
             func_ids: HashMap::new(),
             struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
             exit_process_id,
             get_std_handle_id,
             write_file_id,
@@ -1518,11 +1588,12 @@ impl CraneliftCompiler {
 
     pub fn compile_program(mut self, program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
         self.struct_layouts = compute_struct_layouts(&program.structs);
+        self.enum_layouts = compute_enum_layouts(&program.enums, &self.struct_layouts);
 
         // Step 1: Declare all user functions
         for func in &program.functions {
             let mut sig = self.module.make_signature();
-            if matches!(&func.return_ty, Type::Struct(_)) {
+            if matches!(&func.return_ty, Type::Struct(_) | Type::Enum(_)) {
                 sig.params.push(AbiParam::new(types::I64)); // hidden sret pointer
                 sig.returns.push(AbiParam::new(types::I64));
             } else if func.return_ty != Type::Void {
@@ -1537,6 +1608,8 @@ impl CraneliftCompiler {
                             sig.params.push(AbiParam::new(type_to_clif(leaf_ty)));
                         }
                     }
+                } else if let Type::Enum(_) = &param.ty {
+                    sig.params.push(AbiParam::new(types::I64));
                 } else {
                     sig.params.push(AbiParam::new(type_to_clif(param.ty.clone())));
                 }
@@ -2348,8 +2421,8 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
         let func_id = *self.func_ids.get(&func.name).unwrap();
 
         let mut sig = self.module.make_signature();
-        let is_struct_ret = matches!(&func.return_ty, Type::Struct(_));
-        if is_struct_ret {
+        let is_sret = matches!(&func.return_ty, Type::Struct(_) | Type::Enum(_));
+        if is_sret {
             sig.params.push(AbiParam::new(types::I64)); // hidden sret pointer
             sig.returns.push(AbiParam::new(types::I64));
         } else if func.return_ty != Type::Void {
@@ -2364,6 +2437,8 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
                         sig.params.push(AbiParam::new(type_to_clif(leaf_ty)));
                     }
                 }
+            } else if let Type::Enum(_) = &param.ty {
+                sig.params.push(AbiParam::new(types::I64));
             } else {
                 sig.params.push(AbiParam::new(type_to_clif(param.ty.clone())));
             }
@@ -2380,7 +2455,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
 
         let mut block_param_idx = 0;
         let block_params: Vec<Value> = builder.block_params(entry_block).to_vec();
-        let current_sret_ptr = if is_struct_ret {
+        let current_sret_ptr = if is_sret {
             let sret = block_params[block_param_idx];
             block_param_idx += 1;
             Some(sret)
@@ -2408,6 +2483,19 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
                     builder.ins().store(MemFlagsData::trusted(), leaf_val, slot_addr, leaf_offset as i32);
                 }
                 variables.insert(param.name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
+            } else if let Type::Enum(ename) = &param.ty {
+                let layout = self.enum_layouts.get(ename).unwrap().clone();
+                let slot_data = StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    layout.total_size,
+                    layout.align.min(8) as u8,
+                );
+                let slot = builder.create_sized_stack_slot(slot_data);
+                let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                let incoming_ptr = block_params[block_param_idx];
+                block_param_idx += 1;
+                FunctionTranslationState::emit_copy_bytes(&mut builder, incoming_ptr, slot_addr, layout.total_size as usize);
+                variables.insert(param.name.clone(), Storage::Enum { slot, enum_name: ename.clone() });
             } else {
                 let clif_ty = type_to_clif(param.ty.clone());
                 let var = builder.declare_var(clif_ty);
@@ -2466,6 +2554,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             module: &mut self.module,
             func_ids: &self.func_ids,
             struct_layouts: &self.struct_layouts,
+            enum_layouts: &self.enum_layouts,
             current_sret_ptr,
             exit_process_id: self.exit_process_id,
             get_std_handle_id: self.get_std_handle_id,
@@ -2534,6 +2623,15 @@ enum Storage {
     Struct {
         slot: StackSlot,
         struct_name: String,
+    },
+    Enum {
+        slot: StackSlot,
+        enum_name: String,
+    },
+    EnumPtr {
+        var: Variable,
+        #[allow(dead_code)]
+        enum_name: String,
     },
 }
 
@@ -2607,6 +2705,7 @@ struct FunctionTranslationState<'a> {
     module: &'a mut ObjectModule,
     func_ids: &'a HashMap<String, FuncId>,
     struct_layouts: &'a HashMap<String, StructLayout>,
+    enum_layouts: &'a HashMap<String, EnumLayout>,
     current_sret_ptr: Option<Value>,
     exit_process_id: FuncId,
     get_std_handle_id: FuncId,
@@ -2642,6 +2741,7 @@ impl<'a> FunctionTranslationState<'a> {
     fn get_type_size(&self, ty: &Type) -> usize {
         match ty {
             Type::Struct(name) => self.struct_layouts.get(name).map_or(8, |l| l.total_size as usize),
+            Type::Enum(name) => self.enum_layouts.get(name).map_or(8, |l| l.total_size as usize),
             Type::Array(elem, len) => self.get_type_size(elem) * len,
             _ => ty.size_bytes(),
         }
@@ -2667,6 +2767,29 @@ impl<'a> FunctionTranslationState<'a> {
         if offset < total_bytes {
             let val = builder.ins().load(types::I8, MemFlagsData::trusted(), src_ptr, offset as i32);
             builder.ins().store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
+        }
+    }
+
+    fn emit_zero_bytes(builder: &mut FunctionBuilder, dst_ptr: Value, total_bytes: usize) {
+        let mut offset = 0;
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        while offset + 8 <= total_bytes {
+            builder.ins().store(MemFlagsData::trusted(), zero64, dst_ptr, offset as i32);
+            offset += 8;
+        }
+        if offset + 4 <= total_bytes {
+            let zero32 = builder.ins().iconst(types::I32, 0);
+            builder.ins().store(MemFlagsData::trusted(), zero32, dst_ptr, offset as i32);
+            offset += 4;
+        }
+        if offset + 2 <= total_bytes {
+            let zero16 = builder.ins().iconst(types::I16, 0);
+            builder.ins().store(MemFlagsData::trusted(), zero16, dst_ptr, offset as i32);
+            offset += 2;
+        }
+        if offset < total_bytes {
+            let zero8 = builder.ins().iconst(types::I8, 0);
+            builder.ins().store(MemFlagsData::trusted(), zero8, dst_ptr, offset as i32);
         }
     }
 
@@ -4952,6 +5075,8 @@ impl<'a> FunctionTranslationState<'a> {
                                 builder.ins().store(MemFlagsData::trusted(), fval, dst_ptr, foffset as i32);
                             }
                         }
+                    } else if matches!(value, TypedExpr::Literal { .. }) {
+                        Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                     } else {
                         let src_ptr = self.translate_expr(value, builder)?;
                         Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
@@ -4962,6 +5087,33 @@ impl<'a> FunctionTranslationState<'a> {
                         Storage::Struct {
                             slot,
                             struct_name: sname.clone(),
+                        },
+                    );
+                    return Ok(false);
+                }
+
+                if let Type::Enum(ename) = ty {
+                    let layout = self.enum_layouts.get(ename).unwrap().clone();
+                    let slot_data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        layout.total_size,
+                        layout.align.min(8) as u8,
+                    );
+                    let slot = builder.create_sized_stack_slot(slot_data);
+                    let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+
+                    if matches!(value, TypedExpr::Literal { .. }) {
+                        Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
+                    } else {
+                        let src_ptr = self.translate_expr(value, builder)?;
+                        Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                    }
+
+                    self.variables.insert(
+                        name.clone(),
+                        Storage::Enum {
+                            slot,
+                            enum_name: ename.clone(),
                         },
                     );
                     return Ok(false);
@@ -5144,10 +5296,26 @@ impl<'a> FunctionTranslationState<'a> {
                                     builder.ins().store(MemFlagsData::trusted(), fval, dst_ptr, foffset as i32);
                                 }
                             }
+                        } else if matches!(value, TypedExpr::Literal { .. }) {
+                            Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                         } else {
                             let src_ptr = self.translate_expr(value, builder)?;
                             Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
                         }
+                    }
+                    Storage::Enum { slot, enum_name } => {
+                        let layout = self.enum_layouts.get(&enum_name).unwrap().clone();
+                        let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                        if matches!(value, TypedExpr::Literal { .. }) {
+                            Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
+                        } else {
+                            let src_ptr = self.translate_expr(value, builder)?;
+                            Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                        }
+                    }
+                    Storage::EnumPtr { var, .. } => {
+                        let src_ptr = self.translate_expr(value, builder)?;
+                        builder.def_var(var, src_ptr);
                     }
                     Storage::Scalar(var) => {
                         let val = self.translate_expr(value, builder)?;
@@ -5339,6 +5507,12 @@ impl<'a> FunctionTranslationState<'a> {
                         let val = self.translate_expr(expr, builder)?;
                         let sret = self.current_sret_ptr.expect("sret_ptr must exist when returning struct");
                         let layout = self.struct_layouts.get(&sname).unwrap();
+                        Self::emit_copy_bytes(builder, val, sret, layout.total_size as usize);
+                        builder.ins().return_(&[sret]);
+                    } else if let Type::Enum(ename) = expr.ty() {
+                        let val = self.translate_expr(expr, builder)?;
+                        let sret = self.current_sret_ptr.expect("sret_ptr must exist when returning enum");
+                        let layout = self.enum_layouts.get(&ename).unwrap();
                         Self::emit_copy_bytes(builder, val, sret, layout.total_size as usize);
                         builder.ins().return_(&[sret]);
                     } else {
@@ -5739,8 +5913,11 @@ impl<'a> FunctionTranslationState<'a> {
                     Storage::PromotedArray { .. } => {
                         Ok(self.get_iconst(types::I64, 0, builder))
                     }
-                    Storage::Struct { slot, .. } => {
+                    Storage::Struct { slot, .. } | Storage::Enum { slot, .. } => {
                         Ok(builder.ins().stack_addr(types::I64, slot, 0))
+                    }
+                    Storage::EnumPtr { var, .. } => {
+                        Ok(builder.use_var(var))
                     }
                 }
             }
@@ -7008,6 +7185,14 @@ impl<'a> FunctionTranslationState<'a> {
                         ret_layout.align.min(8) as u8,
                     );
                     Some(builder.create_sized_stack_slot(slot_data))
+                } else if let Type::Enum(ret_ename) = ty {
+                    let ret_layout = self.enum_layouts.get(ret_ename).unwrap();
+                    let slot_data = StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        ret_layout.total_size,
+                        ret_layout.align.min(8) as u8,
+                    );
+                    Some(builder.create_sized_stack_slot(slot_data))
                 } else {
                     None
                 };
@@ -7091,9 +7276,9 @@ impl<'a> FunctionTranslationState<'a> {
             } => {
                 let scrut_val = self.translate_expr(scrutinee, builder)?;
                 let scrut_ty = scrutinee.ty();
-                let clif_scrut_ty = type_to_clif(scrut_ty);
+                let clif_scrut_ty = type_to_clif(scrut_ty.clone());
 
-                let clif_res_ty = if ty.is_struct() || *ty == Type::Void {
+                let clif_res_ty = if ty.is_struct() || ty.is_enum() || *ty == Type::Void {
                     types::I64
                 } else {
                     type_to_clif(ty.clone())
@@ -7103,6 +7288,13 @@ impl<'a> FunctionTranslationState<'a> {
                     Some(builder.declare_var(clif_res_ty))
                 } else {
                     None
+                };
+
+                let is_enum = scrut_ty.is_enum();
+                let tag_val = if is_enum {
+                    builder.ins().load(types::I64, MemFlagsData::trusted(), scrut_val, 0)
+                } else {
+                    scrut_val
                 };
 
                 let merge_block = builder.create_block();
@@ -7117,6 +7309,17 @@ impl<'a> FunctionTranslationState<'a> {
                             crate::typecheck::typed_ast::TypedMatchPattern::Wildcard => {
                                 is_wildcard = true;
                                 break;
+                            }
+                            crate::typecheck::typed_ast::TypedMatchPattern::Variant {
+                                tag,
+                                ..
+                            } => {
+                                let pat_tag_val = self.get_iconst(types::I64, *tag as i64, builder);
+                                let eq = builder.ins().icmp(IntCC::Equal, tag_val, pat_tag_val);
+                                cond = Some(match cond {
+                                    None => eq,
+                                    Some(prev) => builder.ins().bor(prev, eq),
+                                });
                             }
                             crate::typecheck::typed_ast::TypedMatchPattern::Literal(crate::typecheck::typed_ast::TypedLiteral::Int(n, _)) => {
                                 let lit_val = self.get_iconst(clif_scrut_ty, *n, builder);
@@ -7144,7 +7347,49 @@ impl<'a> FunctionTranslationState<'a> {
                         builder.ins().jump(arm_block, &[]);
                         builder.switch_to_block(arm_block);
                         builder.seal_block(arm_block);
+
+                        let prev_vars = self.variables.clone();
+                        for pat in &arm.patterns {
+                            if let crate::typecheck::typed_ast::TypedMatchPattern::Variant { enum_name, variant_name, bindings, .. } = pat {
+                                let elayout = self.enum_layouts.get(enum_name).unwrap().clone();
+                                let vlayout = elayout.variants.get(variant_name).unwrap().clone();
+                                for (i, (b_name, b_ty)) in bindings.iter().enumerate() {
+                                    if b_name == "_" {
+                                        continue;
+                                    }
+                                    let offset = vlayout.field_offsets[i];
+                                    if let Type::Struct(sname) = b_ty {
+                                        let slayout = self.struct_layouts.get(sname).unwrap().clone();
+                                        let slot_data = StackSlotData::new(
+                                            StackSlotKind::ExplicitSlot,
+                                            slayout.total_size,
+                                            slayout.align.min(8) as u8,
+                                        );
+                                        let slot = builder.create_sized_stack_slot(slot_data);
+                                        let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                        let src_field_ptr = builder.ins().iadd_imm_s(scrut_val, offset as i64);
+                                        Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, slayout.total_size as usize);
+                                        self.variables.insert(b_name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
+                                    } else if let Type::Enum(ename) = b_ty {
+                                        let child_ptr = builder.ins().load(types::I64, MemFlagsData::trusted(), scrut_val, offset as i32);
+                                        let var = builder.declare_var(types::I64);
+                                        builder.def_var(var, child_ptr);
+                                        self.variables.insert(b_name.clone(), Storage::EnumPtr { var, enum_name: ename.clone() });
+                                    } else {
+                                        let clif_ty = type_to_clif(b_ty.clone());
+                                        let field_val = builder.ins().load(clif_ty, MemFlagsData::trusted(), scrut_val, offset as i32);
+                                        let var = builder.declare_var(clif_ty);
+                                        builder.def_var(var, field_val);
+                                        self.variables.insert(b_name.clone(), Storage::Scalar(var));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+
                         let body_val = self.translate_expr(&arm.body, builder)?;
+                        self.variables = prev_vars;
+
                         if let Some(var) = res_var {
                             builder.def_var(var, body_val);
                         }
@@ -7157,7 +7402,49 @@ impl<'a> FunctionTranslationState<'a> {
 
                         builder.switch_to_block(arm_block);
                         builder.seal_block(arm_block);
+
+                        let prev_vars = self.variables.clone();
+                        for pat in &arm.patterns {
+                            if let crate::typecheck::typed_ast::TypedMatchPattern::Variant { enum_name, variant_name, bindings, .. } = pat {
+                                let elayout = self.enum_layouts.get(enum_name).unwrap().clone();
+                                let vlayout = elayout.variants.get(variant_name).unwrap().clone();
+                                for (i, (b_name, b_ty)) in bindings.iter().enumerate() {
+                                    if b_name == "_" {
+                                        continue;
+                                    }
+                                    let offset = vlayout.field_offsets[i];
+                                    if let Type::Struct(sname) = b_ty {
+                                        let slayout = self.struct_layouts.get(sname).unwrap().clone();
+                                        let slot_data = StackSlotData::new(
+                                            StackSlotKind::ExplicitSlot,
+                                            slayout.total_size,
+                                            slayout.align.min(8) as u8,
+                                        );
+                                        let slot = builder.create_sized_stack_slot(slot_data);
+                                        let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                        let src_field_ptr = builder.ins().iadd_imm_s(scrut_val, offset as i64);
+                                        Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, slayout.total_size as usize);
+                                        self.variables.insert(b_name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
+                                    } else if let Type::Enum(ename) = b_ty {
+                                        let child_ptr = builder.ins().load(types::I64, MemFlagsData::trusted(), scrut_val, offset as i32);
+                                        let var = builder.declare_var(types::I64);
+                                        builder.def_var(var, child_ptr);
+                                        self.variables.insert(b_name.clone(), Storage::EnumPtr { var, enum_name: ename.clone() });
+                                    } else {
+                                        let clif_ty = type_to_clif(b_ty.clone());
+                                        let field_val = builder.ins().load(clif_ty, MemFlagsData::trusted(), scrut_val, offset as i32);
+                                        let var = builder.declare_var(clif_ty);
+                                        builder.def_var(var, field_val);
+                                        self.variables.insert(b_name.clone(), Storage::Scalar(var));
+                                    }
+                                }
+                                break;
+                            }
+                        }
+
                         let body_val = self.translate_expr(&arm.body, builder)?;
+                        self.variables = prev_vars;
+
                         if let Some(var) = res_var {
                             builder.def_var(var, body_val);
                         }
@@ -7169,6 +7456,10 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 if !terminated {
+                    if let Some(var) = res_var {
+                        let zero = self.get_iconst(clif_res_ty, 0, builder);
+                        builder.def_var(var, zero);
+                    }
                     builder.ins().jump(merge_block, &[]);
                 }
 
@@ -7180,6 +7471,47 @@ impl<'a> FunctionTranslationState<'a> {
                 } else {
                     Ok(self.get_iconst(types::I64, 0, builder))
                 }
+            }
+
+            TypedExpr::EnumConstructor {
+                enum_name,
+                variant_name,
+                tag,
+                args,
+                ..
+            } => {
+                let layout = self.enum_layouts.get(enum_name).unwrap().clone();
+                let v_layout = layout.variants.get(variant_name).unwrap().clone();
+
+                let slot_data = StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    layout.total_size,
+                    layout.align.min(8) as u8,
+                );
+                let slot = builder.create_sized_stack_slot(slot_data);
+                let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+
+                // Store tag at offset 0 (i64)
+                let tag_val = self.get_iconst(types::I64, *tag as i64, builder);
+                builder.ins().store(MemFlagsData::trusted(), tag_val, slot_addr, 0);
+
+                // Store payload arguments
+                for (i, arg_expr) in args.iter().enumerate() {
+                    let offset = v_layout.field_offsets[i];
+                    let arg_val = self.translate_expr(arg_expr, builder)?;
+                    let arg_ty = arg_expr.ty();
+                    if let Type::Struct(sname) = &arg_ty {
+                        let sub_layout = self.struct_layouts.get(sname).unwrap();
+                        let sub_dst = builder.ins().iadd_imm_s(slot_addr, offset as i64);
+                        Self::emit_copy_bytes(builder, arg_val, sub_dst, sub_layout.total_size as usize);
+                    } else if let Type::Enum(_) = &arg_ty {
+                        builder.ins().store(MemFlagsData::trusted(), arg_val, slot_addr, offset as i32);
+                    } else {
+                        builder.ins().store(MemFlagsData::trusted(), arg_val, slot_addr, offset as i32);
+                    }
+                }
+
+                Ok(slot_addr)
             }
         }
     }
@@ -8058,15 +8390,24 @@ impl CraneliftCompiler {
         mir: &crate::mir::lower::MirProgram,
     ) -> Result<Vec<u8>, CodegenError> {
         self.struct_layouts = compute_struct_layouts(&mir.structs);
+        self.enum_layouts = compute_enum_layouts(&mir.enums, &self.struct_layouts);
 
         // Step 1: Declare all functions
         for func in &mir.functions {
             let mut sig = self.module.make_signature();
-            if func.return_ty != Type::Void {
+            let is_sret = matches!(&func.return_ty, Type::Struct(_) | Type::Enum(_));
+            if is_sret {
+                sig.params.push(AbiParam::new(types::I64));
+                sig.returns.push(AbiParam::new(types::I64));
+            } else if func.return_ty != Type::Void {
                 sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
             }
             for (_, p_ty) in &func.params {
-                sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
+                if let Type::Struct(_) | Type::Enum(_) = p_ty {
+                    sig.params.push(AbiParam::new(types::I64));
+                } else {
+                    sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
+                }
             }
             let func_id = self
                 .module

@@ -71,7 +71,7 @@ fn check_place_promotability(
             Projection::Index(_) | Projection::Deref => {
                 non_promotable.insert(p.local.clone());
             }
-            Projection::Field(_) => {}
+            Projection::Field(_) | Projection::Payload(_) => {}
         }
     }
     all_places.insert(p.clone());
@@ -93,6 +93,9 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
             for (_, p) in fields {
                 places.push(p.clone());
             }
+        }
+        Rvalue::EnumVariant { fields, .. } => {
+            places.extend(fields.iter().cloned());
         }
         Rvalue::Phi(incoming) => {
             for (_, p) in incoming {
@@ -386,6 +389,13 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
         }
         Rvalue::Struct(_, fields) => {
             for (_, p) in fields {
+                if let Some(r) = replacements.get(p) {
+                    *p = r.clone();
+                }
+            }
+        }
+        Rvalue::EnumVariant { fields, .. } => {
+            for p in fields {
                 if let Some(r) = replacements.get(p) {
                     *p = r.clone();
                 }

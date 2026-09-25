@@ -211,6 +211,11 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(&arm.body, function_names, calls);
             }
         }
+        TypedExpr::EnumConstructor { args, .. } => {
+            for arg in args {
+                collect_calls_in_expr(arg, function_names, calls);
+            }
+        }
         TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => {}
     }
 }
@@ -337,6 +342,11 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
             replace_in_expr(scrutinee, replacements);
             for arm in arms {
                 replace_in_expr(&mut arm.body, replacements);
+            }
+        }
+        TypedExpr::EnumConstructor { args, .. } => {
+            for arg in args {
+                replace_in_expr(arg, replacements);
             }
         }
         TypedExpr::Literal { .. } => {}

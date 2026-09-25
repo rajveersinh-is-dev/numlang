@@ -1,8 +1,93 @@
-use crate::ast::{Block, Function, Param, Stmt, StructDef};
+use crate::ast::{Block, EnumDef, EnumVariant, Function, Param, Stmt, StructDef};
 use crate::parser::{ParseError, Parser};
 use crate::token::Token;
 
 impl<'a> Parser<'a> {
+    pub fn parse_enum_def(&mut self, doc_comment: Option<String>) -> Result<EnumDef, ParseError> {
+        let enum_span = self.consume(&Token::Enum, "'enum' keyword")?;
+
+        let name = match self.peek_token().cloned() {
+            Some(t) => match t.token {
+                Token::Ident(id) => {
+                    self.advance();
+                    id
+                }
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: t.token,
+                        expected: "enum name".to_string(),
+                        span: t.span,
+                    });
+                }
+            },
+            None => {
+                return Err(ParseError::UnexpectedEof {
+                    expected: "enum name".to_string(),
+                    span: enum_span,
+                });
+            }
+        };
+
+        self.consume(&Token::LBrace, "'{' after enum name")?;
+        let mut variants = Vec::new();
+        while !self.check(&Token::RBrace) && !self.is_at_end() {
+            let (var_name, var_name_span) = match self.peek_token().cloned() {
+                Some(t) => match t.token {
+                    Token::Ident(id) => {
+                        self.advance();
+                        (id, t.span)
+                    }
+                    _ => {
+                        return Err(ParseError::UnexpectedToken {
+                            found: t.token,
+                            expected: "variant name".to_string(),
+                            span: t.span,
+                        });
+                    }
+                },
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "variant name or '}'".to_string(),
+                        span: self.previous_span(),
+                    });
+                }
+            };
+
+            let mut payload = Vec::new();
+            let mut var_span = var_name_span;
+
+            if self.match_token(&Token::LParen) {
+                while !self.check(&Token::RParen) && !self.is_at_end() {
+                    let ty = self.parse_type()?;
+                    payload.push(ty);
+                    if !self.match_token(&Token::Comma) {
+                        break;
+                    }
+                }
+                let end = self.consume(&Token::RParen, "')' after variant payload")?;
+                var_span = var_span.merge(&end);
+            }
+
+            variants.push(EnumVariant {
+                name: var_name,
+                payload,
+                span: var_span,
+            });
+
+            if !self.match_token(&Token::Comma) {
+                break;
+            }
+        }
+
+        let end_span = self.consume(&Token::RBrace, "'}' after enum variants")?;
+        Ok(EnumDef {
+            name,
+            variants,
+            doc_comment,
+            span: enum_span.merge(&end_span),
+        })
+    }
+
     pub fn parse_struct_def(&mut self, doc_comment: Option<String>) -> Result<StructDef, ParseError> {
         let struct_span = self.consume(&Token::Struct, "'struct' keyword")?;
 

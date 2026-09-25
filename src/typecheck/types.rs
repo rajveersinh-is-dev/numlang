@@ -18,6 +18,7 @@ pub enum Type {
     Array(Box<Type>, usize),
     Str,
     Struct(String),
+    Enum(String),
 }
 
 impl Type {
@@ -72,6 +73,10 @@ impl Type {
         matches!(self, Type::Struct(_))
     }
 
+    pub fn is_enum(&self) -> bool {
+        matches!(self, Type::Enum(_))
+    }
+
     pub fn is_array(&self) -> bool {
         matches!(self, Type::Array(_, _))
     }
@@ -87,6 +92,7 @@ impl Type {
             Type::Str => 8,
             Type::Array(elem, len) => elem.size_bytes() * len,
             Type::Struct(_) => 8,
+            Type::Enum(_) => 8,
         }
     }
 
@@ -196,6 +202,7 @@ impl fmt::Display for Type {
             Type::Void => write!(f, "void"),
             Type::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
             Type::Struct(name) => write!(f, "{}", name),
+            Type::Enum(name) => write!(f, "{}", name),
         }
     }
 }

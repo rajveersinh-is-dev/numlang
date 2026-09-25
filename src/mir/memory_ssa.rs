@@ -474,6 +474,9 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
                 reads.push(p.clone());
             }
         }
+        Rvalue::EnumVariant { fields, .. } => {
+            reads.extend(fields.iter().cloned());
+        }
         Rvalue::Phi(incoming) => {
             for (_, p) in incoming {
                 reads.push(p.clone());
@@ -500,6 +503,7 @@ fn format_place(place: &Place) -> String {
             Projection::Deref => s = format!("(*{})", s),
             Projection::Field(f) => s = format!("{}.{}", s, f),
             Projection::Index(idx) => s = format!("{}[{}]", s, format_place(idx)),
+            Projection::Payload(idx) => s = format!("{}.payload_{}", s, idx),
         }
     }
     s
@@ -546,6 +550,10 @@ fn format_rvalue(rv: &Rvalue) -> String {
                 .map(|(k, v)| format!("{}: {}", k, format_place(v)))
                 .collect();
             format!("{} {{ {} }}", name, fields_str.join(", "))
+        }
+        Rvalue::EnumVariant { enum_name, variant_name, fields, .. } => {
+            let fields_str: Vec<String> = fields.iter().map(format_place).collect();
+            format!("{}::{}({})", enum_name, variant_name, fields_str.join(", "))
         }
         Rvalue::Phi(incoming) => {
             let inc_str: Vec<String> = incoming

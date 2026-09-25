@@ -273,6 +273,21 @@ impl CompilerDiagnostic {
                 "empty match block".to_string(),
                 "Provide at least one match arm in the match expression".to_string(),
             ),
+            crate::typecheck::TypeError::NoSuchVariant { enum_name, variant_name, .. } => (
+                format!("Enum `{}` has no variant `{}`", enum_name, variant_name),
+                format!("variant `{}` not found in enum `{}`", variant_name, enum_name),
+                "Check the enum definition for available variants".to_string(),
+            ),
+            crate::typecheck::TypeError::CannotMatchNonEnum { found, .. } => (
+                format!("Cannot match variant pattern on non-enum type `{}`", found),
+                "not an enum type".to_string(),
+                "Variant patterns can only match enum types".to_string(),
+            ),
+            crate::typecheck::TypeError::PayloadArityMismatch { enum_name, variant_name, expected, found, .. } => (
+                format!("Variant `{}::{}` expected {} payload arguments, found {}", enum_name, variant_name, expected, found),
+                format!("expected {} arguments, found {}", expected, found),
+                "Provide the correct number of payload arguments for this variant".to_string(),
+            ),
         };
 
         let help = format!("{} (see 'numlang --explain {}')", base_help, code);

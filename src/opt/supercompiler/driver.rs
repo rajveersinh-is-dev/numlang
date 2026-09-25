@@ -382,6 +382,11 @@ pub fn drive_expr(
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var("_match".to_string(), ty.clone()))
         }
+
+        TypedExpr::EnumConstructor { ty, .. } => {
+            env.mark_symbolic();
+            Value::Symbolic(super::value::SymExpr::Var("_enum".to_string(), ty.clone()))
+        }
     }
 }
 

@@ -141,8 +141,46 @@ impl<'a> Parser<'a> {
             }
             Token::Ident(name) => {
                 self.advance();
-                // Check if followed by function call '('
-                if self.check(&Token::LParen) {
+                if self.check(&Token::ColonColon) {
+                    self.advance(); // consume '::'
+                    let variant_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                        expected: "variant name after '::'".to_string(),
+                        span: token_spanned.span,
+                    })?;
+                    let variant_name = match &variant_tok.token {
+                        Token::Ident(id) => id.clone(),
+                        other => {
+                            return Err(ParseError::UnexpectedToken {
+                                found: other.clone(),
+                                expected: "variant name after '::'".to_string(),
+                                span: variant_tok.span,
+                            });
+                        }
+                    };
+                    let mut args = Vec::new();
+                    let mut end_span = variant_tok.span;
+                    if self.check(&Token::LParen) {
+                        self.advance();
+                        if !self.check(&Token::RParen) {
+                            loop {
+                                args.push(self.parse_expr(0)?);
+                                if self.match_token(&Token::Comma) {
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        end_span = self.consume(&Token::RParen, "')' after enum constructor arguments")?;
+                    }
+                    let span = token_spanned.span.merge(&end_span);
+                    Ok(Expr::EnumConstructor {
+                        enum_name: Some(name),
+                        variant_name,
+                        args,
+                        span,
+                    })
+                } else if self.check(&Token::LParen) {
                     self.advance();
                     let mut args = Vec::new();
                     if !self.check(&Token::RParen) {
@@ -318,9 +356,72 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Ok(MatchPattern::Literal(Literal::Bool(false)))
             }
+            Token::Ident(name) => {
+                self.advance();
+                let mut span = tok.span;
+                let (enum_name, variant_name) = if self.match_token(&Token::ColonColon) {
+                    let v_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                        expected: "variant name after '::'".to_string(),
+                        span: tok.span,
+                    })?;
+                    let v_name = match &v_tok.token {
+                        Token::Ident(id) => id.clone(),
+                        other => {
+                            return Err(ParseError::UnexpectedToken {
+                                found: other.clone(),
+                                expected: "variant name after '::'".to_string(),
+                                span: v_tok.span,
+                            });
+                        }
+                    };
+                    span = span.merge(&v_tok.span);
+                    (Some(name), v_name)
+                } else {
+                    (None, name)
+                };
+
+                let mut bindings = Vec::new();
+                if self.match_token(&Token::LParen) {
+                    if !self.check(&Token::RParen) {
+                        loop {
+                            let prev_sp = self.previous_span();
+                            let b_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                                expected: "binding variable name or ')' in pattern".to_string(),
+                                span: prev_sp,
+                            })?;
+                            let b_name = match &b_tok.token {
+                                Token::Ident(id) => id.clone(),
+                                Token::Underscore => "_".to_string(),
+                                other => {
+                                    return Err(ParseError::UnexpectedToken {
+                                        found: other.clone(),
+                                        expected: "binding variable name or '_' in pattern".to_string(),
+                                        span: b_tok.span,
+                                    });
+                                }
+                            };
+                            bindings.push(b_name);
+                            if self.match_token(&Token::Comma) {
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    let end_span = self.consume(&Token::RParen, "')' after pattern bindings")?;
+                    span = span.merge(&end_span);
+                }
+
+                Ok(MatchPattern::Variant {
+                    enum_name,
+                    variant_name,
+                    bindings,
+                    span,
+                })
+            }
             other => Err(ParseError::UnexpectedToken {
                 found: other,
-                expected: "pattern (literal or '_') in match arm".to_string(),
+                expected: "pattern (literal, variant, or '_') in match arm".to_string(),
                 span: tok.span,
             }),
         }

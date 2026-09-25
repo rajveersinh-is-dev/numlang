@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
                         self.advance();
                         return;
                     }
-                    Token::RBrace | Token::Fn | Token::Struct => {
+                    Token::RBrace | Token::Fn | Token::Struct | Token::Enum => {
                         if self.cursor == start_cursor {
                             self.advance();
                         }
@@ -137,6 +137,7 @@ impl<'a> Parser<'a> {
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
         let mut functions = Vec::new();
         let mut structs = Vec::new();
+        let mut enums = Vec::new();
         let mut items = Vec::new();
         let mut pending_doc_comments: Vec<String> = Vec::new();
 
@@ -163,6 +164,22 @@ impl<'a> Parser<'a> {
                         self.synchronize();
                     }
                 }
+            } else if self.check(&Token::Enum) {
+                let doc = if pending_doc_comments.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut pending_doc_comments).join("\n"))
+                };
+                match self.parse_enum_def(doc) {
+                    Ok(e) => {
+                        enums.push(e.clone());
+                        items.push(crate::ast::Item::Enum(e));
+                    }
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.synchronize();
+                    }
+                }
             } else if self.check(&Token::Fn) {
                 let doc = if pending_doc_comments.is_empty() {
                     None
@@ -183,7 +200,7 @@ impl<'a> Parser<'a> {
                 pending_doc_comments.clear();
                 self.errors.push(ParseError::UnexpectedToken {
                     found: tok.token,
-                    expected: "function or struct definition".to_string(),
+                    expected: "function, struct, or enum definition".to_string(),
                     span: tok.span,
                 });
                 self.synchronize();
@@ -200,6 +217,7 @@ impl<'a> Parser<'a> {
             items,
             functions,
             structs,
+            enums,
         })
     }
 }

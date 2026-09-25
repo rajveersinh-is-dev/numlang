@@ -106,6 +106,7 @@ pub fn supercompile_program(
         // Build a read-only program view for the driver.
         let fake_program = crate::typecheck::typed_ast::TypedProgram {
             structs: program.structs.clone(),
+            enums: program.enums.clone(),
             functions: func_snapshot.clone(),
         };
 
@@ -143,6 +144,7 @@ fn supercompile_main(program: &mut TypedProgram) {
 
     let fake_program = crate::typecheck::typed_ast::TypedProgram {
         structs: program.structs.clone(),
+        enums: program.enums.clone(),
         functions: program.functions.clone(),
     };
 
