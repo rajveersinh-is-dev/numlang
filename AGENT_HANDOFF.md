@@ -90,4 +90,33 @@ This document enables any AI agent or human contributor to instantly take over d
      - String / sequence pattern matching with KMP-like DFA synthesis.
   3. Generate comparative markdown reports and speedup charts showing speedup ratios against Clang, GCC, Rust, and HSc.
 
+---
+
+## 6. Completed: Phase 10 (Close All Turchin Supercompiler Gaps)
+
+- **Status**: Completed (100% tests passing, 0 Clippy warnings under `-D warnings`).
+- **Tracks & Deliverables**:
+  1. **Heap Pointer Type Plumbing** (Track 5):
+     - Added `Type::Ptr(Box<Type>)` to `src/typecheck/types.rs`.
+     - Plumbed layout, size, alignment, and native pointer lowering across `src/codegen/cranelift_backend.rs` and `src/codegen/llvm_backend.rs`.
+     - Added `SymTerm::Ref(SymTermId, Type)` and `SymTerm::Deref(SymTermId, Type)` to `src/mir/supercompiler/term.rs`, `whistle.rs`, `generalize.rs`, and `residualize.rs`.
+  2. **Negative Discriminant Propagation in MIR Switch** (Track 3):
+     - Added `excluded_values: HashMap<SymTermId, Vec<i64>>`, `add_not_equal_int`, `deduce_must_equal_int`, and negative constraint propagation to `src/mir/supercompiler/state.rs`.
+     - In `src/mir/supercompiler/drive.rs`, propagated negative discriminant constraints across all arms and default arms of `Terminator::Switch`.
+     - Added `test_negative_discriminant_propagation` in `tests/futamura_projection_tests.rs`.
+  3. **Partial Specialization in AST Driver** (Track 1):
+     - Extended `src/opt/supercompiler/value.rs` with `sym_to_expr`, `value_to_typed_expr`, `contains_opaque()`, and `is_symbolic_opaque()`.
+     - Handled `__lit_` unstripping, desugared `SymExpr::If` to `TypedExpr::Match`, and preserved symbolic returns in `src/opt/supercompiler/driver.rs` and `mod.rs`.
+     - Added `test_partial_specialization_symbolic_arg` in `tests/futamura_projection_tests.rs`.
+  4. **Coupled 2-Variable Linear Recurrence Solver via Matrix Exponentiation** (Track 2):
+     - Implemented `solve_coupled_2var_recurrence` in `src/mir/supercompiler/generalize.rs` supporting homogeneous and affine coupled systems via Cramer's rule and `mat_pow_3x3`.
+     - Registered `__coupled_a` and `__coupled_b` builtins in `src/typecheck/checker.rs` and added native Cranelift loop lowerings in `src/codegen/cranelift_backend.rs` (both AST and MIR).
+     - Hooked multi-variable candidate matching into `try_solve_loop_recurrence` in `src/mir/supercompiler/drive.rs`.
+     - Added `test_coupled_2var_recurrence_direct` and `test_coupled_2var_linear_recurrence` in `tests/coupled_recurrence_and_fusion_tests.rs`.
+  5. **2nd Futamura Projection Verification** (Track 4):
+     - Added `test_2nd_futamura_projection` to `tests/futamura_projection_tests.rs` specializing an arithmetic AST interpreter on a static program expression with symbolic runtime arguments.
+     - Formally asserted zero residual interpreter dispatch (`TypedExpr::Match`) and zero calls to `eval`, collapsing directly to target arithmetic.
+     - Verified runtime execution and correctness across test inputs ($x=5 \to 16$, $x=10 \to 26$, $x=0 \to 6$).
+
+
 
