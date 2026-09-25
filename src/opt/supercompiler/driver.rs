@@ -24,7 +24,7 @@ const MAX_CALL_DEPTH: usize = 64;
 #[derive(Debug)]
 pub enum DriveResult {
     /// Block returned a value (via `return` statement).
-    Returned(Value),
+    Returned(Box<Value>),
     /// Block hit `break`.
     Break,
     /// Block fell through without returning.
@@ -76,7 +76,7 @@ pub fn drive_function(
     }
 
     match result {
-        DriveResult::Returned(v) => v,
+        DriveResult::Returned(v) => *v,
         _ => {
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var(
@@ -149,10 +149,10 @@ pub fn drive_stmt(
 
         TypedStmt::Return(Some(expr), _) => {
             let val = drive_expr(expr, program, env);
-            DriveResult::Returned(val)
+            DriveResult::Returned(Box::new(val))
         }
 
-        TypedStmt::Return(None, _) => DriveResult::Returned(Value::Void),
+        TypedStmt::Return(None, _) => DriveResult::Returned(Box::new(Value::Void)),
 
         TypedStmt::Break(_) => DriveResult::Break,
 
@@ -410,6 +410,58 @@ pub fn drive_expr(
                 fields: field_vals,
                 ty: ty.clone(),
             }
+        }
+
+        TypedExpr::Lambda { params, body, captured: captured_vars, .. } => {
+            let mut captured = std::collections::HashMap::new();
+            for (name, _ty) in captured_vars {
+                if let Some(val) = env.get(name) {
+                    captured.insert(name.clone(), val.clone());
+                }
+            }
+            Value::Closure {
+                params: params.iter().map(|(n, _)| n.clone()).collect(),
+                body: *body.clone(),
+                captured,
+            }
+        }
+
+        TypedExpr::CallIndirect { callee, args, ty, .. } => {
+            let callee_val = drive_expr(callee, program, env);
+            match callee_val {
+                Value::Closure { params, body, captured } => {
+                    let arg_vals: Vec<Value> = args.iter()
+                        .map(|a| drive_expr(a, program, env))
+                        .collect();
+                    let mut closure_bindings: Vec<(String, Value)> = captured.into_iter().collect();
+                    for (p, v) in params.iter().zip(arg_vals) {
+                        closure_bindings.push((p.clone(), v));
+                    }
+                    let mut closure_env = env.child_for_call(closure_bindings);
+                    let result = drive_expr(&body, program, &mut closure_env);
+                    if closure_env.has_symbolic {
+                        env.mark_symbolic();
+                    }
+                    result
+                }
+                _ => {
+                    env.mark_symbolic();
+                    Value::Symbolic(super::value::SymExpr::Var(
+                        "_indirect_call".to_string(),
+                        ty.clone(),
+                    ))
+                }
+            }
+        }
+
+        TypedExpr::Box { inner, .. } => {
+            // In the symbolic driver, box is evaluated directly to its inner value
+            drive_expr(inner, program, env)
+        }
+
+        TypedExpr::Deref { inner, .. } => {
+            // Deref transparently evaluates the inner boxed value
+            drive_expr(inner, program, env)
         }
     }
 }

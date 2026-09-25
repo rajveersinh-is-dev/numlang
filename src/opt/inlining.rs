@@ -1131,6 +1131,29 @@ fn rename_expr(expr: &TypedExpr, map: &HashMap<String, String>) -> TypedExpr {
             ty: ty.clone(),
             span: *span,
         },
+        TypedExpr::CallIndirect { callee, args, ty, span } => TypedExpr::CallIndirect {
+            callee: Box::new(rename_expr(callee, map)),
+            args: args.iter().map(|a| rename_expr(a, map)).collect(),
+            ty: ty.clone(),
+            span: *span,
+        },
+        TypedExpr::Lambda { params, body, captured, ty, span } => TypedExpr::Lambda {
+            params: params.clone(),
+            body: Box::new(rename_expr(body, map)),
+            captured: captured.clone(),
+            ty: ty.clone(),
+            span: *span,
+        },
+        TypedExpr::Box { inner, ty, span } => TypedExpr::Box {
+            inner: Box::new(rename_expr(inner, map)),
+            ty: ty.clone(),
+            span: *span,
+        },
+        TypedExpr::Deref { inner, ty, span } => TypedExpr::Deref {
+            inner: Box::new(rename_expr(inner, map)),
+            ty: ty.clone(),
+            span: *span,
+        },
         _ => expr.clone(),
     }
 }

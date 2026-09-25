@@ -20,6 +20,13 @@ pub enum Rvalue {
     },
     Discriminant(Place),
     Phi(Vec<(BasicBlockId, Place)>),
+    FnPtr(String),
+    ClosureAlloc {
+        fn_name: String,
+        captured: Vec<Place>,
+    },
+    Alloc(Place),
+    Load(Place),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -281,6 +288,59 @@ impl MirBuilder {
                             tag: *tag,
                             fields: field_places,
                         },
+                    ));
+                place
+            }
+            TypedExpr::Lambda { captured, .. } => {
+                let mut captured_places = Vec::new();
+                for (cap_name, _) in captured {
+                    captured_places.push(Place { local: cap_name.clone(), projections: vec![] });
+                }
+                self.blocks[self.current_block.clone().unwrap().0]
+                    .statements
+                    .push(Statement::Assign(
+                        place.clone(),
+                        Rvalue::ClosureAlloc {
+                            fn_name: "closure_stub".to_string(),
+                            captured: captured_places,
+                        },
+                    ));
+                place
+            }
+            TypedExpr::CallIndirect { callee, args, .. } => {
+                let callee_place = self.lower_expr(callee, None);
+                let mut arg_places = Vec::new();
+                for arg in args {
+                    arg_places.push(self.lower_expr(arg, None));
+                }
+                let next_bb = self.new_block();
+                let curr_bb = self.current_block.clone().unwrap();
+                self.blocks[curr_bb.0].terminator = Terminator::IndirectCall {
+                    callee: callee_place,
+                    args: arg_places,
+                    dest: place.clone(),
+                    next: next_bb.clone(),
+                };
+                self.current_block = Some(next_bb);
+                place
+            }
+            TypedExpr::Box { inner, .. } => {
+                let inner_place = self.lower_expr(inner, None);
+                self.blocks[self.current_block.clone().unwrap().0]
+                    .statements
+                    .push(Statement::Assign(
+                        place.clone(),
+                        Rvalue::Alloc(inner_place),
+                    ));
+                place
+            }
+            TypedExpr::Deref { inner, .. } => {
+                let inner_place = self.lower_expr(inner, None);
+                self.blocks[self.current_block.clone().unwrap().0]
+                    .statements
+                    .push(Statement::Assign(
+                        place.clone(),
+                        Rvalue::Load(inner_place),
                     ));
                 place
             }

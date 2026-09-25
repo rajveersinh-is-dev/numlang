@@ -24,6 +24,13 @@ pub enum Terminator {
     Switch { value: Place, targets: Vec<(i64, BasicBlockId)>, default: BasicBlockId },
     Return { value: Option<Place> },
     Unreachable,
+    /// Indirect call through a runtime function pointer or closure fat pointer
+    IndirectCall {
+        callee: Place,
+        args: Vec<Place>,
+        dest: Place,
+        next: BasicBlockId,
+    },
 }
 
 impl Terminator {
@@ -41,6 +48,7 @@ impl Terminator {
                 succs.push(default.clone());
                 succs
             }
+            Terminator::IndirectCall { next, .. } => vec![next.clone()],
             Terminator::Return { .. } | Terminator::Unreachable => vec![],
         }
     }

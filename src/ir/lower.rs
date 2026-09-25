@@ -522,8 +522,12 @@ impl IrLowerer {
             TypedExpr::StructLiteral { .. }
             | TypedExpr::FieldAccess { .. }
             | TypedExpr::Match { .. }
-            | TypedExpr::EnumConstructor { .. } => {
-                todo!("struct, match, and enum expressions in ir lowering")
+            | TypedExpr::EnumConstructor { .. }
+            | TypedExpr::Lambda { .. }
+            | TypedExpr::CallIndirect { .. }
+            | TypedExpr::Box { .. }
+            | TypedExpr::Deref { .. } => {
+                todo!("struct, match, enum, lambda, box in ir lowering")
             }
         }
     }

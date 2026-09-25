@@ -79,6 +79,29 @@ pub enum TypedExpr {
         ty: Type,
         span: Span,
     },
+    Lambda {
+        params: Vec<(String, Type)>,
+        body: Box<TypedExpr>,
+        captured: Vec<(String, Type)>,
+        ty: Type,
+        span: Span,
+    },
+    CallIndirect {
+        callee: Box<TypedExpr>,
+        args: Vec<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
+    Box {
+        inner: Box<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
+    Deref {
+        inner: Box<TypedExpr>,
+        ty: Type,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +138,10 @@ impl TypedExpr {
             TypedExpr::FieldAccess { ty, .. } => ty.clone(),
             TypedExpr::Match { ty, .. } => ty.clone(),
             TypedExpr::EnumConstructor { ty, .. } => ty.clone(),
+            TypedExpr::Lambda { ty, .. } => ty.clone(),
+            TypedExpr::CallIndirect { ty, .. } => ty.clone(),
+            TypedExpr::Box { ty, .. } => ty.clone(),
+            TypedExpr::Deref { ty, .. } => ty.clone(),
         }
     }
 
@@ -131,6 +158,10 @@ impl TypedExpr {
             TypedExpr::FieldAccess { span, .. } => *span,
             TypedExpr::Match { span, .. } => *span,
             TypedExpr::EnumConstructor { span, .. } => *span,
+            TypedExpr::Lambda { span, .. } => *span,
+            TypedExpr::CallIndirect { span, .. } => *span,
+            TypedExpr::Box { span, .. } => *span,
+            TypedExpr::Deref { span, .. } => *span,
         }
     }
 }

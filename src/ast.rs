@@ -87,6 +87,20 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    Lambda {
+        params: Vec<String>,
+        param_tys: Vec<Option<String>>,
+        body: Box<Expr>,
+        span: Span,
+    },
+    Box {
+        inner: Box<Expr>,
+        span: Span,
+    },
+    Deref {
+        inner: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +137,9 @@ impl Expr {
             Expr::FieldAccess { span, .. } => *span,
             Expr::Match { span, .. } => *span,
             Expr::EnumConstructor { span, .. } => *span,
+            Expr::Lambda { span, .. } => *span,
+            Expr::Box { span, .. } => *span,
+            Expr::Deref { span, .. } => *span,
         }
     }
 }
@@ -217,6 +234,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_ty: Option<String>,
     pub body: Block,
