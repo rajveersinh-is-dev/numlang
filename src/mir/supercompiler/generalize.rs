@@ -75,6 +75,14 @@ fn msg_helper(
             }
             interner.intern_call(c1.clone(), common_a, ty1.clone())
         }
+        (SymTerm::Ref(i1, ty1), SymTerm::Ref(i2, _)) => {
+            let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
+            interner.intern_ref(common, ty1.clone())
+        }
+        (SymTerm::Deref(p1, ty1), SymTerm::Deref(p2, _)) => {
+            let common = msg_helper(*p1, *p2, interner, next_var_id, memo, mappings);
+            interner.intern_deref(common, ty1.clone())
+        }
         _ => {
             // Generalize to fresh variable
             let var_name = format!("_gen_{}", *next_var_id);
