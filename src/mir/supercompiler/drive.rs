@@ -349,7 +349,9 @@ impl<'a> SupercompilerDriver<'a> {
                         self.handle_transition(node_id, next_state, ancestor_stack, depth);
                     }
                 } else {
-                    for (case_val, target_bb) in targets {
+                    let all_case_vals: Vec<i64> = targets.iter().map(|(v, _)| *v).collect();
+
+                    for (i, (case_val, target_bb)) in targets.iter().enumerate() {
                         let mut arm_state = working_state.clone();
                         arm_state.block = target_bb.clone();
                         let case_term = self.interner.intern_int(*case_val);
@@ -363,6 +365,12 @@ impl<'a> SupercompilerDriver<'a> {
                             .path_constraints
                             .add_condition(cond_eq, true, &self.interner);
 
+                        for (j, &other_val) in all_case_vals.iter().enumerate() {
+                            if j != i {
+                                arm_state.path_constraints.add_not_equal_int(val_term, other_val);
+                            }
+                        }
+
                         let arm_node = self.alloc_node(arm_state);
                         self.nodes[node_id.0]
                             .edges
@@ -374,6 +382,9 @@ impl<'a> SupercompilerDriver<'a> {
 
                     let mut def_state = working_state;
                     def_state.block = default.clone();
+                    for &v in &all_case_vals {
+                        def_state.path_constraints.add_not_equal_int(val_term, v);
+                    }
                     let def_node = self.alloc_node(def_state);
                     self.nodes[node_id.0]
                         .edges

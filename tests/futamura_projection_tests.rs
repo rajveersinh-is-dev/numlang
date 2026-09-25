@@ -261,3 +261,43 @@ fn main() -> i64 {
     let (code_sc, _, _) = run_numlang_code(code, true);
     assert_eq!(code_sc, Some(42));
 }
+
+#[test]
+fn test_negative_discriminant_propagation() {
+    // A 3-variant enum where the default arm should deduce it must be variant 2.
+    let code = r#"
+enum Color { Red, Green, Blue }
+
+fn color_val(c: Color) -> i64 {
+    return match c {
+        Red   => 10,
+        Green => 20,
+        Blue  => 30,
+    };
+}
+
+fn main() -> i64 {
+    let c: Color = Blue;
+    return color_val(c);
+}
+"#;
+    let (norm, _, _) = run_numlang_code(code, false);
+    assert_eq!(norm, Some(30));
+
+    let (sc, _, _) = run_numlang_code(code, true);
+    assert_eq!(sc, Some(30));
+
+    // Static: main collapses to `return 30;`
+    let tokens = tokenize(code).unwrap();
+    let program = parse(&tokens).unwrap();
+    let mut typed = typecheck(&program).unwrap();
+    supercompile_program(&mut typed, None);
+    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
+    match &main_fn.body.stmts[0] {
+        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
+            assert_eq!(*lit, TypedLiteral::Int(30, numlang::typecheck::types::Type::I64));
+        }
+        other => panic!("Expected return 30, got: {:?}", other),
+    }
+}
+
