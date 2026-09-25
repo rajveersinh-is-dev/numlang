@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::BinaryOp;
-use super::generalize::solve_recurrence;
+use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
 use super::state::SymbolicState;
 use super::term::{SymTerm, SymTermId, TermInterner};
 use super::whistle::{is_instance_of, state_embeds};
@@ -735,6 +735,7 @@ impl<'a> SupercompilerDriver<'a> {
             any_solved = true;
         }
 
+        let mut unsolved_places = Vec::new();
         for place in &self.active_places {
             if let Some(ref acc_p) = solved_acc_place {
                 if place.local == acc_p.local {
@@ -760,10 +761,12 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
 
+            let mut this_solved = false;
             if history.len() >= 3 {
                 if let Some(closed_form) = solve_recurrence(&history, n_term, &mut self.interner) {
                     solved_state.set_value(place.clone(), closed_form);
                     any_solved = true;
+                    this_solved = true;
                 }
             } else if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
                 if t_anc != t_curr {
@@ -786,8 +789,34 @@ impl<'a> SupercompilerDriver<'a> {
                             {
                                 solved_state.set_value(place.clone(), closed_form);
                                 any_solved = true;
+                                this_solved = true;
                             }
                         }
+                    }
+                }
+            }
+
+            if !this_solved && history.len() >= 4 {
+                unsolved_places.push((place.clone(), history));
+            }
+        }
+
+        if unsolved_places.len() >= 2 {
+            let n = unsolved_places.len();
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let (ref p_a, ref hist_a) = unsolved_places[i];
+                    let (ref p_b, ref hist_b) = unsolved_places[j];
+                    if let Some((term_a, term_b)) = solve_coupled_2var_recurrence(
+                        hist_a,
+                        hist_b,
+                        n_term,
+                        &mut self.interner,
+                    ) {
+                        solved_state.set_value(p_a.clone(), term_a);
+                        solved_state.set_value(p_b.clone(), term_b);
+                        any_solved = true;
+                        break;
                     }
                 }
             }

@@ -449,6 +449,172 @@ pub fn solve_order2_recurrence(
     None
 }
 
+/// Solves coupled 2-variable linear recurrences:
+/// a_{k+1} = p * a_k + q * b_k + c_a
+/// b_{k+1} = r * a_k + s * b_k + c_b
+pub fn solve_coupled_2var_recurrence(
+    samples_a: &[i64],
+    samples_b: &[i64],
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> Option<(SymTermId, SymTermId)> {
+    if samples_a.len() < 4 || samples_b.len() < 4 {
+        return None;
+    }
+
+    let a0 = samples_a[0];
+    let a1 = samples_a[1];
+    let a2 = samples_a[2];
+    let a3 = samples_a[3];
+
+    let b0 = samples_b[0];
+    let b1 = samples_b[1];
+    let b2 = samples_b[2];
+    let b3 = samples_b[3];
+
+    // Method 1: Try homogeneous linear recurrence (c_a = 0, c_b = 0)
+    // a1 = p * a0 + q * b0
+    // a2 = p * a1 + q * b1
+    // b1 = r * a0 + s * b0
+    // b2 = r * a1 + s * b1
+    let mut solved_params = None;
+
+    let det_h = a0.wrapping_mul(b1).wrapping_sub(b0.wrapping_mul(a1));
+    if det_h != 0 {
+        let num_p = a1.wrapping_mul(b1).wrapping_sub(a2.wrapping_mul(b0));
+        let num_q = a0.wrapping_mul(a2).wrapping_sub(a1.wrapping_mul(a1));
+        let num_r = b1.wrapping_mul(b1).wrapping_sub(b2.wrapping_mul(b0));
+        let num_s = a0.wrapping_mul(b2).wrapping_sub(a1.wrapping_mul(b1));
+
+        if num_p % det_h == 0 && num_q % det_h == 0 && num_r % det_h == 0 && num_s % det_h == 0 {
+            let p = num_p / det_h;
+            let q = num_q / det_h;
+            let r = num_r / det_h;
+            let s = num_s / det_h;
+
+            let mut valid = true;
+            for k in 2..samples_a.len().min(samples_b.len()) {
+                let exp_a = p.wrapping_mul(samples_a[k - 1]).wrapping_add(q.wrapping_mul(samples_b[k - 1]));
+                let exp_b = r.wrapping_mul(samples_a[k - 1]).wrapping_add(s.wrapping_mul(samples_b[k - 1]));
+                if samples_a[k] != exp_a || samples_b[k] != exp_b {
+                    valid = false;
+                    break;
+                }
+            }
+            if valid {
+                solved_params = Some((p, q, 0i64, r, s, 0i64));
+            }
+        }
+    }
+
+    // Method 2: Try affine linear recurrence with differences
+    if solved_params.is_none() {
+        let da0 = a1.wrapping_sub(a0);
+        let da1 = a2.wrapping_sub(a1);
+        let da2 = a3.wrapping_sub(a2);
+
+        let db0 = b1.wrapping_sub(b0);
+        let db1 = b2.wrapping_sub(b1);
+        let db2 = b3.wrapping_sub(b2);
+
+        let det_d = da0.wrapping_mul(db1).wrapping_sub(db0.wrapping_mul(da1));
+        if det_d != 0 {
+            let num_p = da1.wrapping_mul(db1).wrapping_sub(da2.wrapping_mul(db0));
+            let num_q = da0.wrapping_mul(da2).wrapping_sub(da1.wrapping_mul(da1));
+            let num_r = db1.wrapping_mul(db1).wrapping_sub(db2.wrapping_mul(db0));
+            let num_s = da0.wrapping_mul(db2).wrapping_sub(da1.wrapping_mul(db1));
+
+            if num_p % det_d == 0 && num_q % det_d == 0 && num_r % det_d == 0 && num_s % det_d == 0 {
+                let p = num_p / det_d;
+                let q = num_q / det_d;
+                let r = num_r / det_d;
+                let s = num_s / det_d;
+
+                let ca = a1.wrapping_sub(p.wrapping_mul(a0)).wrapping_sub(q.wrapping_mul(b0));
+                let cb = b1.wrapping_sub(r.wrapping_mul(a0)).wrapping_sub(s.wrapping_mul(b0));
+
+                let mut valid = true;
+                for k in 1..samples_a.len().min(samples_b.len()) {
+                    let exp_a = p.wrapping_mul(samples_a[k - 1])
+                        .wrapping_add(q.wrapping_mul(samples_b[k - 1]))
+                        .wrapping_add(ca);
+                    let exp_b = r.wrapping_mul(samples_a[k - 1])
+                        .wrapping_add(s.wrapping_mul(samples_b[k - 1]))
+                        .wrapping_add(cb);
+                    if samples_a[k] != exp_a || samples_b[k] != exp_b {
+                        valid = false;
+                        break;
+                    }
+                }
+                if valid {
+                    solved_params = Some((p, q, ca, r, s, cb));
+                }
+            }
+        }
+    }
+
+    let (p, q, ca, r, s, cb) = solved_params?;
+
+    // Check if number of iterations is constant
+    let iter_term = interner.get(num_iters).clone();
+    if let SymTerm::ConstInt(n, _) = iter_term {
+        if n < 0 {
+            return None;
+        }
+        let n_usize = n as usize;
+        if n_usize < samples_a.len() && n_usize < samples_b.len() {
+            return Some((
+                interner.intern_int(samples_a[n_usize]),
+                interner.intern_int(samples_b[n_usize]),
+            ));
+        }
+
+        let m = [
+            [p, q, ca],
+            [r, s, cb],
+            [0, 0, 1],
+        ];
+        let m_pow = mat_pow_3x3(m, n);
+        let a_n = m_pow[0][0]
+            .wrapping_mul(a0)
+            .wrapping_add(m_pow[0][1].wrapping_mul(b0))
+            .wrapping_add(m_pow[0][2]);
+        let b_n = m_pow[1][0]
+            .wrapping_mul(a0)
+            .wrapping_add(m_pow[1][1].wrapping_mul(b0))
+            .wrapping_add(m_pow[1][2]);
+
+        return Some((interner.intern_int(a_n), interner.intern_int(b_n)));
+    }
+
+    // Symbolic number of iterations -> emit intrinsics __coupled_a and __coupled_b
+    let p_term = interner.intern_int(p);
+    let q_term = interner.intern_int(q);
+    let ca_term = interner.intern_int(ca);
+    let r_term = interner.intern_int(r);
+    let s_term = interner.intern_int(s);
+    let cb_term = interner.intern_int(cb);
+    let a0_term = interner.intern_int(a0);
+    let b0_term = interner.intern_int(b0);
+
+    let args = vec![
+        p_term,
+        q_term,
+        ca_term,
+        r_term,
+        s_term,
+        cb_term,
+        a0_term,
+        b0_term,
+        num_iters,
+    ];
+
+    let term_a = interner.intern_call("__coupled_a".to_string(), args.clone(), Type::I64);
+    let term_b = interner.intern_call("__coupled_b".to_string(), args, Type::I64);
+
+    Some((term_a, term_b))
+}
+
 fn mat_pow_2x2(mut m: [[i64; 2]; 2], mut exp: i64) -> [[i64; 2]; 2] {
     let mut res = [[1, 0], [0, 1]];
     while exp > 0 {

@@ -6535,6 +6535,73 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         }
                     }
+                    "__coupled_a" | "__coupled_b" => {
+                        let is_b = callee == "__coupled_b";
+                        let p = self.translate_expr(&args[0], builder)?;
+                        let q = self.translate_expr(&args[1], builder)?;
+                        let ca = self.translate_expr(&args[2], builder)?;
+                        let r = self.translate_expr(&args[3], builder)?;
+                        let s = self.translate_expr(&args[4], builder)?;
+                        let cb = self.translate_expr(&args[5], builder)?;
+                        let a0 = self.translate_expr(&args[6], builder)?;
+                        let b0 = self.translate_expr(&args[7], builder)?;
+                        let n_arg = self.translate_expr(&args[8], builder)?;
+
+                        let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
+                            builder.ins().uextend(types::I64, n_arg)
+                        } else {
+                            n_arg
+                        };
+
+                        let loop_head = builder.create_block();
+                        let loop_body = builder.create_block();
+                        let loop_done = builder.create_block();
+
+                        let a_var = builder.declare_var(types::I64);
+                        let b_var = builder.declare_var(types::I64);
+                        let i_var = builder.declare_var(types::I64);
+
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let one = builder.ins().iconst(types::I64, 1);
+
+                        builder.def_var(a_var, a0);
+                        builder.def_var(b_var, b0);
+                        builder.def_var(i_var, zero);
+
+                        builder.ins().jump(loop_head, &[]);
+                        builder.switch_to_block(loop_head);
+
+                        let cur_i = builder.use_var(i_var);
+                        let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                        builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                        builder.switch_to_block(loop_body);
+                        let cur_a = builder.use_var(a_var);
+                        let cur_b = builder.use_var(b_var);
+
+                        let pa = builder.ins().imul(p, cur_a);
+                        let qb = builder.ins().imul(q, cur_b);
+                        let next_a_tmp = builder.ins().iadd(pa, qb);
+                        let next_a = builder.ins().iadd(next_a_tmp, ca);
+
+                        let ra = builder.ins().imul(r, cur_a);
+                        let sb = builder.ins().imul(s, cur_b);
+                        let next_b_tmp = builder.ins().iadd(ra, sb);
+                        let next_b = builder.ins().iadd(next_b_tmp, cb);
+
+                        let next_i = builder.ins().iadd(cur_i, one);
+                        builder.def_var(a_var, next_a);
+                        builder.def_var(b_var, next_b);
+                        builder.def_var(i_var, next_i);
+                        builder.ins().jump(loop_head, &[]);
+
+                        builder.switch_to_block(loop_done);
+                        if is_b {
+                            return Ok(builder.use_var(b_var));
+                        } else {
+                            return Ok(builder.use_var(a_var));
+                        }
+                    }
                     "tzcnt" | "ctz" => {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().ctz(arg));
@@ -8194,6 +8261,79 @@ impl CraneliftCompiler {
 
                             builder.switch_to_block(fib_done);
                             builder.use_var(a_var)
+                        } else if (callee == "__coupled_a" || callee == "__coupled_b") && args.len() >= 9 {
+                            let is_b = callee == "__coupled_b";
+                            let mut arg_vals = Vec::with_capacity(9);
+                            for arg_op in args.iter().take(9) {
+                                let arg_val = var_map
+                                    .get(&arg_op.local)
+                                    .map(|&(v, _)| builder.use_var(v))
+                                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                    builder.ins().uextend(types::I64, arg_val)
+                                } else {
+                                    arg_val
+                                };
+                                arg_vals.push(val_i64);
+                            }
+                            let p = arg_vals[0];
+                            let q = arg_vals[1];
+                            let ca = arg_vals[2];
+                            let r = arg_vals[3];
+                            let s = arg_vals[4];
+                            let cb = arg_vals[5];
+                            let a0 = arg_vals[6];
+                            let b0 = arg_vals[7];
+                            let n_val = arg_vals[8];
+
+                            let loop_head = builder.create_block();
+                            let loop_body = builder.create_block();
+                            let loop_done = builder.create_block();
+
+                            let a_var = builder.declare_var(types::I64);
+                            let b_var = builder.declare_var(types::I64);
+                            let i_var = builder.declare_var(types::I64);
+
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let one = builder.ins().iconst(types::I64, 1);
+
+                            builder.def_var(a_var, a0);
+                            builder.def_var(b_var, b0);
+                            builder.def_var(i_var, zero);
+
+                            builder.ins().jump(loop_head, &[]);
+                            builder.switch_to_block(loop_head);
+
+                            let cur_i = builder.use_var(i_var);
+                            let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                            builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                            builder.switch_to_block(loop_body);
+                            let cur_a = builder.use_var(a_var);
+                            let cur_b = builder.use_var(b_var);
+
+                            let pa = builder.ins().imul(p, cur_a);
+                            let qb = builder.ins().imul(q, cur_b);
+                            let next_a_tmp = builder.ins().iadd(pa, qb);
+                            let next_a = builder.ins().iadd(next_a_tmp, ca);
+
+                            let ra = builder.ins().imul(r, cur_a);
+                            let sb = builder.ins().imul(s, cur_b);
+                            let next_b_tmp = builder.ins().iadd(ra, sb);
+                            let next_b = builder.ins().iadd(next_b_tmp, cb);
+
+                            let next_i = builder.ins().iadd(cur_i, one);
+                            builder.def_var(a_var, next_a);
+                            builder.def_var(b_var, next_b);
+                            builder.def_var(i_var, next_i);
+                            builder.ins().jump(loop_head, &[]);
+
+                            builder.switch_to_block(loop_done);
+                            if is_b {
+                                builder.use_var(b_var)
+                            } else {
+                                builder.use_var(a_var)
+                            }
                         } else if let Some(&callee_id) = self.func_ids.get(callee) {
                             let local_func =
                                 self.module.declare_func_in_func(callee_id, builder.func);
