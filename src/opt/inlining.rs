@@ -1154,6 +1154,21 @@ fn rename_expr(expr: &TypedExpr, map: &HashMap<String, String>) -> TypedExpr {
             ty: ty.clone(),
             span: *span,
         },
+        TypedExpr::EnumConstructor {
+            enum_name,
+            variant_name,
+            tag,
+            args,
+            ty,
+            span,
+        } => TypedExpr::EnumConstructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            args: args.iter().map(|a| rename_expr(a, map)).collect(),
+            ty: ty.clone(),
+            span: *span,
+        },
         _ => expr.clone(),
     }
 }
