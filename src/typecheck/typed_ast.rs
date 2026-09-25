@@ -252,6 +252,7 @@ pub struct TypedParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypedFunction {
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<TypedParam>,
     pub return_ty: Type,
     pub body: TypedBlock,

@@ -102,6 +102,7 @@ impl Type {
             return true;
         }
         match (self, other) {
+            (Type::Param(_), _) | (_, Type::Param(_)) => true,
             (Type::Closure(c1), Type::Fn(args2, ret2))
             | (Type::Fn(args2, ret2), Type::Closure(c1)) => {
                 &c1.params == args2 && &c1.ret == ret2
