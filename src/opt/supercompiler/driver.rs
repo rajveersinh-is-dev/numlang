@@ -48,8 +48,7 @@ pub fn drive_function(
     }
 
     // Check for recursive cycle
-    let int_key: Vec<i64> = args.iter().filter_map(|v| v.as_int()).collect();
-    if !env.push_call(func.name.clone(), int_key) {
+    if !env.push_call(func.name.clone(), args.clone()) {
         // Cycle detected — cannot evaluate symbolically
         env.mark_symbolic();
         return Value::Symbolic(super::value::SymExpr::Var(
@@ -290,16 +289,7 @@ pub fn drive_expr(
                 }
             };
 
-            // Recursive check: recursive functions must not be inlined/driven
-            if is_recursive(&func) {
-                env.mark_symbolic();
-                return Value::Symbolic(super::value::SymExpr::Var(
-                    format!("_rec_{}", callee),
-                    ty.clone(),
-                ));
-            }
-
-            // All args must be concrete for inlining
+            // All args must be concrete for driving
             if arg_vals.iter().all(|v| v.is_concrete()) {
                 drive_function(&func, arg_vals, program, env)
             } else {
@@ -377,15 +367,66 @@ pub fn drive_expr(
                         }
                     }
                 }
+                Value::Constructor {
+                    ref variant_name,
+                    tag,
+                    ref fields,
+                    ..
+                } => {
+                    for arm in arms {
+                        for pat in &arm.patterns {
+                            match pat {
+                                crate::typecheck::typed_ast::TypedMatchPattern::Variant {
+                                    variant_name: pat_var_name,
+                                    tag: pat_tag,
+                                    bindings,
+                                    ..
+                                } if pat_var_name == variant_name || *pat_tag == tag => {
+                                    let mut arm_env = env.clone();
+                                    for (i, (b_name, _b_ty)) in bindings.iter().enumerate() {
+                                        if b_name != "_" {
+                                            if let Some(field_val) = fields.get(i) {
+                                                arm_env.set(b_name.clone(), field_val.clone());
+                                            }
+                                        }
+                                    }
+                                    let res = drive_expr(&arm.body, program, &mut arm_env);
+                                    if arm_env.has_symbolic {
+                                        env.mark_symbolic();
+                                    }
+                                    return res;
+                                }
+                                crate::typecheck::typed_ast::TypedMatchPattern::Wildcard => {
+                                    return drive_expr(&arm.body, program, env);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var("_match".to_string(), ty.clone()))
         }
 
-        TypedExpr::EnumConstructor { ty, .. } => {
-            env.mark_symbolic();
-            Value::Symbolic(super::value::SymExpr::Var("_enum".to_string(), ty.clone()))
+        TypedExpr::EnumConstructor {
+            enum_name,
+            variant_name,
+            tag,
+            args,
+            ty,
+            ..
+        } => {
+            let field_vals: Vec<Value> =
+                args.iter().map(|a| drive_expr(a, program, env)).collect();
+            Value::Constructor {
+                enum_name: enum_name.clone(),
+                variant_name: variant_name.clone(),
+                tag: *tag,
+                fields: field_vals,
+                ty: ty.clone(),
+            }
         }
     }
 }

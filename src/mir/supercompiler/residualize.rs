@@ -236,7 +236,7 @@ fn emit_term_eval(
             stmts.push(Statement::Assign(place.clone(), Rvalue::Phi(ops)));
             place
         }
-        SymTerm::Constructor(name, fields, ty) => {
+        SymTerm::Constructor(name, tag, fields, ty) => {
             let mut field_places = Vec::new();
             for (idx, &f) in fields.iter().enumerate() {
                 let f_p = emit_term_eval(f, interner, stmts, locals, next_temp_id);
@@ -253,10 +253,22 @@ fn emit_term_eval(
                 local: temp_name,
                 projections: vec![],
             };
-            stmts.push(Statement::Assign(
-                place.clone(),
-                Rvalue::Struct(name.clone(), field_places),
-            ));
+            if let Type::Enum(ref enum_name) = ty {
+                stmts.push(Statement::Assign(
+                    place.clone(),
+                    Rvalue::EnumVariant {
+                        enum_name: enum_name.clone(),
+                        variant_name: name.clone(),
+                        tag: *tag,
+                        fields: field_places.into_iter().map(|(_, p)| p).collect(),
+                    },
+                ));
+            } else {
+                stmts.push(Statement::Assign(
+                    place.clone(),
+                    Rvalue::Struct(name.clone(), field_places),
+                ));
+            }
             place
         }
         SymTerm::Call(callee, args, ty) => {

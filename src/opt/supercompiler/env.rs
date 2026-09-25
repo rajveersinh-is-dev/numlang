@@ -4,7 +4,7 @@
 //! It also tracks the call stack to detect and break recursive cycles.
 
 use std::collections::HashMap;
-use super::value::Value;
+use super::value::{values_equal, Value};
 
 /// The partial evaluation environment.
 #[derive(Debug, Clone)]
@@ -14,7 +14,7 @@ pub struct Env {
 
     /// Active call stack: (function_name, concrete_args_key).
     /// Used to detect cycles in recursive or mutually recursive calls.
-    call_stack: Vec<(String, Vec<i64>)>,
+    call_stack: Vec<(String, Vec<Value>)>,
 
     /// Taint flag: set to true whenever driving encounters a symbolic
     /// value, unresolved condition, or unhandled statement.
@@ -61,9 +61,13 @@ impl Env {
 
     /// Push a call frame. Returns false if this exact call is already on the
     /// stack (cycle detected — caller should return Symbolic instead).
-    pub fn push_call(&mut self, name: String, args: Vec<i64>) -> bool {
+    pub fn push_call(&mut self, name: String, args: Vec<Value>) -> bool {
         // Detect same call with same concrete args already active
-        if self.call_stack.iter().any(|(n, a)| n == &name && a == &args) {
+        if self.call_stack.iter().any(|(n, a)| {
+            n == &name
+                && a.len() == args.len()
+                && a.iter().zip(args.iter()).all(|(x, y)| values_equal(x, y))
+        }) {
             return false; // cycle
         }
         self.call_stack.push((name, args));

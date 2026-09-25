@@ -1,6 +1,6 @@
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::{BasicBlockId, Place, Projection, Terminator};
-use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt};
+use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt};
 use crate::typecheck::types::Type;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,7 @@ pub enum Rvalue {
         tag: usize,
         fields: Vec<Place>,
     },
+    Discriminant(Place),
     Phi(Vec<(BasicBlockId, Place)>),
 }
 
@@ -167,12 +168,97 @@ impl MirBuilder {
                 self.blocks[self.current_block.clone().unwrap().0].statements.push(Statement::Assign(place.clone(), Rvalue::Use(tgt)));
                 place
             }
-            TypedExpr::Match { scrutinee, arms, .. } => {
-                let _scrut = self.lower_expr(scrutinee, None);
-                if let Some(arm) = arms.first() {
-                    let _ = self.lower_expr(&arm.body, Some(place.clone()));
+            TypedExpr::Match {
+                scrutinee,
+                arms,
+                ..
+            } => {
+                let scrut_place = self.lower_expr(scrutinee, None);
+                let res_place = place;
+                let merge_block = self.new_block();
+
+                let discr_place = if matches!(scrutinee.ty(), Type::Enum(_)) {
+                    let d = self.new_temp(Type::I64);
+                    let curr = self.current_block.clone().unwrap().0;
+                    self.blocks[curr]
+                        .statements
+                        .push(Statement::Assign(d.clone(), Rvalue::Discriminant(scrut_place.clone())));
+                    d
+                } else {
+                    scrut_place.clone()
+                };
+
+                let current_entry = self.current_block.clone().unwrap();
+                let mut targets = Vec::new();
+                let mut default_target = None;
+
+                for arm in arms {
+                    let arm_block = self.new_block();
+                    self.current_block = Some(arm_block.clone());
+
+                    for pat in &arm.patterns {
+                        match pat {
+                            TypedMatchPattern::Variant {
+                                tag,
+                                bindings,
+                                ..
+                            } => {
+                                targets.push((*tag as i64, arm_block.clone()));
+                                for (i, (b_name, b_ty)) in bindings.iter().enumerate() {
+                                    if b_name != "_" {
+                                        self.locals.push(MirLocalDecl {
+                                            name: b_name.clone(),
+                                            ty: b_ty.clone(),
+                                            mutable: true,
+                                        });
+                                        let b_place =
+                                            Place { local: b_name.clone(), projections: vec![] };
+                                        let mut src = scrut_place.clone();
+                                        src.projections.push(Projection::Payload(i));
+                                        self.blocks[arm_block.0]
+                                            .statements
+                                            .push(Statement::Assign(b_place, Rvalue::Use(src)));
+                                    }
+                                }
+                            }
+                            TypedMatchPattern::Literal(lit) => {
+                                let case_val = match lit {
+                                    TypedLiteral::Int(v, _) => *v,
+                                    TypedLiteral::Bool(true) => 1,
+                                    TypedLiteral::Bool(false) => 0,
+                                    _ => 0,
+                                };
+                                targets.push((case_val, arm_block.clone()));
+                            }
+                            TypedMatchPattern::Wildcard => {
+                                default_target = Some(arm_block.clone());
+                            }
+                        }
+                    }
+
+                    self.lower_expr(&arm.body, Some(res_place.clone()));
+                    if let Some(curr) = self.current_block.clone() {
+                        if self.blocks[curr.0].terminator == Terminator::Unreachable {
+                            self.blocks[curr.0].terminator =
+                                Terminator::Branch { target: merge_block.clone() };
+                        }
+                    }
                 }
-                place
+
+                let default_bb = default_target.unwrap_or_else(|| {
+                    let dead = self.new_block();
+                    self.blocks[dead.0].terminator = Terminator::Unreachable;
+                    dead
+                });
+
+                self.blocks[current_entry.0].terminator = Terminator::Switch {
+                    value: discr_place,
+                    targets,
+                    default: default_bb,
+                };
+
+                self.current_block = Some(merge_block);
+                res_place
             }
             TypedExpr::EnumConstructor {
                 enum_name,

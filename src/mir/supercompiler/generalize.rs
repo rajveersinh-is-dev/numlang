@@ -57,14 +57,14 @@ fn msg_helper(
             let common_in = msg_helper(*in1, *in2, interner, next_var_id, memo, mappings);
             interner.intern_unary(*op1, common_in, ty1.clone())
         }
-        (SymTerm::Constructor(n1, f1, ty1), SymTerm::Constructor(n2, f2, _))
-            if n1 == n2 && f1.len() == f2.len() =>
+        (SymTerm::Constructor(n1, t1, f1, ty1), SymTerm::Constructor(n2, t2, f2, _))
+            if n1 == n2 && t1 == t2 && f1.len() == f2.len() =>
         {
             let mut common_f = Vec::with_capacity(f1.len());
             for (&a, &b) in f1.iter().zip(f2.iter()) {
                 common_f.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
             }
-            interner.intern_constructor(n1.clone(), common_f, ty1.clone())
+            interner.intern_constructor(n1.clone(), *t1, common_f, ty1.clone())
         }
         (SymTerm::Call(c1, a1, ty1), SymTerm::Call(c2, a2, _))
             if c1 == c2 && a1.len() == a2.len() =>
