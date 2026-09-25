@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::ast::BinaryOp;
 use super::generalize::solve_recurrence;
 use super::state::SymbolicState;
 use super::term::{SymTerm, SymTermId, TermInterner};
@@ -8,7 +9,7 @@ use super::whistle::{is_instance_of, state_embeds};
 use crate::mir::dominance::detect_loops;
 use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
 use crate::mir::memory_ssa::MemoryVersionId;
-use crate::mir::{compute_cfg, BasicBlockId, Place, Terminator};
+use crate::mir::{compute_cfg, BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::types::Type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,6 +103,7 @@ pub struct SupercompilerDriver<'a> {
     interner: TermInterner,
     block_map: HashMap<BasicBlockId, &'a MirBasicBlock>,
     loop_headers: std::collections::HashSet<BasicBlockId>,
+    natural_loops: HashMap<BasicBlockId, std::collections::HashSet<BasicBlockId>>,
     next_node_id: usize,
     max_depth: usize,
     active_places: Vec<Place>,
@@ -135,6 +137,7 @@ impl<'a> SupercompilerDriver<'a> {
             interner: TermInterner::new(),
             block_map,
             loop_headers: loop_info.headers,
+            natural_loops: loop_info.natural_loops,
             next_node_id: 0,
             max_depth: 128,
             active_places,
@@ -465,6 +468,23 @@ impl<'a> SupercompilerDriver<'a> {
         curr: &SymbolicState,
         ancestor_stack: &[ProcessNodeId],
     ) -> Option<SymbolicState> {
+        // If the loop contains array writes, we cannot collapse it to a scalar closed form
+        if let Some(blocks) = self.natural_loops.get(&curr.block) {
+            let loop_has_array_writes = blocks.iter().any(|b_id| {
+                if let Some(b) = self.block_map.get(b_id) {
+                    b.statements.iter().any(|stmt| {
+                        let Statement::Assign(dest, _) = stmt;
+                        dest.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+                    })
+                } else {
+                    false
+                }
+            });
+            if loop_has_array_writes {
+                return None;
+            }
+        }
+
         let mut solved_state = curr.clone();
         let mut any_solved = false;
 
@@ -473,32 +493,89 @@ impl<'a> SupercompilerDriver<'a> {
             if let Terminator::BranchIf { condition, .. } = &block.terminator {
                 // First look for the statement defining condition in this block
                 for stmt in &block.statements {
-                    if let Statement::Assign(dest, Rvalue::BinaryOp(_op, _l, r)) = stmt {
-                        if dest == condition {
-                            let mut resolved_r = curr
-                                .get_value(r)
-                                .unwrap_or_else(|| self.interner.intern_var(r.clone(), Type::I64));
-                            if let SymTerm::Var(p, _) = self.interner.get(resolved_r) {
-                                if let Some(concrete_t) = curr.get_value(p) {
-                                    resolved_r = concrete_t;
+                    if let Statement::Assign(dest, Rvalue::BinaryOp(op, l, r)) = stmt {
+                        if dest == condition && (*op == BinaryOp::Lt || *op == BinaryOp::Le) {
+                            let mut real_l = l.clone();
+                            for s in &block.statements {
+                                if let Statement::Assign(d, Rvalue::Use(src)) = s {
+                                    if d.local == l.local && src.projections.is_empty() {
+                                        real_l = src.clone();
+                                        break;
+                                    }
                                 }
                             }
-                            bound_term = Some(resolved_r);
+                            let mut real_r = r.clone();
+                            for s in &block.statements {
+                                if let Statement::Assign(d, Rvalue::Use(src)) = s {
+                                    if d.local == r.local && src.projections.is_empty() {
+                                        real_r = src.clone();
+                                        break;
+                                    }
+                                }
+                            }
+
+                            let mut const_val = None;
+                            if let Some(concrete_t) = curr.get_value(&real_r).or_else(|| curr.get_value(r)) {
+                                if let SymTerm::ConstInt(v, _) = self.interner.get(concrete_t) {
+                                    const_val = Some(*v);
+                                }
+                            }
+                            if const_val.is_none() {
+                                for stmt2 in &block.statements {
+                                    if let Statement::Assign(d, Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt2 {
+                                        if d.local == r.local || d.local == real_r.local {
+                                            const_val = Some(*v);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if const_val.is_none() {
+                                for b in self.block_map.values() {
+                                    for stmt2 in &b.statements {
+                                        if let Statement::Assign(d, Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt2 {
+                                            if d.local == r.local || d.local == real_r.local {
+                                                const_val = Some(*v);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if const_val.is_some() {
+                                        break;
+                                    }
+                                }
+                            }
+
+                            let iv_initial = anc.get_value(&real_l).or_else(|| anc.get_value(l)).and_then(|t| {
+                                if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
+                                    Some(*v)
+                                } else {
+                                    None
+                                }
+                            }).unwrap_or(0);
+
+                            if let Some(mut v) = const_val {
+                                if *op == BinaryOp::Le {
+                                    v += 1;
+                                }
+                                let iters = v - iv_initial;
+                                bound_term = Some(self.interner.intern_int(iters));
+                            } else {
+                                let mut r_term = curr
+                                    .get_value(&real_r)
+                                    .or_else(|| curr.get_value(r))
+                                    .unwrap_or_else(|| self.interner.intern_var(real_r.clone(), Type::I64));
+                                let offset = if *op == BinaryOp::Le { 1 } else { 0 } - iv_initial;
+                                if offset > 0 {
+                                    let off_term = self.interner.intern_int(offset);
+                                    r_term = self.interner.intern_binary(BinaryOp::Add, r_term, off_term, Type::I64);
+                                } else if offset < 0 {
+                                    let off_term = self.interner.intern_int(-offset);
+                                    r_term = self.interner.intern_binary(BinaryOp::Sub, r_term, off_term, Type::I64);
+                                }
+                                bound_term = Some(r_term);
+                            }
                             break;
-                        }
-                    }
-                }
-                // Fallback to curr.get_value(condition)
-                if bound_term.is_none() {
-                    if let Some(cond_t) = curr.get_value(condition) {
-                        if let SymTerm::Binary(_, _, r, _) = self.interner.get(cond_t).clone() {
-                            let mut resolved_r = r;
-                            if let SymTerm::Var(p, _) = self.interner.get(r) {
-                                if let Some(concrete_t) = curr.get_value(p) {
-                                    resolved_r = concrete_t;
-                                }
-                            }
-                            bound_term = Some(resolved_r);
                         }
                     }
                 }
@@ -514,7 +591,22 @@ impl<'a> SupercompilerDriver<'a> {
             )
         });
 
+        // Try direct accumulator fold pattern recognition FIRST
+        let mut solved_acc_place = None;
+        if let Some((acc_place, closed_form, iv_place)) = self.try_solve_accumulator_loop(anc, curr, n_term) {
+            solved_state.set_value(acc_place.clone(), closed_form);
+            solved_state.set_value(iv_place, n_term);
+            solved_acc_place = Some(acc_place);
+            any_solved = true;
+        }
+
         for place in &self.active_places {
+            if let Some(ref acc_p) = solved_acc_place {
+                if place.local == acc_p.local {
+                    continue;
+                }
+            }
+
             // Collect historical values of this place from loop header ancestors
             let mut history = Vec::new();
             for &anc_id in ancestor_stack {
@@ -571,6 +663,184 @@ impl<'a> SupercompilerDriver<'a> {
         } else {
             None
         }
+    }
+
+    fn try_solve_accumulator_loop(
+        &mut self,
+        base_state: &SymbolicState,
+        curr: &SymbolicState,
+        n_term: SymTermId,
+    ) -> Option<(Place, SymTermId, Place)> {
+        let blocks = self.natural_loops.get(&curr.block)?;
+        let header_block = self.block_map.get(&curr.block)?;
+
+        // Find loop condition: iv < bound or iv <= bound
+        let iv = match &header_block.terminator {
+            Terminator::BranchIf { condition, .. } => {
+                let mut iv_found = None;
+                for stmt in &header_block.statements {
+                    if let Statement::Assign(dest, Rvalue::BinaryOp(op, l, _r)) = stmt {
+                        if dest == condition && (*op == BinaryOp::Lt || *op == BinaryOp::Le) {
+                            let mut base_l = l.clone();
+                            for s in &header_block.statements {
+                                if let Statement::Assign(d, Rvalue::Use(src)) = s {
+                                    if d.local == l.local && src.projections.is_empty() {
+                                        base_l = src.clone();
+                                        break;
+                                    }
+                                }
+                            }
+                            iv_found = Some(base_l);
+                            break;
+                        }
+                    }
+                }
+                iv_found?
+            }
+            _ => return None,
+        };
+
+        // Find accumulator candidates in loop body blocks (excluding header)
+        for place in &self.active_places {
+            if place.local == iv.local {
+                continue;
+            }
+
+            // Check if place is updated as place = place + delta or place = delta + place
+            let mut delta_place_opt = None;
+            let mut update_count = 0;
+
+            for b_id in blocks {
+                if *b_id == curr.block {
+                    continue;
+                }
+                if let Some(b) = self.block_map.get(b_id) {
+                    for (idx, stmt) in b.statements.iter().enumerate() {
+                        let Statement::Assign(dest, rval) = stmt;
+                        if dest.local == place.local {
+                            update_count += 1;
+                            if let Rvalue::BinaryOp(BinaryOp::Add, l, r) = rval {
+                                if is_place_or_alias(l, place, &b.statements, idx) {
+                                    delta_place_opt = Some(r.clone());
+                                } else if is_place_or_alias(r, place, &b.statements, idx) {
+                                    delta_place_opt = Some(l.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if update_count != 1 {
+                continue;
+            }
+
+            let delta_place = match delta_place_opt {
+                Some(d) => d,
+                None => continue,
+            };
+
+            // Get initial value of place and iv from base_state
+            let initial_acc = if let Some(t) = base_state.get_value(place) {
+                if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
+                    *val
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            let initial_iv = if let Some(t) = base_state.get_value(&iv) {
+                if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
+                    *val
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
+            // Evaluate delta for iterations k = 0..7
+            let mut samples = Vec::new();
+            let mut running_sum = initial_acc;
+            samples.push(running_sum);
+            let mut eval_success = true;
+
+            for k in 0..7 {
+                let mut env: HashMap<String, i64> = HashMap::new();
+
+                // Populate constants and known values from base_state
+                for p in &self.active_places {
+                    if let Some(t) = base_state.get_value(p) {
+                        if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
+                            env.insert(p.local.clone(), *v);
+                        }
+                    }
+                }
+                // Bind iv to initial_iv + k
+                env.insert(iv.local.clone(), initial_iv + k);
+
+                // Evaluate statements in loop body
+                for b_id in blocks {
+                    if *b_id == curr.block {
+                        continue;
+                    }
+                    if let Some(b) = self.block_map.get(b_id) {
+                        for stmt in &b.statements {
+                            let Statement::Assign(dest, rval) = stmt;
+                            if dest.local == place.local {
+                                continue;
+                            }
+                            let val_opt = match rval {
+                                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) => Some(*v),
+                                Rvalue::Use(p) => env.get(&p.local).copied(),
+                                Rvalue::BinaryOp(op, l, r) => {
+                                    if let (Some(&lv), Some(&rv)) = (env.get(&l.local), env.get(&r.local)) {
+                                        match op {
+                                            BinaryOp::Add => Some(lv.wrapping_add(rv)),
+                                            BinaryOp::Sub => Some(lv.wrapping_sub(rv)),
+                                            BinaryOp::Mul => Some(lv.wrapping_mul(rv)),
+                                            BinaryOp::Div => if rv != 0 { Some(lv / rv) } else { None },
+                                            BinaryOp::Mod => if rv != 0 { Some(lv % rv) } else { None },
+                                            BinaryOp::BitAnd => Some(lv & rv),
+                                            BinaryOp::BitOr => Some(lv | rv),
+                                            BinaryOp::BitXor => Some(lv ^ rv),
+                                            BinaryOp::Shl => Some(lv << (rv as u32 % 64)),
+                                            BinaryOp::Shr => Some(lv >> (rv as u32 % 64)),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Rvalue::UnaryOp(crate::ast::UnaryOp::Neg, p) => env.get(&p.local).map(|v| -v),
+                                _ => None,
+                            };
+                            if let Some(v) = val_opt {
+                                env.insert(dest.local.clone(), v);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(&delta_val) = env.get(&delta_place.local) {
+                    running_sum = running_sum.wrapping_add(delta_val);
+                    samples.push(running_sum);
+                } else {
+                    eval_success = false;
+                    break;
+                }
+            }
+
+            if eval_success && samples.len() >= 4 {
+                if let Some(closed_form) = solve_recurrence(&samples, n_term, &mut self.interner) {
+                    return Some((place.clone(), closed_form, iv));
+                }
+            }
+        }
+
+        None
     }
 
     fn try_drive_interprocedural_call(
@@ -630,4 +900,18 @@ impl<'a> SupercompilerDriver<'a> {
             None
         }
     }
+}
+
+fn is_place_or_alias(p: &Place, target: &Place, stmts: &[Statement], idx: usize) -> bool {
+    if p.local == target.local && p.projections == target.projections {
+        return true;
+    }
+    for s in &stmts[..idx] {
+        if let Statement::Assign(dest, Rvalue::Use(src)) = s {
+            if dest.local == p.local && src.local == target.local && src.projections == target.projections {
+                return true;
+            }
+        }
+    }
+    false
 }

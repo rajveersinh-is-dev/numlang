@@ -7537,6 +7537,32 @@ impl CraneliftCompiler {
         }
 
         // Declare variables for locals and parameters
+        let aliases = crate::mir::supercompiler::fusion::build_alias_map(func);
+        let mut array_slots: HashMap<String, (StackSlot, usize, Type)> = HashMap::new();
+        for local in &func.locals {
+            if let Type::Array(ref elem_ty, len) = local.ty {
+                let elem_size = elem_ty.size_bytes().max(1);
+                let slot_size = ((len * elem_size) as u32).max(8);
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    slot_size,
+                    3,
+                ));
+                array_slots.insert(local.name.clone(), (slot, len, (**elem_ty).clone()));
+            }
+        }
+        for local in &func.locals {
+            let real_name = crate::mir::supercompiler::fusion::resolve_alias(&local.name, &aliases);
+            if let Some(slot_info) = array_slots.get(real_name).cloned() {
+                array_slots.insert(local.name.clone(), slot_info);
+            }
+        }
+        for (k, v) in &aliases {
+            if let Some(slot_info) = array_slots.get(v).cloned() {
+                array_slots.insert(k.clone(), slot_info);
+            }
+        }
+
         let mut var_map: HashMap<String, (Variable, types::Type)> = HashMap::new();
         for local in &func.locals {
             let clif_ty = type_to_clif(local.ty.clone());
@@ -7646,7 +7672,39 @@ impl CraneliftCompiler {
                         TypedLiteral::Str(_) => builder.ins().iconst(types::I64, 0),
                     },
                     crate::mir::lower::Rvalue::Use(p) => {
-                        if let Some(&(var, _)) = var_map.get(&p.local) {
+                        if !p.projections.is_empty() {
+                            if let Some(crate::mir::Projection::Index(idx_place)) = p.projections.first() {
+                                let p_name = crate::mir::supercompiler::fusion::resolve_alias(&p.local, &aliases);
+                                if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(p_name).or_else(|| array_slots.get(&p.local)) {
+                                    let elem_size = elem_ty.size_bytes().max(1);
+                                    let elem_clif = type_to_clif(elem_ty.clone());
+                                    let idx_val = var_map.get(&idx_place.local)
+                                        .map(|&(v, _)| builder.use_var(v))
+                                        .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                                    let idx_i64 = if builder.func.dfg.value_type(idx_val) != types::I64 {
+                                        builder.ins().uextend(types::I64, idx_val)
+                                    } else {
+                                        idx_val
+                                    };
+                                    let offset = if elem_size == 1 {
+                                        idx_i64
+                                    } else {
+                                        builder.ins().imul_imm_s(idx_i64, elem_size as i64)
+                                    };
+                                    let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                                    let elem_addr = builder.ins().iadd(base_addr, offset);
+                                    builder.ins().load(elem_clif, MemFlagsData::trusted(), elem_addr, 0)
+                                } else if let Some(&(var, _)) = var_map.get(&p.local) {
+                                    builder.use_var(var)
+                                } else {
+                                    builder.ins().iconst(types::I64, 0)
+                                }
+                            } else if let Some(&(var, _)) = var_map.get(&p.local) {
+                                builder.use_var(var)
+                            } else {
+                                builder.ins().iconst(types::I64, 0)
+                            }
+                        } else if let Some(&(var, _)) = var_map.get(&p.local) {
                             builder.use_var(var)
                         } else {
                             builder.ins().iconst(types::I64, 0)
@@ -7802,10 +7860,68 @@ impl CraneliftCompiler {
                             builder.ins().iconst(types::I64, 0)
                         }
                     }
+                    crate::mir::lower::Rvalue::Array(elem_places) => {
+                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(&place.local, &aliases);
+                        if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(target_name).or_else(|| array_slots.get(&place.local)) {
+                            let elem_size = elem_ty.size_bytes().max(1);
+                            let elem_clif = type_to_clif(elem_ty.clone());
+                            for (i, ep) in elem_places.iter().enumerate() {
+                                let el_val = var_map.get(&ep.local)
+                                    .map(|&(v, _)| builder.use_var(v))
+                                    .unwrap_or_else(|| builder.ins().iconst(elem_clif, 0));
+                                builder.ins().stack_store(elem_clif, el_val, slot, (i * elem_size) as i32);
+                            }
+                        }
+                        builder.ins().iconst(types::I64, 0)
+                    }
                     _ => builder.ins().iconst(types::I64, 0),
                 };
 
-                if let Some(&(var, var_ty)) = var_map.get(&place.local) {
+                if let crate::mir::lower::Rvalue::Use(src_p) = rval {
+                    if place.projections.is_empty() && src_p.projections.is_empty() {
+                        if let Some(slot_info) = array_slots.get(&src_p.local).cloned() {
+                            array_slots.insert(place.local.clone(), slot_info);
+                        }
+                    }
+                }
+
+                if !place.projections.is_empty() {
+                    if let Some(crate::mir::Projection::Index(idx_place)) = place.projections.first() {
+                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(&place.local, &aliases);
+                        if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(target_name).or_else(|| array_slots.get(&place.local)) {
+                            let elem_size = elem_ty.size_bytes().max(1);
+                            let elem_clif = type_to_clif(elem_ty.clone());
+                            let val_ty = builder.func.dfg.value_type(val);
+                            let coerced_val = if elem_clif == val_ty {
+                                val
+                            } else if elem_clif.is_int() && val_ty.is_int() {
+                                if elem_clif.bits() > val_ty.bits() {
+                                    builder.ins().uextend(elem_clif, val)
+                                } else {
+                                    builder.ins().ireduce(elem_clif, val)
+                                }
+                            } else {
+                                val
+                            };
+                            let idx_val = var_map.get(&idx_place.local)
+                                .map(|&(v, _)| builder.use_var(v))
+                                .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                            let idx_i64 = if builder.func.dfg.value_type(idx_val) != types::I64 {
+                                builder.ins().uextend(types::I64, idx_val)
+                            } else {
+                                idx_val
+                            };
+                            let offset = if elem_size == 1 {
+                                idx_i64
+                            } else {
+                                builder.ins().imul_imm_s(idx_i64, elem_size as i64)
+                            };
+                            let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                            let elem_addr = builder.ins().iadd(base_addr, offset);
+                            builder.ins().store(MemFlagsData::trusted(), coerced_val, elem_addr, 0);
+                        }
+                    }
+                } else if let Some(&(var, var_ty)) = var_map.get(&place.local) {
                     let val_ty = builder.func.dfg.value_type(val);
                     let coerced_val = if var_ty == val_ty {
                         val
@@ -7923,21 +8039,6 @@ impl CraneliftCompiler {
                 }
                 crate::mir::Terminator::Unreachable => {
                     builder.ins().trap(TrapCode::user(1).unwrap());
-                    if func.return_ty != Type::Void {
-                        let ret_ty = type_to_clif(func.return_ty.clone());
-                        let dummy = if ret_ty.is_float() {
-                            if ret_ty == types::F32 {
-                                builder.ins().f32const(0.0)
-                            } else {
-                                builder.ins().f64const(0.0)
-                            }
-                        } else {
-                            builder.ins().iconst(ret_ty, 0)
-                        };
-                        builder.ins().return_(&[dummy]);
-                    } else {
-                        builder.ins().return_(&[]);
-                    }
                 }
             }
         }

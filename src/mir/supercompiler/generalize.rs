@@ -243,6 +243,60 @@ pub fn solve_recurrence(
         }
     }
 
+    // Degree 4: Quartic sequence (e.g. sum of cubes \sum i^3)
+    if samples.len() >= 6 {
+        let s3 = samples[3];
+        let s4 = samples[4];
+        let s5 = samples[5];
+        let d1_2 = s3.wrapping_sub(s2);
+        let d1_3 = s4.wrapping_sub(s3);
+        let d1_4 = s5.wrapping_sub(s4);
+        let d2_0 = d1_1.wrapping_sub(d1_0);
+        let d2_1 = d1_2.wrapping_sub(d1_1);
+        let d2_2 = d1_3.wrapping_sub(d1_2);
+        let d2_3 = d1_4.wrapping_sub(d1_3);
+        let d3_0 = d2_1.wrapping_sub(d2_0);
+        let d3_1 = d2_2.wrapping_sub(d2_1);
+        let d3_2 = d2_3.wrapping_sub(d2_2);
+        let d4_0 = d3_1.wrapping_sub(d3_0);
+        let d4_1 = d3_2.wrapping_sub(d3_1);
+
+        if d4_0 == d4_1 {
+            let s0_term = interner.intern_int(s0);
+            let d1_term = interner.intern_int(d1_0);
+            let d2_term = interner.intern_int(d2_0);
+            let d3_term = interner.intern_int(d3_0);
+            let d4_term = interner.intern_int(d4_0);
+            let one_term = interner.intern_int(1);
+            let two_term = interner.intern_int(2);
+            let three_term = interner.intern_int(3);
+            let six_term = interner.intern_int(6);
+            let twentyfour_term = interner.intern_int(24);
+
+            let linear_part = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
+            let k_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one_term, Type::I64);
+            let k_minus_2 = interner.intern_binary(BinaryOp::Sub, num_iters, two_term, Type::I64);
+            let k_minus_3 = interner.intern_binary(BinaryOp::Sub, num_iters, three_term, Type::I64);
+
+            let k_times_k1 = interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
+            let tri_part = interner.intern_binary(BinaryOp::Div, k_times_k1, two_term, Type::I64);
+            let quad_part = interner.intern_binary(BinaryOp::Mul, tri_part, d2_term, Type::I64);
+
+            let k_times_k1_k2 = interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
+            let cubic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
+            let cubic_part = interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64);
+
+            let k_times_k1_k2_k3 = interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
+            let quartic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2_k3, twentyfour_term, Type::I64);
+            let quartic_part = interner.intern_binary(BinaryOp::Mul, quartic_binom, d4_term, Type::I64);
+
+            let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
+            let sum2 = interner.intern_binary(BinaryOp::Add, sum1, quad_part, Type::I64);
+            let sum3 = interner.intern_binary(BinaryOp::Add, sum2, cubic_part, Type::I64);
+            return Some(interner.intern_binary(BinaryOp::Add, sum3, quartic_part, Type::I64));
+        }
+    }
+
     // Geometric sequence: s_{k+1} = s_k * ratio
     if s0 != 0 && s1 != 0 {
         let ratio = s1 / s0;
