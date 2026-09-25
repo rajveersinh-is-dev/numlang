@@ -32,6 +32,8 @@ pub enum SymTerm {
     Ref(SymTermId, Type),
     /// A dereference of a symbolic pointer.
     Deref(SymTermId, Type),
+    /// The discriminant (variant tag) of an enum value.
+    Discriminant(SymTermId, Type),
 }
 
 impl SymTerm {
@@ -50,6 +52,7 @@ impl SymTerm {
             SymTerm::Call(_, _, ty) => ty,
             SymTerm::Ref(_, ty) => ty,
             SymTerm::Deref(_, ty) => ty,
+            SymTerm::Discriminant(_, ty) => ty,
         }
     }
 
@@ -287,6 +290,10 @@ impl TermInterner {
         self.intern(SymTerm::Deref(ptr, ty))
     }
 
+    pub fn intern_discriminant(&mut self, inner: SymTermId) -> SymTermId {
+        self.intern(SymTerm::Discriminant(inner, Type::I64))
+    }
+
     pub fn import_from(&mut self, other: &TermInterner, id: SymTermId) -> SymTermId {
         let term = other.get(id).clone();
         match term {
@@ -333,6 +340,10 @@ impl TermInterner {
                 let ptr_new = self.import_from(other, ptr);
                 self.intern_deref(ptr_new, ty)
             }
+            SymTerm::Discriminant(inner, ty) => {
+                let inner_new = self.import_from(other, inner);
+                self.intern(SymTerm::Discriminant(inner_new, ty))
+            }
         }
     }
 
@@ -362,7 +373,9 @@ impl TermInterner {
             SymTerm::Phi(incoming, _) => {
                 1 + incoming.iter().map(|(_, t)| self.sizes[t.0]).sum::<usize>()
             }
-            SymTerm::Ref(inner, _) | SymTerm::Deref(inner, _) => 1 + self.sizes[inner.0],
+            SymTerm::Ref(inner, _)
+            | SymTerm::Deref(inner, _)
+            | SymTerm::Discriminant(inner, _) => 1 + self.sizes[inner.0],
         };
 
         self.lookup.insert(term.clone(), id);
@@ -414,6 +427,7 @@ impl TermInterner {
             }
             SymTerm::Ref(inner, _) => format!("&({})", self.format_term(*inner)),
             SymTerm::Deref(ptr, _) => format!("*({})", self.format_term(*ptr)),
+            SymTerm::Discriminant(inner, _) => format!("discriminant({})", self.format_term(*inner)),
         }
     }
 }

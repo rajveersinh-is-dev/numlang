@@ -28,6 +28,23 @@ pub fn most_specific_generalization(
     }
 }
 
+/// Textbook first-order anti-unification (Sørensen & Glück 1995; Plotkin 1970).
+pub fn anti_unify(
+    t1: SymTermId,
+    t2: SymTermId,
+    interner: &mut TermInterner,
+    subst1: &mut HashMap<String, SymTermId>,
+    subst2: &mut HashMap<String, SymTermId>,
+) -> SymTermId {
+    let mut next_var_id = subst1.len();
+    let res = most_specific_generalization(t1, t2, interner, &mut next_var_id);
+    for (place, v1, v2) in res.var_mappings {
+        subst1.insert(place.local.clone(), v1);
+        subst2.insert(place.local, v2);
+    }
+    res.common_term
+}
+
 fn msg_helper(
     t1: SymTermId,
     t2: SymTermId,
@@ -82,6 +99,16 @@ fn msg_helper(
         (SymTerm::Deref(p1, ty1), SymTerm::Deref(p2, _)) => {
             let common = msg_helper(*p1, *p2, interner, next_var_id, memo, mappings);
             interner.intern_deref(common, ty1.clone())
+        }
+        (SymTerm::Discriminant(i1, _), SymTerm::Discriminant(i2, _)) => {
+            let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
+            interner.intern_discriminant(common)
+        }
+        (SymTerm::Select(c1, t1, e1, ty1), SymTerm::Select(c2, t2, e2, _)) => {
+            let common_c = msg_helper(*c1, *c2, interner, next_var_id, memo, mappings);
+            let common_t = msg_helper(*t1, *t2, interner, next_var_id, memo, mappings);
+            let common_e = msg_helper(*e1, *e2, interner, next_var_id, memo, mappings);
+            interner.intern_select(common_c, common_t, common_e, ty1.clone())
         }
         _ => {
             // Generalize to fresh variable

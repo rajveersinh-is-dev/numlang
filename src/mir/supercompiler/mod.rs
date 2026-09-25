@@ -86,7 +86,7 @@ pub fn supercompile_mir_program_with_mode(
             SupercompileMode::Classic => {
                 let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                if !has_uncollapsed_array_loops {
                     *func = new_func;
                 }
                 total_stats.nodes_explored += stats.nodes_explored;

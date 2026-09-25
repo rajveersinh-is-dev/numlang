@@ -9,10 +9,10 @@ governance: "INTEGRITY_RULES.md"
 
 ## Current Position
 
-Phase: Transitioning into Phase 20 (Fix Core Residualization, Knot Transfers & Textbook MSG)
-Plan: `master_remediation_plan.md` & `.planning/phases/20-residualization-and-msg/PLAN.md`
-Status: Foundations complete (Phases 1–19); comprehensive audit completed (`honest_review.md`); active remediation commencing under strict integrity rules.
-Last activity: 2026-09-25 — Formal audit completed, `INTEGRITY_RULES.md` enacted, Phases 20–28 planned.
+Phase: Transitioning into Phase 21 (Real Hamilton Global Process-Tree Distillation)
+Plan: `master_remediation_plan.md` & `.planning/phases/21-global-distillation/PLAN.md`
+Status: Phase 20 completed (100% green tests, 0 crashes on heap/recursive benchmarks, textbook MSG, parallel knot state transfers); commencing Phase 21.
+Last activity: 2026-09-26 — Phase 20 executed and verified.
 
 ## Progress
 
@@ -24,8 +24,8 @@ Last activity: 2026-09-25 — Formal audit completed, `INTEGRITY_RULES.md` enact
 - [x] Phase 13: Heap Memory `Box<T>`, Deref, Symbolic Heap
 - [x] Phase 14–19: Advanced Prototyping (Fuzzing, Benchmarks, CLI, Docker)
 - [x] **Milestone Audit**: Comprehensive independent review (`honest_review.md`)
-- [ ] **Phase 20: Fix Core Residualization, Knot Transfers & Textbook MSG** (ACTIVE)
-- [ ] Phase 21: Real Hamilton Global Distillation
+- [x] **Phase 20: Fix Core Residualization, Knot Transfers & Textbook MSG** (COMPLETED)
+- [ ] **Phase 21: Real Hamilton Global Distillation** (NEXT)
 - [ ] Phase 22: Real Mitchell & Klyuchnikov MRSC
 - [ ] Phase 23: Real Polyhedral Loop & Stencil Deforestation
 - [ ] Phase 24: Formal SMT-Based Translation Validation

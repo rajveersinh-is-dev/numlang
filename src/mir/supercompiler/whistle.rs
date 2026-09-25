@@ -34,7 +34,7 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
                 || is_embedded(t1, *el2, interner)
         }
         SymTerm::Phi(incoming2, _) => incoming2.iter().any(|(_, t)| is_embedded(t1, *t, interner)),
-        SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) => is_embedded(t1, *inner2, interner),
+        SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => is_embedded(t1, *inner2, interner),
         _ => false,
     };
     if embedded_in_child {
@@ -45,6 +45,7 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
     match (term1, term2) {
         (SymTerm::Ref(i1, _), SymTerm::Ref(i2, _)) => is_embedded(*i1, *i2, interner),
         (SymTerm::Deref(p1, _), SymTerm::Deref(p2, _)) => is_embedded(*p1, *p2, interner),
+        (SymTerm::Discriminant(i1, _), SymTerm::Discriminant(i2, _)) => is_embedded(*i1, *i2, interner),
         (SymTerm::Binary(op1, l1, r1, _), SymTerm::Binary(op2, l2, r2, _)) => {
             op1 == op2
                 && is_embedded(*l1, *l2, interner)
