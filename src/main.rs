@@ -150,6 +150,19 @@ pub struct Cli {
     )]
     pub opt_level: String,
 
+    #[arg(
+        long = "verify-equivalence",
+        help = "Perform formal translation validation verifying semantic equivalence"
+    )]
+    pub verify_equivalence: bool,
+
+    #[arg(
+        long = "threads",
+        default_value = "0",
+        help = "Number of worker threads for parallel supercompilation (0 for auto)"
+    )]
+    pub threads: usize,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -871,6 +884,35 @@ fn real_main() -> Result<()> {
             &cli.mrsc_objective,
         );
         println!("{}", stats);
+        return Ok(());
+    }
+
+    if cli.verify_equivalence {
+        let orig_mir = numlang::mir::lower::lower_program(&typed_program);
+        let mut sc_mir = orig_mir.clone();
+        numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+            &mut sc_mir,
+            cli.mode.into(),
+            &cli.mrsc_objective,
+        );
+        match numlang::mir::supercompiler::verify_program_equivalence(&orig_mir, &sc_mir) {
+            Ok(certs) => {
+                println!(
+                    "numlang: translation validation certified {} function(s) successfully.",
+                    certs.len()
+                );
+                for cert in certs {
+                    println!(
+                        "  ✓ `{}`: verified {} block(s) across {} path(s)",
+                        cert.function_name, cert.residual_blocks, cert.paths_verified
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("numlang: translation validation error: {}", e);
+                std::process::exit(1);
+            }
+        }
         return Ok(());
     }
 

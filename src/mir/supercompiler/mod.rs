@@ -9,9 +9,12 @@ pub mod drive;
 pub mod fusion;
 pub mod generalize;
 pub mod mrsc;
+pub mod parallel;
+pub mod polyhedral;
 pub mod residualize;
 pub mod state;
 pub mod term;
+pub mod validate;
 pub mod whistle;
 
 pub use distill::DistillationEngine;
@@ -23,7 +26,10 @@ pub use mrsc::{
     MinCodeSizeObjective, MinDynamicBranchObjective, MultiResultEngine, ParetoObjective,
     ResidualObjective,
 };
+pub use parallel::supercompile_mir_program_parallel;
+pub use polyhedral::fuse_polyhedral_stencils;
 use residualize::residualize_process_tree;
+pub use validate::{verify_program_equivalence, TranslationValidator, ValidationCertificate, ValidationError};
 
 use crate::mir::lower::{MirFunction, MirProgram};
 
@@ -66,6 +72,7 @@ pub fn supercompile_mir_program_with_mode(
             fuse_loops(func, &candidate);
         }
         fuse_map_filter(func);
+        fuse_polyhedral_stencils(func);
     }
 
     // Pass 2: Symbolic driving, recurrence solving, and SSA supercompilation
