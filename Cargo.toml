@@ -18,6 +18,13 @@ cranelift-native = "0.135"
 target-lexicon = "0.13"
 inkwell = { version = "0.5.0", features = ["llvm18-0"], optional = true }
 
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "supercompiler_benchmarks"
+harness = false
+
 [features]
 default = []
 llvm-backend = ["dep:inkwell"]

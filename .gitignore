@@ -6,3 +6,4 @@ Cargo.lock
 *.exe
 proof/.lake/
 fuzz_report.json
+bench/bin/

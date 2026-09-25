@@ -1427,6 +1427,7 @@ pub struct CraneliftCompiler {
     log2_id: FuncId,
     log10_id: FuncId,
     pow_id: FuncId,
+    malloc_id: FuncId,
 }
 
 impl CraneliftCompiler {
@@ -1576,6 +1577,13 @@ impl CraneliftCompiler {
             .declare_function("pow", Linkage::Import, &sig_2f)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
+        let mut sig_malloc = module.make_signature();
+        sig_malloc.params.push(AbiParam::new(types::I64));
+        sig_malloc.returns.push(AbiParam::new(types::I64));
+        let malloc_id = module
+            .declare_function("malloc", Linkage::Import, &sig_malloc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         Ok(Self {
             module,
             func_ids: HashMap::new(),
@@ -1598,6 +1606,7 @@ impl CraneliftCompiler {
             log2_id,
             log10_id,
             pow_id,
+            malloc_id,
         })
     }
 
@@ -2599,6 +2608,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             f64_pool,
             f32_pool,
             array_load_cache: HashMap::new(),
+            malloc_id: self.malloc_id,
         };
 
         let terminated = state.translate_block(&body_to_translate, &mut builder)?;
@@ -2750,6 +2760,7 @@ struct FunctionTranslationState<'a> {
     f64_pool: HashMap<u64, Value>,
     f32_pool: HashMap<u32, Value>,
     array_load_cache: HashMap<(String, String), (TypedExpr, Value)>,
+    malloc_id: FuncId,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -6858,11 +6869,11 @@ impl<'a> FunctionTranslationState<'a> {
                             return Ok(builder.ins().select(cond_hi, hi, c1));
                         }
                     }
-                    "to_int" => {
+                    "to_int" if args[0].ty().is_float() => {
                         let a = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().fcvt_to_sint(types::I64, a));
                     }
-                    "to_float" => {
+                    "to_float" if !args[0].ty().is_float() => {
                         let a = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().fcvt_from_sint(types::F64, a));
                     }
@@ -7639,16 +7650,20 @@ impl<'a> FunctionTranslationState<'a> {
                     Type::Box(t) => (**t).clone(),
                     _ => inner.ty(),
                 };
-                let size = inner_ty.size_bytes().max(8) as u32;
-                let slot_data = StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    size,
-                    8,
-                );
-                let slot = builder.create_sized_stack_slot(slot_data);
-                let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
+                let size = match &inner_ty {
+                    Type::Struct(sname) => self.struct_layouts.get(sname).map_or(8, |l| l.total_size),
+                    Type::Enum(ename) => self.enum_layouts.get(ename).map_or(8, |l| l.total_size),
+                    _ => inner_ty.size_bytes().max(8) as u32,
+                };
+                let size_val = builder.ins().iconst(types::I64, size as i64);
+                let malloc_func = self.module.declare_func_in_func(self.malloc_id, builder.func);
+                let call_inst = builder.ins().call(malloc_func, &[size_val]);
+                let slot_addr = builder.inst_results(call_inst)[0];
                 if let Type::Struct(sname) = &inner_ty {
                     let sub_layout = self.struct_layouts.get(sname).unwrap();
+                    Self::emit_copy_bytes(builder, inner_val, slot_addr, sub_layout.total_size as usize);
+                } else if let Type::Enum(ename) = &inner_ty {
+                    let sub_layout = self.enum_layouts.get(ename).unwrap();
                     Self::emit_copy_bytes(builder, inner_val, slot_addr, sub_layout.total_size as usize);
                 } else {
                     builder.ins().store(MemFlagsData::trusted(), inner_val, slot_addr, 0);
@@ -7658,7 +7673,7 @@ impl<'a> FunctionTranslationState<'a> {
 
             TypedExpr::Deref { inner, ty, .. } => {
                 let ptr_val = self.translate_expr(inner, builder)?;
-                if ty.is_struct() {
+                if ty.is_struct() || matches!(ty, Type::Enum(_)) {
                     Ok(ptr_val)
                 } else {
                     let clif_ty = type_to_clif(ty.clone());
@@ -8419,43 +8434,78 @@ impl CraneliftCompiler {
                             } else {
                                 builder.use_var(a_var)
                             }
+                        } else if callee == "print" || callee == "println" {
+                            let is_nl = callee == "println";
+                            if args.is_empty() {
+                                let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                                builder.ins().call(print_nl_func, &[]);
+                            } else {
+                                let arg_p = &args[0];
+                                let arg_val = var_map
+                                    .get(&arg_p.local)
+                                    .map(|&(v, _)| builder.use_var(v))
+                                    .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
+                                let print_i64_func = self.module.declare_func_in_func(self.print_i64_id, builder.func);
+                                builder.ins().call(print_i64_func, &[arg_val]);
+                                if is_nl {
+                                    let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                                    builder.ins().call(print_nl_func, &[]);
+                                }
+                            }
+                            builder.ins().iconst(types::I64, 0)
                         } else if let Some(&callee_id) = self.func_ids.get(callee) {
                             let local_func =
                                 self.module.declare_func_in_func(callee_id, builder.func);
                             let sig = builder.func.dfg.ext_funcs[local_func].signature;
                             let expected_params = builder.func.dfg.signatures[sig].params.clone();
-                            let arg_vals: Vec<Value> = args
-                                .iter()
-                                .enumerate()
-                                .map(|(i, p)| {
-                                    let v = var_map
-                                        .get(&p.local)
-                                        .map(|&(v, _)| builder.use_var(v))
-                                        .unwrap_or_else(|| {
-                                            builder.ins().iconst(types::I64, 0)
-                                        });
-                                    let v_ty = builder.func.dfg.value_type(v);
-                                    let expected_ty = if i < expected_params.len() {
-                                        expected_params[i].value_type
+                            let is_sret = expected_params.len() > args.len();
+                            let mut arg_vals: Vec<Value> = Vec::new();
+                            let ret_sret_ptr = if is_sret {
+                                let slot_data = StackSlotData::new(
+                                    StackSlotKind::ExplicitSlot,
+                                    64,
+                                    8,
+                                );
+                                let slot = builder.create_sized_stack_slot(slot_data);
+                                let sret_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                arg_vals.push(sret_ptr);
+                                Some(sret_ptr)
+                            } else {
+                                None
+                            };
+
+                            let param_offset = if is_sret { 1 } else { 0 };
+                            for (i, p) in args.iter().enumerate() {
+                                let v = var_map
+                                    .get(&p.local)
+                                    .map(|&(v, _)| builder.use_var(v))
+                                    .unwrap_or_else(|| {
+                                        builder.ins().iconst(types::I64, 0)
+                                    });
+                                let v_ty = builder.func.dfg.value_type(v);
+                                let exp_idx = i + param_offset;
+                                let expected_ty = if exp_idx < expected_params.len() {
+                                    expected_params[exp_idx].value_type
+                                } else {
+                                    v_ty
+                                };
+                                if v_ty == expected_ty {
+                                    arg_vals.push(v);
+                                } else if v_ty.is_int() && expected_ty.is_int() {
+                                    if expected_ty.bits() > v_ty.bits() {
+                                        arg_vals.push(builder.ins().uextend(expected_ty, v));
                                     } else {
-                                        v_ty
-                                    };
-                                    if v_ty == expected_ty {
-                                        v
-                                    } else if v_ty.is_int() && expected_ty.is_int() {
-                                        if expected_ty.bits() > v_ty.bits() {
-                                            builder.ins().uextend(expected_ty, v)
-                                        } else {
-                                            builder.ins().ireduce(expected_ty, v)
-                                        }
-                                    } else {
-                                        v
+                                        arg_vals.push(builder.ins().ireduce(expected_ty, v));
                                     }
-                                })
-                                .collect();
+                                } else {
+                                    arg_vals.push(v);
+                                }
+                            }
                             let call_inst = builder.ins().call(local_func, &arg_vals);
                             let res = builder.inst_results(call_inst);
-                            if res.is_empty() {
+                            if let Some(sret) = ret_sret_ptr {
+                                sret
+                            } else if res.is_empty() {
                                 builder.ins().iconst(types::I32, 0)
                             } else {
                                 res[0]
