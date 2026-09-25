@@ -46,9 +46,12 @@ pub fn supercompile_mir_program(program: &mut MirProgram) -> SupercompilerStats 
     // Pass 2: Symbolic driving, recurrence solving, and SSA supercompilation
     let funcs_snapshot = program.functions.clone();
     for func in &mut program.functions {
+        if func_is_impure(func) {
+            continue;
+        }
         let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
         let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-        if !has_uncollapsed_array_loops {
+        if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
             *func = new_func;
         }
         total_stats.nodes_explored += stats.nodes_explored;
@@ -58,6 +61,19 @@ pub fn supercompile_mir_program(program: &mut MirProgram) -> SupercompilerStats 
     }
 
     total_stats
+}
+
+fn func_is_impure(func: &MirFunction) -> bool {
+    for b in &func.blocks {
+        for stmt in &b.statements {
+            if let crate::mir::lower::Statement::Assign(_, crate::mir::lower::Rvalue::Call(callee, _)) = stmt {
+                if callee == "print" || callee == "println" || callee == "exit" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn func_has_array_writes(func: &MirFunction) -> bool {
