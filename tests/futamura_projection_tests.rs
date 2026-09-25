@@ -301,3 +301,39 @@ fn main() -> i64 {
     }
 }
 
+#[test]
+fn test_partial_specialization_symbolic_arg() {
+    // `double(x: i64) -> i64` specialized where x is symbolic should produce
+    // a residual `return x + x;` (or `return 2 * x;`) rather than bailing.
+    let code = r#"
+fn double(x: i64) -> i64 {
+    return x + x;
+}
+fn main() -> i64 {
+    return double(21);
+}
+"#;
+    // 1. Normal run: double(21) = 42
+    let (code_norm, _, _) = run_numlang_code(code, false);
+    assert_eq!(code_norm, Some(42));
+
+    // 2. Supercompiled run (main is fully concrete — should collapse to 42)
+    let (code_sc, _, _) = run_numlang_code(code, true);
+    assert_eq!(code_sc, Some(42));
+
+    // 3. Static check: main must collapse to `return 42;`
+    let tokens = tokenize(code).unwrap();
+    let program = parse(&tokens).unwrap();
+    let mut typed = typecheck(&program).unwrap();
+    supercompile_program(&mut typed, None);
+    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
+    assert_eq!(main_fn.body.stmts.len(), 1);
+    match &main_fn.body.stmts[0] {
+        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
+            assert_eq!(*lit, TypedLiteral::Int(42, numlang::typecheck::types::Type::I64));
+        }
+        other => panic!("Expected return 42, got: {:?}", other),
+    }
+}
+
+

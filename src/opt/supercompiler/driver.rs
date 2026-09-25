@@ -73,17 +73,10 @@ pub fn drive_function(
 
     if child_env.has_symbolic {
         env.mark_symbolic();
-        return Value::Symbolic(super::value::SymExpr::Var(
-            format!("_sym_res_{}", func.name),
-            func.return_ty.clone(),
-        ));
     }
 
     match result {
-        DriveResult::Returned(v)
-            if v.is_concrete() => {
-                v
-            }
+        DriveResult::Returned(v) => v,
         _ => {
             env.mark_symbolic();
             Value::Symbolic(super::value::SymExpr::Var(
@@ -289,17 +282,7 @@ pub fn drive_expr(
                 }
             };
 
-            // All args must be concrete for driving
-            if arg_vals.iter().all(|v| v.is_concrete()) {
-                drive_function(&func, arg_vals, program, env)
-            } else {
-                // Symbolic args — cannot inline
-                env.mark_symbolic();
-                Value::Symbolic(super::value::SymExpr::Var(
-                    format!("_sym_{}", callee),
-                    ty.clone(),
-                ))
-            }
+            drive_function(&func, arg_vals, program, env)
         }
 
         TypedExpr::ArrayLiteral { elements, ty, .. } => {

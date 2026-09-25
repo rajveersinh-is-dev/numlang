@@ -25,11 +25,11 @@ pub mod residualizer;
 pub mod termination;
 pub mod value;
 
-use crate::typecheck::typed_ast::TypedProgram;
+use crate::typecheck::typed_ast::{TypedBlock, TypedProgram, TypedStmt};
 use driver::{drive_function, is_impure};
 use env::Env;
-use residualizer::residualize_return;
-use value::Value;
+use residualizer::{residualize_return, DUMMY_SPAN};
+use value::{value_to_typed_expr, Value};
 
 /// Entry point — supercompile all functions in the program.
 ///
@@ -48,7 +48,7 @@ pub fn supercompile_program(
         .collect();
 
     // Second pass: try to supercompile each non-recursive function that is
-    // called with all-literal arguments.
+    // called with all-literal arguments, or partially specialize symbolic arguments.
     let call_map = collect_literal_calls(program);
 
     // Clone the full function list for the driver to reference.
@@ -60,48 +60,39 @@ pub fn supercompile_program(
             continue;
         }
 
-        // Only attempt supercompilation if all call sites pass concrete literals.
-        let Some(call_args_list) = call_map.get(&func.name) else {
-            continue;
+        let has_consistent_literal_calls = if let Some(call_args_list) = call_map.get(&func.name) {
+            !call_args_list.is_empty() && call_args_list.iter().all(|a| a == &call_args_list[0])
+        } else {
+            false
         };
-        if call_args_list.is_empty() {
-            continue;
-        }
 
-        // Use the first (and hopefully only) call site's args.
-        // If all sites agree on the same args, we can replace the body universally.
-        let first = &call_args_list[0];
-        if !call_args_list.iter().all(|a| a == first) {
-            continue; // Different call sites with different args — skip
-        }
-
-        // Build concrete parameter bindings from the call-site literals.
-        let params_vals: Vec<Value> = first
-            .iter()
-            .map(|lit_expr| {
-                use crate::typecheck::typed_ast::TypedLiteral;
-                match lit_expr {
+        let params_vals: Vec<Value> = if has_consistent_literal_calls {
+            let first = &call_map.get(&func.name).unwrap()[0];
+            first
+                .iter()
+                .zip(&func.params)
+                .map(|(lit_expr, p)| match lit_expr {
                     crate::typecheck::typed_ast::TypedExpr::Literal { lit, .. } => match lit {
-                        TypedLiteral::Int(i, _) => Value::Int(*i),
-                        TypedLiteral::Float(f, _) => Value::Float(*f),
-                        TypedLiteral::Bool(b) => Value::Bool(*b),
-                        TypedLiteral::Str(_) => Value::Symbolic(value::SymExpr::Var(
-                            "_str".to_string(),
+                        crate::typecheck::typed_ast::TypedLiteral::Int(i, _) => Value::Int(*i),
+                        crate::typecheck::typed_ast::TypedLiteral::Float(f, _) => Value::Float(*f),
+                        crate::typecheck::typed_ast::TypedLiteral::Bool(b) => Value::Bool(*b),
+                        crate::typecheck::typed_ast::TypedLiteral::Str(_) => Value::Symbolic(value::SymExpr::Var(
+                            p.name.clone(),
                             crate::typecheck::types::Type::Str,
                         )),
                     },
                     _ => Value::Symbolic(value::SymExpr::Var(
-                        "_sym".to_string(),
-                        crate::typecheck::types::Type::I64,
+                        p.name.clone(),
+                        p.ty.clone(),
                     )),
-                }
-            })
-            .collect();
-
-        // If any param is symbolic, we cannot specialize this function.
-        if params_vals.iter().any(|v| matches!(v, Value::Symbolic(_))) {
-            continue;
-        }
+                })
+                .collect()
+        } else {
+            func.params
+                .iter()
+                .map(|p| Value::Symbolic(value::SymExpr::Var(p.name.clone(), p.ty.clone())))
+                .collect()
+        };
 
         // Build a read-only program view for the driver.
         let fake_program = crate::typecheck::typed_ast::TypedProgram {
@@ -117,6 +108,14 @@ pub fn supercompile_program(
         // If we got a concrete result and no symbolic operations occurred, replace the body.
         if result.is_concrete() && !env.has_symbolic {
             func.body = residualize_return(&result);
+        } else if !result.is_symbolic_opaque() {
+            // Partial specialization: replace body with a residual expression
+            // that contains the folded-concrete parts and symbolic holes.
+            let residual_expr = value_to_typed_expr(&result);
+            func.body = TypedBlock {
+                stmts: vec![TypedStmt::Return(Some(residual_expr), DUMMY_SPAN)],
+                span: DUMMY_SPAN,
+            };
         }
     }
 
@@ -153,6 +152,12 @@ fn supercompile_main(program: &mut TypedProgram) {
 
     if result.is_concrete() && !env.has_symbolic {
         program.functions[main_idx].body = residualize_return(&result);
+    } else if !result.is_symbolic_opaque() {
+        let residual_expr = value_to_typed_expr(&result);
+        program.functions[main_idx].body = TypedBlock {
+            stmts: vec![TypedStmt::Return(Some(residual_expr), DUMMY_SPAN)],
+            span: DUMMY_SPAN,
+        };
     }
 }
 
