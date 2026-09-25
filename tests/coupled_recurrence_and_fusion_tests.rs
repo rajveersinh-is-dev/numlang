@@ -5,7 +5,9 @@ use numlang::ast::BinaryOp;
 use numlang::codegen::linker::link_executable;
 use numlang::codegen::compile_supercompiled_to_obj;
 use numlang::mir::lower::{lower_program, Rvalue, Statement};
-use numlang::mir::supercompiler::generalize::{solve_order2_recurrence, solve_order3_recurrence};
+use numlang::mir::supercompiler::generalize::{
+    solve_coupled_2var_recurrence, solve_order2_recurrence, solve_order3_recurrence,
+};
 use numlang::mir::supercompiler::supercompile_mir_program;
 use numlang::mir::supercompiler::term::{SymTerm, TermInterner};
 use numlang::parser::parse;
@@ -222,5 +224,81 @@ fn test_coupled_fibonacci_symbolic_recurrence() {
 
     let code = compile_and_run_supercompiled(src, "coupled_fib_symbolic");
     assert_eq!(code, 55);
+}
+
+#[test]
+fn test_coupled_2var_recurrence_direct() {
+    let mut interner = TermInterner::new();
+    // a_{k+1} = 2*a_k + b_k
+    // b_{k+1} = a_k + 2*b_k
+    // a0 = 1, b0 = 0
+    // a: 1, 2, 5, 14, 41
+    // b: 0, 1, 4, 13, 40
+    let samples_a = vec![1, 2, 5, 14];
+    let samples_b = vec![0, 1, 4, 13];
+
+    let n4 = interner.intern_int(4);
+    let (sol_a, sol_b) = solve_coupled_2var_recurrence(&samples_a, &samples_b, n4, &mut interner)
+        .expect("Failed to solve coupled 2-variable recurrence for n=4");
+
+    if let SymTerm::ConstInt(val_a, _) = interner.get(sol_a) {
+        assert_eq!(*val_a, 41, "a_4 must be 41");
+    } else {
+        panic!("Expected ConstInt for a_4");
+    }
+    if let SymTerm::ConstInt(val_b, _) = interner.get(sol_b) {
+        assert_eq!(*val_b, 40, "b_4 must be 40");
+    } else {
+        panic!("Expected ConstInt for b_4");
+    }
+
+    // Symbolic test
+    let place = numlang::mir::Place {
+        local: "n".to_string(),
+        projections: vec![],
+    };
+    let n_sym = interner.intern_var(place, Type::I64);
+    let (sol_sym_a, sol_sym_b) = solve_coupled_2var_recurrence(&samples_a, &samples_b, n_sym, &mut interner)
+        .expect("Failed to solve coupled 2-variable recurrence symbolically");
+
+    match interner.get(sol_sym_a) {
+        SymTerm::Call(callee, args, _) => {
+            assert_eq!(callee, "__coupled_a");
+            assert_eq!(args.len(), 9);
+        }
+        other => panic!("Expected Call to __coupled_a, found: {:?}", other),
+    }
+    match interner.get(sol_sym_b) {
+        SymTerm::Call(callee, args, _) => {
+            assert_eq!(callee, "__coupled_b");
+            assert_eq!(args.len(), 9);
+        }
+        other => panic!("Expected Call to __coupled_b, found: {:?}", other),
+    }
+}
+
+#[test]
+fn test_coupled_2var_linear_recurrence() {
+    let src = r#"
+        fn coupled(n: i64) -> i64 {
+            let mut a: i64 = 1;
+            let mut b: i64 = 0;
+            let mut i: i64 = 0;
+            while i < n {
+                let next_a: i64 = 2 * a + b;
+                let next_b: i64 = a + 2 * b;
+                a = next_a;
+                b = next_b;
+                i = i + 1;
+            }
+            return a + b;
+        }
+
+        fn main() -> i64 {
+            return coupled(4);
+        }
+    "#;
+    let code = compile_and_run_supercompiled(src, "coupled_2var");
+    assert_eq!(code, 81);
 }
 

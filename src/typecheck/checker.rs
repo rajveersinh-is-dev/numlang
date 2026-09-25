@@ -3250,6 +3250,34 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    "__coupled_a" | "__coupled_b" => {
+                        if args.len() != 9 {
+                            return Err(TypeError::ArityMismatch {
+                                name: callee.clone(),
+                                expected: 9,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        let mut typed_args = Vec::with_capacity(9);
+                        for arg in args {
+                            let typed_arg = self.check_expr(arg, Some(Type::I64))?;
+                            if typed_arg.ty() != Type::I64 {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: typed_arg.ty(),
+                                    span: typed_arg.span(),
+                                });
+                            }
+                            typed_args.push(typed_arg);
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: callee.clone(),
+                            args: typed_args,
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
                     _ => {}
                 }
 
