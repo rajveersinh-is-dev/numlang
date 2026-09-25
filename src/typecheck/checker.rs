@@ -300,6 +300,47 @@ impl TypeChecker {
         }
     }
 
+    fn resolve_parsed_type_in_struct(
+        &self,
+        ty: Type,
+        known_structs: &[crate::ast::StructDef],
+        known_enums: &[crate::ast::EnumDef],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        match ty {
+            Type::Struct(sname) => {
+                if known_enums.iter().any(|en| en.name == sname) || self.enum_infos.contains_key(&sname) {
+                    Ok(Type::Enum(sname))
+                } else if known_structs.iter().any(|st| st.name == sname) || self.struct_infos.contains_key(&sname) {
+                    Ok(Type::Struct(sname))
+                } else {
+                    Err(TypeError::UnknownType { name: sname, span })
+                }
+            }
+            Type::Array(elem, len) => {
+                let resolved_elem = self.resolve_parsed_type_in_struct(*elem, known_structs, known_enums, span)?;
+                Ok(Type::Array(Box::new(resolved_elem), len))
+            }
+            Type::Box(inner) => {
+                let resolved_inner = self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
+                Ok(Type::Box(Box::new(resolved_inner)))
+            }
+            Type::Ptr(inner) => {
+                let resolved_inner = self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
+                Ok(Type::Ptr(Box::new(resolved_inner)))
+            }
+            Type::Fn(args, ret) => {
+                let mut resolved_args = Vec::new();
+                for a in args {
+                    resolved_args.push(self.resolve_parsed_type_in_struct(a, known_structs, known_enums, span)?);
+                }
+                let resolved_ret = self.resolve_parsed_type_in_struct(*ret, known_structs, known_enums, span)?;
+                Ok(Type::Fn(resolved_args, Box::new(resolved_ret)))
+            }
+            other => Ok(other),
+        }
+    }
+
     pub fn resolve_type_in_struct(
         &self,
         ty_str: &str,
@@ -311,34 +352,42 @@ impl TypeChecker {
             name: ty_str.to_string(),
             span,
         })?;
-        match &ty {
+        self.resolve_parsed_type_in_struct(ty, known_structs, known_enums, span)
+    }
+
+    fn resolve_parsed_type(&self, ty: Type, span: Span) -> Result<Type, TypeError> {
+        match ty {
             Type::Struct(sname) => {
-                if known_enums.iter().any(|en| &en.name == sname) || self.enum_infos.contains_key(sname) {
-                    return Ok(Type::Enum(sname.clone()));
-                }
-                if !known_structs.iter().any(|st| &st.name == sname) && !self.struct_infos.contains_key(sname) {
-                    return Err(TypeError::UnknownType {
-                        name: sname.clone(),
-                        span,
-                    });
+                if self.enum_infos.contains_key(&sname) {
+                    Ok(Type::Enum(sname))
+                } else if self.struct_infos.contains_key(&sname) {
+                    Ok(Type::Struct(sname))
+                } else {
+                    Err(TypeError::UnknownType { name: sname, span })
                 }
             }
             Type::Array(elem, len) => {
-                if let Type::Struct(sname) = &**elem {
-                    if known_enums.iter().any(|en| &en.name == sname) || self.enum_infos.contains_key(sname) {
-                        return Ok(Type::Array(Box::new(Type::Enum(sname.clone())), *len));
-                    }
-                    if !known_structs.iter().any(|st| &st.name == sname) && !self.struct_infos.contains_key(sname) {
-                        return Err(TypeError::UnknownType {
-                            name: sname.clone(),
-                            span,
-                        });
-                    }
-                }
+                let resolved_elem = self.resolve_parsed_type(*elem, span)?;
+                Ok(Type::Array(Box::new(resolved_elem), len))
             }
-            _ => {}
+            Type::Box(inner) => {
+                let resolved_inner = self.resolve_parsed_type(*inner, span)?;
+                Ok(Type::Box(Box::new(resolved_inner)))
+            }
+            Type::Ptr(inner) => {
+                let resolved_inner = self.resolve_parsed_type(*inner, span)?;
+                Ok(Type::Ptr(Box::new(resolved_inner)))
+            }
+            Type::Fn(args, ret) => {
+                let mut resolved_args = Vec::new();
+                for a in args {
+                    resolved_args.push(self.resolve_parsed_type(a, span)?);
+                }
+                let resolved_ret = self.resolve_parsed_type(*ret, span)?;
+                Ok(Type::Fn(resolved_args, Box::new(resolved_ret)))
+            }
+            other => Ok(other),
         }
-        Ok(ty)
     }
 
     pub fn resolve_type(&self, ty_str: &str, span: Span) -> Result<Type, TypeError> {
@@ -346,34 +395,7 @@ impl TypeChecker {
             name: ty_str.to_string(),
             span,
         })?;
-        match &ty {
-            Type::Struct(sname) => {
-                if self.enum_infos.contains_key(sname) {
-                    return Ok(Type::Enum(sname.clone()));
-                }
-                if !self.struct_infos.contains_key(sname) {
-                    return Err(TypeError::UnknownType {
-                        name: sname.clone(),
-                        span,
-                    });
-                }
-            }
-            Type::Array(elem, len) => {
-                if let Type::Struct(sname) = &**elem {
-                    if self.enum_infos.contains_key(sname) {
-                        return Ok(Type::Array(Box::new(Type::Enum(sname.clone())), *len));
-                    }
-                    if !self.struct_infos.contains_key(sname) {
-                        return Err(TypeError::UnknownType {
-                            name: sname.clone(),
-                            span,
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(ty)
+        self.resolve_parsed_type(ty, span)
     }
 
     pub fn check_program(&mut self, program: &Program) -> Result<TypedProgram, TypeError> {
