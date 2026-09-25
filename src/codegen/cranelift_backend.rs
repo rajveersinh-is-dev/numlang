@@ -8752,6 +8752,7 @@ pub fn compile_to_obj_with_opt(
         compiler.compile_program(&optimized)
     } else {
         let mut unopt = program.clone();
+        crate::opt::monomorphize::monomorphize(&mut unopt);
         unopt.desugar_for_loops();
         compiler.compile_program(&unopt)
     }
@@ -8764,6 +8765,7 @@ pub fn compile_mir_to_obj(mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>
 
 pub fn compile_supercompiled_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
     let mut typed = program.clone();
+    crate::opt::monomorphize::monomorphize(&mut typed);
     crate::opt::supercompiler::supercompile_program(&mut typed, None);
     let mut mir_program = crate::mir::lower::lower_program(&typed);
     crate::mir::supercompiler::supercompile_mir_program(&mut mir_program);

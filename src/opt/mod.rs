@@ -3,6 +3,7 @@ pub mod bce;
 pub mod const_args;
 pub mod inlining;
 pub mod loop_opt;
+pub mod monomorphize;
 pub mod recursion;
 pub mod supercompiler;
 pub mod while_unroll;
@@ -10,6 +11,9 @@ pub mod while_unroll;
 use crate::typecheck::typed_ast::TypedProgram;
 
 pub fn optimize_program(program: &mut TypedProgram) {
+    // Monomorphize generic functions into concrete instantiations
+    monomorphize::monomorphize(program);
+
     // Desugar for loops into canonical while loops before optimization
     program.desugar_for_loops();
 

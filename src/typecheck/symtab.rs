@@ -13,6 +13,7 @@ pub struct Symbol {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSig {
     pub name: String,
+    pub type_params: Vec<String>,
     pub param_names: Vec<String>,
     pub param_types: Vec<Type>,
     pub return_ty: Type,
@@ -74,9 +75,9 @@ impl ScopeEnvironment {
         None
     }
 
-    pub fn define_function(&mut self, sig: FunctionSig) -> Result<(), FunctionSig> {
+    pub fn define_function(&mut self, sig: FunctionSig) -> Result<(), Box<FunctionSig>> {
         if let Some(existing) = self.functions.get(&sig.name) {
-            return Err(existing.clone());
+            return Err(Box::new(existing.clone()));
         }
         self.functions.insert(sig.name.clone(), sig);
         Ok(())
@@ -132,6 +133,7 @@ mod tests {
         let mut env = ScopeEnvironment::new();
         let sig = FunctionSig {
             name: "add".to_string(),
+            type_params: Vec::new(),
             param_names: vec!["a".to_string(), "b".to_string()],
             param_types: vec![Type::F64, Type::F64],
             return_ty: Type::F64,

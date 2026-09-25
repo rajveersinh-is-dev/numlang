@@ -279,6 +279,7 @@ pub struct TypeChecker {
     pub struct_infos: HashMap<String, StructInfo>,
     pub enum_infos: HashMap<String, EnumInfo>,
     pub variant_to_enum: HashMap<String, Vec<String>>,
+    pub current_type_params: Vec<String>,
 }
 
 impl Default for TypeChecker {
@@ -297,6 +298,7 @@ impl TypeChecker {
             struct_infos: HashMap::new(),
             enum_infos: HashMap::new(),
             variant_to_enum: HashMap::new(),
+            current_type_params: Vec::new(),
         }
     }
 
@@ -309,7 +311,9 @@ impl TypeChecker {
     ) -> Result<Type, TypeError> {
         match ty {
             Type::Struct(sname) => {
-                if known_enums.iter().any(|en| en.name == sname) || self.enum_infos.contains_key(&sname) {
+                if self.current_type_params.contains(&sname) {
+                    Ok(Type::Param(sname))
+                } else if known_enums.iter().any(|en| en.name == sname) || self.enum_infos.contains_key(&sname) {
                     Ok(Type::Enum(sname))
                 } else if known_structs.iter().any(|st| st.name == sname) || self.struct_infos.contains_key(&sname) {
                     Ok(Type::Struct(sname))
@@ -358,7 +362,9 @@ impl TypeChecker {
     fn resolve_parsed_type(&self, ty: Type, span: Span) -> Result<Type, TypeError> {
         match ty {
             Type::Struct(sname) => {
-                if self.enum_infos.contains_key(&sname) {
+                if self.current_type_params.contains(&sname) {
+                    Ok(Type::Param(sname))
+                } else if self.enum_infos.contains_key(&sname) {
                     Ok(Type::Enum(sname))
                 } else if self.struct_infos.contains_key(&sname) {
                     Ok(Type::Struct(sname))
@@ -570,6 +576,7 @@ impl TypeChecker {
 
         // Pass 1: Collect and validate all function signatures
         for func in &program.functions {
+            self.current_type_params = func.type_params.clone();
             let return_ty = match &func.return_ty {
                 Some(s) => self.resolve_type(s, func.span)?,
                 None => Type::Void,
@@ -582,9 +589,11 @@ impl TypeChecker {
                 param_names.push(param.name.clone());
                 param_types.push(pty);
             }
+            self.current_type_params.clear();
 
             let sig = FunctionSig {
                 name: func.name.clone(),
+                type_params: func.type_params.clone(),
                 param_names,
                 param_types,
                 return_ty,
@@ -619,6 +628,7 @@ impl TypeChecker {
             .cloned()
             .expect("Function must exist in scope");
 
+        self.current_type_params = func.type_params.clone();
         self.current_fn_return_ty = sig.return_ty.clone();
         self.env.enter_scope();
 
@@ -650,9 +660,11 @@ impl TypeChecker {
         }
 
         self.env.exit_scope();
+        self.current_type_params.clear();
 
         Ok(TypedFunction {
             name: func.name.clone(),
+            type_params: func.type_params.clone(),
             params: typed_params,
             return_ty: sig.return_ty,
             body: TypedBlock {
@@ -3392,6 +3404,23 @@ impl TypeChecker {
                         name: callee.clone(),
                         expected: sig.param_types.len(),
                         found: args.len(),
+                        span: *span,
+                    });
+                }
+
+                if !sig.type_params.is_empty() {
+                    let mut typed_args = Vec::new();
+                    let mut subst = HashMap::new();
+                    for (arg, param_ty) in args.iter().zip(&sig.param_types) {
+                        let typed_arg = self.check_expr(arg, None)?;
+                        crate::opt::monomorphize::unify_types(param_ty, &typed_arg.ty(), &mut subst, *span)?;
+                        typed_args.push(typed_arg);
+                    }
+                    let return_ty = crate::opt::monomorphize::substitute_type(&sig.return_ty, &subst);
+                    return Ok(TypedExpr::Call {
+                        callee: callee.clone(),
+                        args: typed_args,
+                        ty: return_ty,
                         span: *span,
                     });
                 }
