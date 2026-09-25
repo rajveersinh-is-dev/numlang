@@ -13,6 +13,8 @@ pub struct PathConstraintStore {
     pub term_equivalences: HashMap<SymTermId, SymTermId>,
     /// Lower and upper integer bounds for symbolic terms
     pub integer_bounds: HashMap<SymTermId, (Option<i64>, Option<i64>)>,
+    /// Tracks sets of values that a symbolic term is known NOT to equal.
+    pub excluded_values: HashMap<SymTermId, Vec<i64>>,
 }
 
 impl PathConstraintStore {
@@ -21,6 +23,31 @@ impl PathConstraintStore {
             const_equalities: HashMap::new(),
             term_equivalences: HashMap::new(),
             integer_bounds: HashMap::new(),
+            excluded_values: HashMap::new(),
+        }
+    }
+
+    pub fn add_not_equal_int(&mut self, term: SymTermId, val: i64) {
+        let leader = self.find_leader(term);
+        let entry = self.excluded_values.entry(leader).or_default();
+        if !entry.contains(&val) {
+            entry.push(val);
+        }
+    }
+
+    /// If all values of an enum are excluded except one, return that one.
+    pub fn deduce_must_equal_int(&self, term: SymTermId, all_variants: &[i64]) -> Option<i64> {
+        let leader = self.find_leader(term);
+        let excluded = self.excluded_values.get(&leader)?;
+        let remaining: Vec<i64> = all_variants
+            .iter()
+            .copied()
+            .filter(|v| !excluded.contains(v))
+            .collect();
+        if remaining.len() == 1 {
+            Some(remaining[0])
+        } else {
+            None
         }
     }
 
@@ -42,6 +69,13 @@ impl PathConstraintStore {
                 match (op, is_true) {
                     (BinaryOp::Eq, true) | (BinaryOp::Ne, false) => {
                         self.unify_terms(l, r, interner);
+                    }
+                    (BinaryOp::Eq, false) | (BinaryOp::Ne, true) => {
+                        if let SymTerm::ConstInt(val, _) = interner.get(r) {
+                            self.add_not_equal_int(l, *val);
+                        } else if let SymTerm::ConstInt(val, _) = interner.get(l) {
+                            self.add_not_equal_int(r, *val);
+                        }
                     }
                     (BinaryOp::Lt, true) | (BinaryOp::Ge, false) => {
                         self.add_less_than(l, r, interner);
@@ -71,6 +105,20 @@ impl PathConstraintStore {
                     self.const_equalities.get(&right_lead),
                 ) {
                     return Some(l_val == r_val);
+                }
+                if let SymTerm::ConstInt(r_val, _) = interner.get(right_lead) {
+                    if let Some(excluded) = self.excluded_values.get(&left_lead) {
+                        if excluded.contains(r_val) {
+                            return Some(false);
+                        }
+                    }
+                }
+                if let SymTerm::ConstInt(l_val, _) = interner.get(left_lead) {
+                    if let Some(excluded) = self.excluded_values.get(&right_lead) {
+                        if excluded.contains(l_val) {
+                            return Some(false);
+                        }
+                    }
                 }
                 None
             }
