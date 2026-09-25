@@ -356,7 +356,7 @@ impl LlvmCompiler {
                 })?;
                 Ok((*st).into())
             }
-            Type::Enum(_) => Ok(self.context.i64_type().ptr_type(AddressSpace::default()).into()),
+            Type::Enum(_) | Type::Ptr(_) => Ok(self.context.i64_type().ptr_type(AddressSpace::default()).into()),
             Type::Void => Err(LlvmError::TypeLoweringError(
                 "Void type cannot be converted to BasicTypeEnum".to_string(),
             )),

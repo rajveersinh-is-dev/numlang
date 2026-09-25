@@ -28,6 +28,10 @@ pub enum SymTerm {
     Select(SymTermId, SymTermId, SymTermId, Type), // condition, then, else
     Phi(Vec<(BasicBlockId, SymTermId)>, Type),
     Call(String, Vec<SymTermId>, Type),
+    /// A reference to a heap-allocated value (symbolic address).
+    Ref(SymTermId, Type),
+    /// A dereference of a symbolic pointer.
+    Deref(SymTermId, Type),
 }
 
 impl SymTerm {
@@ -44,6 +48,8 @@ impl SymTerm {
             SymTerm::Select(_, _, _, ty) => ty,
             SymTerm::Phi(_, ty) => ty,
             SymTerm::Call(_, _, ty) => ty,
+            SymTerm::Ref(_, ty) => ty,
+            SymTerm::Deref(_, ty) => ty,
         }
     }
 
@@ -273,6 +279,14 @@ impl TermInterner {
         self.intern(SymTerm::Call(callee, args, ty))
     }
 
+    pub fn intern_ref(&mut self, inner: SymTermId, ty: Type) -> SymTermId {
+        self.intern(SymTerm::Ref(inner, ty))
+    }
+
+    pub fn intern_deref(&mut self, ptr: SymTermId, ty: Type) -> SymTermId {
+        self.intern(SymTerm::Deref(ptr, ty))
+    }
+
     pub fn import_from(&mut self, other: &TermInterner, id: SymTermId) -> SymTermId {
         let term = other.get(id).clone();
         match term {
@@ -311,6 +325,14 @@ impl TermInterner {
                 let args_new = args.iter().map(|&a| self.import_from(other, a)).collect();
                 self.intern_call(callee, args_new, ty)
             }
+            SymTerm::Ref(inner, ty) => {
+                let inner_new = self.import_from(other, inner);
+                self.intern_ref(inner_new, ty)
+            }
+            SymTerm::Deref(ptr, ty) => {
+                let ptr_new = self.import_from(other, ptr);
+                self.intern_deref(ptr_new, ty)
+            }
         }
     }
 
@@ -340,6 +362,7 @@ impl TermInterner {
             SymTerm::Phi(incoming, _) => {
                 1 + incoming.iter().map(|(_, t)| self.sizes[t.0]).sum::<usize>()
             }
+            SymTerm::Ref(inner, _) | SymTerm::Deref(inner, _) => 1 + self.sizes[inner.0],
         };
 
         self.lookup.insert(term.clone(), id);
@@ -389,6 +412,8 @@ impl TermInterner {
                     .collect();
                 format!("phi({})", inc_str.join(", "))
             }
+            SymTerm::Ref(inner, _) => format!("&({})", self.format_term(*inner)),
+            SymTerm::Deref(ptr, _) => format!("*({})", self.format_term(*ptr)),
         }
     }
 }

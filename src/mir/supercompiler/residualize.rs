@@ -293,5 +293,44 @@ fn emit_term_eval(
             ));
             place
         }
+        SymTerm::Ref(inner, ty) => {
+            let in_place = emit_term_eval(*inner, interner, stmts, locals, next_temp_id);
+            let temp_name = format!("_sc_{}", *next_temp_id);
+            *next_temp_id += 1;
+            locals.push(MirLocalDecl {
+                name: temp_name.clone(),
+                ty: ty.clone(),
+                mutable: false,
+            });
+            let place = Place {
+                local: temp_name,
+                projections: vec![],
+            };
+            stmts.push(Statement::Assign(
+                place.clone(),
+                Rvalue::Use(in_place),
+            ));
+            place
+        }
+        SymTerm::Deref(ptr, ty) => {
+            let mut p_place = emit_term_eval(*ptr, interner, stmts, locals, next_temp_id);
+            p_place.projections.push(crate::mir::Projection::Deref);
+            let temp_name = format!("_sc_{}", *next_temp_id);
+            *next_temp_id += 1;
+            locals.push(MirLocalDecl {
+                name: temp_name.clone(),
+                ty: ty.clone(),
+                mutable: false,
+            });
+            let place = Place {
+                local: temp_name,
+                projections: vec![],
+            };
+            stmts.push(Statement::Assign(
+                place.clone(),
+                Rvalue::Use(p_place),
+            ));
+            place
+        }
     }
 }

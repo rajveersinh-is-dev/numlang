@@ -19,6 +19,7 @@ pub enum Type {
     Str,
     Struct(String),
     Enum(String),
+    Ptr(Box<Type>),
 }
 
 impl Type {
@@ -93,6 +94,7 @@ impl Type {
             Type::Array(elem, len) => elem.size_bytes() * len,
             Type::Struct(_) => 8,
             Type::Enum(_) => 8,
+            Type::Ptr(_) => 8,
         }
     }
 
@@ -203,6 +205,7 @@ impl fmt::Display for Type {
             Type::Array(elem, len) => write!(f, "[{}; {}]", elem, len),
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
+            Type::Ptr(inner) => write!(f, "*{}", inner),
         }
     }
 }

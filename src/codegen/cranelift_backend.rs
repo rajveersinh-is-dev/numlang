@@ -34,7 +34,7 @@ fn type_to_clif(ty: Type) -> types::Type {
         Type::Void => types::I32,
         Type::Str => types::I64,
         Type::Array(_, _) => types::I64, // Pointer to array
-        Type::Struct(_) | Type::Enum(_) => types::I64,   // Pointer to struct or enum on stack
+        Type::Struct(_) | Type::Enum(_) | Type::Ptr(_) => types::I64,   // Pointer to struct, enum, or heap ptr
     }
 }
 
@@ -102,7 +102,7 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
                 (8, 8)
             }
         }
-        Type::Enum(_) => (8, 8),
+        Type::Enum(_) | Type::Ptr(_) => (8, 8),
     }
 }
 
