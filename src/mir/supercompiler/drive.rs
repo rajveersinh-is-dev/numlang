@@ -527,6 +527,23 @@ impl<'a> SupercompilerDriver<'a> {
                 }
                 self.interner.intern_phi(phi_ops, Type::I64)
             }
+            Rvalue::Alloc(inner_place) => {
+                let inner_term = state
+                    .get_value(inner_place)
+                    .unwrap_or_else(|| self.interner.intern_var(inner_place.clone(), Type::I64));
+                state.next_heap_id += 1;
+                let addr_term = self.interner.intern_ref(inner_term, Type::Ptr(Box::new(Type::I64)));
+                state.symbolic_heap.insert(addr_term, inner_term);
+                addr_term
+            }
+            Rvalue::Load(ptr_place) => {
+                let ptr_term = state
+                    .get_value(ptr_place)
+                    .unwrap_or_else(|| self.interner.intern_var(ptr_place.clone(), Type::Ptr(Box::new(Type::I64))));
+                state.symbolic_heap.get(&ptr_term).copied().unwrap_or_else(|| {
+                    self.interner.intern_deref(ptr_term, Type::I64)
+                })
+            }
             _ => self.interner.intern_var(dest.clone(), Type::I64),
         };
 

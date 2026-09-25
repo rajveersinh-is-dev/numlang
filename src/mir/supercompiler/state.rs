@@ -236,6 +236,8 @@ pub struct SymbolicState {
     pub env: HashMap<Place, SymTermId>,
     pub memory_version: MemoryVersionId,
     pub path_constraints: PathConstraintStore,
+    pub symbolic_heap: HashMap<SymTermId, SymTermId>,
+    pub next_heap_id: usize,
 }
 
 impl SymbolicState {
@@ -246,6 +248,8 @@ impl SymbolicState {
             env: HashMap::new(),
             memory_version,
             path_constraints: PathConstraintStore::new(),
+            symbolic_heap: HashMap::new(),
+            next_heap_id: 0,
         }
     }
 
