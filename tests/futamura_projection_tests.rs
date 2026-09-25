@@ -336,4 +336,143 @@ fn main() -> i64 {
     }
 }
 
+#[test]
+fn test_2nd_futamura_projection() {
+    // 2nd Futamura Projection: Specializing an interpreter on a static program expression
+    // produces a compiled residual function with ZERO interpreter dispatch/match overhead.
+    let code = r#"
+enum Expr {
+    Var,
+    Lit(i64),
+    Add(Expr, Expr),
+    Mul(Expr, Expr),
+}
+
+fn eval(e: Expr, x: i64) -> i64 {
+    return match e {
+        Var => x,
+        Lit(val) => val,
+        Add(l, r) => eval(l, x) + eval(r, x),
+        Mul(l, r) => eval(l, x) * eval(r, x),
+    };
+}
+
+fn compiled_prog(x: i64) -> i64 {
+    let prog: Expr = Mul(Add(Var, Lit(3)), Lit(2));
+    return eval(prog, x);
+}
+
+fn main() -> i64 {
+    return compiled_prog(5);
+}
+"#;
+
+    // 1. Normal run: (5 + 3) * 2 = 16
+    let (code_norm, _, _) = run_numlang_code(code, false);
+    assert_eq!(code_norm, Some(16));
+
+    // 2. Supercompiled run: must execute and yield 16
+    let (code_sc, _, _) = run_numlang_code(code, true);
+    assert_eq!(code_sc, Some(16));
+
+    // 3. Static verification of 2nd Futamura Projection:
+    // In compiled_prog(x: i64), the static expression `Mul(Add(Var, Lit(3)), Lit(2))`
+    // must be specialized away with respect to symbolic parameter `x`.
+    // The residual AST of compiled_prog must contain:
+    // - ZERO TypedExpr::Match / TypedStmt::Match
+    // - ZERO TypedExpr::Call to `eval`
+    // - Purely arithmetic operations on `x`
+    let tokens = tokenize(code).unwrap();
+    let program = parse(&tokens).unwrap();
+    let mut typed = typecheck(&program).unwrap();
+
+    supercompile_program(&mut typed, None);
+
+    let compiled_fn = typed
+        .functions
+        .iter()
+        .find(|f| f.name == "compiled_prog")
+        .expect("compiled_prog function exists");
+
+    fn contains_interpreter_overhead(expr: &TypedExpr) -> bool {
+        match expr {
+            TypedExpr::Match { .. } => true,
+            TypedExpr::Call { callee, .. } if callee == "eval" => true,
+            TypedExpr::Binary { left, right, .. } => {
+                contains_interpreter_overhead(left) || contains_interpreter_overhead(right)
+            }
+            TypedExpr::Unary { expr, .. } => contains_interpreter_overhead(expr),
+            _ => false,
+        }
+    }
+
+    fn block_contains_interpreter_overhead(block: &numlang::typecheck::typed_ast::TypedBlock) -> bool {
+        block.stmts.iter().any(|stmt| match stmt {
+            TypedStmt::Return(Some(expr), _) => contains_interpreter_overhead(expr),
+            TypedStmt::Expr(expr) => contains_interpreter_overhead(expr),
+            TypedStmt::Let { value, .. } => contains_interpreter_overhead(value),
+            TypedStmt::Assign { value, .. } => contains_interpreter_overhead(value),
+            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                contains_interpreter_overhead(condition)
+                    || block_contains_interpreter_overhead(then_branch)
+                    || else_branch.as_ref().is_some_and(block_contains_interpreter_overhead)
+            }
+            TypedStmt::While { condition, body, .. } => {
+                contains_interpreter_overhead(condition)
+                    || block_contains_interpreter_overhead(body)
+            }
+            _ => false,
+        })
+    }
+
+    assert!(
+        !block_contains_interpreter_overhead(&compiled_fn.body),
+        "Residual compiled_prog must be completely free of interpreter dispatch/calls! Found: {:#?}",
+        compiled_fn.body
+    );
+
+    // 4. Execution correctness: test inputs x = 5, x = 10, x = 0
+    let test_inputs = [(5, 16), (10, 26), (0, 6)];
+    for (input, expected) in test_inputs {
+        let code_input = format!(
+            r#"
+enum Expr {{
+    Var,
+    Lit(i64),
+    Add(Expr, Expr),
+    Mul(Expr, Expr),
+}}
+
+fn eval(e: Expr, x: i64) -> i64 {{
+    return match e {{
+        Var => x,
+        Lit(val) => val,
+        Add(l, r) => eval(l, x) + eval(r, x),
+        Mul(l, r) => eval(l, x) * eval(r, x),
+    }};
+}}
+
+fn compiled_prog(x: i64) -> i64 {{
+    let prog: Expr = Mul(Add(Var, Lit(3)), Lit(2));
+    return eval(prog, x);
+}}
+
+fn main() -> i64 {{
+    return compiled_prog({});
+}}
+"#,
+            input
+        );
+        let (code_res, _, _) = run_numlang_code(&code_input, true);
+        assert_eq!(
+            code_res,
+            Some(expected),
+            "compiled_prog({}) must evaluate to {}",
+            input,
+            expected
+        );
+    }
+}
+
+
 
