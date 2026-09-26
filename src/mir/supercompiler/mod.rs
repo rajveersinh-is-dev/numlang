@@ -29,7 +29,11 @@ pub use mrsc::{
 pub use parallel::supercompile_mir_program_parallel;
 pub use polyhedral::fuse_polyhedral_stencils;
 use residualize::residualize_process_tree;
-pub use validate::{verify_program_equivalence, TranslationValidator, ValidationCertificate, ValidationError};
+pub use validate::{
+    check_satisfiability, verify_formula_validity, verify_program_equivalence, BoolFormula,
+    BvExpr, SmtLib2Printer, SmtResult, TranslationValidator, ValidationCertificate,
+    ValidationError,
+};
 
 use crate::mir::lower::{MirFunction, MirProgram};
 
