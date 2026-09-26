@@ -97,6 +97,25 @@ impl ProcessTree {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DriverConfig {
+    pub max_depth: usize,
+    pub max_unroll_depth: usize,
+    pub solve_recurrences: bool,
+    pub inline_calls: bool,
+}
+
+impl Default for DriverConfig {
+    fn default() -> Self {
+        DriverConfig {
+            max_depth: 128,
+            max_unroll_depth: 0,
+            solve_recurrences: true,
+            inline_calls: true,
+        }
+    }
+}
+
 pub struct SupercompilerDriver<'a> {
     func: &'a MirFunction,
     nodes: Vec<ProcessNode>,
@@ -110,6 +129,7 @@ pub struct SupercompilerDriver<'a> {
     stats: SupercompilerStats,
     program_funcs: HashMap<String, &'a MirFunction>,
     call_stack: Vec<String>,
+    pub config: DriverConfig,
 }
 
 impl<'a> SupercompilerDriver<'a> {
@@ -144,7 +164,29 @@ impl<'a> SupercompilerDriver<'a> {
             stats: SupercompilerStats::default(),
             program_funcs: HashMap::new(),
             call_stack: Vec::new(),
+            config: DriverConfig::default(),
         }
+    }
+
+    pub fn with_config(mut self, config: DriverConfig) -> Self {
+        self.max_depth = config.max_depth;
+        self.config = config;
+        self
+    }
+
+    pub fn with_unroll_depth(mut self, depth: usize) -> Self {
+        self.config.max_unroll_depth = depth;
+        self
+    }
+
+    pub fn with_recurrence_solving(mut self, enable: bool) -> Self {
+        self.config.solve_recurrences = enable;
+        self
+    }
+
+    pub fn with_inlining(mut self, enable: bool) -> Self {
+        self.config.inline_calls = enable;
+        self
     }
 
     pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
@@ -562,9 +604,11 @@ impl<'a> SupercompilerDriver<'a> {
                     .collect();
 
                 let mut inlined_res = None;
-                if let Some(callee_func) = self.program_funcs.get(callee).copied() {
-                    if !self.call_stack.contains(callee) && self.call_stack.len() < 8 {
-                        inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms);
+                if self.config.inline_calls {
+                    if let Some(callee_func) = self.program_funcs.get(callee).copied() {
+                        if !self.call_stack.contains(callee) && self.call_stack.len() < 8 {
+                            inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms);
+                        }
                     }
                 }
 
@@ -615,19 +659,28 @@ impl<'a> SupercompilerDriver<'a> {
         depth: usize,
     ) {
         // 1. Knot-tying test: is next_state an exact instance of an ancestor?
-        for &anc_id in ancestor_stack.iter().rev() {
-            let anc_state = &self.nodes[anc_id.0].state;
-            if is_instance_of(anc_state, &next_state, &self.active_places) {
-                // Knot tied! Fold back to ancestor loop header
-                self.stats.knots_tied += 1;
-                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
-                return;
+        let header_visits = ancestor_stack
+            .iter()
+            .filter(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
+            .count();
+
+        let should_try_knot = header_visits >= self.config.max_unroll_depth;
+
+        if should_try_knot {
+            for &anc_id in ancestor_stack.iter().rev() {
+                let anc_state = &self.nodes[anc_id.0].state;
+                if is_instance_of(anc_state, &next_state, &self.active_places) {
+                    // Knot tied! Fold back to ancestor loop header
+                    self.stats.knots_tied += 1;
+                    self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
+                    return;
+                }
             }
         }
 
         // 2. Whistle test: does an ancestor loop header embed next_state or have repeated visits?
         let is_loop_header = self.loop_headers.contains(&next_state.block);
-        if is_loop_header {
+        if is_loop_header && self.config.solve_recurrences {
             let header_visits = ancestor_stack
                 .iter()
                 .filter(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
