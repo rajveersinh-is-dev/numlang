@@ -19,6 +19,9 @@ pub struct Env {
     /// Taint flag: set to true whenever driving encounters a symbolic
     /// value, unresolved condition, or unhandled statement.
     pub has_symbolic: bool,
+
+    /// Step counter to prevent runaway exponential compile-time evaluation.
+    pub steps: usize,
 }
 
 impl Default for Env {
@@ -33,6 +36,7 @@ impl Env {
             bindings: HashMap::new(),
             call_stack: Vec::new(),
             has_symbolic: false,
+            steps: 0,
         }
     }
 
@@ -102,6 +106,7 @@ impl Env {
             bindings: HashMap::new(),
             call_stack: self.call_stack.clone(),
             has_symbolic: false,
+            steps: self.steps,
         };
         for (name, val) in params {
             if matches!(val, Value::Symbolic(_)) {
