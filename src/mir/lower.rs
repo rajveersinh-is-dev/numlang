@@ -587,8 +587,12 @@ impl MirBuilder {
 pub fn lower_program(program: &TypedProgram) -> MirProgram {
     let mut mir_funcs = Vec::new();
     for func in &program.functions {
+        let mut f_to_lower = func.clone();
+        if let Some(lowered_body) = crate::opt::recursion::try_lower_tail_calls(func) {
+            f_to_lower.body = lowered_body;
+        }
         let builder = MirBuilder::new();
-        mir_funcs.push(builder.build(func));
+        mir_funcs.push(builder.build(&f_to_lower));
     }
     MirProgram {
         functions: mir_funcs,

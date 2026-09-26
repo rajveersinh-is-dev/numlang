@@ -390,6 +390,7 @@ impl<'a> MultiResultEngine<'a> {
                 max_unroll_depth: 0,
                 solve_recurrences: true,
                 inline_calls: true,
+                ..DriverConfig::default()
             })
             .run();
 
@@ -413,6 +414,7 @@ impl<'a> MultiResultEngine<'a> {
                 max_unroll_depth: 4,
                 solve_recurrences: true,
                 inline_calls: true,
+                ..DriverConfig::default()
             })
             .run();
 
@@ -436,6 +438,7 @@ impl<'a> MultiResultEngine<'a> {
                 max_unroll_depth: 0,
                 solve_recurrences: false,
                 inline_calls: true,
+                ..DriverConfig::default()
             })
             .run();
 
