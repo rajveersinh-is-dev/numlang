@@ -3,8 +3,9 @@ import NumLangProofs.Semantics
 namespace NumLang
 
 /-- Single-step driving reduction on Core Expr.
-    Performs constant folding and deterministic branch selection on static redexes. -/
-def drive : Expr → Option Expr
+    Performs constant folding on binary operations and deterministic branch selection
+    on conditionals with static redexes. -/
+def drive (_E : FunEnv) : Expr → Option Expr
   | Expr.bin op (Expr.lit n1) (Expr.lit n2) =>
     match evalOp op n1 n2 with
     | some n3 => some (Expr.lit n3)
@@ -13,78 +14,206 @@ def drive : Expr → Option Expr
     if nc ≠ 0 then some t else some f
   | _ => none
 
-/-- Inversion lemma: A literal evaluates only to its own integer value. -/
-theorem bigStep_lit_inv (env : Env) (n : Int) (v : Val) (h : BigStep env (Expr.lit n) v) :
-    v = Val.intVal n := by
-  cases h
-  rfl
+/-- Supercompiler loop folding: folds a configuration into a recursive call to a specialized function. -/
+def foldCall (f : String) (arg : Expr) : Expr :=
+  Expr.call f arg
 
-/-- Theorem: Driving preserves big-step operational semantics. -/
-theorem driving_preserves_semantics :
-    ∀ (env : Env) (e : Expr) (v : Val),
-      BigStep env e v →
-      ∀ (res : Expr), drive e = some res →
-      BigStep env res v := by
-  intro env e v h
-  induction h with
-  | lit env n =>
-    intro res hd
-    nomatch hd
-  | var env idx val hget =>
-    intro res hd
-    nomatch hd
-  | bin env op e1 e2 n1 n2 n3 h1 h2 hop ih1 ih2 =>
-    intro res hd
+/-- Supercompiler Most Specific Generalization (MSG): generalizes a subterm into a let-binding. -/
+def generalize (x : String) (a : Expr) (body : Expr) : Expr :=
+  Expr.letIn x a body
+
+/-- Theorem: Driving preserves big-step operational semantics (forward direction). -/
+theorem driving_correctness (E : FunEnv) (env : Env) (h : Heap) (e : Expr) (v : Val) (h' : Heap)
+    (he : BigStep E env h e v h') (res : Expr) (hd : drive E e = some res) :
+    BigStep E env h res v h' := by
+  cases e with
+  | bin op e1 e2 =>
     cases e1 with
-    | lit m1 =>
+    | lit n1 =>
       cases e2 with
-      | lit m2 =>
-        have hm1 : Val.intVal n1 = Val.intVal m1 := bigStep_lit_inv env m1 (Val.intVal n1) h1
-        have hm2 : Val.intVal n2 = Val.intVal m2 := bigStep_lit_inv env m2 (Val.intVal n2) h2
-        injection hm1 with eq1
-        injection hm2 with eq2
-        subst eq1 eq2
+      | lit n2 =>
         dsimp [drive] at hd
+        cases he
+        rename_i h1 m1 m2 m3 hop he1 he2
+        have h_inv1 := bigStep_lit_inv E env h n1 (Val.intVal m1) h1 he1
+        have h_inv2 := bigStep_lit_inv E env h1 n2 (Val.intVal m2) h' he2
+        rcases h_inv1 with ⟨eq_v1, eq_h1⟩
+        rcases h_inv2 with ⟨eq_v2, eq_h2⟩
+        injection eq_v1 with eq1
+        injection eq_v2 with eq2
+        subst eq1 eq2 eq_h1 eq_h2
         rw [hop] at hd
-        injection hd with hres
-        subst hres
-        exact BigStep.lit env n3
-      | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ =>
+        injection hd with h_res
+        subst h_res
+        exact BigStep.lit E env h' m3
+      | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
         nomatch hd
-    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ =>
+    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
       nomatch hd
-  | cond_true env c t f val nc hc hnc ht ihc _ =>
-    intro res hd
+  | cond c t f =>
     cases c with
-    | lit mc =>
-      have hmc : Val.intVal nc = Val.intVal mc := bigStep_lit_inv env mc (Val.intVal nc) hc
-      injection hmc with eqc
-      subst eqc
+    | lit nc =>
       dsimp [drive] at hd
-      split at hd
-      · rename_i _
-        injection hd with hres
-        subst hres
-        exact ht
-      · rename_i hneg
-        exact False.elim (hneg hnc)
-    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ =>
+      cases he
+      · rename_i h1 mc hne hc ht
+        have h_inv := bigStep_lit_inv E env h nc (Val.intVal mc) h1 hc
+        rcases h_inv with ⟨eq_v, eq_h⟩
+        injection eq_v with eq_mc
+        subst eq_mc eq_h
+        split at hd
+        · rename_i _
+          injection hd with h_res
+          subst h_res
+          exact ht
+        · rename_i h_not
+          exact False.elim (h_not hne)
+      · rename_i h1 hc hf
+        have h_inv := bigStep_lit_inv E env h nc (Val.intVal 0) h1 hc
+        rcases h_inv with ⟨eq_v, eq_h⟩
+        injection eq_v with eq_mc
+        subst eq_mc eq_h
+        split at hd
+        · rename_i h_not
+          exact False.elim (h_not rfl)
+        · rename_i _
+          injection hd with h_res
+          subst h_res
+          exact hf
+    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
       nomatch hd
-  | cond_false env c t f val hc hf ihc _ =>
-    intro res hd
-    cases c with
-    | lit mc =>
-      have hmc : Val.intVal 0 = Val.intVal mc := bigStep_lit_inv env mc (Val.intVal 0) hc
-      injection hmc with eqc
-      subst eqc
-      dsimp [drive] at hd
-      injection hd with hres
-      subst hres
-      exact hf
-    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ =>
-      nomatch hd
-  | letIn env valExpr body vVal vBody hval hbody ihval ihbody =>
-    intro res hd
+  | lit _ | var _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
     nomatch hd
+
+/-- Theorem: Driving preserves big-step operational semantics (reverse direction / soundness). -/
+theorem driving_soundness (E : FunEnv) (env : Env) (h : Heap) (e res : Expr) (v : Val) (h' : Heap)
+    (hd : drive E e = some res) (hres : BigStep E env h res v h') :
+    BigStep E env h e v h' := by
+  cases e with
+  | bin op e1 e2 =>
+    cases e1 with
+    | lit n1 =>
+      cases e2 with
+      | lit n2 =>
+        dsimp [drive] at hd
+        cases h_eval : evalOp op n1 n2 with
+        | none =>
+          rw [h_eval] at hd
+          nomatch hd
+        | some n3 =>
+          rw [h_eval] at hd
+          injection hd with h_eq
+          subst h_eq
+          have h_inv := bigStep_lit_inv E env h n3 v h' hres
+          rcases h_inv with ⟨eq_v, eq_h⟩
+          subst eq_v eq_h
+          apply BigStep.bin (h1 := h') (n1 := n1) (n2 := n2) (n3 := n3)
+          · exact BigStep.lit E env h' n1
+          · exact BigStep.lit E env h' n2
+          · exact h_eval
+      | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
+        nomatch hd
+    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
+      nomatch hd
+  | cond c t f =>
+    cases c with
+    | lit nc =>
+      dsimp [drive] at hd
+      by_cases hnc : nc = 0
+      · subst hnc
+        dsimp at hd
+        injection hd with h_eq
+        subst h_eq
+        apply BigStep.cond_false
+        · exact BigStep.lit E env h 0
+        · exact hres
+      · have hne : nc ≠ 0 := hnc
+        split at hd
+        · rename_i _
+          injection hd with h_eq
+          subst h_eq
+          apply BigStep.cond_true (nc := nc)
+          · exact BigStep.lit E env h nc
+          · exact hne
+          · exact hres
+        · rename_i h_contra
+          exact False.elim (h_contra hne)
+    | var _ | bin _ _ _ | cond _ _ _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
+      nomatch hd
+  | lit _ | var _ | letIn _ _ _ | call _ _ | box _ | deref _ | assign _ _ =>
+    nomatch hd
+
+/-- Semantic Preservation Theorem 1: Driving preserves big-step evaluation equivalence. -/
+theorem driving_equiv (E : FunEnv) (env : Env) (h : Heap) (e res : Expr) (v : Val) (h' : Heap)
+    (hd : drive E e = some res) :
+    BigStep E env h e v h' ↔ BigStep E env h res v h' := by
+  constructor
+  · intro he
+    exact driving_correctness E env h e v h' he res hd
+  · intro hres
+    exact driving_soundness E env h e res v h' hd hres
+
+/-- Supercompiler loop folding correctness: evaluating the specialized function body implies
+    the folded call evaluates to the same result. -/
+theorem folding_correctness (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vArg vRet : Val) (h1 h2 : Heap)
+    (harg : BigStep E env h arg vArg h1)
+    (hE : E f = some fdef)
+    (hbody : BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2) :
+    BigStep E env h (foldCall f arg) vRet h2 :=
+  BigStep.call E env h h1 h2 f arg vArg vRet fdef harg hE hbody
+
+/-- Supercompiler loop folding soundness: if a folded call evaluates, then there exist
+    argument evaluation steps leading to the function body evaluation. -/
+theorem folding_soundness (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vRet : Val) (h2 : Heap)
+    (hE : E f = some fdef)
+    (hcall : BigStep E env h (foldCall f arg) vRet h2) :
+    ∃ (vArg : Val) (h1 : Heap), BigStep E env h arg vArg h1 ∧ BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2 := by
+  cases hcall
+  rename_i h1 vArg fdef' hEf harg hbody
+  rw [hE] at hEf
+  injection hEf with eq_fdef
+  subst eq_fdef
+  exact ⟨vArg, h1, harg, hbody⟩
+
+/-- Semantic Preservation Theorem 2: Supercompiler loop folding preserves big-step operational semantics.
+    A folded call is semantically equivalent to argument evaluation followed by body evaluation. -/
+theorem folding_equiv (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vRet : Val) (h2 : Heap)
+    (hE : E f = some fdef) :
+    BigStep E env h (foldCall f arg) vRet h2 ↔
+    ∃ (vArg : Val) (h1 : Heap), BigStep E env h arg vArg h1 ∧ BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2 := by
+  constructor
+  · exact folding_soundness E env h f arg fdef vRet h2 hE
+  · intro ⟨vArg, h1, ha, hb⟩
+    exact folding_correctness E env h f arg fdef vArg vRet h1 h2 ha hE hb
+
+/-- Supercompiler Most Specific Generalization (let-expression abstraction) correctness. -/
+theorem generalization_correctness (E : FunEnv) (env : Env) (h : Heap)
+    (x : String) (a body : Expr) (va : Val) (h1 : Heap) (v : Val) (h2 : Heap)
+    (ha : BigStep E env h a va h1)
+    (hbody : BigStep E ((x, va) :: env) h1 body v h2) :
+    BigStep E env h (generalize x a body) v h2 :=
+  BigStep.letIn E env h h1 h2 x a body va v ha hbody
+
+/-- Supercompiler Most Specific Generalization (let-expression abstraction) soundness. -/
+theorem generalization_soundness (E : FunEnv) (env : Env) (h : Heap)
+    (x : String) (a body : Expr) (v : Val) (h2 : Heap)
+    (hgen : BigStep E env h (generalize x a body) v h2) :
+    ∃ (va : Val) (h1 : Heap), BigStep E env h a va h1 ∧ BigStep E ((x, va) :: env) h1 body v h2 := by
+  cases hgen
+  rename_i h1 va hval hbody
+  exact ⟨va, h1, hval, hbody⟩
+
+/-- Semantic Preservation Theorem 3: Most Specific Generalization
+    preserves big-step operational semantics. -/
+theorem generalization_equiv (E : FunEnv) (env : Env) (h : Heap)
+    (x : String) (a body : Expr) (v : Val) (h2 : Heap) :
+    BigStep E env h (generalize x a body) v h2 ↔
+    ∃ (va : Val) (h1 : Heap), BigStep E env h a va h1 ∧ BigStep E ((x, va) :: env) h1 body v h2 := by
+  constructor
+  · exact generalization_soundness E env h x a body v h2
+  · intro ⟨va, h1, ha, hb⟩
+    exact generalization_correctness E env h x a body va h1 v h2 ha hb
 
 end NumLang

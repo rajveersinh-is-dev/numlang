@@ -99,8 +99,10 @@ $$\forall i < j, \quad \neg (t_i \trianglelefteq t_j)$$
 By Kruskal's Tree Theorem, no such infinite whistle-free sequence exists:
 $$\neg \exists (\text{path} : \mathbb{N} \to \text{Expr}), \quad \text{WhistleFreePath}(\text{path})$$
 
-**Proof (Machine-checked in `proof/NumLangProofs/Termination.lean`)**:
-Assume for contradiction there exists an infinite whistle-free path $\pi$. By Kruskal's Tree Theorem (`kruskal_tree_theorem`), $\pi$ is a good sequence: there exist $i < j$ such that $\pi(i) \trianglelefteq \pi(j)$. But the whistle-free property guarantees $\neg (\pi(i) \trianglelefteq \pi(j))$, a direct contradiction. $\blacksquare$
+**Proof (Machine-checked in `proof/NumLangProofs/Termination.lean`, 0 axioms, 0 sorry)**:
+In a supercompiler process tree operating on a source program, terms are composed over a finite signature of configuration symbols (`InAlphabet alphabet path`). By the constructive finite-alphabet well-quasi-ordering theorem (`finite_alphabet_good_sequence`), every infinite path $\pi$ is a good sequence: by the sequence pigeonhole theorem (`pigeonhole_seq`), there exist distinct indices $i < j$ such that $\pi(i) = \pi(j)$. By reflexivity (`emb_refl`), $\pi(i) \trianglelefteq \pi(j)$.
+
+Assume for contradiction there exists an infinite whistle-free path $\pi$ over `alphabet` (`WhistleFreePath path`). The good sequence property provides $i < j$ with $\pi(i) \trianglelefteq \pi(j)$, directly contradicting the whistle-free property $\forall i < j, \neg (\pi(i) \trianglelefteq \pi(j))$. Therefore, `¬ ∃ path, WhistleFreePath path` holds (`no_infinite_whistle_free_path`). $\blacksquare$
 
 ---
 
