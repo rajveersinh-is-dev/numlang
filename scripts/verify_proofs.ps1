@@ -12,10 +12,14 @@ try {
         Write-Error "Lake build failed with exit code $LASTEXITCODE"
     }
 
-    Write-Host "Scanning for sorry placeholders..."
+    Write-Host "Scanning for sorry placeholders and unproven axioms..."
     $sorries = Select-String -Path "*.lean", "NumLangProofs\*.lean" -Pattern "\bsorry\b"
     if ($sorries) {
         Write-Error "ERROR: Proofs contain incomplete 'sorry' placeholders: $sorries"
+    }
+    $axioms = Select-String -Path "*.lean", "NumLangProofs\*.lean" -Pattern "\baxiom\b"
+    if ($axioms) {
+        Write-Error "ERROR: Proofs contain unproven 'axiom' statements: $axioms"
     }
 
     Write-Host "=========================================="
