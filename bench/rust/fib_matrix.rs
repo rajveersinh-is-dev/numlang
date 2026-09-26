@@ -29,7 +29,7 @@ fn main() {
     let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
     for _ in 0..1000 {
-        sum = (sum + fib(50)) % 1000000007;
+        sum = (sum + fib(40)) % 1000000007;
     }
     let elapsed = t0.elapsed();
     println!("{}", sum);

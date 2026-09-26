@@ -44,10 +44,11 @@ python3 bench/harness/runner.py
 echo "[PASS] Empirical measurements recorded in bench/data/results.csv."
 echo ""
 
-# Stage 5: Publication Figures Generation
-echo "[STAGE 5/6] Generating publication-quality vector figures..."
+# Stage 5: LaTeX Tables & Publication Figures Generation
+echo "[STAGE 5/6] Generating LaTeX tables and publication-quality vector figures..."
+python3 bench/harness/generate_tables.py
 python3 bench/plot.py
-echo "[PASS] Generated figures in bench/figures/ (speedup.pdf, throughput.pdf, codesize.pdf)."
+echo "[PASS] Generated tables in paper/generated/ and figures in bench/figures/."
 echo ""
 
 # Stage 6: Summary Report

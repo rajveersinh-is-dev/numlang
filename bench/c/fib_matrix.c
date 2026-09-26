@@ -32,7 +32,7 @@ int main(void) {
 
     int64_t sum = 0;
     for (int i = 0; i < 1000; i++) {
-        sum = (sum + fib(50)) % 1000000007;
+        sum = (sum + fib(40)) % 1000000007;
     }
 
     QueryPerformanceCounter(&t1);

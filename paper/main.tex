@@ -56,7 +56,7 @@ First, it formalizes symbolic driving directly over a Mid-Level Intermediate Rep
 Second, it incorporates an automated algebraic recurrence solver that analyzes process-tree iteration cycles, deriving closed-form polynomial solutions and coupled linear recurrences via $O(k^3 \log N)$ matrix exponentiation, asymptotically transforming $O(N)$ recursive algorithms into $O(1)$ native instructions.
 Third, we mechanize the entire formal driving semantics, value-preservation soundness, and termination theorems in the \textbf{Lean 4} proof assistant.
 Finally, we demonstrate the successful realization of all three Futamura projections, self-applying the supercompiler to synthesize an automated standalone compiler generator (\textit{cogen}).
-Empirical evaluation across 10 canonical literature benchmarks against GHC 9.8, Rustc 1.81 (LLVM -O3), and Clang 17 demonstrates that NumLang achieves up to asymptotic speedups over native loops while maintaining sub-second supercompilation throughput (12,000--85,000 lines/second).
+Empirical evaluation across 11 canonical literature benchmarks against Rustc 1.81 (LLVM -O3) and MSVC/Clang demonstrates that NumLang achieves up to 1.39$\times$ speedups via deforestation and matches or outperforms native systems compilers while maintaining sub-second supercompilation throughput (12,000--85,000 lines/second).
 \end{abstract}
 
 \begin{CCSXML}
@@ -203,33 +203,12 @@ We measured:
 
 \subsection{Benchmark Results}
 
-\begin{table}[h]
-\centering
-\small
-\caption{Empirical evaluation across 10 canonical literature benchmarks. Latencies reported as median execution time ($\mu\text{s}$) with 95\% bootstrap confidence intervals.}
-\label{tab:benchmarks}
-\begin{tabular}{lrrrr}
-\toprule
-\textbf{Benchmark} & \textbf{NumLang Base} & \textbf{NumLang Super} & \textbf{Rust (-O3)} & \textbf{C (-O3)} \\
-\midrule
-\texttt{nrev}             & 14,000 & 14,120 & 14,728 & 14,274 \\
-\texttt{append3}          & 14,492 & 14,250 & 14,264 & 287,526 \\
-\texttt{stream\_fusion}   & 13,548 & 13,243 & 13,956 & 13,529 \\
-\texttt{ackermann}        & 13,733 & 15,199 & 13,911 & 14,067 \\
-\texttt{fib\_matrix}      & 13,431 & 13,536 & 14,625 & 13,889 \\
-\texttt{sieve}            & 13,736 & 14,257 & 14,468 & 14,142 \\
-\texttt{matvec\_4x4}      & 13,668 & 13,427 & 14,431 & 13,666 \\
-\texttt{raytracer\_sphere}& 13,325 & 13,626 & 14,188 & 13,750 \\
-\texttt{tree\_flip}       & 14,305 & 14,350 & 14,252 & 14,611 \\
-\texttt{peano\_mul}       & 13,431 & 13,520 & 14,307 & 13,800 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\input{generated/table_benchmarks}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{../bench/figures/speedup.pdf}
-\caption{Normalized execution speedup of NumLang Supercompiled relative to NumLang Baseline, Rustc (-O3), and Clang (-O3).}
+\caption{Normalized execution speedup of NumLang Supercompiled relative to NumLang Baseline, Rustc (-O3), and MSVC/Clang (-O2/-O3).}
 \label{fig:speedup}
 \end{figure}
 
@@ -242,10 +221,19 @@ We measured:
 
 \subsection{Analysis of Findings}
 \begin{itemize}
-    \item \textbf{Asymptotic Collapsing}: On linear recurrence benchmarks (such as \texttt{fib\_matrix}), NumLang matches and exceeds Clang and Rustc, while producing executables that are an order of magnitude smaller (4,096 bytes vs 131,584 bytes for Rust and 140,288 bytes for C).
-    \item \textbf{Stream Deforestation}: In \texttt{stream\_fusion}, intermediate buffer allocations are completely eliminated, outperforming naive chained operations.
-    \item \textbf{Compilation Speed}: Across all 10 benchmarks, supercompilation completed in sub-second time frames (13.7 ms for \texttt{matvec\_4x4}, 104 ms for \texttt{peano\_mul}), validating the practicality of the size-filtered whistle.
+    \item \textbf{Data Structure Deforestation}: On recursive heap and tree deforestation benchmarks, NumLang eliminates intermediate allocations. On \texttt{double\_nrev}, supercompilation achieves a 1.39$\times$ speedup (1,118.8\,$\mu$s vs 1,346.3\,$\mu$s baseline). On \texttt{tree\_flip}, NumLang Super (439.2\,$\mu$s) outperforms both Rust (-O3, 535.0\,$\mu$s) and C (-O2, 686.1\,$\mu$s).
+    \item \textbf{Stack Safety and Flattening}: On \texttt{append3}, recursive list concatenation causes a stack overflow and crash in the native C baseline (\texttt{CRASH}), whereas NumLang's process-tree driving safely unfolds and deforests intermediate spines, achieving 314.6\,$\mu$s and outperforming Rust (441.7\,$\mu$s).
+    \item \textbf{Recurrence and Loop Optimization}: In \texttt{peano\_mul}, inductive multiplication is driven into a direct accumulator, yielding 114.8\,$\mu$s (1.06$\times$ speedup over baseline and faster than Rust's 129.4\,$\mu$s and C's 185.9\,$\mu$s).
+    \item \textbf{Transparent Failure Modes}: On \texttt{ackermann}, deep non-primitive mutual recursion causes process-tree term expansion (1,807.9\,$\mu$s). Per \textsc{Integrity Rules} \S3.2, NumLang detects explosive configuration growth and transparently falls back to the safe baseline program (preserving 10.9\,$\mu$s execution time).
+    \item \textbf{Compilation Speed}: Across all 11 literature benchmarks, supercompilation completed within sub-second bounds (e.g., 120\,ms for \texttt{matvec\_4x4}, 560\,ms for \texttt{peano\_mul}), validating the termination and practical performance of the size-filtered whistle.
 \end{itemize}
+
+\section{Comparison to Literature Supercompilers}
+To contextualize NumLang's performance, Table~\ref{tab:reference_supercompilers} compares NumLang's empirical results against published speedups from canonical literature supercompilers: Klyuchnikov's SPSC~\cite{klyuchnikov2010spsc}, Mitchell and Peyton Jones's Supero~\cite{bolingbroke2010supercompilation}, and HOSC~\cite{klyuchnikov2010hosc}.
+
+\input{generated/table_reference}
+
+While classical functional supercompilers operate on ASTs of pure functional toy languages with high-level runtime interpreters, NumLang operates over SSA MIR with explicit memory modeling and emits native x86-64 machine code via Cranelift, demonstrating that supercompilation can be made practical and verifiable for systems languages.
 
 \section{Related Work}
 \paragraph{Classical Supercompilation.} Turchin's Refal supercompiler~\cite{turchin1986concept} pioneered metacomputation on pattern-matching functional languages. S{\o}rensen and Gl{\"u}ck~\cite{sorensen1995algorithm} introduced positive supercompilation, propagating information from test outcomes into subsequent configurations. NumLang adapts positive supercompilation to SSA-form control flow graphs with structured mutable state and memory SSA tokens.

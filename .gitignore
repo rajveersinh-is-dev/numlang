@@ -9,3 +9,5 @@ fuzz_report.json
 bench/bin/
 __pycache__/
 *.pyc
+_panic.nl
+*.pdb

@@ -1,41 +1,39 @@
 enum Tree {
-    Nil,
-    Node(i64, Box<Tree>, Box<Tree>),
+    Leaf(i64),
+    Node(Box<Tree>, Box<Tree>),
 }
 
 fn make_tree(depth: i64, val: i64) -> Tree {
     if depth <= 0 {
-        Tree::Nil
+        Tree::Leaf(val)
     } else {
-        Tree::Node(
-            val,
-            Box::new(make_tree(depth - 1, val * 2)),
-            Box::new(make_tree(depth - 1, val * 2 + 1)),
-        )
+        let left = make_tree(depth - 1, val * 2);
+        let right = make_tree(depth - 1, val * 2 + 1);
+        Tree::Node(Box::new(left), Box::new(right))
     }
 }
 
-fn flip(t: &Tree) -> Tree {
+fn flip(t: Tree) -> Tree {
     match t {
-        Tree::Nil => Tree::Nil,
-        Tree::Node(v, l, r) => Tree::Node(*v, Box::new(flip(r)), Box::new(flip(l))),
+        Tree::Leaf(v) => Tree::Leaf(v),
+        Tree::Node(l, r) => Tree::Node(Box::new(flip(*r)), Box::new(flip(*l))),
     }
 }
 
 fn sum_tree(t: &Tree) -> i64 {
     match t {
-        Tree::Nil => 0,
-        Tree::Node(v, l, r) => *v + sum_tree(l) + sum_tree(r),
+        Tree::Leaf(v) => *v,
+        Tree::Node(l, r) => sum_tree(l) + sum_tree(r),
     }
 }
 
 fn main() {
     let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
-    for _ in 0..50 {
-        let t = make_tree(8, 1);
-        let f = flip(&t);
-        sum += sum_tree(&f);
+    for _ in 0..100 {
+        let t = make_tree(4, 1);
+        let flipped_twice = flip(flip(t));
+        sum += sum_tree(&flipped_twice);
     }
     let elapsed = t0.elapsed();
     println!("{}", sum);

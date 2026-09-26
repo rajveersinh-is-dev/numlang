@@ -16,16 +16,21 @@ with open(csv_path, mode="r", newline="") as f:
     for row in reader:
         b = row["benchmark"]
         cfg = row["config"]
-        med = float(row["median_us"])
+        if row.get("status") == "CRASH":
+            val_str = "CRASH"
+        elif row.get("median_us"):
+            val_str = f"{float(row['median_us']):.1f} us"
+        else:
+            val_str = "N/A"
         if b not in rows:
             rows[b] = {}
-        rows[b][cfg] = med
+        rows[b][cfg] = val_str
 
 for b, cfgs in rows.items():
-    nl_b = f"{cfgs.get('numlang_base', 0.0):.1f} us" if 'numlang_base' in cfgs else "N/A"
-    nl_s = f"{cfgs.get('numlang_super', 0.0):.1f} us" if 'numlang_super' in cfgs else "N/A"
-    rs   = f"{cfgs.get('rust_opt', 0.0):.1f} us" if 'rust_opt' in cfgs else "N/A"
-    c    = f"{cfgs.get('c_opt', 0.0):.1f} us" if 'c_opt' in cfgs else "N/A"
+    nl_b = cfgs.get('numlang_base', "N/A")
+    nl_s = cfgs.get('numlang_super', "N/A")
+    rs   = cfgs.get('rust_opt', "N/A")
+    c    = cfgs.get('c_opt', "N/A")
     print(f"{b:<18} | {nl_b:<14} | {nl_s:<14} | {rs:<14} | {c:<14}")
 
 print("=" * 84)

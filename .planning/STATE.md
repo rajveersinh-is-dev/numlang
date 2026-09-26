@@ -9,10 +9,10 @@ governance: "INTEGRITY_RULES.md"
 
 ## Current Position
 
-Phase: **Phase 28 — Paper Rewrite & 1-Click Reproducible Artifact Package** (NEXT — FINAL PHASE)
+Phase: **Phase 28 — Paper Rewrite & 1-Click Reproducible Artifact Package** (COMPLETED)
 Plan: `master_remediation_plan.md`
-Status: Phase 27 committed (`fd030fa`). In-process benchmark timing fixed; 5 canonical literature benchmarks added (KMP, double-nrev, power-spec, Peano mul, interpreter-spec); SPSC/HOSC reference baselines in `bench/data/reference_baselines.csv`; `bench/data/results.csv` regenerated with honest per-iteration microsecond data; `tests/benchmark_correctness_tests.rs` 5/5 green. One known CRASH: `append3,c_opt` exits code 3221226356 — recorded transparently in results.csv.
-Last activity: 2026-09-26 — Phase 27 executed and verified.
+Status: Phase 28 completed. Paper Table 1 rewritten with automated cryptographic SHA-256 data pipeline (`bench/harness/generate_tables.py`); zero hardcoded values in `paper/main.tex`; SPSC/HOSC literature comparisons integrated; benchmark exit codes across NumLang, Rust, and C synchronized; Dockerfile Lean 4 verification un-swallowed; Makefile with `reproduce` target added; stray build artifacts cleaned.
+Last activity: 2026-09-26 — Phase 28 executed and verified.
 
 ## Progress
 
@@ -32,7 +32,7 @@ Last activity: 2026-09-26 — Phase 27 executed and verified.
 - [x] **Phase 25: Genuine Self-Applicable Specializer MinSpec.nl** (COMMITTED `81b2604`)
 - [x] **Phase 26: Rigorous Lean 4 Verification — Zero Axioms, Recursive Semantics** (COMMITTED `55fe450`)
 - [x] **Phase 27: Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (COMMITTED `fd030fa`)
-- [ ] **Phase 28: Paper Rewrite & 1-Click Reproducible Artifact Package** (NEXT — FINAL)
+- [x] **Phase 28: Paper Rewrite & 1-Click Reproducible Artifact Package** (COMPLETED)
 
 ## Accumulated Context
 

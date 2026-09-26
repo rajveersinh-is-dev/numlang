@@ -52,7 +52,7 @@ RUN cargo build --release --all-features
 
 # Verify Lean 4 proofs
 WORKDIR /numlang/proof
-RUN lake build || true
+RUN lake build
 
 # Return to root workspace
 WORKDIR /numlang

@@ -40,16 +40,18 @@ def load_data():
     with open(DATA_PATH, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            status = row.get("status", "ok")
             records.append({
                 "benchmark": row["benchmark"],
                 "config": row["config"],
-                "mean_us": float(row["mean_us"]),
-                "median_us": float(row["median_us"]),
-                "ci_lower_us": float(row["ci_lower_us"]),
-                "ci_upper_us": float(row["ci_upper_us"]),
-                "compile_time_ms": float(row["compile_time_ms"]),
-                "binary_size_bytes": int(row["binary_size_bytes"]),
-                "speedup": float(row["speedup_vs_baseline"]),
+                "status": status,
+                "mean_us": float(row["mean_us"]) if row.get("mean_us") else 0.0,
+                "median_us": float(row["median_us"]) if row.get("median_us") else 0.0,
+                "ci_lower_us": float(row["ci_lower_us"]) if row.get("ci_lower_us") else 0.0,
+                "ci_upper_us": float(row["ci_upper_us"]) if row.get("ci_upper_us") else 0.0,
+                "compile_time_ms": float(row["compile_time_ms"]) if row.get("compile_time_ms") else 0.0,
+                "binary_size_bytes": int(row["binary_size_bytes"]) if row.get("binary_size_bytes") else 0,
+                "speedup": float(row["speedup_vs_baseline"]) if row.get("speedup_vs_baseline") else 0.0,
             })
     return records
 
@@ -71,9 +73,9 @@ def plot_speedup(records):
         rust_r = next((r for r in records if r["benchmark"] == b and r["config"] == "rust_opt"), None)
         c_r = next((r for r in records if r["benchmark"] == b and r["config"] == "c_opt"), None)
 
-        super_speedups.append(base_time / super_r["mean_us"] if super_r and super_r["mean_us"] > 0 else 1.0)
-        rust_speedups.append(base_time / rust_r["mean_us"] if rust_r and rust_r["mean_us"] > 0 else 1.0)
-        c_speedups.append(base_time / c_r["mean_us"] if c_r and c_r["mean_us"] > 0 else 1.0)
+        super_speedups.append(base_time / super_r["mean_us"] if super_r and super_r["mean_us"] > 0 else 0.0)
+        rust_speedups.append(base_time / rust_r["mean_us"] if rust_r and rust_r["mean_us"] > 0 else 0.0)
+        c_speedups.append(base_time / c_r["mean_us"] if c_r and c_r["mean_us"] > 0 else 0.0)
 
     x = np.arange(len(benches))
     width = 0.25
