@@ -9,10 +9,10 @@ governance: "INTEGRITY_RULES.md"
 
 ## Current Position
 
-Phase: **Phase 27 — Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (NEXT)
+Phase: **Phase 28 — Paper Rewrite & 1-Click Reproducible Artifact Package** (NEXT — FINAL PHASE)
 Plan: `master_remediation_plan.md`
-Status: Phase 26 committed (`55fe450`). All Lean 4 proofs pass `lake build` with zero errors, zero warnings, zero `sorry`, and zero `axiom`. Commencing Phase 27.
-Last activity: 2026-09-26 — Phase 26 executed and verified.
+Status: Phase 27 committed (`fd030fa`). In-process benchmark timing fixed; 5 canonical literature benchmarks added (KMP, double-nrev, power-spec, Peano mul, interpreter-spec); SPSC/HOSC reference baselines in `bench/data/reference_baselines.csv`; `bench/data/results.csv` regenerated with honest per-iteration microsecond data; `tests/benchmark_correctness_tests.rs` 5/5 green. One known CRASH: `append3,c_opt` exits code 3221226356 — recorded transparently in results.csv.
+Last activity: 2026-09-26 — Phase 27 executed and verified.
 
 ## Progress
 
@@ -25,27 +25,26 @@ Last activity: 2026-09-26 — Phase 26 executed and verified.
 - [x] Phase 14–19: Advanced Prototyping (Fuzzing, Benchmarks, CLI, Docker)
 - [x] **Milestone Audit**: Comprehensive independent review (`honest_review.md`)
 - [x] **Phase 20: Fix Core Residualization, Knot Transfers & Textbook MSG** (COMMITTED `12c0867`)
-- [x] **Phase 21: Real Hamilton Global Process-Tree Distillation with Deforestation** (COMMITTED `dc1b0ba`)
-- [x] **Phase 22: Real Multi-Result Supercompilation (MRSC) Hypergraph Search and Pareto Selection** (COMMITTED `dea4cc3`)
-- [x] **Phase 23: Real Polyhedral Loop & Stencil Deforestation with Buffer Contraction** (COMMITTED `5318b62`)
-- [x] **Phase 24: Formal SMT-Based Translation Validation & Simulation Preorder** (COMMITTED `e7d3db1`)
-- [x] **Phase 25: Genuine Self-Applicable Specializer MinSpec.nl for 2nd and 3rd Futamura Projections** (COMMITTED `81b2604`)
+- [x] **Phase 21: Real Hamilton Global Process-Tree Distillation** (COMMITTED `dc1b0ba`)
+- [x] **Phase 22: Real MRSC Hypergraph Search and Pareto Selection** (COMMITTED `dea4cc3`)
+- [x] **Phase 23: Real Polyhedral Loop & Stencil Deforestation** (COMMITTED `5318b62`)
+- [x] **Phase 24: Formal SMT-Based Translation Validation** (COMMITTED `e7d3db1`)
+- [x] **Phase 25: Genuine Self-Applicable Specializer MinSpec.nl** (COMMITTED `81b2604`)
 - [x] **Phase 26: Rigorous Lean 4 Verification — Zero Axioms, Recursive Semantics** (COMMITTED `55fe450`)
-- [ ] **Phase 27: Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (NEXT)
-- [ ] Phase 28: Paper Rewrite & Reproducibility Package
+- [x] **Phase 27: Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (COMMITTED `fd030fa`)
+- [ ] **Phase 28: Paper Rewrite & 1-Click Reproducible Artifact Package** (NEXT — FINAL)
 
 ## Accumulated Context
 
 ### Critical Audit Findings & Decisions
-- **Residualization Fix**: Fixed in Phase 20.
-- **Textbook MSG**: Fixed in Phase 20.
-- **Genuine Algorithms**: All rebuilt per INTEGRITY_RULES.md — Phases 21–24.
-- **Futamura Self-Application**: Resolved in Phase 25 via `src/stdlib/minspec.nl`.
-- **Lean 4 Proofs**: Resolved in Phase 26 — `axiom kruskal_tree_theorem` removed; `Semantics.lean` now models recursive function environments and heap; `Termination.lean` and `Driving.lean` carry constructive proofs. Zero `sorry`, zero `axiom`.
-- **Safe box() Pattern**: Never write `box(Cons(..., box(...)))` inline when large enum variables are live. Always expand to explicit intermediate variables.
-- **Linker Stack Patch**: `/STACK:16777216,1048576` in `src/codegen/linker.rs`.
-- **Benchmarking Overhaul** (Phase 27 — CURRENT FOCUS):
-  - `bench/harness/runner.py` `measure_execution_times` times `subprocess.run()` (process spawn ~14-18ms on Windows), not code execution. Must be replaced with in-process timing: N ≥ 10,000 iterations of the core computation inside the binary, measured with `QueryPerformanceCounter`/`clock_gettime`.
-  - `bench/data/results.csv` is contaminated — `numlang_super` shows ~16× slower than baseline due to timing artifact.
-  - No SPSC/HOSC comparison exists. Need KMP, double-nrev, Peano mul, power-spec benchmarks.
-  - `bench/c/append3.c` double-free was already fixed.
+- All algorithmic stubs resolved: Phases 21–24.
+- Futamura projections: Resolved in Phase 25 via `src/stdlib/minspec.nl`.
+- Lean 4 proofs: Resolved in Phase 26 — zero `axiom`, zero `sorry`, recursive semantics modeled.
+- Benchmark timing: Fixed in Phase 27 — in-process per-iteration measurement, 30 rounds, 95% CI.
+- **Paper integrity** (Phase 28 — CURRENT FOCUS):
+  - `paper/main.tex` contains hardcoded claims e.g. "12,000--85,000 lines/second" throughput not backed by verified pipeline.
+  - `\begin{tabular}...\toprule\end{tabular}` is empty — Table 1 benchmark data must be auto-generated from `bench/data/results.csv`.
+  - `bench/harness/generate_tables.py` does NOT exist yet — must be created.
+  - `docker/Dockerfile` has `RUN lake build || true` — Lean build failure is silently swallowed; must be `RUN lake build` (no `|| true`).
+  - `docker/Dockerfile` CMD references `scripts/run_all_experiments.sh` — must verify this script exists and runs cleanly.
+  - Sections 4 (Futamura), 5 (Lean 4 proofs), and 6 (Evaluation) need rewriting with verified data.
