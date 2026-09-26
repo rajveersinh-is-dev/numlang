@@ -111,23 +111,29 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.branches_pruned += stats.branches_pruned;
                 total_stats.loops_collapsed += stats.loops_collapsed;
                 total_stats.knots_tied += stats.knots_tied;
+                total_stats.calls_inlined += stats.calls_inlined;
             }
             SupercompileMode::Distill => {
                 let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
+                let budget = driver.config.max_inline_nodes;
                 let mut tree = driver.run();
                 let mut interner_clone = tree.interner.clone();
                 let mut distill = DistillationEngine::new(func, &mut interner_clone);
                 let folds = distill.distill_process_tree(&mut tree);
                 let stats = tree.stats.clone();
-                let new_func = residualize_process_tree(&tree, func);
-                let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops {
-                    *func = new_func;
+                let total_reductions = stats.branches_pruned + stats.loops_collapsed + folds + stats.knots_tied + stats.calls_inlined;
+                if total_reductions > 0 && tree.nodes.len() < budget {
+                    let new_func = residualize_process_tree(&tree, func);
+                    let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
+                    if !has_uncollapsed_array_loops {
+                        *func = new_func;
+                    }
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
                 total_stats.loops_collapsed += stats.loops_collapsed + folds;
                 total_stats.knots_tied += stats.knots_tied;
+                total_stats.calls_inlined += stats.calls_inlined;
             }
             SupercompileMode::Mrsc => {
                 let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
@@ -138,13 +144,15 @@ pub fn supercompile_mir_program_with_mode(
                 };
                 let stats = best_tree.stats.clone();
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                let is_profitable = stats.branches_pruned > 0 || stats.loops_collapsed > 0 || stats.knots_tied > 0 || stats.calls_inlined > 0;
+                if !has_uncollapsed_array_loops && stats.knots_tied == 0 && is_profitable {
                     *func = best_res;
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
                 total_stats.loops_collapsed += stats.loops_collapsed;
                 total_stats.knots_tied += stats.knots_tied;
+                total_stats.calls_inlined += stats.calls_inlined;
             }
         }
     }
@@ -185,8 +193,13 @@ pub fn supercompile_mir_function(func: &MirFunction) -> MirFunction {
 /// Supercompiles a single MIR function and returns its performance metrics.
 pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func);
+    let budget = driver.config.max_inline_nodes;
     let tree = driver.run();
     let stats = tree.stats.clone();
+    // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
+    if tree.nodes.len() >= budget || (stats.branches_pruned == 0 && stats.loops_collapsed == 0 && stats.knots_tied == 0 && stats.calls_inlined == 0) {
+        return (func.clone(), stats);
+    }
     (residualize_process_tree(&tree, func), stats)
 }
 
@@ -196,8 +209,13 @@ pub fn supercompile_mir_function_with_program(
     program_funcs: &[MirFunction],
 ) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
+    let budget = driver.config.max_inline_nodes;
     let tree = driver.run();
     let stats = tree.stats.clone();
+    // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
+    if tree.nodes.len() >= budget || (stats.branches_pruned == 0 && stats.loops_collapsed == 0 && stats.knots_tied == 0 && stats.calls_inlined == 0) {
+        return (func.clone(), stats);
+    }
     (residualize_process_tree(&tree, func), stats)
 }
 

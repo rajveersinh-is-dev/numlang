@@ -8182,6 +8182,7 @@ impl CraneliftCompiler {
         }
 
         // Map basic blocks
+        let clif_entry = builder.create_block();
         let mut block_map: HashMap<crate::mir::BasicBlockId, cranelift_codegen::ir::Block> =
             HashMap::new();
         for b in &func.blocks {
@@ -8323,13 +8324,12 @@ impl CraneliftCompiler {
             local_types.insert(p_name.clone(), p_ty.clone());
         }
 
-        let entry_block = block_map[&func.blocks[0].id];
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
+        builder.append_block_params_for_function_params(clif_entry);
+        builder.switch_to_block(clif_entry);
 
         let mut current_sret_ptr: Option<Value> = None;
         let param_offset = if is_sret {
-            let sret_val = builder.block_params(entry_block)[0];
+            let sret_val = builder.block_params(clif_entry)[0];
             current_sret_ptr = Some(sret_val);
             1
         } else {
@@ -8337,11 +8337,14 @@ impl CraneliftCompiler {
         };
 
         for (i, (param_name, _)) in func.params.iter().enumerate() {
-            let val = builder.block_params(entry_block)[i + param_offset];
+            let val = builder.block_params(clif_entry)[i + param_offset];
             if let Some(&(var, _)) = var_map.get(param_name) {
                 builder.def_var(var, val);
             }
         }
+
+        let first_mir_block = block_map[&func.blocks[0].id];
+        builder.ins().jump(first_mir_block, &[]);
 
         // Emit blocks
         for b in &func.blocks {

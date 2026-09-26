@@ -89,6 +89,14 @@ impl TermInterner {
         &self.terms[id.0]
     }
 
+    pub fn len(&self) -> usize {
+        self.terms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty()
+    }
+
     pub fn size(&self, id: SymTermId) -> usize {
         self.sizes[id.0]
     }

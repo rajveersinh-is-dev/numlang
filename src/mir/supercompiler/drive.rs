@@ -37,14 +37,15 @@ pub struct SupercompilerStats {
     pub branches_pruned: usize,
     pub loops_collapsed: usize,
     pub knots_tied: usize,
+    pub calls_inlined: usize,
 }
 
 impl fmt::Display for SupercompilerStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}",
-            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied
+            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}, calls inlined: {}",
+            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied, self.calls_inlined
         )
     }
 }
@@ -103,6 +104,9 @@ pub struct DriverConfig {
     pub max_unroll_depth: usize,
     pub solve_recurrences: bool,
     pub inline_calls: bool,
+    pub max_inline_depth: usize,
+    pub max_inline_nodes: usize,
+    pub inline_loop_body_calls: bool,
 }
 
 impl Default for DriverConfig {
@@ -112,6 +116,9 @@ impl Default for DriverConfig {
             max_unroll_depth: 0,
             solve_recurrences: true,
             inline_calls: true,
+            max_inline_depth: 3,
+            max_inline_nodes: 512,
+            inline_loop_body_calls: false,
         }
     }
 }
@@ -163,7 +170,7 @@ impl<'a> SupercompilerDriver<'a> {
             active_places,
             stats: SupercompilerStats::default(),
             program_funcs: HashMap::new(),
-            call_stack: Vec::new(),
+            call_stack: vec![func.name.clone()],
             config: DriverConfig::default(),
         }
     }
@@ -189,6 +196,21 @@ impl<'a> SupercompilerDriver<'a> {
         self
     }
 
+    pub fn with_max_inline_depth(mut self, depth: usize) -> Self {
+        self.config.max_inline_depth = depth;
+        self
+    }
+
+    pub fn with_max_inline_nodes(mut self, nodes: usize) -> Self {
+        self.config.max_inline_nodes = nodes;
+        self
+    }
+
+    pub fn with_inline_loop_body_calls(mut self, enable: bool) -> Self {
+        self.config.inline_loop_body_calls = enable;
+        self
+    }
+
     pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
         self.program_funcs = funcs
             .iter()
@@ -206,6 +228,14 @@ impl<'a> SupercompilerDriver<'a> {
     pub fn with_call_stack(mut self, stack: Vec<String>) -> Self {
         self.call_stack = stack;
         self
+    }
+
+    pub fn interner(&self) -> &TermInterner {
+        &self.interner
+    }
+
+    pub fn interner_mut(&mut self) -> &mut TermInterner {
+        &mut self.interner
     }
 
     pub fn run(mut self) -> ProcessTree {
@@ -277,7 +307,7 @@ impl<'a> SupercompilerDriver<'a> {
         ancestor_stack: &mut Vec<ProcessNodeId>,
         depth: usize,
     ) {
-        if depth >= self.max_depth {
+        if depth >= self.max_depth || self.nodes.len() >= self.config.max_inline_nodes {
             return;
         }
 
@@ -334,6 +364,17 @@ impl<'a> SupercompilerDriver<'a> {
                         self.handle_transition(node_id, next_state, ancestor_stack, depth);
                     }
                     None => {
+                        if self.nodes.len() >= self.config.max_inline_nodes {
+                            for &anc_id in ancestor_stack.iter().rev() {
+                                if self.nodes[anc_id.0].state.block == working_state.block {
+                                    self.stats.knots_tied += 1;
+                                    self.nodes[node_id.0].edges.push(ProcessEdge::Knot(anc_id));
+                                    return;
+                                }
+                            }
+                            return;
+                        }
+
                         // Split into two child branches in the process tree
                         let mut then_state = working_state.clone();
                         then_state.block = then_target.clone();
@@ -605,9 +646,28 @@ impl<'a> SupercompilerDriver<'a> {
 
                 let mut inlined_res = None;
                 if self.config.inline_calls {
-                    if let Some(callee_func) = self.program_funcs.get(callee).copied() {
-                        if !self.call_stack.contains(callee) && self.call_stack.len() < 8 {
+                    let in_loop_body = self
+                        .natural_loops
+                        .values()
+                        .any(|loop_blocks| loop_blocks.contains(&state.block));
+
+                    let loop_invariance_ok = if in_loop_body && !self.config.inline_loop_body_calls {
+                        self.all_args_loop_invariant(&arg_terms, &state.block)
+                    } else {
+                        true
+                    };
+
+                    let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
+                    let depth_ok = self.call_stack.len() < self.config.max_inline_depth
+                        && callee_count < self.config.max_inline_depth;
+                    let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
+
+                    if loop_invariance_ok && depth_ok && budget_ok {
+                        if let Some(callee_func) = self.program_funcs.get(callee).copied() {
                             inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms);
+                            if inlined_res.is_some() {
+                                self.stats.calls_inlined += 1;
+                            }
                         }
                     }
                 }
@@ -678,6 +738,22 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
+        // Budget cap check: if node count reaches max_inline_nodes, tie knot to earliest matching ancestor
+        if self.nodes.len() >= self.config.max_inline_nodes {
+            for &anc_id in ancestor_stack.iter() {
+                if self.nodes[anc_id.0].state.block == next_state.block {
+                    self.stats.knots_tied += 1;
+                    self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
+                    return;
+                }
+            }
+            if let Some(&first_anc) = ancestor_stack.first() {
+                self.stats.knots_tied += 1;
+                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(first_anc));
+                return;
+            }
+        }
+
         // 2. Whistle test: does an ancestor loop header embed next_state or have repeated visits?
         let is_loop_header = self.loop_headers.contains(&next_state.block);
         if is_loop_header && self.config.solve_recurrences {
@@ -702,6 +778,34 @@ impl<'a> SupercompilerDriver<'a> {
                         self.drive_node(next_node, ancestor_stack, depth + 1);
                         ancestor_stack.pop();
                         return;
+                    } else {
+                        // Repeated visits but recurrence solver failed: tie knot without partial unrolling
+                        for &a_id in ancestor_stack.iter().rev() {
+                            let a_st = &self.nodes[a_id.0].state;
+                            if is_instance_of(a_st, &next_state, &self.active_places) {
+                                self.stats.knots_tied += 1;
+                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                return;
+                            }
+                        }
+                        let mut gen_state = anc_state.clone();
+                        let mut next_var_id = self.interner.len();
+                        for place in &self.active_places {
+                            if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                if t_anc != t_curr {
+                                    let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                        t_anc,
+                                        t_curr,
+                                        &mut self.interner,
+                                        &mut next_var_id,
+                                    );
+                                    gen_state.set_value(place.clone(), gen_res.common_term);
+                                }
+                            }
+                        }
+                        self.stats.knots_tied += 1;
+                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(first_anc_id));
+                        return;
                     }
                 }
             }
@@ -720,6 +824,34 @@ impl<'a> SupercompilerDriver<'a> {
                         ancestor_stack.push(from_id);
                         self.drive_node(next_node, ancestor_stack, depth + 1);
                         ancestor_stack.pop();
+                        return;
+                    } else {
+                        // Whistle blew but recurrence solver failed (coupled / modular recurrence)
+                        for &a_id in ancestor_stack.iter().rev() {
+                            let a_st = &self.nodes[a_id.0].state;
+                            if is_instance_of(a_st, &next_state, &self.active_places) {
+                                self.stats.knots_tied += 1;
+                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                return;
+                            }
+                        }
+                        let mut gen_state = anc_state.clone();
+                        let mut next_var_id = self.interner.len();
+                        for place in &self.active_places {
+                            if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                if t_anc != t_curr {
+                                    let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                        t_anc,
+                                        t_curr,
+                                        &mut self.interner,
+                                        &mut next_var_id,
+                                    );
+                                    gen_state.set_value(place.clone(), gen_res.common_term);
+                                }
+                            }
+                        }
+                        self.stats.knots_tied += 1;
+                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
                         return;
                     }
                 }
@@ -1145,6 +1277,68 @@ impl<'a> SupercompilerDriver<'a> {
         None
     }
 
+    fn all_args_loop_invariant(&self, arg_terms: &[SymTermId], block: &BasicBlockId) -> bool {
+        let mut loop_blocks = std::collections::HashSet::new();
+        for blocks in self.natural_loops.values() {
+            if blocks.contains(block) {
+                loop_blocks.extend(blocks.iter().cloned());
+            }
+        }
+
+        if loop_blocks.is_empty() {
+            return true;
+        }
+
+        let mut assigned_places = std::collections::HashSet::new();
+        for b_id in &loop_blocks {
+            if let Some(b) = self.block_map.get(b_id) {
+                for stmt in &b.statements {
+                    match stmt {
+                        Statement::Assign(dest, _) => {
+                            assigned_places.insert(dest.local.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        for &arg in arg_terms {
+            if self.term_references_locals(arg, &assigned_places) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn term_references_locals(&self, term_id: SymTermId, locals: &std::collections::HashSet<String>) -> bool {
+        match self.interner.get(term_id) {
+            SymTerm::Var(p, _) => locals.contains(&p.local),
+            SymTerm::Binary(_, l, r, _) => {
+                self.term_references_locals(*l, locals) || self.term_references_locals(*r, locals)
+            }
+            SymTerm::Unary(_, inner, _) => self.term_references_locals(*inner, locals),
+            SymTerm::Constructor(_, _, fields, _) => {
+                fields.iter().any(|&f| self.term_references_locals(f, locals))
+            }
+            SymTerm::Select(c, t, e, _) => {
+                self.term_references_locals(*c, locals)
+                    || self.term_references_locals(*t, locals)
+                    || self.term_references_locals(*e, locals)
+            }
+            SymTerm::Phi(incoming, _) => {
+                incoming.iter().any(|(_, t)| self.term_references_locals(*t, locals))
+            }
+            SymTerm::Call(_, args, _) => {
+                args.iter().any(|&a| self.term_references_locals(a, locals))
+            }
+            SymTerm::Ref(inner, _) => self.term_references_locals(*inner, locals),
+            SymTerm::Deref(ptr, _) => self.term_references_locals(*ptr, locals),
+            SymTerm::Discriminant(inner, _) => self.term_references_locals(*inner, locals),
+            _ => false,
+        }
+    }
+
     fn try_drive_interprocedural_call(
         &mut self,
         callee: &'a MirFunction,
@@ -1170,6 +1364,7 @@ impl<'a> SupercompilerDriver<'a> {
         child_call_stack.push(callee.name.clone());
 
         let mut child_driver = SupercompilerDriver::new(callee)
+            .with_config(self.config)
             .with_program_functions_map(self.program_funcs.clone())
             .with_call_stack(child_call_stack);
 

@@ -171,6 +171,38 @@ fn is_inlinable(func: &TypedFunction, recursive_funcs: &HashSet<String>) -> bool
     has_single_return_at_end(&func.body)
 }
 
+fn block_contains_loop(block: &TypedBlock) -> bool {
+    block.stmts.iter().any(stmt_contains_loop)
+}
+
+fn stmt_contains_loop(stmt: &TypedStmt) -> bool {
+    match stmt {
+        TypedStmt::While { .. } => true,
+        TypedStmt::If { then_branch, else_branch, .. } => {
+            block_contains_loop(then_branch) || else_branch.as_ref().is_some_and(block_contains_loop)
+        }
+        _ => false,
+    }
+}
+
+fn func_contains_loop(func: &TypedFunction) -> bool {
+    block_contains_loop(&func.body)
+}
+
+fn is_inlinable_at_callsite(
+    func: &TypedFunction,
+    recursive_funcs: &HashSet<String>,
+    in_loop: bool,
+) -> bool {
+    if !is_inlinable(func, recursive_funcs) {
+        return false;
+    }
+    if in_loop && func_contains_loop(func) {
+        return false;
+    }
+    true
+}
+
 fn count_stmts_block(block: &TypedBlock) -> usize {
     let mut count = block.stmts.len();
     for stmt in &block.stmts {
@@ -520,10 +552,10 @@ fn inline_in_function(
     call_counter: &mut usize,
 ) -> bool {
     // Phase A: Call Lifting - extract calls inside expressions to preceding `let` bindings
-    lift_calls_in_block(&mut func.body, func_defs, recursive_funcs, call_counter);
+    lift_calls_in_block(&mut func.body, func_defs, recursive_funcs, call_counter, false);
 
     // Phase B: Statement-level inlining
-    inline_block(&mut func.body, func_defs, recursive_funcs, call_counter)
+    inline_block(&mut func.body, func_defs, recursive_funcs, call_counter, false)
 }
 
 fn lift_calls_in_block(
@@ -531,6 +563,7 @@ fn lift_calls_in_block(
     func_defs: &HashMap<String, TypedFunction>,
     recursive_funcs: &HashSet<String>,
     counter: &mut usize,
+    in_loop: bool,
 ) {
     let mut new_stmts = Vec::with_capacity(block.stmts.len());
 
@@ -542,63 +575,63 @@ fn lift_calls_in_block(
                 else_branch,
                 ..
             } => {
-                lift_calls_expr(condition, &mut new_stmts, func_defs, recursive_funcs, counter);
-                lift_calls_in_block(then_branch, func_defs, recursive_funcs, counter);
+                lift_calls_expr(condition, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
+                lift_calls_in_block(then_branch, func_defs, recursive_funcs, counter, in_loop);
                 if let Some(eb) = else_branch {
-                    lift_calls_in_block(eb, func_defs, recursive_funcs, counter);
+                    lift_calls_in_block(eb, func_defs, recursive_funcs, counter, in_loop);
                 }
                 new_stmts.push(stmt);
             }
             TypedStmt::While { body, .. } => {
                 // Notice: calls in while condition must re-evaluate every iteration;
-                // do not lift out of while condition, but recurse into while body.
-                lift_calls_in_block(body, func_defs, recursive_funcs, counter);
+                // do not lift out of while condition, but recurse into while body with in_loop = true.
+                lift_calls_in_block(body, func_defs, recursive_funcs, counter, true);
                 new_stmts.push(stmt);
             }
             TypedStmt::Let { value, .. } => {
                 // If value is a bare Call, we don't need to lift it; it's already a statement root.
                 if let TypedExpr::Call { callee, .. } = value {
                     if let Some(target) = func_defs.get(callee) {
-                        if is_inlinable(target, recursive_funcs) {
+                        if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                             new_stmts.push(stmt);
                             continue;
                         }
                     }
                 }
-                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
                 new_stmts.push(stmt);
             }
             TypedStmt::Assign { value, .. } => {
                 if let TypedExpr::Call { callee, .. } = value {
                     if let Some(target) = func_defs.get(callee) {
-                        if is_inlinable(target, recursive_funcs) {
+                        if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                             new_stmts.push(stmt);
                             continue;
                         }
                     }
                 }
-                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
                 new_stmts.push(stmt);
             }
             TypedStmt::Return(Some(expr), _) => {
                 if let TypedExpr::Call { callee, .. } = expr {
                     if let Some(target) = func_defs.get(callee) {
-                        if is_inlinable(target, recursive_funcs) {
+                        if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                             new_stmts.push(stmt);
                             continue;
                         }
                     }
                 }
-                lift_calls_expr(expr, &mut new_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(expr, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
                 new_stmts.push(stmt);
             }
             TypedStmt::Expr(expr) => {
-                lift_calls_expr(expr, &mut new_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(expr, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
                 new_stmts.push(stmt);
             }
             TypedStmt::IndexAssign { index, value, .. } => {
-                lift_calls_expr(index, &mut new_stmts, func_defs, recursive_funcs, counter);
-                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(index, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
+                lift_calls_expr(value, &mut new_stmts, func_defs, recursive_funcs, counter, in_loop);
                 new_stmts.push(stmt);
             }
             _ => {
@@ -616,16 +649,17 @@ fn lift_calls_expr(
     func_defs: &HashMap<String, TypedFunction>,
     recursive_funcs: &HashSet<String>,
     counter: &mut usize,
+    in_loop: bool,
 ) {
     match expr {
         TypedExpr::Call { callee, args, ty, span } => {
             // First lift inside arguments
             for arg in args.iter_mut() {
-                lift_calls_expr(arg, pre_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(arg, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
             }
             // If this call is inlinable, extract it
             if let Some(target) = func_defs.get(callee) {
-                if is_inlinable(target, recursive_funcs) {
+                if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                     *counter += 1;
                     let tmp_name = format!("__inl_lifted_{}_{}", callee, counter);
                     let tmp_expr = TypedExpr::Call {
@@ -650,20 +684,20 @@ fn lift_calls_expr(
             }
         }
         TypedExpr::Unary { expr, .. } => {
-            lift_calls_expr(expr, pre_stmts, func_defs, recursive_funcs, counter);
+            lift_calls_expr(expr, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
         }
         TypedExpr::Binary { left, right, .. } => {
-            lift_calls_expr(left, pre_stmts, func_defs, recursive_funcs, counter);
-            lift_calls_expr(right, pre_stmts, func_defs, recursive_funcs, counter);
+            lift_calls_expr(left, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
+            lift_calls_expr(right, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
         }
         TypedExpr::ArrayLiteral { elements, .. } => {
             for el in elements {
-                lift_calls_expr(el, pre_stmts, func_defs, recursive_funcs, counter);
+                lift_calls_expr(el, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
             }
         }
         TypedExpr::Index { target, index, .. } => {
-            lift_calls_expr(target, pre_stmts, func_defs, recursive_funcs, counter);
-            lift_calls_expr(index, pre_stmts, func_defs, recursive_funcs, counter);
+            lift_calls_expr(target, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
+            lift_calls_expr(index, pre_stmts, func_defs, recursive_funcs, counter, in_loop);
         }
         _ => {}
     }
@@ -674,6 +708,7 @@ fn inline_block(
     func_defs: &HashMap<String, TypedFunction>,
     recursive_funcs: &HashSet<String>,
     call_counter: &mut usize,
+    in_loop: bool,
 ) -> bool {
     let mut changed = false;
     let mut new_stmts = Vec::with_capacity(block.stmts.len());
@@ -685,18 +720,18 @@ fn inline_block(
                 else_branch,
                 ..
             } => {
-                if inline_block(then_branch, func_defs, recursive_funcs, call_counter) {
+                if inline_block(then_branch, func_defs, recursive_funcs, call_counter, in_loop) {
                     changed = true;
                 }
                 if let Some(eb) = else_branch {
-                    if inline_block(eb, func_defs, recursive_funcs, call_counter) {
+                    if inline_block(eb, func_defs, recursive_funcs, call_counter, in_loop) {
                         changed = true;
                     }
                 }
                 new_stmts.push(stmt);
             }
             TypedStmt::While { body, .. } => {
-                if inline_block(body, func_defs, recursive_funcs, call_counter) {
+                if inline_block(body, func_defs, recursive_funcs, call_counter, true) {
                     changed = true;
                 }
                 new_stmts.push(stmt);
@@ -709,7 +744,7 @@ fn inline_block(
                 span,
             } => {
                 if let Some(target) = func_defs.get(callee) {
-                    if is_inlinable(target, recursive_funcs) {
+                    if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                         *call_counter += 1;
                         let cid = *call_counter;
                         expand_inlined_call(
@@ -736,7 +771,7 @@ fn inline_block(
                 span,
             } => {
                 if let Some(target) = func_defs.get(callee) {
-                    if is_inlinable(target, recursive_funcs) {
+                    if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                         *call_counter += 1;
                         let cid = *call_counter;
                         expand_inlined_call(
@@ -757,7 +792,7 @@ fn inline_block(
             }
             TypedStmt::Return(Some(TypedExpr::Call { callee, args, .. }), span) => {
                 if let Some(target) = func_defs.get(callee) {
-                    if is_inlinable(target, recursive_funcs) {
+                    if is_inlinable_at_callsite(target, recursive_funcs, in_loop) {
                         *call_counter += 1;
                         let cid = *call_counter;
                         expand_inlined_call(
