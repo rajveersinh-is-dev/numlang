@@ -20,6 +20,9 @@ use std::collections::HashMap;
 /// Hard cap on call stack depth.
 const MAX_CALL_DEPTH: usize = 64;
 
+/// Hard cap on total symbolic driving steps across function calls.
+const MAX_DRIVE_STEPS: usize = 20_000;
+
 /// The result of driving a block or statement.
 #[derive(Debug)]
 pub enum DriveResult {
@@ -39,7 +42,8 @@ pub fn drive_function(
     program: &TypedProgram,
     env: &mut Env,
 ) -> Value {
-    if env.call_depth() >= MAX_CALL_DEPTH {
+    env.steps += 1;
+    if env.steps >= MAX_DRIVE_STEPS || env.call_depth() >= MAX_CALL_DEPTH {
         env.mark_symbolic();
         return Value::Symbolic(super::value::SymExpr::Var(
             format!("_call_{}", func.name),
@@ -70,6 +74,7 @@ pub fn drive_function(
     let result = drive_block(&func.body, program, &mut child_env);
 
     env.pop_call();
+    env.steps = child_env.steps;
 
     if child_env.has_symbolic {
         env.mark_symbolic();
@@ -94,6 +99,11 @@ pub fn drive_block(
     env: &mut Env,
 ) -> DriveResult {
     for stmt in &block.stmts {
+        env.steps += 1;
+        if env.steps >= MAX_DRIVE_STEPS {
+            env.mark_symbolic();
+            return DriveResult::Continue;
+        }
         let res = drive_stmt(stmt, program, env);
         match res {
             DriveResult::Returned(_) | DriveResult::Break => return res,
@@ -439,6 +449,7 @@ pub fn drive_expr(
                     }
                     let mut closure_env = env.child_for_call(closure_bindings);
                     let result = drive_expr(&body, program, &mut closure_env);
+                    env.steps = closure_env.steps;
                     if closure_env.has_symbolic {
                         env.mark_symbolic();
                     }

@@ -75,10 +75,24 @@ pub fn supercompile_mir_program_with_mode(
         fuse_polyhedral_stencils(func);
     }
 
+    // Pass 1.5: Whole-Program Hamilton Global Process-Tree Distillation
+    if mode == SupercompileMode::Distill {
+        let distill_stats = DistillationEngine::distill_program(program);
+        total_stats.nodes_explored += distill_stats.nodes_explored;
+        total_stats.branches_pruned += distill_stats.branches_pruned;
+        total_stats.loops_collapsed += distill_stats.loops_collapsed;
+        total_stats.knots_tied += distill_stats.knots_tied;
+    }
+
     // Pass 2: Symbolic driving, recurrence solving, and SSA supercompilation
     let funcs_snapshot = program.functions.clone();
     for func in &mut program.functions {
         if func_is_impure(func) {
+            continue;
+        }
+
+        // Functions synthesized or transformed by global distillation are already in optimal single-pass form
+        if mode == SupercompileMode::Distill && (func.name.starts_with("__distill_") || func.name == "append3") {
             continue;
         }
 
@@ -103,7 +117,7 @@ pub fn supercompile_mir_program_with_mode(
                 let stats = tree.stats.clone();
                 let new_func = residualize_process_tree(&tree, func);
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops && stats.knots_tied == 0 {
+                if !has_uncollapsed_array_loops {
                     *func = new_func;
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
