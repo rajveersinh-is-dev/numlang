@@ -2,29 +2,27 @@
 #include <stdint.h>
 #include <windows.h>
 
+int64_t dot4(int64_t m0, int64_t m1, int64_t m2, int64_t m3, int64_t v0, int64_t v1, int64_t v2, int64_t v3) {
+    return m0 * v0 + m1 * v1 + m2 * v2 + m3 * v3;
+}
+
+int64_t matvec_step(int64_t v0, int64_t v1, int64_t v2, int64_t v3) {
+    int64_t r0 = dot4(2, 1, -1, 0, v0, v1, v2, v3);
+    int64_t r1 = dot4(-1, 3, 0, 2, v0, v1, v2, v3);
+    int64_t r2 = dot4(0, -2, 4, 1, v0, v1, v2, v3);
+    int64_t r3 = dot4(1, 0, 1, 3, v0, v1, v2, v3);
+    return (r0 + r1 + r2 + r3) % 1000;
+}
+
 int main(void) {
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
 
-    int64_t m[4][4] = {
-        {1, 2, 3, 4},
-        {5, 6, 7, 8},
-        {9, 1, 2, 3},
-        {4, 5, 6, 7}
-    };
-    int64_t v[4] = {2, 3, 5, 7};
     int64_t sum = 0;
-
-    for (int i = 0; i < 1000; i++) {
-        int64_t res[4] = {0, 0, 0, 0};
-        for (int r = 0; r < 4; r++) {
-            for (int c = 0; c < 4; c++) {
-                res[r] += m[r][c] * v[c];
-            }
-        }
-        sum += res[0] + res[1] + res[2] + res[3];
-        v[0] = (v[0] + 1) % 10;
+    for (int64_t i = 0; i < 1000; i++) {
+        int64_t val = matvec_step(i % 10, (i + 1) % 10, (i + 2) % 10, (i + 3) % 10);
+        sum += val;
     }
 
     QueryPerformanceCounter(&t1);

@@ -45,10 +45,11 @@ python bench/harness/runner.py
 Write-Host "[PASS] Empirical measurements recorded in bench/data/results.csv." -ForegroundColor Green
 Write-Host ""
 
-# Stage 5: Publication Figures Generation
-Write-Host "[STAGE 5/6] Generating publication-quality vector figures..." -ForegroundColor Yellow
+# Stage 5: LaTeX Tables & Publication Figures Generation
+Write-Host "[STAGE 5/6] Generating LaTeX tables and publication-quality vector figures..." -ForegroundColor Yellow
+python bench/harness/generate_tables.py
 python bench/plot.py
-Write-Host "[PASS] Generated figures in bench/figures/ (speedup.pdf, throughput.pdf, codesize.pdf)." -ForegroundColor Green
+Write-Host "[PASS] Generated tables in paper/generated/ and figures in bench/figures/." -ForegroundColor Green
 Write-Host ""
 
 # Stage 6: Summary Report

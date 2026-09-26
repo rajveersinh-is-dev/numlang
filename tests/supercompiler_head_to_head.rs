@@ -131,7 +131,7 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<(PathBuf, Duratio
 
     let bat_path = test_dir.join(format!("compile_msvc_{}.bat", name));
     let bat_content = format!(
-        "@echo off\r\ncall \"{}\" >nul 2>&1\r\ncl /O2 /nologo /Fe:\"%~2\" \"%~1\" >nul 2>&1\r\n",
+        "@echo off\r\ncall \"{}\" >nul 2>&1\r\ncl /O2 /nologo /Fo:\"%~dp2\" /Fe:\"%~2\" \"%~1\" >nul 2>&1\r\n",
         vcvars.display()
     );
     fs::write(&bat_path, bat_content).ok()?;
