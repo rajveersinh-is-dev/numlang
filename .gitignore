@@ -7,3 +7,5 @@ Cargo.lock
 proof/.lake/
 fuzz_report.json
 bench/bin/
+__pycache__/
+*.pyc

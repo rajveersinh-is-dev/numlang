@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <windows.h>
 
 typedef struct Node {
     int64_t head;
@@ -42,6 +43,10 @@ Node* make_list(int64_t start, int64_t len) {
 }
 
 int main(void) {
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+
     int64_t sum = 0;
     for (int i = 0; i < 100; i++) {
         Node* xs = make_list(1, 10);
@@ -54,6 +59,11 @@ int main(void) {
         free_list(zs);
         free_list(app);
     }
+
+    QueryPerformanceCounter(&t1);
+    int64_t ns = (int64_t)((t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart);
+
     printf("%lld\n", (long long)sum);
+    printf("COMPUTE_NS: %lld\n", (long long)ns);
     return (int)(sum % 256);
 }

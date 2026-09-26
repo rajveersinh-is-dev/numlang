@@ -1,18 +1,16 @@
-fn ack(m: i64, n: i64) -> i64 {
-    if m == 0 {
-        n + 1
-    } else if n == 0 {
-        ack(m - 1, 1)
+fn power(x: i64, n: i64) -> i64 {
+    if n <= 0 {
+        1
     } else {
-        ack(m - 1, ack(m, n - 1))
+        x * power(x, n - 1)
     }
 }
 
 fn main() {
     let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
-    for _ in 0..50 {
-        sum += ack(3, 4);
+    for i in 0..1000 {
+        sum = (sum + power(i % 10, 8)) % 1000000007;
     }
     let elapsed = t0.elapsed();
     println!("{}", sum);

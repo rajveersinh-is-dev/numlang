@@ -43,6 +43,7 @@ fn from_int(n: i64) -> Peano {
 }
 
 fn main() {
+    let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
     for _ in 0..100 {
         let three = from_int(3);
@@ -50,6 +51,8 @@ fn main() {
         let prod = mul(three, four);
         sum += to_int(&prod);
     }
+    let elapsed = t0.elapsed();
     println!("{}", sum);
+    println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit((sum % 256) as i32);
 }

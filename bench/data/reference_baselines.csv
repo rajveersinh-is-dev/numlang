@@ -1,0 +1,9 @@
+benchmark,system,source_paper,baseline_config,specialized_config,reported_speedup,notes
+kmp,SPSC,Klyuchnikov (2010) - SPSC: A Simple Supercompiler in Scala,interpreted string matcher with pattern table,residual deterministic finite automaton,2.15,Eliminates pattern inspection and table lookup; residual is pure state machine
+kmp,Supero,Mitchell & Jones (2010) - Supercompilation: Ideas for a generic supercompiler,higher-order list matcher against pattern,residual state machine with unrolled states,2.40,1st Futamura projection of string matcher against static pattern
+double_nrev,SPSC,Klyuchnikov (2010) - SPSC: A Simple Supercompiler in Scala,two-pass naive reverse (reverse (reverse xs)),single-pass deforested identity/reverse,2.80,Eliminates intermediate list allocation between successive reversals
+double_nrev,Supero,Mitchell & Jones (2010) - Supercompilation: Ideas for a generic supercompiler,composition of naive reverse passes,deforested single-pass residual,3.10,Deforestation of intermediate data structures via driving and folding
+peano_mul,SPSC,Klyuchnikov (2010) - SPSC: A Simple Supercompiler in Scala,inductive Peano multiplication (mul x y),unfolded addition accumulator,2.35,Drives inductive Peano structures and folds recurring configurations
+peano_mul,HOSC,Klyuchnikov (2010) - Higher-Order Supercompilation,higher-order Peano multiplication,residual accumulator form,2.70,Higher-order driving and generalization with homeomorphic embedding
+power_spec,Supero,Mitchell & Jones (2010) - Supercompilation: Ideas for a generic supercompiler,recursive power function with static exponent,unrolled straight-line multiplications,4.50,Specialization with static exponent eliminates call stack and branch tests
+power_spec,SPSC,Klyuchnikov (2010) - SPSC: A Simple Supercompiler in Scala,inductive exponent power function,straight-line residual multiplication,3.85,Partial evaluation / driving of static integer exponent

@@ -25,6 +25,10 @@ Node* nrev(Node* xs) {
     return append(nrev(xs->tail), cons(xs->head, NULL));
 }
 
+Node* double_nrev(Node* xs) {
+    return nrev(nrev(xs));
+}
+
 int64_t sum_list(Node* xs) {
     int64_t s = 0;
     while (xs) {
@@ -55,10 +59,10 @@ int main(void) {
     int64_t sum = 0;
     for (int i = 0; i < 100; i++) {
         Node* xs = make_list(15);
-        Node* rev = nrev(xs);
-        sum += sum_list(rev);
+        Node* rev2 = double_nrev(xs);
+        sum += sum_list(rev2);
         free_list(xs);
-        free_list(rev);
+        free_list(rev2);
     }
 
     QueryPerformanceCounter(&t1);

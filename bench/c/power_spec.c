@@ -2,19 +2,19 @@
 #include <stdint.h>
 #include <windows.h>
 
+int64_t power(int64_t x, int64_t n) {
+    if (n <= 0) return 1;
+    return x * power(x, n - 1);
+}
+
 int main(void) {
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
 
     int64_t sum = 0;
-    for (int iter = 0; iter < 10; iter++) {
-        for (int64_t i = 0; i < 100000; i++) {
-            int64_t v = i * 2;
-            if (v % 3 == 0) {
-                sum += v + 1;
-            }
-        }
+    for (int i = 0; i < 1000; i++) {
+        sum = (sum + power(i % 10, 8)) % 1000000007;
     }
 
     QueryPerformanceCounter(&t1);

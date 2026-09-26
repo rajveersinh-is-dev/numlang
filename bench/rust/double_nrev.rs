@@ -10,6 +10,17 @@ fn append(xs: List, ys: List) -> List {
     }
 }
 
+fn nrev(xs: List) -> List {
+    match xs {
+        List::Nil => List::Nil,
+        List::Cons(h, t) => append(nrev(*t), List::Cons(h, Box::new(List::Nil))),
+    }
+}
+
+fn double_nrev(xs: List) -> List {
+    nrev(nrev(xs))
+}
+
 fn sum_list(xs: &List) -> i64 {
     match xs {
         List::Nil => 0,
@@ -17,11 +28,11 @@ fn sum_list(xs: &List) -> i64 {
     }
 }
 
-fn make_list(start: i64, len: i64) -> List {
-    if len <= 0 {
+fn make_list(n: i64) -> List {
+    if n <= 0 {
         List::Nil
     } else {
-        List::Cons(start, Box::new(make_list(start + 1, len - 1)))
+        List::Cons(n, Box::new(make_list(n - 1)))
     }
 }
 
@@ -29,11 +40,9 @@ fn main() {
     let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
     for _ in 0..100 {
-        let xs = make_list(1, 10);
-        let ys = make_list(11, 10);
-        let zs = make_list(21, 10);
-        let app = append(append(xs, ys), zs);
-        sum += sum_list(&app);
+        let xs = make_list(15);
+        let rev2 = double_nrev(xs);
+        sum += sum_list(&rev2);
     }
     let elapsed = t0.elapsed();
     println!("{}", sum);
