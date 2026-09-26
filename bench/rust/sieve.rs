@@ -1,32 +1,27 @@
-fn is_prime(n: i64) -> bool {
-    if n <= 1 {
-        return false;
-    }
-    let mut d = 2;
-    while d * d <= n {
-        if (n % d) == 0 {
-            return false;
-        }
-        d += 1;
-    }
-    true
-}
-
-fn count_primes(limit: i64) -> i64 {
-    let mut sum = 0;
-    for i in 2..=limit {
-        if is_prime(i) {
-            sum += i;
-        }
-    }
-    sum
-}
+const N: usize = 10000;
 
 fn main() {
-    let mut total: i64 = 0;
-    for _ in 0..100 {
-        total += count_primes(200);
+    let t0 = std::time::Instant::now();
+    let mut count: i64 = 0;
+    for _ in 0..10 {
+        let mut prime = vec![true; N + 1];
+        prime[0] = false;
+        prime[1] = false;
+        let mut p = 2;
+        while p * p <= N {
+            if prime[p] {
+                let mut i = p * p;
+                while i <= N {
+                    prime[i] = false;
+                    i += p;
+                }
+            }
+            p += 1;
+        }
+        count = prime.iter().filter(|&&b| b).count() as i64;
     }
-    println!("{}", total);
-    std::process::exit((total % 256) as i32);
+    let elapsed = t0.elapsed();
+    println!("{}", count);
+    println!("COMPUTE_NS: {}", elapsed.as_nanos());
+    std::process::exit((count % 256) as i32);
 }

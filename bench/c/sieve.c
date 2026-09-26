@@ -1,31 +1,32 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <windows.h>
 
-int is_prime(int64_t n) {
-    if (n <= 1) return 0;
-    int64_t d = 2;
-    while (d * d <= n) {
-        if ((n % d) == 0) return 0;
-        d++;
-    }
-    return 1;
-}
-
-int64_t count_primes(int64_t limit) {
-    int64_t sum = 0;
-    for (int64_t i = 2; i <= limit; i++) {
-        if (is_prime(i)) {
-            sum += i;
-        }
-    }
-    return sum;
-}
+#define N 10000
+int prime[N + 1];
 
 int main(void) {
-    int64_t total = 0;
-    for (int rep = 0; rep < 100; rep++) {
-        total += count_primes(200);
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+
+    int64_t count = 0;
+    for (int iter = 0; iter < 10; iter++) {
+        for (int i = 0; i <= N; i++) prime[i] = 1;
+        prime[0] = prime[1] = 0;
+        for (int p = 2; p * p <= N; p++) {
+            if (prime[p]) {
+                for (int i = p * p; i <= N; i += p) prime[i] = 0;
+            }
+        }
+        count = 0;
+        for (int i = 2; i <= N; i++) if (prime[i]) count++;
     }
-    printf("%lld\n", (long long)total);
-    return (int)(total % 256);
+
+    QueryPerformanceCounter(&t1);
+    int64_t ns = (int64_t)((t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart);
+
+    printf("%lld\n", (long long)count);
+    printf("COMPUTE_NS: %lld\n", (long long)ns);
+    return (int)(count % 256);
 }

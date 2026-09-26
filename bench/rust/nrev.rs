@@ -33,12 +33,15 @@ fn make_list(n: i64) -> List {
 }
 
 fn main() {
+    let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
     for _ in 0..100 {
         let xs = make_list(15);
         let rev = nrev(xs);
         sum += sum_list(&rev);
     }
+    let elapsed = t0.elapsed();
     println!("{}", sum);
+    println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit((sum % 256) as i32);
 }

@@ -26,6 +26,7 @@ fn make_list(start: i64, len: i64) -> List {
 }
 
 fn main() {
+    let t0 = std::time::Instant::now();
     let mut sum: i64 = 0;
     for _ in 0..100 {
         let xs = make_list(1, 10);
@@ -34,6 +35,8 @@ fn main() {
         let app = append(append(xs, ys), zs);
         sum += sum_list(&app);
     }
+    let elapsed = t0.elapsed();
     println!("{}", sum);
+    println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit((sum % 256) as i32);
 }
