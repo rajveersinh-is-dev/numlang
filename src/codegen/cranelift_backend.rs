@@ -85,7 +85,11 @@ pub struct EnumVariantLayout {
     pub payload_size: u32,
 }
 
-fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u32, u32) {
+fn compute_type_layout(
+    ty: &Type,
+    layouts: &HashMap<String, StructLayout>,
+    enum_layouts: &HashMap<String, EnumLayout>,
+) -> (u32, u32) {
     match ty {
         Type::I8 | Type::U8 | Type::Bool => (1, 1),
         Type::I16 | Type::U16 => (2, 2),
@@ -93,7 +97,7 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
         Type::I64 | Type::U64 | Type::Usize | Type::F64 | Type::Str => (8, 8),
         Type::Void => (0, 1),
         Type::Array(elem, len) => {
-            let (elem_sz, elem_al) = compute_type_layout(elem, layouts);
+            let (elem_sz, elem_al) = compute_type_layout(elem, layouts, enum_layouts);
             (elem_sz * (*len as u32), elem_al)
         }
         Type::Struct(sname) => {
@@ -103,7 +107,14 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
                 (8, 8)
             }
         }
-        Type::Enum(_) | Type::Ptr(_) | Type::Fn(..) | Type::Box(_) => (8, 8),
+        Type::Enum(ename) => {
+            if let Some(l) = enum_layouts.get(ename) {
+                (l.total_size, l.align)
+            } else {
+                (8, 8)
+            }
+        }
+        Type::Ptr(_) | Type::Fn(..) | Type::Box(_) => (8, 8),
         Type::Closure(..) => (16, 8),
         Type::Param(_) => (0, 1),
     }
@@ -111,6 +122,7 @@ fn compute_type_layout(ty: &Type, layouts: &HashMap<String, StructLayout>) -> (u
 
 fn compute_struct_layouts(struct_defs: &[crate::typecheck::typed_ast::TypedStructDef]) -> HashMap<String, StructLayout> {
     let mut layouts: HashMap<String, StructLayout> = HashMap::new();
+    let empty_enums = HashMap::new();
     for sdef in struct_defs {
         let mut offset: u32 = 0;
         let mut max_align: u32 = 1;
@@ -118,7 +130,7 @@ fn compute_struct_layouts(struct_defs: &[crate::typecheck::typed_ast::TypedStruc
         let mut ordered_fields = Vec::new();
 
         for (fname, fty) in &sdef.fields {
-            let (fsz, fal) = compute_type_layout(fty, &layouts);
+            let (fsz, fal) = compute_type_layout(fty, &layouts, &empty_enums);
             max_align = max_align.max(fal);
             offset = (offset + fal - 1) & !(fal - 1);
             fields.insert(fname.clone(), (offset, fty.clone()));
@@ -151,7 +163,7 @@ fn compute_enum_layouts(
             let mut curr_offset: u32 = 8;
             let mut field_offsets = Vec::new();
             for field_ty in &variant.payload {
-                let (fsz, fal) = compute_type_layout(field_ty, struct_layouts);
+                let (fsz, fal) = compute_type_layout(field_ty, struct_layouts, &layouts);
                 let fal = fal.max(1);
                 curr_offset = (curr_offset + fal - 1) & !(fal - 1);
                 field_offsets.push(curr_offset);
@@ -1428,6 +1440,7 @@ pub struct CraneliftCompiler {
     log10_id: FuncId,
     pow_id: FuncId,
     malloc_id: FuncId,
+    local_alloc_id: Option<FuncId>,
 }
 
 impl CraneliftCompiler {
@@ -1580,9 +1593,29 @@ impl CraneliftCompiler {
         let mut sig_malloc = module.make_signature();
         sig_malloc.params.push(AbiParam::new(types::I64));
         sig_malloc.returns.push(AbiParam::new(types::I64));
-        let malloc_id = module
-            .declare_function("malloc", Linkage::Import, &sig_malloc)
-            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        #[cfg(target_os = "windows")]
+        let (malloc_id, local_alloc_id) = {
+            let mut sig_local_alloc = module.make_signature();
+            sig_local_alloc.params.push(AbiParam::new(types::I32));
+            sig_local_alloc.params.push(AbiParam::new(types::I64));
+            sig_local_alloc.returns.push(AbiParam::new(types::I64));
+            let local_alloc_id = module
+                .declare_function("LocalAlloc", Linkage::Import, &sig_local_alloc)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            let malloc_id = module
+                .declare_function("__nl_malloc", Linkage::Local, &sig_malloc)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            (malloc_id, Some(local_alloc_id))
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let (malloc_id, local_alloc_id) = {
+            let malloc_id = module
+                .declare_function("malloc", Linkage::Import, &sig_malloc)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            (malloc_id, None)
+        };
 
         Ok(Self {
             module,
@@ -1607,6 +1640,7 @@ impl CraneliftCompiler {
             log10_id,
             pow_id,
             malloc_id,
+            local_alloc_id,
         })
     }
 
@@ -1661,8 +1695,9 @@ impl CraneliftCompiler {
             }
         }
 
-        // Step 3b: Emit print helpers
+        // Step 3b: Emit print and alloc helpers
         self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_malloc(&mut ctx, &mut fn_builder_ctx)?;
 
         // Step 4: Emit final object file
         let product = self.module.finish();
@@ -1673,6 +1708,43 @@ impl CraneliftCompiler {
         Ok(obj_bytes)
     }
 
+
+    fn emit_helper_malloc(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        if let Some(local_alloc_id) = self.local_alloc_id {
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64));
+            sig.returns.push(AbiParam::new(types::I64));
+            ctx.func.signature = sig;
+
+            let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+            let entry = builder.create_block();
+            builder.append_block_params_for_function_params(entry);
+            builder.switch_to_block(entry);
+            builder.seal_block(entry);
+
+            let size_val = builder.block_params(entry)[0];
+            let flags_val = builder.ins().iconst(types::I32, 0x0040); // LPTR = LMEM_FIXED | LMEM_ZEROINIT
+
+            let local_alloc = self.module.declare_func_in_func(local_alloc_id, builder.func);
+            let call = builder.ins().call(local_alloc, &[flags_val, size_val]);
+            let ptr = builder.inst_results(call)[0];
+
+            builder.ins().return_(&[ptr]);
+
+            let config = self.module.target_config();
+            builder.finalize(config);
+
+            self.module
+                .define_function(self.malloc_id, ctx)
+                .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_malloc: {:#?}", e)))?;
+            self.module.clear_context(ctx);
+        }
+        Ok(())
+    }
 
     fn emit_print_helpers(
         &mut self,
@@ -2653,6 +2725,7 @@ enum Storage {
         slot: StackSlot,
         enum_name: String,
     },
+    #[allow(dead_code)]
     EnumPtr {
         var: Variable,
         #[allow(dead_code)]
@@ -7468,10 +7541,17 @@ impl<'a> FunctionTranslationState<'a> {
                                         Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, slayout.total_size as usize);
                                         self.variables.insert(b_name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
                                     } else if let Type::Enum(ename) = b_ty {
-                                        let child_ptr = builder.ins().load(types::I64, MemFlagsData::trusted(), scrut_val, offset as i32);
-                                        let var = builder.declare_var(types::I64);
-                                        builder.def_var(var, child_ptr);
-                                        self.variables.insert(b_name.clone(), Storage::EnumPtr { var, enum_name: ename.clone() });
+                                        let elayout = self.enum_layouts.get(ename).unwrap().clone();
+                                        let slot_data = StackSlotData::new(
+                                            StackSlotKind::ExplicitSlot,
+                                            elayout.total_size,
+                                            elayout.align.min(8) as u8,
+                                        );
+                                        let slot = builder.create_sized_stack_slot(slot_data);
+                                        let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                        let src_field_ptr = builder.ins().iadd_imm_s(scrut_val, offset as i64);
+                                        Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, elayout.total_size as usize);
+                                        self.variables.insert(b_name.clone(), Storage::Enum { slot, enum_name: ename.clone() });
                                     } else {
                                         let clif_ty = type_to_clif(b_ty.clone());
                                         let field_val = builder.ins().load(clif_ty, MemFlagsData::trusted(), scrut_val, offset as i32);
@@ -7523,10 +7603,17 @@ impl<'a> FunctionTranslationState<'a> {
                                         Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, slayout.total_size as usize);
                                         self.variables.insert(b_name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
                                     } else if let Type::Enum(ename) = b_ty {
-                                        let child_ptr = builder.ins().load(types::I64, MemFlagsData::trusted(), scrut_val, offset as i32);
-                                        let var = builder.declare_var(types::I64);
-                                        builder.def_var(var, child_ptr);
-                                        self.variables.insert(b_name.clone(), Storage::EnumPtr { var, enum_name: ename.clone() });
+                                        let elayout = self.enum_layouts.get(ename).unwrap().clone();
+                                        let slot_data = StackSlotData::new(
+                                            StackSlotKind::ExplicitSlot,
+                                            elayout.total_size,
+                                            elayout.align.min(8) as u8,
+                                        );
+                                        let slot = builder.create_sized_stack_slot(slot_data);
+                                        let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
+                                        let src_field_ptr = builder.ins().iadd_imm_s(scrut_val, offset as i64);
+                                        Self::emit_copy_bytes(builder, src_field_ptr, dst_ptr, elayout.total_size as usize);
+                                        self.variables.insert(b_name.clone(), Storage::Enum { slot, enum_name: ename.clone() });
                                     } else {
                                         let clif_ty = type_to_clif(b_ty.clone());
                                         let field_val = builder.ins().load(clif_ty, MemFlagsData::trusted(), scrut_val, offset as i32);
@@ -7601,8 +7688,10 @@ impl<'a> FunctionTranslationState<'a> {
                         let sub_layout = self.struct_layouts.get(sname).unwrap();
                         let sub_dst = builder.ins().iadd_imm_s(slot_addr, offset as i64);
                         Self::emit_copy_bytes(builder, arg_val, sub_dst, sub_layout.total_size as usize);
-                    } else if let Type::Enum(_) = &arg_ty {
-                        builder.ins().store(MemFlagsData::trusted(), arg_val, slot_addr, offset as i32);
+                    } else if let Type::Enum(ename) = &arg_ty {
+                        let sub_layout = self.enum_layouts.get(ename).unwrap();
+                        let sub_dst = builder.ins().iadd_imm_s(slot_addr, offset as i64);
+                        Self::emit_copy_bytes(builder, arg_val, sub_dst, sub_layout.total_size as usize);
                     } else {
                         builder.ins().store(MemFlagsData::trusted(), arg_val, slot_addr, offset as i32);
                     }
@@ -8852,8 +8941,9 @@ impl CraneliftCompiler {
             }
         }
 
-        // Step 3b: Emit print helpers
+        // Step 3b: Emit print and alloc helpers
         self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_malloc(&mut ctx, &mut fn_builder_ctx)?;
 
         // Step 4: Emit final object file
         let product = self.module.finish();
