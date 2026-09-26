@@ -9,10 +9,10 @@ governance: "INTEGRITY_RULES.md"
 
 ## Current Position
 
-Phase: **Phase 26 — Rigorous Lean 4 Verification (Zero Axioms, Recursive Semantics)** (NEXT)
+Phase: **Phase 27 — Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (NEXT)
 Plan: `master_remediation_plan.md`
-Status: Phase 25 committed (`81b2604`). All 3 Futamura projections verified sound via `verify_soundness`. `true_futamura_projections_tests` 4/4 green. Zero clippy warnings. Commencing Phase 26.
-Last activity: 2026-09-26 — Phase 25 executed and verified.
+Status: Phase 26 committed (`55fe450`). All Lean 4 proofs pass `lake build` with zero errors, zero warnings, zero `sorry`, and zero `axiom`. Commencing Phase 27.
+Last activity: 2026-09-26 — Phase 26 executed and verified.
 
 ## Progress
 
@@ -30,18 +30,22 @@ Last activity: 2026-09-26 — Phase 25 executed and verified.
 - [x] **Phase 23: Real Polyhedral Loop & Stencil Deforestation with Buffer Contraction** (COMMITTED `5318b62`)
 - [x] **Phase 24: Formal SMT-Based Translation Validation & Simulation Preorder** (COMMITTED `e7d3db1`)
 - [x] **Phase 25: Genuine Self-Applicable Specializer MinSpec.nl for 2nd and 3rd Futamura Projections** (COMMITTED `81b2604`)
-- [ ] **Phase 26: Rigorous Lean 4 Verification (Zero Axioms, Recursive Semantics)** (NEXT)
-- [ ] Phase 27: Honest High-Precision Benchmarks & Supercompiler Comparisons
+- [x] **Phase 26: Rigorous Lean 4 Verification — Zero Axioms, Recursive Semantics** (COMMITTED `55fe450`)
+- [ ] **Phase 27: Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (NEXT)
 - [ ] Phase 28: Paper Rewrite & Reproducibility Package
 
 ## Accumulated Context
 
 ### Critical Audit Findings & Decisions
-- **Residualization Fix**: Fixed in Phase 20 — knot edges in `residualize.rs` now transfer variable state updates; Phi nodes correctly remapped.
-- **Textbook MSG**: Fixed in Phase 20 — polynomial curve-fitter replaced with Plotkin/Sørensen anti-unification.
-- **Genuine Algorithms Mandate**: All rebuilt per INTEGRITY_RULES.md — `distill.rs` (Phase 21), `mrsc.rs` (Phase 22), `polyhedral.rs` (Phase 23), `validate.rs` (Phase 24).
-- **Futamura Self-Application**: Resolved in Phase 25 — `src/stdlib/minspec.nl` is a self-applicable partial evaluator written in NumLang. `verify_soundness(prog_id, input_x)` proves all 3 projections yield identical residual programs and identical outputs for programs 1, 2, 3.
-- **Safe box() Pattern (Phase 25 lesson)**: Never write `box(Cons(..., box(...)))` inline when large enum variables are live on stack. Always expand to explicit intermediate variables to avoid Windows ACCESS_VIOLATION in Cranelift codegen.
-- **Linker Stack Patch**: `/STACK:16777216,1048576` in `src/codegen/linker.rs` — raises Windows stack to 16MB for deep recursive enum functions.
-- **Lean 4 Proof Integrity** (Phase 26): `axiom kruskal_tree_theorem` must be removed; proofs must constructively verify termination and semantic preservation over recursive semantics with heap and recursive function environments. `lake build` must pass with zero errors, zero warnings, zero `sorry`, zero `axiom`.
-- **Benchmarking Overhaul** (Phase 27): `runner.py`'s `subprocess.run()` timing measures Windows process spawn (~14-18ms). Must be replaced with in-process microsecond hardware performance counter timing across >= 10,000 iterations.
+- **Residualization Fix**: Fixed in Phase 20.
+- **Textbook MSG**: Fixed in Phase 20.
+- **Genuine Algorithms**: All rebuilt per INTEGRITY_RULES.md — Phases 21–24.
+- **Futamura Self-Application**: Resolved in Phase 25 via `src/stdlib/minspec.nl`.
+- **Lean 4 Proofs**: Resolved in Phase 26 — `axiom kruskal_tree_theorem` removed; `Semantics.lean` now models recursive function environments and heap; `Termination.lean` and `Driving.lean` carry constructive proofs. Zero `sorry`, zero `axiom`.
+- **Safe box() Pattern**: Never write `box(Cons(..., box(...)))` inline when large enum variables are live. Always expand to explicit intermediate variables.
+- **Linker Stack Patch**: `/STACK:16777216,1048576` in `src/codegen/linker.rs`.
+- **Benchmarking Overhaul** (Phase 27 — CURRENT FOCUS):
+  - `bench/harness/runner.py` `measure_execution_times` times `subprocess.run()` (process spawn ~14-18ms on Windows), not code execution. Must be replaced with in-process timing: N ≥ 10,000 iterations of the core computation inside the binary, measured with `QueryPerformanceCounter`/`clock_gettime`.
+  - `bench/data/results.csv` is contaminated — `numlang_super` shows ~16× slower than baseline due to timing artifact.
+  - No SPSC/HOSC comparison exists. Need KMP, double-nrev, Peano mul, power-spec benchmarks.
+  - `bench/c/append3.c` double-free was already fixed.
