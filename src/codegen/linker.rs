@@ -191,6 +191,7 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     cmd.arg("/opt:ref");
     cmd.arg("/opt:icf");
     cmd.arg("/incremental:no");
+    cmd.arg("/STACK:16777216,1048576");
     if let Some(ref bp) = bench_obj_path {
         cmd.arg(bp);
     }
