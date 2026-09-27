@@ -747,7 +747,17 @@ pub fn solve_order3_recurrence(
         return Some(interner.intern_int(s_n));
     }
 
-    None
+    // Symbolic number of iterations: emit __order3_recurrence intrinsic
+    // Arguments: c1, c2, c3, s0, s1, s2, num_iters
+    let c1_term = interner.intern_int(c1);
+    let c2_term = interner.intern_int(c2);
+    let c3_term = interner.intern_int(c3);
+    let s0_term = interner.intern_int(s[0]);
+    let s1_term = interner.intern_int(s[1]);
+    let s2_term = interner.intern_int(s[2]);
+
+    let args = vec![c1_term, c2_term, c3_term, s0_term, s1_term, s2_term, num_iters];
+    Some(interner.intern_call("__order3_recurrence".to_string(), args, Type::I64))
 }
 
 fn det_3x3(m: [[i64; 3]; 3]) -> i64 {

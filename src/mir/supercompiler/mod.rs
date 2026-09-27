@@ -20,6 +20,7 @@ pub mod whistle;
 pub use distill::DistillationEngine;
 pub use drive::{
     ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerDriver, SupercompilerStats,
+    TerminationWitness, WhistleFiring, WhistleKind,
 };
 pub use fusion::{find_fusion_candidates, fuse_loops, fuse_map_filter, FusionCandidate};
 pub use mrsc::{

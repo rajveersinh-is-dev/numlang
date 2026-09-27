@@ -6705,6 +6705,67 @@ impl<'a> FunctionTranslationState<'a> {
                             return Ok(builder.use_var(a_var));
                         }
                     }
+                    "__order3_recurrence" => {
+                        let c1 = self.translate_expr(&args[0], builder)?;
+                        let c2 = self.translate_expr(&args[1], builder)?;
+                        let c3 = self.translate_expr(&args[2], builder)?;
+                        let s0 = self.translate_expr(&args[3], builder)?;
+                        let s1 = self.translate_expr(&args[4], builder)?;
+                        let s2 = self.translate_expr(&args[5], builder)?;
+                        let n_arg = self.translate_expr(&args[6], builder)?;
+
+                        let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
+                            builder.ins().uextend(types::I64, n_arg)
+                        } else {
+                            n_arg
+                        };
+
+                        let loop_head = builder.create_block();
+                        let loop_body = builder.create_block();
+                        let loop_done = builder.create_block();
+
+                        let v0_var = builder.declare_var(types::I64);
+                        let v1_var = builder.declare_var(types::I64);
+                        let v2_var = builder.declare_var(types::I64);
+                        let i_var = builder.declare_var(types::I64);
+
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let one = builder.ins().iconst(types::I64, 1);
+
+                        builder.def_var(v0_var, s0);
+                        builder.def_var(v1_var, s1);
+                        builder.def_var(v2_var, s2);
+                        builder.def_var(i_var, zero);
+
+                        builder.ins().jump(loop_head, &[]);
+                        builder.switch_to_block(loop_head);
+
+                        let cur_i = builder.use_var(i_var);
+                        let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                        builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                        builder.switch_to_block(loop_body);
+                        let cur_v0 = builder.use_var(v0_var);
+                        let cur_v1 = builder.use_var(v1_var);
+                        let cur_v2 = builder.use_var(v2_var);
+
+                        let c1_v2 = builder.ins().imul(c1, cur_v2);
+                        let c2_v1 = builder.ins().imul(c2, cur_v1);
+                        let c3_v0 = builder.ins().imul(c3, cur_v0);
+
+                        let sum1 = builder.ins().iadd(c1_v2, c2_v1);
+                        let next_v2 = builder.ins().iadd(sum1, c3_v0);
+
+                        let next_i = builder.ins().iadd(cur_i, one);
+                        builder.def_var(v0_var, cur_v1);
+                        builder.def_var(v1_var, cur_v2);
+                        builder.def_var(v2_var, next_v2);
+                        builder.def_var(i_var, next_i);
+                        builder.ins().jump(loop_head, &[]);
+
+                        builder.switch_to_block(loop_done);
+                        return Ok(builder.use_var(v0_var));
+                    }
                     "tzcnt" | "ctz" => {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().ctz(arg));
@@ -8556,6 +8617,70 @@ impl CraneliftCompiler {
                             } else {
                                 builder.use_var(a_var)
                             }
+                        } else if callee == "__order3_recurrence" && args.len() >= 7 {
+                            let mut arg_vals = Vec::with_capacity(7);
+                            for arg_op in args.iter().take(7) {
+                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_op);
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                    builder.ins().uextend(types::I64, arg_val)
+                                } else {
+                                    arg_val
+                                };
+                                arg_vals.push(val_i64);
+                            }
+                            let c1 = arg_vals[0];
+                            let c2 = arg_vals[1];
+                            let c3 = arg_vals[2];
+                            let s0 = arg_vals[3];
+                            let s1 = arg_vals[4];
+                            let s2 = arg_vals[5];
+                            let n_val = arg_vals[6];
+
+                            let loop_head = builder.create_block();
+                            let loop_body = builder.create_block();
+                            let loop_done = builder.create_block();
+
+                            let v0_var = builder.declare_var(types::I64);
+                            let v1_var = builder.declare_var(types::I64);
+                            let v2_var = builder.declare_var(types::I64);
+                            let i_var = builder.declare_var(types::I64);
+
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let one = builder.ins().iconst(types::I64, 1);
+
+                            builder.def_var(v0_var, s0);
+                            builder.def_var(v1_var, s1);
+                            builder.def_var(v2_var, s2);
+                            builder.def_var(i_var, zero);
+
+                            builder.ins().jump(loop_head, &[]);
+                            builder.switch_to_block(loop_head);
+
+                            let cur_i = builder.use_var(i_var);
+                            let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                            builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                            builder.switch_to_block(loop_body);
+                            let cur_v0 = builder.use_var(v0_var);
+                            let cur_v1 = builder.use_var(v1_var);
+                            let cur_v2 = builder.use_var(v2_var);
+
+                            let c1_v2 = builder.ins().imul(c1, cur_v2);
+                            let c2_v1 = builder.ins().imul(c2, cur_v1);
+                            let c3_v0 = builder.ins().imul(c3, cur_v0);
+
+                            let sum1 = builder.ins().iadd(c1_v2, c2_v1);
+                            let next_v2 = builder.ins().iadd(sum1, c3_v0);
+
+                            let next_i = builder.ins().iadd(cur_i, one);
+                            builder.def_var(v0_var, cur_v1);
+                            builder.def_var(v1_var, cur_v2);
+                            builder.def_var(v2_var, next_v2);
+                            builder.def_var(i_var, next_i);
+                            builder.ins().jump(loop_head, &[]);
+
+                            builder.switch_to_block(loop_done);
+                            builder.use_var(v0_var)
                         } else if callee == "print" || callee == "println" {
                             let is_nl = callee == "println";
                             if args.is_empty() {

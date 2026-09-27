@@ -94,6 +94,7 @@ fn test_mrsc_pareto_dominance_mathematical_properties() {
         root: numlang::mir::supercompiler::drive::ProcessNodeId(0),
         interner: numlang::mir::supercompiler::term::TermInterner::new(),
         stats: SupercompilerStats::default(),
+        witness: Default::default(),
     };
 
     // Candidate A: small code, few branches, few steps
