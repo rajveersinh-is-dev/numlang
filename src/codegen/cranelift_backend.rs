@@ -6766,6 +6766,71 @@ impl<'a> FunctionTranslationState<'a> {
                         builder.switch_to_block(loop_done);
                         return Ok(builder.use_var(v0_var));
                     }
+                    callee if callee.starts_with("__nway_recurrence_") => {
+                        let target_idx = callee
+                            .strip_prefix("__nway_recurrence_")
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(0);
+                        let mut arg_vals = Vec::with_capacity(args.len());
+                        for arg in args {
+                            let val = self.translate_expr(arg, builder)?;
+                            let val_i64 = if builder.func.dfg.value_type(val) != types::I64 {
+                                builder.ins().uextend(types::I64, val)
+                            } else {
+                                val
+                            };
+                            arg_vals.push(val_i64);
+                        }
+                        let n = (1..=8).find(|&k| k * k + 2 * k + 2 == arg_vals.len()).unwrap_or(3);
+                        let n_val = arg_vals[1 + n * n + 2 * n];
+
+                        let mut v_vars = Vec::with_capacity(n);
+                        for i in 0..n {
+                            let var = builder.declare_var(types::I64);
+                            builder.def_var(var, arg_vals[1 + n * n + n + i]);
+                            v_vars.push(var);
+                        }
+                        let i_var = builder.declare_var(types::I64);
+                        let zero = builder.ins().iconst(types::I64, 0);
+                        let one = builder.ins().iconst(types::I64, 1);
+                        builder.def_var(i_var, zero);
+
+                        let loop_head = builder.create_block();
+                        let loop_body = builder.create_block();
+                        let loop_done = builder.create_block();
+
+                        builder.ins().jump(loop_head, &[]);
+                        builder.switch_to_block(loop_head);
+
+                        let cur_i = builder.use_var(i_var);
+                        let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                        builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                        builder.switch_to_block(loop_body);
+                        let cur_v: Vec<_> = v_vars.iter().take(n).map(|&var| builder.use_var(var)).collect();
+
+                        let mut next_v = Vec::with_capacity(n);
+                        for r in 0..n {
+                            let mut sum = arg_vals[1 + n * n + r];
+                            for (c, &cur_val) in cur_v.iter().enumerate().take(n) {
+                                let a_rc = arg_vals[1 + r * n + c];
+                                let term = builder.ins().imul(a_rc, cur_val);
+                                sum = builder.ins().iadd(sum, term);
+                            }
+                            next_v.push(sum);
+                        }
+
+                        let next_i = builder.ins().iadd(cur_i, one);
+                        for (i, &next_val) in next_v.iter().enumerate().take(n) {
+                            builder.def_var(v_vars[i], next_val);
+                        }
+                        builder.def_var(i_var, next_i);
+                        builder.ins().jump(loop_head, &[]);
+
+                        builder.switch_to_block(loop_done);
+                        let safe_target = if target_idx < n { target_idx } else { 0 };
+                        return Ok(builder.use_var(v_vars[safe_target]));
+                    }
                     "tzcnt" | "ctz" => {
                         let arg = self.translate_expr(&args[0], builder)?;
                         return Ok(builder.ins().ctz(arg));
@@ -8681,6 +8746,70 @@ impl CraneliftCompiler {
 
                             builder.switch_to_block(loop_done);
                             builder.use_var(v0_var)
+                        } else if callee.starts_with("__nway_recurrence_") && !args.is_empty() {
+                            let target_idx = callee
+                                .strip_prefix("__nway_recurrence_")
+                                .and_then(|s| s.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            let mut arg_vals = Vec::with_capacity(args.len());
+                            for arg_op in args {
+                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_op);
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                    builder.ins().uextend(types::I64, arg_val)
+                                } else {
+                                    arg_val
+                                };
+                                arg_vals.push(val_i64);
+                            }
+                            let n = (1..=8).find(|&k| k * k + 2 * k + 2 == arg_vals.len()).unwrap_or(3);
+                            let n_val = arg_vals[1 + n * n + 2 * n];
+
+                            let mut v_vars = Vec::with_capacity(n);
+                            for i in 0..n {
+                                let var = builder.declare_var(types::I64);
+                                builder.def_var(var, arg_vals[1 + n * n + n + i]);
+                                v_vars.push(var);
+                            }
+                            let i_var = builder.declare_var(types::I64);
+                            let zero = builder.ins().iconst(types::I64, 0);
+                            let one = builder.ins().iconst(types::I64, 1);
+                            builder.def_var(i_var, zero);
+
+                            let loop_head = builder.create_block();
+                            let loop_body = builder.create_block();
+                            let loop_done = builder.create_block();
+
+                            builder.ins().jump(loop_head, &[]);
+                            builder.switch_to_block(loop_head);
+
+                            let cur_i = builder.use_var(i_var);
+                            let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
+                            builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
+
+                            builder.switch_to_block(loop_body);
+                            let cur_v: Vec<_> = v_vars.iter().take(n).map(|&var| builder.use_var(var)).collect();
+
+                            let mut next_v = Vec::with_capacity(n);
+                            for r in 0..n {
+                                let mut sum = arg_vals[1 + n * n + r];
+                                for (c, &cur_val) in cur_v.iter().enumerate().take(n) {
+                                    let a_rc = arg_vals[1 + r * n + c];
+                                    let term = builder.ins().imul(a_rc, cur_val);
+                                    sum = builder.ins().iadd(sum, term);
+                                }
+                                next_v.push(sum);
+                            }
+
+                            let next_i = builder.ins().iadd(cur_i, one);
+                            for (i, &next_val) in next_v.iter().enumerate().take(n) {
+                                builder.def_var(v_vars[i], next_val);
+                            }
+                            builder.def_var(i_var, next_i);
+                            builder.ins().jump(loop_head, &[]);
+
+                            builder.switch_to_block(loop_done);
+                            let safe_target = if target_idx < n { target_idx } else { 0 };
+                            builder.use_var(v_vars[safe_target])
                         } else if callee == "print" || callee == "println" {
                             let is_nl = callee == "println";
                             if args.is_empty() {
