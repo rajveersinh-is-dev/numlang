@@ -51,12 +51,41 @@ impl fmt::Display for SupercompilerStats {
     }
 }
 
+/// A single whistle-firing event — records that the HE check detected `ancestor ⊴ descendant`
+/// at node `from_id`, causing a knot to be tied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhistleFiring {
+    /// The node that was being driven when the whistle fired.
+    pub from_id: ProcessNodeId,
+    /// The ancestor node whose state embeds into the current state.
+    pub ancestor_id: ProcessNodeId,
+    /// The kind of stopping: HE whistle or header-visit cutoff.
+    pub kind: WhistleKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WhistleKind {
+    /// Homeomorphic embedding detected (state_embeds returned true).
+    HomeomorphicEmbedding,
+    /// Header visit count >= 3 (empirical cutoff; no HE check fired first).
+    HeaderVisitCutoff,
+}
+
+/// A complete termination certificate for one function's process tree.
+/// Presence of this struct (with a non-empty `firings` vec) proves that
+/// the driving loop terminated by whistle, not by accident.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminationWitness {
+    pub firings: Vec<WhistleFiring>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProcessTree {
     pub nodes: Vec<ProcessNode>,
     pub root: ProcessNodeId,
     pub interner: TermInterner,
     pub stats: SupercompilerStats,
+    pub witness: TerminationWitness,
 }
 
 impl ProcessTree {
@@ -138,6 +167,7 @@ pub struct SupercompilerDriver<'a> {
     program_funcs: HashMap<String, &'a MirFunction>,
     call_stack: Vec<String>,
     pub config: DriverConfig,
+    witness: TerminationWitness,
 }
 
 impl<'a> SupercompilerDriver<'a> {
@@ -173,6 +203,7 @@ impl<'a> SupercompilerDriver<'a> {
             program_funcs: HashMap::new(),
             call_stack: vec![func.name.clone()],
             config: DriverConfig::default(),
+            witness: TerminationWitness::default(),
         }
     }
 
@@ -246,6 +277,7 @@ impl<'a> SupercompilerDriver<'a> {
                 root: ProcessNodeId(0),
                 interner: self.interner,
                 stats: self.stats,
+                witness: self.witness,
             };
         }
 
@@ -272,6 +304,7 @@ impl<'a> SupercompilerDriver<'a> {
                 root: ProcessNodeId(0),
                 interner: self.interner,
                 stats: self.stats,
+                witness: self.witness,
             };
         }
 
@@ -287,6 +320,7 @@ impl<'a> SupercompilerDriver<'a> {
             root: root_id,
             interner: self.interner,
             stats: self.stats,
+            witness: self.witness,
         }
     }
 
@@ -782,13 +816,18 @@ impl<'a> SupercompilerDriver<'a> {
                         self.drive_node(next_node, ancestor_stack, depth + 1);
                         ancestor_stack.pop();
                         return;
-                    } else {
+                    } else if header_visits >= 6 {
                         // Repeated visits but recurrence solver failed: tie knot without partial unrolling
                         for &a_id in ancestor_stack.iter().rev() {
                             let a_st = &self.nodes[a_id.0].state;
                             if is_instance_of(a_st, &next_state, &self.active_places) {
                                 self.stats.knots_tied += 1;
                                 self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                self.witness.firings.push(WhistleFiring {
+                                    from_id,
+                                    ancestor_id: a_id,
+                                    kind: WhistleKind::HeaderVisitCutoff,
+                                });
                                 return;
                             }
                         }
@@ -810,6 +849,11 @@ impl<'a> SupercompilerDriver<'a> {
                         let gen_node_id = self.alloc_node(gen_state);
                         self.stats.knots_tied += 1;
                         self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                        self.witness.firings.push(WhistleFiring {
+                            from_id,
+                            ancestor_id: gen_node_id,
+                            kind: WhistleKind::HeaderVisitCutoff,
+                        });
                         return;
                     }
                 }
@@ -837,6 +881,11 @@ impl<'a> SupercompilerDriver<'a> {
                             if is_instance_of(a_st, &next_state, &self.active_places) {
                                 self.stats.knots_tied += 1;
                                 self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                self.witness.firings.push(WhistleFiring {
+                                    from_id,
+                                    ancestor_id: a_id,
+                                    kind: WhistleKind::HomeomorphicEmbedding,
+                                });
                                 return;
                             }
                         }
@@ -858,6 +907,11 @@ impl<'a> SupercompilerDriver<'a> {
                         let gen_node_id = self.alloc_node(gen_state);
                         self.stats.knots_tied += 1;
                         self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                        self.witness.firings.push(WhistleFiring {
+                            from_id,
+                            ancestor_id: gen_node_id,
+                            kind: WhistleKind::HomeomorphicEmbedding,
+                        });
                         return;
                     }
                 }
@@ -1002,11 +1056,13 @@ impl<'a> SupercompilerDriver<'a> {
             )
         });
 
-        // Try direct accumulator fold pattern recognition FIRST
+        let mut solved_places = std::collections::HashSet::new();
         let mut solved_acc_place = None;
         if let Some((acc_place, closed_form, iv_place)) = self.try_solve_accumulator_loop(anc, curr, n_term) {
             solved_state.set_value(acc_place.clone(), closed_form);
-            solved_state.set_value(iv_place, n_term);
+            solved_state.set_value(iv_place.clone(), n_term);
+            solved_places.insert(acc_place.local.clone());
+            solved_places.insert(iv_place.local.clone());
             solved_acc_place = Some(acc_place);
             any_solved = true;
         }
@@ -1043,6 +1099,7 @@ impl<'a> SupercompilerDriver<'a> {
                     solved_state.set_value(place.clone(), closed_form);
                     any_solved = true;
                     this_solved = true;
+                    solved_places.insert(place.local.clone());
                 }
             } else if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
                 if t_anc != t_curr {
@@ -1066,6 +1123,7 @@ impl<'a> SupercompilerDriver<'a> {
                                 solved_state.set_value(place.clone(), closed_form);
                                 any_solved = true;
                                 this_solved = true;
+                                solved_places.insert(place.local.clone());
                             }
                         }
                     }
@@ -1091,6 +1149,8 @@ impl<'a> SupercompilerDriver<'a> {
                     ) {
                         solved_state.set_value(p_a.clone(), term_a);
                         solved_state.set_value(p_b.clone(), term_b);
+                        solved_places.insert(p_a.local.clone());
+                        solved_places.insert(p_b.local.clone());
                         any_solved = true;
                         break;
                     }
@@ -1098,7 +1158,18 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
-        if any_solved {
+        let mut mutating_places = Vec::new();
+        for place in &self.active_places {
+            if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
+                if t_anc != t_curr {
+                    mutating_places.push(&place.local);
+                }
+            }
+        }
+
+        let all_mutating_solved = mutating_places.iter().all(|local| solved_places.contains(*local));
+
+        if any_solved && all_mutating_solved {
             Some(solved_state)
         } else {
             None

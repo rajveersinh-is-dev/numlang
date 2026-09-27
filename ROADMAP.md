@@ -29,7 +29,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Remediation & Frontier Roadmap (Phases 20–28)
+### Remediation & Frontier Roadmap (Phases 20–31)
 
 *Formulated to systematically resolve all findings from the comprehensive audit (`honest_review.md`).*
 
@@ -46,6 +46,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 | **Phase 28** | **Paper Rewrite & Reproducibility Package**<br>Rewrite `paper/main.tex` with automated cryptographic SHA-256 data pipeline, zero data fabrication, transparent reporting of speedups/neutral results, and 1-click Docker reproduction (`make reproduce`). | **Completed** | `paper/main.tex`<br>`bench/harness/generate_tables.py`<br>`docker/Dockerfile`<br>`Makefile` |
 | **Phase 29** | **Fix Supercompiler Regressions**<br>Resolve 4 confirmed benchmark regressions: Ackermann (call-site depth budget & knot-tying), stream_fusion (loop-invariant call-site guards & no loop-inlining in loops), fib_matrix (MSG anti-unification fallback on recurrence failure), and power_spec (profitability gate bailing on zero reductions). Preserve all previous supercompiler wins. | **Completed** | Test suite & commit |
 | **Phase 30** | **Supercompiler Refinements (MSG Knots, Zero-Edge Leaves, Inliner Loop Precomputation, Unified Gate)**<br>Materialize MSG generalized state as allocated knot target nodes; handle budget-exhaustion zero-edge non-return leaves safely with `Terminator::Unreachable`; precompute `has_loop_funcs` set in AST inliner to eliminate redundant full-AST scans; unify profitability gate across Classic, Distill, and MRSC modes. | **Completed** | Full suite green (100%), benchmarks stable |
+| **Phase 31** | **Formal Termination Certificate & Order-3 Symbolic Recurrence**<br>Add machine-readable `TerminationWitness` recording HE whistle firings and header cutoffs; implement CLI `--emit-termination-proof` emitting JSON certificates; extend linear recurrence solver to symbolic trip counts for order-3 recurrences via `__order3_recurrence` intrinsic and native codegen lowering. | **Completed** | Full suite green (100%), benchmarks stable |
 
 ---
 

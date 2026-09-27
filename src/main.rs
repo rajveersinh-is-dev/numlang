@@ -84,6 +84,12 @@ pub struct Cli {
     pub supercompile_stats: bool,
 
     #[arg(
+        long = "emit-termination-proof",
+        help = "Emit the supercompiler termination witness as JSON (one entry per function)"
+    )]
+    pub emit_termination_proof: bool,
+
+    #[arg(
         long = "emit-obj",
         help = "Emit compiled native COFF object file (.obj)"
     )]
@@ -872,6 +878,50 @@ fn real_main() -> Result<()> {
         for func in &mir_program.functions {
             let tree = numlang::mir::supercompiler::build_process_tree(func);
             println!("Function `{}`:\n{}", func.name, tree.display());
+        }
+        return Ok(());
+    }
+
+    if cli.emit_termination_proof {
+        let mir_program = numlang::mir::lower::lower_program(&typed_program);
+        for func in &mir_program.functions {
+            let driver = numlang::mir::supercompiler::SupercompilerDriver::new(func)
+                .with_program_functions(&mir_program.functions);
+            let tree = driver.run();
+            let firings = &tree.witness.firings;
+            if firings.is_empty() {
+                println!(
+                    r#"{{"function_name": "{}", "total_firings": 0, "note": "no whistle fired — function terminates trivially"}}"#,
+                    func.name
+                );
+            } else {
+                let mut firings_json = String::new();
+                firings_json.push('[');
+                for (i, f) in firings.iter().enumerate() {
+                    if i > 0 {
+                        firings_json.push_str(", ");
+                    }
+                    let kind_str = match f.kind {
+                        numlang::mir::supercompiler::WhistleKind::HomeomorphicEmbedding => {
+                            "HomeomorphicEmbedding"
+                        }
+                        numlang::mir::supercompiler::WhistleKind::HeaderVisitCutoff => {
+                            "HeaderVisitCutoff"
+                        }
+                    };
+                    firings_json.push_str(&format!(
+                        r#"{{"from_id": {}, "ancestor_id": {}, "kind": "{}"}}"#,
+                        f.from_id.0, f.ancestor_id.0, kind_str
+                    ));
+                }
+                firings_json.push(']');
+                println!(
+                    r#"{{"function_name": "{}", "total_firings": {}, "firings": {}}}"#,
+                    func.name,
+                    firings.len(),
+                    firings_json
+                );
+            }
         }
         return Ok(());
     }
