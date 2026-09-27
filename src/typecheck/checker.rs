@@ -3348,6 +3348,26 @@ impl TypeChecker {
                             span: *span,
                         });
                     }
+                    callee if callee.starts_with("__nway_recurrence_") => {
+                        let mut typed_args = Vec::with_capacity(args.len());
+                        for arg in args {
+                            let typed_arg = self.check_expr(arg, Some(Type::I64))?;
+                            if typed_arg.ty() != Type::I64 {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::I64,
+                                    found: typed_arg.ty(),
+                                    span: typed_arg.span(),
+                                });
+                            }
+                            typed_args.push(typed_arg);
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: callee.to_string(),
+                            args: typed_args,
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
                     _ => {}
                 }
 

@@ -11,6 +11,7 @@ pub mod generalize;
 pub mod mrsc;
 pub mod parallel;
 pub mod polyhedral;
+pub mod recurrence;
 pub mod residualize;
 pub mod state;
 pub mod term;
@@ -29,6 +30,7 @@ pub use mrsc::{
 };
 pub use parallel::supercompile_mir_program_parallel;
 pub use polyhedral::fuse_polyhedral_stencils;
+pub use recurrence::{detect_nway_linear_system, solve_nway_recurrence, NWayLinearSystem};
 use residualize::residualize_process_tree;
 pub use validate::{
     check_satisfiability, verify_formula_validity, verify_program_equivalence, BoolFormula,

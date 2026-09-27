@@ -816,7 +816,7 @@ impl<'a> SupercompilerDriver<'a> {
                         self.drive_node(next_node, ancestor_stack, depth + 1);
                         ancestor_stack.pop();
                         return;
-                    } else if header_visits >= 6 {
+                    } else if header_visits >= 12 {
                         // Repeated visits but recurrence solver failed: tie knot without partial unrolling
                         for &a_id in ancestor_stack.iter().rev() {
                             let a_st = &self.nodes[a_id.0].state;
@@ -1135,7 +1135,38 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
-        if unsolved_places.len() >= 2 {
+        let mut nway_solved = false;
+        if unsolved_places.len() >= 3 {
+            let trajectories: Vec<Vec<i64>> = unsolved_places.iter().map(|(_, h)| h.clone()).collect();
+            if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&trajectories) {
+                let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+                for (idx, (ref p, _)) in unsolved_places.iter().enumerate() {
+                    solved_state.set_value(p.clone(), terms[idx]);
+                    solved_places.insert(p.local.clone());
+                }
+                any_solved = true;
+                nway_solved = true;
+            } else if unsolved_places.len() <= 8 {
+                'subset_search: for sz in (3..unsolved_places.len()).rev() {
+                    for combo in get_combinations(unsolved_places.len(), sz) {
+                        let sub_trajectories: Vec<Vec<i64>> = combo.iter().map(|&idx| unsolved_places[idx].1.clone()).collect();
+                        if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&sub_trajectories) {
+                            let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+                            for (t_idx, &u_idx) in combo.iter().enumerate() {
+                                let (ref p, _) = unsolved_places[u_idx];
+                                solved_state.set_value(p.clone(), terms[t_idx]);
+                                solved_places.insert(p.local.clone());
+                            }
+                            any_solved = true;
+                            nway_solved = true;
+                            break 'subset_search;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !nway_solved && unsolved_places.len() >= 2 {
             let n = unsolved_places.len();
             for i in 0..n {
                 for j in (i + 1)..n {
@@ -1149,6 +1180,14 @@ impl<'a> SupercompilerDriver<'a> {
                     ) {
                         solved_state.set_value(p_a.clone(), term_a);
                         solved_state.set_value(p_b.clone(), term_b);
+                        solved_places.insert(p_a.local.clone());
+                        solved_places.insert(p_b.local.clone());
+                        any_solved = true;
+                        break;
+                    } else if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&[hist_a.clone(), hist_b.clone()]) {
+                        let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+                        solved_state.set_value(p_a.clone(), terms[0]);
+                        solved_state.set_value(p_b.clone(), terms[1]);
                         solved_places.insert(p_a.local.clone());
                         solved_places.insert(p_b.local.clone());
                         any_solved = true;
@@ -1488,4 +1527,22 @@ fn is_place_or_alias(p: &Place, target: &Place, stmts: &[Statement], idx: usize)
         }
     }
     false
+}
+
+fn get_combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
+    let mut result = Vec::new();
+    let mut current = Vec::new();
+    fn backtrack(start: usize, n: usize, k: usize, current: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+        if current.len() == k {
+            result.push(current.clone());
+            return;
+        }
+        for i in start..n {
+            current.push(i);
+            backtrack(i + 1, n, k, current, result);
+            current.pop();
+        }
+    }
+    backtrack(0, n, k, &mut current, &mut result);
+    result
 }
