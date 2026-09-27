@@ -76,7 +76,20 @@ pub fn residualize_process_tree(tree: &ProcessTree, original_func: &MirFunction)
 
         // Handle outgoing edges
         let b_idx = block_id.0;
-        if node.edges.is_empty() {
+        let is_orig_void_return = original_func.blocks.iter().any(|b| {
+            b.id == node.state.block && matches!(b.terminator, Terminator::Return { value: None })
+        });
+        if node.overflow || (node.edges.is_empty() && (!is_orig_void_return || original_func.return_ty != Type::Void)) {
+            // Task 2: Budget-overflow or zero-edge non-Return leaf.
+            // Safely terminate with Unreachable rather than an empty Return.
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[supercompiler] Warning: emitting Unreachable for zero-edge non-return leaf (overflow={}) at node {:?}",
+                node.overflow, node.id
+            );
+            residual_blocks[b_idx].statements = stmts;
+            residual_blocks[b_idx].terminator = Terminator::Unreachable;
+        } else if node.edges.is_empty() {
             residual_blocks[b_idx].statements = stmts;
             residual_blocks[b_idx].terminator = Terminator::Return { value: None };
         } else if node.edges.len() == 1 {
