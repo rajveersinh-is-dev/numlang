@@ -29,6 +29,7 @@ pub struct ProcessNode {
     pub state: SymbolicState,
     pub edges: Vec<ProcessEdge>,
     pub return_term: Option<SymTermId>,
+    pub overflow: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -297,6 +298,7 @@ impl<'a> SupercompilerDriver<'a> {
             state,
             edges: Vec::new(),
             return_term: None,
+            overflow: false,
         });
         id
     }
@@ -308,6 +310,7 @@ impl<'a> SupercompilerDriver<'a> {
         depth: usize,
     ) {
         if depth >= self.max_depth || self.nodes.len() >= self.config.max_inline_nodes {
+            self.nodes[node_id.0].overflow = true;
             return;
         }
 
@@ -372,6 +375,7 @@ impl<'a> SupercompilerDriver<'a> {
                                     return;
                                 }
                             }
+                            self.nodes[node_id.0].overflow = true;
                             return;
                         }
 
@@ -803,8 +807,9 @@ impl<'a> SupercompilerDriver<'a> {
                                 }
                             }
                         }
+                        let gen_node_id = self.alloc_node(gen_state);
                         self.stats.knots_tied += 1;
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(first_anc_id));
+                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
                         return;
                     }
                 }
@@ -850,8 +855,9 @@ impl<'a> SupercompilerDriver<'a> {
                                 }
                             }
                         }
+                        let gen_node_id = self.alloc_node(gen_state);
                         self.stats.knots_tied += 1;
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(anc_id));
+                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
                         return;
                     }
                 }

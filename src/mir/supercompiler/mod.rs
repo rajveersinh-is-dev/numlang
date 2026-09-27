@@ -121,13 +121,10 @@ pub fn supercompile_mir_program_with_mode(
                 let mut distill = DistillationEngine::new(func, &mut interner_clone);
                 let folds = distill.distill_process_tree(&mut tree);
                 let stats = tree.stats.clone();
-                let total_reductions = stats.branches_pruned + stats.loops_collapsed + folds + stats.knots_tied + stats.calls_inlined;
-                if total_reductions > 0 && tree.nodes.len() < budget {
+                let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
+                if !has_uncollapsed_array_loops && (is_profitable(&stats, budget, &tree) || (tree.nodes.len() < budget && folds > 0)) {
                     let new_func = residualize_process_tree(&tree, func);
-                    let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                    if !has_uncollapsed_array_loops {
-                        *func = new_func;
-                    }
+                    *func = new_func;
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -143,9 +140,9 @@ pub fn supercompile_mir_program_with_mode(
                     _ => mrsc_engine.explore_and_select(&MinCodeSizeObjective),
                 };
                 let stats = best_tree.stats.clone();
+                let budget = SupercompilerDriver::new(func).config.max_inline_nodes;
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                let is_profitable = stats.branches_pruned > 0 || stats.loops_collapsed > 0 || stats.knots_tied > 0 || stats.calls_inlined > 0;
-                if !has_uncollapsed_array_loops && stats.knots_tied == 0 && is_profitable {
+                if !has_uncollapsed_array_loops && is_profitable(&stats, budget, &best_tree) {
                     *func = best_res;
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
@@ -158,6 +155,14 @@ pub fn supercompile_mir_program_with_mode(
     }
 
     total_stats
+}
+
+fn is_profitable(stats: &SupercompilerStats, budget: usize, tree: &ProcessTree) -> bool {
+    tree.nodes.len() < budget
+        && (stats.branches_pruned > 0
+            || stats.loops_collapsed > 0
+            || stats.knots_tied > 0
+            || stats.calls_inlined > 0)
 }
 
 fn func_is_impure(func: &MirFunction) -> bool {
@@ -197,7 +202,7 @@ pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction,
     let tree = driver.run();
     let stats = tree.stats.clone();
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if tree.nodes.len() >= budget || (stats.branches_pruned == 0 && stats.loops_collapsed == 0 && stats.knots_tied == 0 && stats.calls_inlined == 0) {
+    if !is_profitable(&stats, budget, &tree) {
         return (func.clone(), stats);
     }
     (residualize_process_tree(&tree, func), stats)
@@ -213,7 +218,7 @@ pub fn supercompile_mir_function_with_program(
     let tree = driver.run();
     let stats = tree.stats.clone();
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if tree.nodes.len() >= budget || (stats.branches_pruned == 0 && stats.loops_collapsed == 0 && stats.knots_tied == 0 && stats.calls_inlined == 0) {
+    if !is_profitable(&stats, budget, &tree) {
         return (func.clone(), stats);
     }
     (residualize_process_tree(&tree, func), stats)
