@@ -55,13 +55,23 @@ fn test_bitwise_ir_lowering() {
 }
 
 fn run_numlang_code(code: &str) -> Option<i32> {
-    let test_dir = std::env::temp_dir().join("numlang_test_bitwise");
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let id = format!(
+        "{}_{:?}_{}_{}",
+        std::process::id(),
+        std::thread::current().id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+        count
+    )
+    .replace(['(', ')', ' '], "_");
+    let test_dir = std::env::temp_dir().join(format!("numlang_test_bitwise_{}", id));
     fs::create_dir_all(&test_dir).unwrap();
-    let id = format!("{}_{}", std::process::id(), std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos());
-    let src_file = test_dir.join(format!("test_{}.nl", id));
+    let src_file = test_dir.join("test.nl");
     fs::write(&src_file, code).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
@@ -70,7 +80,7 @@ fn run_numlang_code(code: &str) -> Option<i32> {
         .output()
         .expect("Failed to run numlang program");
 
-    let _ = fs::remove_file(&src_file);
+    let _ = fs::remove_dir_all(&test_dir);
     output.status.code()
 }
 

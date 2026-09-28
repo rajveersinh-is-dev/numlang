@@ -92,6 +92,15 @@ fn msg_helper(
             }
             interner.intern_call(c1.clone(), common_a, ty1.clone())
         }
+        (SymTerm::ClosureVal(fn1, c1, ty1), SymTerm::ClosureVal(fn2, c2, _))
+            if fn1 == fn2 && c1.len() == c2.len() =>
+        {
+            let mut common_c = Vec::with_capacity(c1.len());
+            for (&a, &b) in c1.iter().zip(c2.iter()) {
+                common_c.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_closure_val(fn1.clone(), common_c, ty1.clone())
+        }
         (SymTerm::Ref(i1, ty1), SymTerm::Ref(i2, _)) => {
             let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
             interner.intern_ref(common, ty1.clone())

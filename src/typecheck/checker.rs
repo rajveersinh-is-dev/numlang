@@ -1259,6 +1259,18 @@ impl TypeChecker {
                     }
                 }
 
+                if let Some(fn_sig) = self.env.lookup_function(name) {
+                    let fn_ty = Type::Fn(
+                        fn_sig.param_types.clone(),
+                        Box::new(fn_sig.return_ty.clone()),
+                    );
+                    return Ok(TypedExpr::Ident {
+                        name: name.clone(),
+                        ty: fn_ty,
+                        span: *span,
+                    });
+                }
+
                 Err(TypeError::UndeclaredVariable {
                     name: name.clone(),
                     span: *span,

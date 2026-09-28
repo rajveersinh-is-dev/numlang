@@ -1,2 +1,5 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/STACK:16777216"]
+
+[env]
+RUST_MIN_STACK = "16777216"

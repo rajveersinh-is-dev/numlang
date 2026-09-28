@@ -577,11 +577,64 @@ impl<'a> SupercompilerDriver<'a> {
                     ancestor_stack.pop();
                 }
             }
-            Terminator::IndirectCall { next, dest, .. } => {
+            Terminator::IndirectCall { next, dest, callee, args } => {
+                let callee_res = self.resolve_place(callee, &working_state);
+                let callee_term = working_state.get_value(&callee_res);
+
+                let arg_terms: Vec<SymTermId> = args
+                    .iter()
+                    .map(|p| {
+                        let p_res = self.resolve_place(p, &working_state);
+                        working_state
+                            .get_value(&p_res)
+                            .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
+                    })
+                    .collect();
+
                 let mut next_state = working_state;
                 next_state.block = next.clone();
-                let dest_term = self.interner.intern_var(dest.clone(), Type::I64);
-                next_state.set_value(dest.clone(), dest_term);
+
+                let result_term = if let Some(callee_term_id) = callee_term {
+                    if let SymTerm::ClosureVal(fn_name, captured_terms, _) =
+                        self.interner.get(callee_term_id).clone()
+                    {
+                        // Try to inline through the closure
+                        let inlined = if let Some(callee_func) = self
+                            .program_funcs
+                            .get(&fn_name)
+                            .copied()
+                            .or_else(|| {
+                                self.resolve_closure_function(
+                                    &fn_name,
+                                    captured_terms.len(),
+                                    arg_terms.len(),
+                                )
+                            })
+                        {
+                            let depth_ok = self.call_stack.len() < self.config.max_inline_depth;
+                            let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
+                            if depth_ok && budget_ok {
+                                self.try_drive_closure_call(
+                                    callee_func,
+                                    &captured_terms,
+                                    &arg_terms,
+                                    &next_state,
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        inlined.unwrap_or_else(|| self.interner.intern_var(dest.clone(), Type::I64))
+                    } else {
+                        self.interner.intern_var(dest.clone(), Type::I64)
+                    }
+                } else {
+                    self.interner.intern_var(dest.clone(), Type::I64)
+                };
+
+                next_state.set_value(dest.clone(), result_term);
                 let next_node = self.alloc_node(next_state);
                 self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
                 ancestor_stack.push(node_id);
@@ -919,6 +972,21 @@ impl<'a> SupercompilerDriver<'a> {
                 state.symbolic_heap.get(&ptr_term).copied().unwrap_or_else(|| {
                     self.interner.intern_deref(ptr_term, dest_ty.clone())
                 })
+            }
+            Rvalue::ClosureAlloc { fn_name, captured } => {
+                let captured_terms: Vec<SymTermId> = captured
+                    .iter()
+                    .map(|p| {
+                        let p_res = self.resolve_place(p, state);
+                        state
+                            .get_value(&p_res)
+                            .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
+                    })
+                    .collect();
+                self.interner.intern_closure_val(fn_name.clone(), captured_terms, dest_ty)
+            }
+            Rvalue::FnPtr(fn_name) => {
+                self.interner.intern_closure_val(fn_name.clone(), vec![], dest_ty)
             }
             _ => self.interner.intern_var(dest.clone(), dest_ty),
         };
@@ -1628,6 +1696,9 @@ impl<'a> SupercompilerDriver<'a> {
             SymTerm::Ref(inner, _) => self.term_references_locals(*inner, locals),
             SymTerm::Deref(ptr, _) => self.term_references_locals(*ptr, locals),
             SymTerm::Discriminant(inner, _) => self.term_references_locals(*inner, locals),
+            SymTerm::ClosureVal(_, captured, _) => {
+                captured.iter().any(|&c| self.term_references_locals(c, locals))
+            }
             _ => false,
         }
     }
@@ -1684,6 +1755,108 @@ impl<'a> SupercompilerDriver<'a> {
         if return_terms.len() == 1 {
             let child_ret = return_terms[0];
             Some(self.interner.import_from(&child_tree.interner, child_ret))
+        } else if !return_terms.is_empty() {
+            let first = return_terms[0];
+            let all_same = return_terms.iter().all(|&t| {
+                child_tree.interner.get(t) == child_tree.interner.get(first)
+            });
+            if all_same {
+                Some(self.interner.import_from(&child_tree.interner, first))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn resolve_closure_function(
+        &self,
+        _fn_name: &str,
+        n_captured: usize,
+        n_args: usize,
+    ) -> Option<&'a MirFunction> {
+        let expected_arity = n_captured + n_args;
+        let candidates: Vec<_> = self
+            .program_funcs
+            .values()
+            .filter(|f| f.params.len() == expected_arity && f.name.contains("closure"))
+            .collect();
+        if candidates.len() == 1 {
+            Some(candidates[0])
+        } else {
+            None
+        }
+    }
+
+    fn try_drive_closure_call(
+        &mut self,
+        callee: &'a MirFunction,
+        captured_terms: &[SymTermId],
+        args: &[SymTermId],
+        caller_state: &SymbolicState,
+    ) -> Option<SymTermId> {
+        let n_captured = captured_terms.len();
+        let n_args = args.len();
+        if callee.blocks.is_empty() || callee.params.len() != n_captured + n_args {
+            return None;
+        }
+
+        let entry_id = callee.blocks[0].id.clone();
+        let mut initial_state = SymbolicState::new(entry_id, MemoryVersionId::LIVE_ON_ENTRY);
+
+        // Bind captured vars (first n_captured params)
+        for ((param_name, _), &cap_term) in
+            callee.params[..n_captured].iter().zip(captured_terms.iter())
+        {
+            let p = Place {
+                local: param_name.clone(),
+                projections: vec![],
+            };
+            initial_state.set_value(p, cap_term);
+            let iv = self.get_term_interval(cap_term, caller_state);
+            if iv != Interval::FULL {
+                initial_state.refine(cap_term, iv);
+            }
+        }
+
+        // Bind call-time args (remaining params)
+        for ((param_name, _), &arg_term) in callee.params[n_captured..].iter().zip(args.iter()) {
+            let p = Place {
+                local: param_name.clone(),
+                projections: vec![],
+            };
+            initial_state.set_value(p, arg_term);
+            let iv = self.get_term_interval(arg_term, caller_state);
+            if iv != Interval::FULL {
+                initial_state.refine(arg_term, iv);
+            }
+        }
+
+        let mut child_call_stack = self.call_stack.clone();
+        child_call_stack.push(callee.name.clone());
+
+        let mut child_driver = SupercompilerDriver::new(callee)
+            .with_config(self.config)
+            .with_program_functions_map(self.program_funcs.clone())
+            .with_call_stack(child_call_stack);
+        child_driver.interner = self.interner.clone();
+
+        let child_tree = child_driver.run_with_initial_state(initial_state);
+
+        self.stats.branches_pruned += child_tree.stats.branches_pruned;
+        self.stats.sc_bce_eliminated += child_tree.stats.sc_bce_eliminated;
+        self.stats.calls_inlined += 1;
+
+        let mut return_terms = Vec::new();
+        for node in &child_tree.nodes {
+            if let Some(ret) = node.return_term {
+                return_terms.push(ret);
+            }
+        }
+
+        if return_terms.len() == 1 {
+            Some(self.interner.import_from(&child_tree.interner, return_terms[0]))
         } else if !return_terms.is_empty() {
             let first = return_terms[0];
             let all_same = return_terms.iter().all(|&t| {

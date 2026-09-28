@@ -72,6 +72,7 @@ pub struct MirBuilder {
     next_block_id: usize,
     next_temp_id: usize,
     loop_stack: Vec<(BasicBlockId, BasicBlockId)>,
+    pub closure_functions: Vec<MirFunction>,
 }
 
 impl MirBuilder {
@@ -84,6 +85,7 @@ impl MirBuilder {
             next_block_id: 0,
             next_temp_id: 0,
             loop_stack: Vec::new(),
+            closure_functions: Vec::new(),
         }
     }
 
@@ -121,10 +123,18 @@ impl MirBuilder {
                 self.blocks[block_id.0].statements.push(Statement::Assign(place.clone(), Rvalue::Constant(lit.clone())));
                 place
             }
-            TypedExpr::Ident { name, .. } => {
-                let src_place = Place { local: name.clone(), projections: vec![] };
-                self.blocks[block_id.0].statements.push(Statement::Assign(place.clone(), Rvalue::Use(src_place)));
-                place
+            TypedExpr::Ident { name, ty, .. } => {
+                if matches!(ty, Type::Fn(..)) && !self.locals.iter().any(|l| &l.name == name) {
+                    self.blocks[block_id.0].statements.push(Statement::Assign(
+                        place.clone(),
+                        Rvalue::FnPtr(name.clone()),
+                    ));
+                    place
+                } else {
+                    let src_place = Place { local: name.clone(), projections: vec![] };
+                    self.blocks[block_id.0].statements.push(Statement::Assign(place.clone(), Rvalue::Use(src_place)));
+                    place
+                }
             }
             TypedExpr::Unary { op, expr, .. } => {
                 let inner = self.lower_expr(expr, None);
@@ -291,20 +301,77 @@ impl MirBuilder {
                     ));
                 place
             }
-            TypedExpr::Lambda { captured, .. } => {
+            TypedExpr::Lambda { params, body, captured, ty, .. } => {
                 let mut captured_places = Vec::new();
                 for (cap_name, _) in captured {
                     captured_places.push(Place { local: cap_name.clone(), projections: vec![] });
                 }
+                let closure_name = "closure_stub".to_string();
                 self.blocks[self.current_block.clone().unwrap().0]
                     .statements
                     .push(Statement::Assign(
                         place.clone(),
                         Rvalue::ClosureAlloc {
-                            fn_name: "closure_stub".to_string(),
+                            fn_name: closure_name.clone(),
                             captured: captured_places,
                         },
                     ));
+
+                let mut closure_builder = MirBuilder::new();
+                for (cap_name, cap_ty) in captured {
+                    closure_builder.locals.push(MirLocalDecl {
+                        name: cap_name.clone(),
+                        ty: cap_ty.clone(),
+                        mutable: false,
+                    });
+                }
+                for (p_name, p_ty) in params {
+                    closure_builder.locals.push(MirLocalDecl {
+                        name: p_name.clone(),
+                        ty: p_ty.clone(),
+                        mutable: false,
+                    });
+                }
+                let ret_ty = match ty {
+                    Type::Closure(c) => *c.ret.clone(),
+                    Type::Fn(_, r) => *r.clone(),
+                    _ => body.ty(),
+                };
+                closure_builder.locals.push(MirLocalDecl {
+                    name: "_ret".to_string(),
+                    ty: ret_ty.clone(),
+                    mutable: true,
+                });
+
+                let entry = closure_builder.new_block();
+                closure_builder.current_block = Some(entry);
+                let ret_place = Place { local: "_ret".to_string(), projections: vec![] };
+                let result_place = closure_builder.lower_expr(body, Some(ret_place.clone()));
+                if let Some(curr) = closure_builder.current_block.clone() {
+                    if closure_builder.blocks[curr.0].terminator == Terminator::Unreachable {
+                        closure_builder.blocks[curr.0].terminator = Terminator::Return { value: Some(result_place) };
+                    }
+                }
+
+                let mut all_params = Vec::new();
+                for (c_name, c_ty) in captured {
+                    all_params.push((c_name.clone(), c_ty.clone()));
+                }
+                for (p_name, p_ty) in params {
+                    all_params.push((p_name.clone(), p_ty.clone()));
+                }
+
+                let nested = std::mem::take(&mut closure_builder.closure_functions);
+                let closure_fn = MirFunction {
+                    name: closure_name,
+                    params: all_params,
+                    return_ty: ret_ty,
+                    locals: closure_builder.locals,
+                    blocks: closure_builder.blocks,
+                };
+                self.closure_functions.push(closure_fn);
+                self.closure_functions.extend(nested);
+
                 place
             }
             TypedExpr::CallIndirect { callee, args, .. } => {
@@ -550,7 +617,7 @@ impl MirBuilder {
         }
     }
 
-    pub fn build(mut self, func: &TypedFunction) -> MirFunction {
+    pub fn build(mut self, func: &TypedFunction) -> (MirFunction, Vec<MirFunction>) {
         for p in &func.params {
             self.locals.push(MirLocalDecl {
                 name: p.name.clone(),
@@ -574,26 +641,31 @@ impl MirBuilder {
             }
         }
 
-        MirFunction {
+        let mir_fn = MirFunction {
             name: func.name.clone(),
             params: func.params.iter().map(|p| (p.name.clone(), p.ty.clone())).collect(),
             return_ty: func.return_ty.clone(),
             locals: self.locals,
             blocks: self.blocks,
-        }
+        };
+        (mir_fn, self.closure_functions)
     }
 }
 
 pub fn lower_program(program: &TypedProgram) -> MirProgram {
     let mut mir_funcs = Vec::new();
+    let mut extra_funcs = Vec::new();
     for func in &program.functions {
         let mut f_to_lower = func.clone();
         if let Some(lowered_body) = crate::opt::recursion::try_lower_tail_calls(func) {
             f_to_lower.body = lowered_body;
         }
         let builder = MirBuilder::new();
-        mir_funcs.push(builder.build(&f_to_lower));
+        let (built, closures) = builder.build(&f_to_lower);
+        mir_funcs.push(built);
+        extra_funcs.extend(closures);
     }
+    mir_funcs.extend(extra_funcs);
     MirProgram {
         functions: mir_funcs,
         structs: program.structs.clone(),

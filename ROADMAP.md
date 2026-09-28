@@ -29,7 +29,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Remediation & Frontier Roadmap (Phases 20–33)
+### Remediation & Frontier Roadmap (Phases 20–34)
 
 *Formulated to systematically resolve all findings from the comprehensive audit (`honest_review.md`).*
 
@@ -49,6 +49,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 | **Phase 31** | **Formal Termination Certificate & Order-3 Symbolic Recurrence**<br>Add machine-readable `TerminationWitness` recording HE whistle firings and header cutoffs; implement CLI `--emit-termination-proof` emitting JSON certificates; extend linear recurrence solver to symbolic trip counts for order-3 recurrences via `__order3_recurrence` intrinsic and native codegen lowering. | **Completed** | Full suite green (100%), benchmarks stable |
 | **Phase 32** | **N-Way Mutual Recurrence Solver**<br>Add `NWayLinearSystem`, `detect_nway_linear_system` using integer Cramer's rule and fraction-free Gaussian elimination ($N \le 8$), binary matrix exponentiation `mat_pow_nxn`, and `solve_nway_recurrence` emitting `__nway_recurrence_i` intrinsics and exact closed forms; integrate into `SupercompilerDriver` loop recurrence pipeline. | **Completed** | Full suite green (100%), benchmarks stable |
 | **Phase 33** | **Refinement Type Propagation Through Process Tree**<br>Add `Interval` arithmetic and `refinements` mapping to `SymbolicState`; interval propagation across arithmetic ops (`Add`, `Sub`, `Mul`); branch narrowing across 6 comparison operators; dead-branch pruning on empty intervals; call-site argument refinement propagation into inlined callees; supercompiler-level bounds-check elimination (`sc_bce_eliminated`). | **Completed** | Full suite green (100%), 5/5 new tests passing |
+| **Phase 34** | **Full Higher-Order Closure Driving**<br>Add `SymTerm::ClosureVal(String, Vec<SymTermId>, Type)` for symbolic closures; track `Rvalue::ClosureAlloc` and `Rvalue::FnPtr` in `drive_statement`; drive through `Terminator::IndirectCall` in `drive_node` via `resolve_closure_function` and `try_drive_closure_call`; bind captured variables and call arguments into callee initial state with interval refinement propagation; fold closure invocations and deforest higher-order loops. | **Completed** | Full suite green (100%), 6/6 new tests passing |
 
 ---
 

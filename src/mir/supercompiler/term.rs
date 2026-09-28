@@ -34,6 +34,8 @@ pub enum SymTerm {
     Deref(SymTermId, Type),
     /// The discriminant (variant tag) of an enum value.
     Discriminant(SymTermId, Type),
+    /// A symbolically known closure: fn_name + captured symbolic terms.
+    ClosureVal(String, Vec<SymTermId>, Type),
 }
 
 impl SymTerm {
@@ -53,6 +55,7 @@ impl SymTerm {
             SymTerm::Ref(_, ty) => ty,
             SymTerm::Deref(_, ty) => ty,
             SymTerm::Discriminant(_, ty) => ty,
+            SymTerm::ClosureVal(_, _, ty) => ty,
         }
     }
 
@@ -302,6 +305,15 @@ impl TermInterner {
         self.intern(SymTerm::Discriminant(inner, Type::I64))
     }
 
+    pub fn intern_closure_val(
+        &mut self,
+        fn_name: String,
+        captured: Vec<SymTermId>,
+        ty: Type,
+    ) -> SymTermId {
+        self.intern(SymTerm::ClosureVal(fn_name, captured, ty))
+    }
+
     pub fn import_from(&mut self, other: &TermInterner, id: SymTermId) -> SymTermId {
         let term = other.get(id).clone();
         match term {
@@ -352,6 +364,10 @@ impl TermInterner {
                 let inner_new = self.import_from(other, inner);
                 self.intern(SymTerm::Discriminant(inner_new, ty))
             }
+            SymTerm::ClosureVal(fn_name, captured, ty) => {
+                let captured_new = captured.iter().map(|&c| self.import_from(other, c)).collect();
+                self.intern_closure_val(fn_name, captured_new, ty)
+            }
         }
     }
 
@@ -384,6 +400,9 @@ impl TermInterner {
             SymTerm::Ref(inner, _)
             | SymTerm::Deref(inner, _)
             | SymTerm::Discriminant(inner, _) => 1 + self.sizes[inner.0],
+            SymTerm::ClosureVal(_, captured, _) => {
+                1 + captured.iter().map(|c| self.sizes[c.0]).sum::<usize>()
+            }
         };
 
         self.lookup.insert(term.clone(), id);
@@ -436,6 +455,10 @@ impl TermInterner {
             SymTerm::Ref(inner, _) => format!("&({})", self.format_term(*inner)),
             SymTerm::Deref(ptr, _) => format!("*({})", self.format_term(*ptr)),
             SymTerm::Discriminant(inner, _) => format!("discriminant({})", self.format_term(*inner)),
+            SymTerm::ClosureVal(fn_name, captured, _) => {
+                let c_str: Vec<String> = captured.iter().map(|c| self.format_term(*c)).collect();
+                format!("closure:{}({})", fn_name, c_str.join(", "))
+            }
         }
     }
 }
