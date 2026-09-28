@@ -6003,6 +6003,10 @@ impl<'a> FunctionTranslationState<'a> {
             },
 
             TypedExpr::Ident { name, .. } => {
+                if let Some(func_id) = self.func_ids.get(name) {
+                    let local_func = self.module.declare_func_in_func(*func_id, builder.func);
+                    return Ok(builder.ins().func_addr(types::I64, local_func));
+                }
                 let storage = self
                     .variables
                     .get(name)
@@ -8961,6 +8965,14 @@ impl CraneliftCompiler {
                         } else {
                             let clif_ty = type_to_clif(dest_ty);
                             builder.ins().load(clif_ty, MemFlagsData::trusted(), ptr_val, 0)
+                        }
+                    }
+                    crate::mir::lower::Rvalue::FnPtr(name) => {
+                        if let Some(func_id) = self.func_ids.get(name) {
+                            let local_func = self.module.declare_func_in_func(*func_id, builder.func);
+                            builder.ins().func_addr(types::I64, local_func)
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
                         }
                     }
                     _ => builder.ins().iconst(types::I64, 0),

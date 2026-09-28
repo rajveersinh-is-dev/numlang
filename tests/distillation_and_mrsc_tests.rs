@@ -137,43 +137,49 @@ fn test_distillation_double_zip() {
 
 #[test]
 fn test_mrsc_optimal_code_size() {
-    let code = r#"
-    fn branch_tree(x: i64, depth: i64) -> i64 {
-        if depth <= 0 {
-            return x;
-        }
-        if (x % 2) == 0 {
-            return branch_tree(x / 2, depth - 1);
-        } else {
-            return branch_tree(x * 3 + 1, depth - 1);
-        }
-    }
+    let builder = std::thread::Builder::new().stack_size(16 * 1024 * 1024);
+    let handler = builder
+        .spawn(|| {
+            let code = r#"
+            fn branch_tree(x: i64, depth: i64) -> i64 {
+                if depth <= 0 {
+                    return x;
+                }
+                if (x % 2) == 0 {
+                    return branch_tree(x / 2, depth - 1);
+                } else {
+                    return branch_tree(x * 3 + 1, depth - 1);
+                }
+            }
 
-    fn main() -> i64 {
-        return branch_tree(7, 4);
-    }
-    "#;
+            fn main() -> i64 {
+                return branch_tree(7, 4);
+            }
+            "#;
 
-    let mir = get_mir(code);
-    let func = mir.functions.iter().find(|f| f.name == "branch_tree").unwrap();
+            let mir = get_mir(code);
+            let func = mir.functions.iter().find(|f| f.name == "branch_tree").unwrap();
 
-    let mrsc = MultiResultEngine::new(func, &mir.functions);
-    let (best_res, _best_tree, score) = mrsc.explore_and_select(&MinCodeSizeObjective);
+            let mrsc = MultiResultEngine::new(func, &mir.functions);
+            let (best_res, _best_tree, score) = mrsc.explore_and_select(&MinCodeSizeObjective);
 
-    let mut actual_count = 0;
-    for b in &best_res.blocks {
-        actual_count += 1 + b.statements.len();
-    }
-    assert_eq!(score, actual_count as f64, "MRSC score must equal residual block/stmt count");
+            let mut actual_count = 0;
+            for b in &best_res.blocks {
+                actual_count += 1 + b.statements.len();
+            }
+            assert_eq!(score, actual_count as f64, "MRSC score must equal residual block/stmt count");
 
-    // Also test Pareto objective
-    let (pareto_res, _pareto_tree, pareto_score) = mrsc.explore_and_select(&ParetoObjective);
-    assert!(pareto_score >= score, "Pareto score should incorporate branch penalties");
-    assert!(!pareto_res.blocks.is_empty(), "Pareto residual must have blocks");
+            // Also test Pareto objective
+            let (pareto_res, _pareto_tree, pareto_score) = mrsc.explore_and_select(&ParetoObjective);
+            assert!(pareto_score >= score, "Pareto score should incorporate branch penalties");
+            assert!(!pareto_res.blocks.is_empty(), "Pareto residual must have blocks");
 
-    // Test execution of program compiled with MRSC
-    let res = compile_and_run_mode(code, "test_mrsc_optimal_code_size", SupercompileMode::Mrsc, "size");
-    assert!(res >= 0, "Execution under MRSC must succeed");
+            // Test execution of program compiled with MRSC
+            let res = compile_and_run_mode(code, "test_mrsc_optimal_code_size", SupercompileMode::Mrsc, "size");
+            assert!(res >= 0, "Execution under MRSC must succeed");
+        })
+        .unwrap();
+    handler.join().unwrap();
 }
 
 #[test]

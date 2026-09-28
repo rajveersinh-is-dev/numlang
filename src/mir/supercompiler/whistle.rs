@@ -35,6 +35,9 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
         }
         SymTerm::Phi(incoming2, _) => incoming2.iter().any(|(_, t)| is_embedded(t1, *t, interner)),
         SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => is_embedded(t1, *inner2, interner),
+        SymTerm::ClosureVal(_, captured2, _) => {
+            captured2.iter().any(|&c| is_embedded(t1, c, interner))
+        }
         _ => false,
     };
     if embedded_in_child {
@@ -69,6 +72,14 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
                 && a1
                     .iter()
                     .zip(a2.iter())
+                    .all(|(&a, &b)| is_embedded(a, b, interner))
+        }
+        (SymTerm::ClosureVal(fn1, c1, _), SymTerm::ClosureVal(fn2, c2, _)) => {
+            fn1 == fn2
+                && c1.len() == c2.len()
+                && c1
+                    .iter()
+                    .zip(c2.iter())
                     .all(|(&a, &b)| is_embedded(a, b, interner))
         }
         (SymTerm::Select(c1, th1, el1, _), SymTerm::Select(c2, th2, el2, _)) => {

@@ -510,5 +510,32 @@ fn emit_term_eval(
             ));
             place
         }
+        SymTerm::ClosureVal(fn_name, captured, ty) => {
+            let cap_places: Vec<Place> = captured
+                .iter()
+                .map(|&c| emit_term_eval(c, interner, stmts, locals, next_temp_id, phi_remap))
+                .collect();
+            let temp_name = format!("_sc_{}", *next_temp_id);
+            *next_temp_id += 1;
+            locals.push(MirLocalDecl {
+                name: temp_name.clone(),
+                ty: ty.clone(),
+                mutable: false,
+            });
+            let place = Place {
+                local: temp_name,
+                projections: vec![],
+            };
+            let rval = if cap_places.is_empty() && fn_name != "closure_stub" {
+                Rvalue::FnPtr(fn_name.clone())
+            } else {
+                Rvalue::ClosureAlloc {
+                    fn_name: fn_name.clone(),
+                    captured: cap_places,
+                }
+            };
+            stmts.push(Statement::Assign(place.clone(), rval));
+            place
+        }
     }
 }
