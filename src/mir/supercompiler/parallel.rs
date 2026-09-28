@@ -117,5 +117,6 @@ pub fn supercompile_mir_program_parallel(
         loops_collapsed: loops_collapsed.load(Ordering::Relaxed),
         knots_tied: knots_tied.load(Ordering::Relaxed),
         calls_inlined: 0,
+        sc_bce_eliminated: 0,
     }
 }

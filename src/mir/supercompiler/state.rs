@@ -229,6 +229,62 @@ impl PathConstraintStore {
     }
 }
 
+/// Interval refinement attached to a symbolic term at a given program point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Interval {
+    pub lo: Option<i64>,   // None = -∞
+    pub hi: Option<i64>,   // None = +∞
+}
+
+impl Interval {
+    pub const FULL: Self = Interval { lo: None, hi: None };
+    pub const fn exact(v: i64) -> Self {
+        Interval { lo: Some(v), hi: Some(v) }
+    }
+
+    pub fn meet(&self, other: &Interval) -> Interval {
+        // intersect: take max of los, min of his
+        let lo = match (self.lo, other.lo) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        let hi = match (self.hi, other.hi) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        Interval { lo, hi }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match (self.lo, self.hi) {
+            (Some(lo), Some(hi)) => lo > hi,
+            _ => false,
+        }
+    }
+
+    pub fn definitely_nonneg(&self) -> bool {
+        self.lo.is_some_and(|lo| lo >= 0)
+    }
+
+    pub fn definitely_lt(&self, bound: i64) -> bool {
+        self.hi.is_some_and(|hi| hi < bound)
+    }
+
+    pub fn definitely_le(&self, bound: i64) -> bool {
+        self.hi.is_some_and(|hi| hi <= bound)
+    }
+
+    pub fn definitely_gt(&self, bound: i64) -> bool {
+        self.lo.is_some_and(|lo| lo > bound)
+    }
+
+    pub fn definitely_ge(&self, bound: i64) -> bool {
+        self.lo.is_some_and(|lo| lo >= bound)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolicState {
     pub block: BasicBlockId,
@@ -238,6 +294,7 @@ pub struct SymbolicState {
     pub path_constraints: PathConstraintStore,
     pub symbolic_heap: HashMap<SymTermId, SymTermId>,
     pub next_heap_id: usize,
+    pub refinements: HashMap<SymTermId, Interval>,
 }
 
 impl SymbolicState {
@@ -250,6 +307,7 @@ impl SymbolicState {
             path_constraints: PathConstraintStore::new(),
             symbolic_heap: HashMap::new(),
             next_heap_id: 0,
+            refinements: HashMap::new(),
         }
     }
 
@@ -260,4 +318,25 @@ impl SymbolicState {
     pub fn set_value(&mut self, place: Place, term: SymTermId) {
         self.env.insert(place, term);
     }
+
+    pub fn refine(&mut self, term: SymTermId, iv: Interval) {
+        let leader = self.path_constraints.find_leader(term);
+        let updated = {
+            let entry = self.refinements.entry(leader).or_insert(Interval::FULL);
+            *entry = entry.meet(&iv);
+            entry.clone()
+        };
+        if leader != term {
+            self.refinements.insert(term, updated);
+        }
+    }
+
+    pub fn get_refinement(&self, term: SymTermId) -> Interval {
+        let leader = self.path_constraints.find_leader(term);
+        if let Some(iv) = self.refinements.get(&leader) {
+            return iv.clone();
+        }
+        self.refinements.get(&term).cloned().unwrap_or(Interval::FULL)
+    }
 }
+
