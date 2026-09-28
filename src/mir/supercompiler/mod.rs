@@ -32,6 +32,7 @@ pub use parallel::supercompile_mir_program_parallel;
 pub use polyhedral::fuse_polyhedral_stencils;
 pub use recurrence::{detect_nway_linear_system, solve_nway_recurrence, NWayLinearSystem};
 use residualize::residualize_process_tree;
+pub use state::Interval;
 pub use validate::{
     check_satisfiability, verify_formula_validity, verify_program_equivalence, BoolFormula,
     BvExpr, SmtLib2Printer, SmtResult, TranslationValidator, ValidationCertificate,
@@ -115,6 +116,7 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.loops_collapsed += stats.loops_collapsed;
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
+                total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
             }
             SupercompileMode::Distill => {
                 let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
@@ -134,6 +136,7 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.loops_collapsed += stats.loops_collapsed + folds;
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
+                total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
             }
             SupercompileMode::Mrsc => {
                 let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
@@ -153,6 +156,7 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.loops_collapsed += stats.loops_collapsed;
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
+                total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
             }
         }
     }
@@ -165,7 +169,8 @@ fn is_profitable(stats: &SupercompilerStats, budget: usize, tree: &ProcessTree) 
         && (stats.branches_pruned > 0
             || stats.loops_collapsed > 0
             || stats.knots_tied > 0
-            || stats.calls_inlined > 0)
+            || stats.calls_inlined > 0
+            || stats.sc_bce_eliminated > 0)
 }
 
 fn func_is_impure(func: &MirFunction) -> bool {
