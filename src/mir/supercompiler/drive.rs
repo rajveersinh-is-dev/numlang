@@ -40,14 +40,17 @@ pub struct SupercompilerStats {
     pub knots_tied: usize,
     pub calls_inlined: usize,
     pub sc_bce_eliminated: usize,
+    // Phase 35: Residual code-size metrics (set by compact.rs after compaction)
+    pub residual_block_count: usize,
+    pub residual_stmt_count: usize,
 }
 
 impl fmt::Display for SupercompilerStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}, calls inlined: {}, sc bce eliminated: {}",
-            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied, self.calls_inlined, self.sc_bce_eliminated
+            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}, calls inlined: {}, sc bce eliminated: {}, residual blocks: {}, residual stmts: {}",
+            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied, self.calls_inlined, self.sc_bce_eliminated, self.residual_block_count, self.residual_stmt_count
         )
     }
 }

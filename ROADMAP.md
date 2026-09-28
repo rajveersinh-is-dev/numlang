@@ -29,7 +29,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Remediation & Frontier Roadmap (Phases 20–34)
+### Remediation & Frontier Roadmap (Phases 20–35)
 
 *Formulated to systematically resolve all findings from the comprehensive audit (`honest_review.md`).*
 
@@ -50,6 +50,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 | **Phase 32** | **N-Way Mutual Recurrence Solver**<br>Add `NWayLinearSystem`, `detect_nway_linear_system` using integer Cramer's rule and fraction-free Gaussian elimination ($N \le 8$), binary matrix exponentiation `mat_pow_nxn`, and `solve_nway_recurrence` emitting `__nway_recurrence_i` intrinsics and exact closed forms; integrate into `SupercompilerDriver` loop recurrence pipeline. | **Completed** | Full suite green (100%), benchmarks stable |
 | **Phase 33** | **Refinement Type Propagation Through Process Tree**<br>Add `Interval` arithmetic and `refinements` mapping to `SymbolicState`; interval propagation across arithmetic ops (`Add`, `Sub`, `Mul`); branch narrowing across 6 comparison operators; dead-branch pruning on empty intervals; call-site argument refinement propagation into inlined callees; supercompiler-level bounds-check elimination (`sc_bce_eliminated`). | **Completed** | Full suite green (100%), 5/5 new tests passing |
 | **Phase 34** | **Full Higher-Order Closure Driving**<br>Add `SymTerm::ClosureVal(String, Vec<SymTermId>, Type)` for symbolic closures; track `Rvalue::ClosureAlloc` and `Rvalue::FnPtr` in `drive_statement`; drive through `Terminator::IndirectCall` in `drive_node` via `resolve_closure_function` and `try_drive_closure_call`; bind captured variables and call arguments into callee initial state with interval refinement propagation; fold closure invocations and deforest higher-order loops. | **Completed** | Full suite green (100%), 6/6 new tests passing |
+| **Phase 35** | **Optimal Residual Code Size (Post-Distillation Compaction)**<br>Implement pre-residualization process-tree compaction (`compact_process_tree`) with dead overflow node elimination and alpha-equivalent knot deduplication; implement post-residualization MIR peephole pass (`compact_mir_function`) with identity assignment removal and conservative copy propagation (eta-reduction); add `residual_block_count` and `residual_stmt_count` to `SupercompilerStats` and `--supercompile-stats` CLI. | **Completed** | Full suite green (100%), 5/5 new tests passing |
 
 ---
 

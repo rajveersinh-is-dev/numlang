@@ -934,6 +934,8 @@ fn real_main() -> Result<()> {
             &cli.mrsc_objective,
         );
         println!("{}", stats);
+        println!("  residual blocks:   {}", stats.residual_block_count);
+        println!("  residual stmts:    {}", stats.residual_stmt_count);
         return Ok(());
     }
 

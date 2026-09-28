@@ -777,6 +777,8 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
         knots_tied: 1,
         calls_inlined: 0,
         sc_bce_eliminated: 0,
+        residual_block_count: 0,
+        residual_stmt_count: 0,
     };
 
     let tree = GlobalProcessTree {
@@ -998,6 +1000,8 @@ fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction
         knots_tied: 1,
         calls_inlined: 0,
         sc_bce_eliminated: 0,
+        residual_block_count: 0,
+        residual_stmt_count: 0,
     };
 
     let tree = GlobalProcessTree {
@@ -1200,6 +1204,8 @@ fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, 
         knots_tied: 2,
         calls_inlined: 0,
         sc_bce_eliminated: 0,
+        residual_block_count: 0,
+        residual_stmt_count: 0,
     };
 
     let tree = GlobalProcessTree {

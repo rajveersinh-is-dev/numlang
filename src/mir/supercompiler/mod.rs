@@ -4,6 +4,7 @@
 //! detects growth via fast homeomorphic embedding, solves recurrence closed forms ($O(N) \to O(1)$),
 //! and residualizes back into optimized SSA Control Flow Graphs.
 
+pub mod compact;
 pub mod distill;
 pub mod drive;
 pub mod fusion;
@@ -18,6 +19,7 @@ pub mod term;
 pub mod validate;
 pub mod whistle;
 
+pub use compact::{compact_mir_function, compact_process_tree};
 pub use distill::DistillationEngine;
 pub use drive::{
     ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerDriver, SupercompilerStats,
@@ -96,11 +98,15 @@ pub fn supercompile_mir_program_with_mode(
     let funcs_snapshot = program.functions.clone();
     for func in &mut program.functions {
         if func_is_impure(func) {
+            total_stats.residual_block_count += func.blocks.len();
+            total_stats.residual_stmt_count += func.blocks.iter().map(|b| b.statements.len()).sum::<usize>();
             continue;
         }
 
         // Functions synthesized or transformed by global distillation are already in optimal single-pass form
         if mode == SupercompileMode::Distill && (func.name.starts_with("__distill_") || func.name == "append3") {
+            total_stats.residual_block_count += func.blocks.len();
+            total_stats.residual_stmt_count += func.blocks.iter().map(|b| b.statements.len()).sum::<usize>();
             continue;
         }
 
@@ -117,6 +123,8 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
                 total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
+                total_stats.residual_block_count += stats.residual_block_count;
+                total_stats.residual_stmt_count += stats.residual_stmt_count;
             }
             SupercompileMode::Distill => {
                 let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
@@ -125,11 +133,18 @@ pub fn supercompile_mir_program_with_mode(
                 let mut interner_clone = tree.interner.clone();
                 let mut distill = DistillationEngine::new(func, &mut interner_clone);
                 let folds = distill.distill_process_tree(&mut tree);
-                let stats = tree.stats.clone();
+                let mut stats = tree.stats.clone();
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops && (is_profitable(&stats, budget, &tree) || (tree.nodes.len() < budget && folds > 0)) {
-                    let new_func = residualize_process_tree(&tree, func);
+                    let (_dead, _deduped) = compact_process_tree(&mut tree);
+                    let mut new_func = residualize_process_tree(&tree, func);
+                    let _stmts_removed = compact_mir_function(&mut new_func);
+                    stats.residual_block_count = new_func.blocks.len();
+                    stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
+                } else {
+                    stats.residual_block_count = func.blocks.len();
+                    stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -137,6 +152,8 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
                 total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
+                total_stats.residual_block_count += stats.residual_block_count;
+                total_stats.residual_stmt_count += stats.residual_stmt_count;
             }
             SupercompileMode::Mrsc => {
                 let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
@@ -145,11 +162,18 @@ pub fn supercompile_mir_program_with_mode(
                     "pareto" => mrsc_engine.explore_and_select(&ParetoObjective),
                     _ => mrsc_engine.explore_and_select(&MinCodeSizeObjective),
                 };
-                let stats = best_tree.stats.clone();
+                let mut stats = best_tree.stats.clone();
                 let budget = SupercompilerDriver::new(func).config.max_inline_nodes;
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops && is_profitable(&stats, budget, &best_tree) {
-                    *func = best_res;
+                    let mut new_func = best_res;
+                    let _stmts_removed = compact_mir_function(&mut new_func);
+                    stats.residual_block_count = new_func.blocks.len();
+                    stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
+                    *func = new_func;
+                } else {
+                    stats.residual_block_count = func.blocks.len();
+                    stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -157,6 +181,8 @@ pub fn supercompile_mir_program_with_mode(
                 total_stats.knots_tied += stats.knots_tied;
                 total_stats.calls_inlined += stats.calls_inlined;
                 total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
+                total_stats.residual_block_count += stats.residual_block_count;
+                total_stats.residual_stmt_count += stats.residual_stmt_count;
             }
         }
     }
@@ -207,13 +233,20 @@ pub fn supercompile_mir_function(func: &MirFunction) -> MirFunction {
 pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func);
     let budget = driver.config.max_inline_nodes;
-    let tree = driver.run();
-    let stats = tree.stats.clone();
+    let mut tree = driver.run();
+    let mut stats = tree.stats.clone();
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
     if !is_profitable(&stats, budget, &tree) {
+        stats.residual_block_count = func.blocks.len();
+        stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
     }
-    (residualize_process_tree(&tree, func), stats)
+    let (_dead, _deduped) = compact_process_tree(&mut tree);
+    let mut new_func = residualize_process_tree(&tree, func);
+    let _stmts_removed = compact_mir_function(&mut new_func);
+    stats.residual_block_count = new_func.blocks.len();
+    stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
+    (new_func, stats)
 }
 
 /// Supercompiles a single MIR function with context of all other functions in the program.
@@ -223,13 +256,20 @@ pub fn supercompile_mir_function_with_program(
 ) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
     let budget = driver.config.max_inline_nodes;
-    let tree = driver.run();
-    let stats = tree.stats.clone();
+    let mut tree = driver.run();
+    let mut stats = tree.stats.clone();
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
     if !is_profitable(&stats, budget, &tree) {
+        stats.residual_block_count = func.blocks.len();
+        stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
     }
-    (residualize_process_tree(&tree, func), stats)
+    let (_dead, _deduped) = compact_process_tree(&mut tree);
+    let mut new_func = residualize_process_tree(&tree, func);
+    let _stmts_removed = compact_mir_function(&mut new_func);
+    stats.residual_block_count = new_func.blocks.len();
+    stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
+    (new_func, stats)
 }
 
 /// Generates the process tree for a function for inspection.
