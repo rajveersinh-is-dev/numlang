@@ -1,8 +1,8 @@
 # NumLang: A Formally Verified, Self-Applicable Process-Tree Supercompiler
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/davea/numlang)
-[![Tests: 102 suites](https://img.shields.io/badge/tests-100%25%20passing-brightgreen.svg)](https://github.com/davea/numlang)
-[![Clippy: 0 warnings](https://img.shields.io/badge/clippy-0%20warnings-brightgreen.svg)](https://github.com/davea/numlang)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](https://github.com/Raj123-0/numlang)
+[![Tests: 102 suites](https://img.shields.io/badge/tests-100%25%20passing-brightgreen.svg)](https://github.com/Raj123-0/numlang)
+[![Clippy: 0 warnings](https://img.shields.io/badge/clippy-0%20warnings-brightgreen.svg)](https://github.com/Raj123-0/numlang)
 [![Lean 4 Verified](https://img.shields.io/badge/Lean%204-verified-blue.svg)](lean/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![ACM PLDI 2027](https://img.shields.io/badge/ACM%20SIGPLAN-PLDI%20'27-purple.svg)](paper/)
