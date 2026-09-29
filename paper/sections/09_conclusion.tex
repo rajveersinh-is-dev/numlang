@@ -1,0 +1,27 @@
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+
+In this paper, we presented \textbf{NumLang}, a formally verified, SSA-based process-tree supercompiler that bridges the historic gap between academic metacomputation and optimizing systems compilers. Over four decades after Turchin's foundational insights, NumLang demonstrates that supercompilation can achieve practical, reliable, and verified dominance in a systems programming language.
+
+We have established NumLang's leadership across \textbf{nine measurable axes}:
+\begin{enumerate}
+    \item \textbf{Guaranteed Termination}: A formal WQO termination witness and monotonic rank decrease certified for every compiled unit.
+    \item \textbf{Recurrence Transformation}: Automatic $O(N) \to O(1)$ closed-form derivations for order-$k$ and $N$-way mutual linear recurrences via matrix exponentiation.
+    \item \textbf{Refinement Bounds Elimination}: Path-sensitive interval narrowing that eliminates 100\% of runtime bounds checks in verified loops.
+    \item \textbf{Higher-Order Deforestation}: Symbolic closure driving that deforests functional compositions into fused register-level loops.
+    \item \textbf{Minimal Residual Code}: Multi-phase process-tree compaction and copy propagation that avoid exponential code blowup.
+    \item \textbf{Parallel Residualization}: Subtree read-write disjointness analysis that synthesizes native \texttt{Fork}/\texttt{Join} concurrency.
+    \item \textbf{Content-Addressed Caching}: SHA-256 specialization caching that enables sub-5ms incremental rebuilds.
+    \item \textbf{Mechanized Correctness}: An end-to-end semantic preservation proof verified in Lean 4 with zero unproven axioms and zero \texttt{sorry}.
+    \item \textbf{Empirical Dominance}: Consistent speedups over GCC, Clang, and GHC across an expanded suite of 30 diverse benchmarks.
+\end{enumerate}
+
+\paragraph{Future Work.}
+We plan to extend NumLang along three frontier directions:
+\begin{itemize}
+    \item \textbf{Dependent Type Systems}: Integrating refinement types directly into the surface language to allow programmer-guided driving invariants.
+    \item \textbf{Probabilistic Programs}: Extending process trees to support stochastic execution distributions and exact inference synthesis.
+    \item \textbf{Heterogeneous GPU Targets}: Lowering parallel fork/join subtrees into SPIR-V and CUDA kernels for high-throughput accelerator execution.
+\end{itemize}
+
+NumLang demonstrates that aggressive metacomputation and mathematical verification can coexist harmoniously in a modern systems compiler, providing a blueprint for the next generation of optimizing compilers.

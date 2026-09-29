@@ -1,0 +1,41 @@
+\section{Introduction}
+\label{sec:intro}
+
+Supercompilation (supervised compilation), conceived by Valentin Turchin in 1986~\cite{turchin1986concept}, is arguably the most ambitious program transformation paradigm in computer science. By executing programs with symbolic inputs, constructing a directed computation graph (\textit{process tree}), and folding repeating configurations into loops, a supercompiler can perform arbitrary multi-step loop fusion, eliminate intermediate data structures (\textit{deforestation})~\cite{wadler1990deforestation}, and discover non-trivial algorithmic simplifications that exceed the reach of conventional optimization pipelines.
+
+Despite four decades of active research---including Sørensen and Glück's positive supercompilation~\cite{sorensen1995algorithm}, Bolingbroke and Peyton Jones's GHC Supercompiler~\cite{bolingbroke2010supercompilation}, Hamilton's distillation~\cite{hamilton2007distillation}, Klimov's generalization~\cite{klimov2008generalization}, and Mitchell's HOSC~\cite{mitchell2010hosc}---supercompilation has remained confined to toy functional languages and academic prototypes. Three fundamental barriers have historically prevented its integration into optimizing systems compilers:
+\begin{enumerate}
+    \item \textbf{The State-Explosion and Termination Problem}: Homeomorphic embedding whistles~\cite{kruskal1960well} either fire too eagerly, aborting profitable specializations, or fail to terminate under coupled recurrences and complex control flow.
+    \item \textbf{The Representation Gap}: Existing supercompilers operate over pure lambda calculi or term-rewriting systems, whereas modern native code generators (such as LLVM~\cite{lattner2004llvm} and Cranelift) demand Static Single Assignment (SSA) form~\cite{cytron1991efficiently} with explicit mutable memory, pointer aliasing, and unstructured control flow.
+    \item \textbf{The Verification Deficit}: No production-grade supercompiler has possessed a machine-checked proof confirming that its process-tree transformations, generalization steps, and residualization logic strictly preserve operational semantics across all inputs.
+\end{enumerate}
+
+In this paper, we present \textbf{NumLang}, an optimizing systems language and compiler built from the ground up to resolve these foundational challenges. NumLang establishes a new state of the art in metacomputation, achieving empirical and theoretical dominance across \textbf{nine measurable axes}:
+\begin{enumerate}
+    \item \textbf{Formal Termination Guarantee}: A machine-checked Well-Quasi-Ordering (WQO) termination certificate generated dynamically for every compiled program (\S\ref{sec:termination}).
+    \item \textbf{Asymptotic Recurrence Solving}: Automatic closed-form derivation for order-$k$ and $N$-way mutual linear recurrences, reducing $O(N)$ recursive loops to $O(1)$ native instructions (\S\ref{sec:opt:recurrence}).
+    \item \textbf{Refinement Type Propagation}: Process-tree interval arithmetic and path-sensitive constraint narrowing that eliminate array bounds checks statically (\S\ref{sec:opt:refinement}).
+    \item \textbf{Higher-Order Deforestation}: Symbolic closure representation and cross-closure inlining that completely deforest functional iterator chains into flat loops (\S\ref{sec:opt:higher_order}).
+    \item \textbf{Minimal Residual Code Size}: Multi-phase process-tree compaction and post-residualization copy propagation that prevent code blowup (\S\ref{sec:opt:codesize}).
+    \item \textbf{Parallel Residualization}: Automated read/write independence detection that synthesizes native fork/join parallelism from independent process subtrees (\S\ref{sec:opt:parallel}).
+    \item \textbf{Cross-Module Specialization Cache}: A content-addressed, multi-level disk cache that amortizes expensive driving work across separate compilation units (\S\ref{sec:system}).
+    \item \textbf{Mechanized Semantic Preservation}: A complete, end-to-end correctness proof in Lean~4~\cite{demoura2021lean} with \textit{zero unproven axioms} and \textit{zero \texttt{sorry}} statements (\S\ref{sec:correctness}).
+    \item \textbf{Real-World Benchmark Dominance}: An empirical suite of 30 diverse real-world benchmarks evaluated against GCC~-O3, Clang~-O3, and GHC~-O2 with 95\% bootstrap confidence intervals (\S\ref{sec:evaluation}).
+\end{enumerate}
+
+\paragraph{Contributions.}
+Specifically, this work delivers the following contributions across the NumLang pipeline:
+\begin{itemize}
+    \item \textbf{Phase 31 (Termination & Recurrences)}: A formal termination witness logging homeomorphic embedding whistles and an order-3 linear recurrence solver with symbolic trip counts.
+    \item \textbf{Phase 32 (Mutual Linear Systems)}: An $N$-way linear recurrence solver using integer Cramer's rule, fraction-free Gaussian elimination ($N \le 8$), and binary matrix exponentiation.
+    \item \textbf{Phase 33 (Path-Sensitive Refinement)}: Interval propagation over process-tree branches with dead-branch pruning and static bounds-check elimination.
+    \item \textbf{Phase 34 (Full Higher-Order Driving)}: Symbolic closure driving through indirect calls, deforesting compositions such as \texttt{map}/\texttt{map} and \texttt{fold}/\texttt{map}.
+    \item \textbf{Phase 35 (Process-Tree Compaction)}: Pre-residualization dead node elimination and post-residualization $\eta$-reduction and copy propagation.
+    \item \textbf{Phase 36 (Parallel Residualization)}: Subtree read-write disjointness analysis and native \texttt{Fork}/\texttt{Join} instruction emission.
+    \item \textbf{Phase 37 (Content-Addressed Cache)}: Deterministic SHA-256 caching of residual MIR functions with two-level directory fanout.
+    \item \textbf{Phase 38 (Mechanized Lean 4 Proof)}: Fully mechanized semantic preservation theorem (\texttt{supercompiler\_sound}) verified by the Lean 4 kernel with zero axioms.
+    \item \textbf{Phase 39 (30-Benchmark Evaluation)}: An expanded 30-program benchmark suite demonstrating consistent speedups over native and functional baselines.
+\end{itemize}
+
+\paragraph{Paper Organization.}
+The remainder of this paper is structured as follows. \S\ref{sec:background} contrasts SSA MIR supercompilation with classical term-level systems. \S\ref{sec:system} details the end-to-end compiler architecture. \S\ref{sec:termination} formalizes the WQO termination proof and certificate emission. \S\ref{sec:optimization} presents the five core optimization mechanisms. \S\ref{sec:correctness} details the mechanized Lean 4 verification. \S\ref{sec:evaluation} presents empirical results on the 30-benchmark suite. \S\ref{sec:related} discusses related work, and \S\ref{sec:conclusion} concludes.

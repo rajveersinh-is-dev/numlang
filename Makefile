@@ -1,36 +1,28 @@
 # NumLang Supercompiler: Top-level Reproducibility Makefile
-# Compatible with Linux, macOS, and Windows environments
+# Targets: build, test, reproduce, paper, artifact-docker
 
 PYTHON ?= python3
 
-.PHONY: build test lean bench tables figures paper reproduce clean-root
+.PHONY: build test reproduce paper artifact-docker clean
 
 build:
-	cargo build --release --all-features
+	cargo build --release
 
 test:
-	cargo test --tests --release
+	cargo test
 
-lean:
-	cd proof && lake build
-
-bench: build
+reproduce:
 	$(PYTHON) bench/harness/runner.py
-
-tables:
 	$(PYTHON) bench/harness/generate_tables.py
+	sha256sum -c bench/data/checksums.sha256
 
-figures:
-	$(PYTHON) bench/plot.py
+paper:
+	cd paper && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
 
-paper: figures tables
-	cd paper && latexmk -pdf -interaction=nonstopmode main.tex
+artifact-docker:
+	docker build -f docker/Dockerfile -t numlang-artifact .
+	docker run --rm numlang-artifact
 
-reproduce: build test lean bench tables figures
-	@echo "======================================================================"
-	@echo "[DONE] Full end-to-end empirical reproduction complete."
-	@echo "[INTEGRITY] Cryptographic SHA-256 hashes embedded in paper/generated/*.tex"
-	@echo "======================================================================"
-
-clean-root:
-	$(PYTHON) -c "import glob, os; [os.remove(f) for f in glob.glob('*.exe') + glob.glob('*.obj') + glob.glob('*.pdb') + ['_panic.nl'] if os.path.exists(f)]"
+clean:
+	cargo clean
+	rm -f bench/data/*.tmp

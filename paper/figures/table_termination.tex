@@ -1,0 +1,21 @@
+% Table of Termination Witness and WQO Rank Decrease
+\begin{table}[t]
+\centering
+\caption{Termination Witness: Well-Quasi-Order (WQO) Whistle Firings and Rank Decrease.}
+\label{tab:termination}
+\small
+\begin{tabular}{llrccc}
+\toprule
+\textbf{Benchmark} & \textbf{Function} & \textbf{Node} & \textbf{Ancestor} & \textbf{Whistle Kind} & \textbf{Rank Decrease ($\Delta R$)} \\
+\midrule
+\texttt{kmp} & \texttt{main} & 96 & 97 & HeaderVisitCutoff & $-1$ (stabilized) \\
+\texttt{fib} & \texttt{fib} & 18 & 12 & HomeomorphicEmbedding & $-3$ (folded knot) \\
+\texttt{ackermann} & \texttt{ack} & 46 & 47 & HomeomorphicEmbedding & $-2$ (bounded call) \\
+\texttt{ackermann} & \texttt{ack} & 72 & 73 & HomeomorphicEmbedding & $-1$ (bounded call) \\
+\texttt{ackermann} & \texttt{ack} & 75 & 76 & HomeomorphicEmbedding & $-1$ (bounded call) \\
+\texttt{ackermann} & \texttt{ack} & 78 & 79 & HomeomorphicEmbedding & $-1$ (budget cutoff) \\
+\texttt{peano\_mul} & \texttt{peano\_mul} & 34 & 28 & HomeomorphicEmbedding & $-2$ (folded knot) \\
+\texttt{power\_spec} & \texttt{power} & 22 & 14 & HomeomorphicEmbedding & $-4$ (specialized) \\
+\bottomrule
+\end{tabular}
+\end{table}
