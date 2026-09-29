@@ -3,7 +3,7 @@ use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt};
 use crate::typecheck::types::Type;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Rvalue {
     Use(Place),
     BinaryOp(BinaryOp, Place, Place),
@@ -29,12 +29,12 @@ pub enum Rvalue {
     Load(Place),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Statement {
     Assign(Place, Rvalue),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MirBasicBlock {
     pub id: BasicBlockId,
     pub arguments: Vec<(String, Type)>,
@@ -42,14 +42,14 @@ pub struct MirBasicBlock {
     pub terminator: Terminator,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MirLocalDecl {
     pub name: String,
     pub ty: Type,
     pub mutable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MirFunction {
     pub name: String,
     pub params: Vec<(String, Type)>,

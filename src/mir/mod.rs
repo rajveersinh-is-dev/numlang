@@ -1,9 +1,9 @@
 use crate::typecheck::types::Type;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BasicBlockId(pub usize);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Projection {
     Deref,
     Field(String),
@@ -11,13 +11,13 @@ pub enum Projection {
     Payload(usize),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Place {
     pub local: String,
     pub projections: Vec<Projection>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Terminator {
     Branch { target: BasicBlockId },
     BranchIf { condition: Place, then_target: BasicBlockId, else_target: BasicBlockId },
@@ -91,7 +91,7 @@ pub fn compute_cfg(
     (preds, succs)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BasicBlock {
     pub id: BasicBlockId,
     pub arguments: Vec<(String, Type)>,

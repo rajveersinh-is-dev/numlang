@@ -9278,11 +9278,27 @@ pub fn compile_supercompiled_to_obj_with_mode_options(
     objective: &str,
     parallel_residualize: bool,
 ) -> Result<Vec<u8>, CodegenError> {
+    compile_supercompiled_to_obj_with_cache(program, mode, objective, parallel_residualize, None)
+}
+
+pub fn compile_supercompiled_to_obj_with_cache(
+    program: &TypedProgram,
+    mode: crate::mir::supercompiler::SupercompileMode,
+    objective: &str,
+    parallel_residualize: bool,
+    opt_cache: Option<&crate::mir::supercompiler::cache::SpecializationCache>,
+) -> Result<Vec<u8>, CodegenError> {
     let mut typed = program.clone();
     crate::opt::monomorphize::monomorphize(&mut typed);
     crate::opt::supercompiler::supercompile_program(&mut typed, None);
     let mut mir_program = crate::mir::lower::lower_program(&typed);
-    crate::mir::supercompiler::supercompile_mir_program_with_mode_options(&mut mir_program, mode, objective, parallel_residualize);
+    crate::mir::supercompiler::supercompile_mir_program_with_cache(
+        &mut mir_program,
+        mode,
+        objective,
+        parallel_residualize,
+        opt_cache,
+    );
     compile_mir_to_obj(&mir_program)
 }
 

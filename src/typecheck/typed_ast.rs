@@ -2,7 +2,7 @@ use crate::ast::{BinaryOp, UnaryOp};
 use crate::span::Span;
 use crate::typecheck::types::Type;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TypedLiteral {
     Int(i64, Type),
     Float(f64, Type),
