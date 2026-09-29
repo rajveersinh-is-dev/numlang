@@ -1,64 +1,40 @@
-FROM debian:bookworm-slim AS base
+FROM rust:1.85-slim-bullseye
 
-# Prevent interactive prompts during apt install
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install core build dependencies, C/C++ toolchains, GHC Haskell, Python scientific stack
+# Install dependencies: C/C++ toolchains, GHC, Python stack, and TeX Live
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     curl \
     git \
-    llvm-17 \
-    llvm-17-dev \
-    clang-17 \
-    libclang-17-dev \
-    zlib1g-dev \
     python3 \
     python3-pip \
-    python3-matplotlib \
-    python3-scipy \
-    python3-pandas \
-    python3-numpy \
+    gcc \
+    clang \
     ghc \
-    cabal-install \
-    ca-certificates \
     texlive-latex-base \
     texlive-latex-extra \
     texlive-fonts-recommended \
-    latexmk \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Symlink clang-17 to clang and clang++
-RUN ln -s /usr/bin/clang-17 /usr/bin/clang && \
-    ln -s /usr/bin/clang++-17 /usr/bin/clang++
+# Install Lean 4 / Lake via elan
+RUN curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+ENV PATH="/root/.elan/bin:${PATH}"
 
-# Install pinned Rust toolchain (1.81.0)
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.81.0
-
-# Install Lean 4 via elan (v4.11.0)
-ENV ELAN_HOME=/usr/local/elan \
-    PATH=/usr/local/elan/bin:$PATH
-RUN curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain leanprover/lean4:v4.11.0
-
-# Set up project workspace
-WORKDIR /numlang
+# Set workspace
+WORKDIR /artifact
 COPY . .
 
 # Build NumLang compiler
-RUN cargo build --release --all-features
+RUN cargo build --release
 
-# Verify Lean 4 proofs
-WORKDIR /numlang/proof
+# Build Lean proofs
+WORKDIR /artifact/lean
 RUN lake build
 
-# Return to root workspace
-WORKDIR /numlang
+# Python dependencies for benchmarks
+WORKDIR /artifact
+RUN pip3 install --no-cache-dir tabulate scipy numpy
 
-# Make scripts executable
-RUN chmod +x scripts/*.sh
-
-# Default container entrypoint executes all verification gates and benchmark suites
-CMD ["bash", "scripts/run_all_experiments.sh"]
+# Setup entrypoint
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

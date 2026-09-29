@@ -1,0 +1,40 @@
+\section{Background and Motivation}
+\label{sec:background}
+
+\subsection{Supercompilation Landscape}
+Supercompilation constructs a symbolic representation of all reachable runtime configurations. When a recurring configuration is detected, the supercompiler folds the back-edge to form a loop (knot tying). If a configuration grows unbounded, a whistle mechanism halts specialization and applies generalization (e.g., Most Specific Generalization, MSG) to extract common structure.
+
+Table~\ref{tab:competitor_comparison} compares NumLang against the five seminal supercompilers developed over the past four decades: Turchin's original Refal supercompiler~\cite{turchin1986concept}, Bolingbroke and Peyton Jones's GHC Supercompiler (Supero)~\cite{bolingbroke2010supercompilation}, Hamilton's Distillation~\cite{hamilton2007distillation}, Klimov's MSG framework~\cite{klimov2008generalization}, and Mitchell's HOSC~\cite{mitchell2010hosc}.
+
+\begin{table*}[t]
+\centering
+\caption{Systematic comparison of supercompiler architectures across formal and engineering capabilities.}
+\label{tab:competitor_comparison}
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{System} & \textbf{Termination Proof} & \textbf{Higher-Order} & \textbf{Parallel Emission} & \textbf{Mechanized Proof} & \textbf{Cross-Module Cache} \\
+\midrule
+Turchin (1986)~\cite{turchin1986concept} & Informal & No & No & No & No \\
+Bolingbroke et al. (2010)~\cite{bolingbroke2010supercompilation} & WQO Proof & Yes & No & No & No \\
+Hamilton (2007)~\cite{hamilton2007distillation} & Informal & Partial & No & No & No \\
+Klimov (2008)~\cite{klimov2008generalization} & Informal & No & No & No & No \\
+Mitchell (2010)~\cite{mitchell2010hosc} & Informal & Yes & No & No & No \\
+\textbf{NumLang} (This Work) & \textbf{Lean-Proved} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} & \textbf{Yes} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+As Table~\ref{tab:competitor_comparison} highlights, existing systems either omit formal machine-checked correctness proofs, fail to support native parallel code generation, or incur exorbitant compilation times due to the absence of caching mechanisms.
+
+\subsection{MIR Supercompilation vs. Term-Level Supercompilation}
+A fundamental limitation of previous supercompilers is their reliance on pure expression trees (e.g., lambda terms or term-rewriting patterns). In contrast, NumLang introduces \textbf{SSA Mid-Level IR (MIR) Supercompilation}. This architectural departure addresses three critical challenges:
+
+\paragraph{Flat Control Flow vs. Nested Syntax Trees.}
+Term-level supercompilers express loops through structural recursion. When specializing algorithms with irregular control flow (e.g., early exits, mutual loops, or complex state machines), expression trees rapidly suffer exponential code duplication. NumLang operates on a control-flow graph (CFG) of basic blocks populated with Static Single Assignment (SSA) instructions and explicit $\phi$-nodes. Driving over SSA MIR naturally handles unstructured control flow, join points, and knot remapping without code blowup.
+
+\paragraph{Explicit Heap and Memory Modeling.}
+Systems languages cannot assume purely immutable values. NumLang's MIR incorporates an explicit symbolic heap with MemorySSA versioning and pointer alias analysis. Statements such as \texttt{Alloc}, \texttt{Load}, and \texttt{Store} update symbolic memory version tokens. This allows the driving engine to trace heap mutations, perform symbolic store forwarding, and detect when intermediate heap buffers (e.g., temporary arrays in polyhedral stencils) can be contracted into registers.
+
+\paragraph{Direct Native Lowering.}
+Traditional supercompilers generate source code in high-level interpreted or managed languages (Refal, Haskell, or Scala), relying on an external compiler to emit machine code. This introduces a impedance mismatch: the downstream compiler often fails to optimize or vectorize the generated residual expressions. NumLang's supercompiler directly outputs optimized SSA MIR, which is subsequently validated via SMT translation validation and lowered to high-performance native machine code via Cranelift or LLVM.

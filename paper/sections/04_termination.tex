@@ -1,0 +1,48 @@
+\section{Termination Guarantees}
+\label{sec:termination}
+
+A supercompiler must guarantee termination on all input programs, including those featuring mutual recursion, non-linear iteration, and dynamic data structures. In NumLang, termination is established both dynamically via a certified Well-Quasi-Ordering (WQO) whistle and statically via a machine-checked proof in Lean~4.
+
+\subsection{Formalization of State Embedding}
+Let $\mathcal{T}$ denote the set of symbolic terms, $\mathcal{H}$ denote the set of symbolic heap allocations, and $\mathcal{S}$ denote the set of symbolic execution states. Each state $s \in \mathcal{S}$ is a tuple $\langle b, \rho, h, \Pi \rangle$ comprising the current basic block identifier $b$, register environment $\rho: \text{Reg} \to \mathcal{T}$, heap configuration $h \in \mathcal{H}$, and path constraint set $\Pi$.
+
+The homeomorphic embedding relation $\trianglelefteq$ over symbolic terms is defined inductively following Higman and Kruskal~\cite{kruskal1960well}:
+\begin{align}
+\frac{t_1 = t_2}{t_1 \trianglelefteq t_2} \quad \text{(Refl)} \quad
+\frac{\exists i.\; t_1 \trianglelefteq u_i}{t_1 \trianglelefteq f(u_1, \dots, u_k)} \quad \text{(Dive)} \\
+\frac{f = g \quad \forall i.\; t_i \trianglelefteq u_i}{f(t_1, \dots, t_k) \trianglelefteq g(u_1, \dots, u_k)} \quad \text{(Couple)}
+\end{align}
+
+We extend this relation to whole symbolic states via the partial order $\le_{\text{state}}$:
+\begin{definition}[State Embedding $\le_{\text{state}}$]
+Given two states $s_1 = \langle b_1, \rho_1, h_1, \Pi_1 \rangle$ and $s_2 = \langle b_2, \rho_2, h_2, \Pi_2 \rangle$, we say $s_1 \le_{\text{state}} s_2$ if and only if:
+\begin{enumerate}
+    \item $b_1 = b_2$ (identical control-flow location);
+    \item $\forall r \in \text{dom}(\rho_1).\; \rho_1(r) \trianglelefteq \rho_2(r)$ (pairwise term embedding);
+    \item $h_1 \trianglelefteq_H h_2$ (structural embedding of allocated heap shapes);
+    \item $\Pi_2 \implies \Pi_1$ (path constraint entailment).
+\end{enumerate}
+\end{definition}
+
+\subsection{Well-Quasi-Ordering Theorem}
+By Kruskal's Tree Theorem, the homeomorphic embedding relation over a finite alphabet of term and heap constructors constitutes a well-quasi-order:
+\begin{theorem}[Termination of Process-Tree Driving]
+\label{thm:termination}
+Let $s_0, s_1, s_2, \dots$ be any infinite sequence of symbolic states generated along a branch of a process tree. There exist indices $i < j$ such that $s_i \le_{\text{state}} s_j$.
+\end{theorem}
+\begin{proof}
+Formally verified in Lean 4 (\texttt{lean/Supercompiler/Termination.lean}). The signature alphabet of MIR operators and heap constructors is finite. By Higman's Lemma and Kruskal's Theorem, $(\mathcal{S}, \le_{\text{state}})$ is a WQO; hence every infinite sequence contains an embedded pair, ensuring that no branch can expand infinitely without triggering a whistle.
+\end{proof}
+
+\subsection{Termination Witnesses and Rank Decrease}
+When a whistle fires ($s_{\text{anc}} \le_{\text{state}} s_{\text{curr}}$), the driving engine halts further unrolling and initiates either knot tying (if states are isomorphic up to renaming) or generalization (MSG). To provide external verifiability, NumLang includes a CLI flag (\texttt{--emit-termination-proof}) that outputs a machine-readable JSON certificate recording every whistle firing, the corresponding ancestor node, and the monotonic rank decrease $\Delta R$ on the configuration WQO measure.
+
+\input{figures/table_termination.tex}
+
+Table~\ref{tab:termination} details the whistle firings and WQO rank decrease across representative benchmarks:
+\begin{itemize}
+    \item In \texttt{kmp}, the loop header visit count is bounded by a cutoff whistle, stabilizing after one iteration and producing a deterministic DFA state machine.
+    \item In \texttt{fib}, homeomorphic embedding detects the accumulating argument pattern, folding the recurring loop into a generalized knot.
+    \item In \texttt{ackermann}, four recursive whistle firings trigger depth cutoffs that prevent infinite expansion on non-primitive recursive call trees while preserving partial evaluation on static arguments.
+\end{itemize}
+In every case, the rank decrease is strictly negative, certifying that the process-tree construction terminates in finite steps.
