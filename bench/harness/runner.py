@@ -33,18 +33,64 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_BIN_DIR = BENCH_DIR / "bin"
 TEMP_BIN_DIR.mkdir(parents=True, exist_ok=True)
 
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class BenchmarkEntry:
+    name: str
+    src: str
+    expected_exit: int
+    category: str
+    c_equiv: Optional[str] = None
+    hs_equiv: Optional[str] = None
+
 BENCHMARKS = [
-    "kmp",
-    "double_nrev",
-    "peano_mul",
-    "power_spec",
-    "nrev",
-    "append3",
-    "stream_fusion",
-    "ackermann",
-    "fib_matrix",
-    "matvec_4x4",
-    "tree_flip",
+    # 1. String Algorithms
+    BenchmarkEntry("kmp", "bench/numlang/kmp.nl", 88, "String Algorithms", "bench/c/kmp.c", "bench/haskell/kmp.hs"),
+    BenchmarkEntry("boyer_moore", "bench/numlang/boyer_moore.nl", 142, "String Algorithms", "bench/c/boyer_moore.c", "bench/haskell/boyer_moore.hs"),
+    BenchmarkEntry("rabin_karp", "bench/numlang/rabin_karp.nl", 142, "String Algorithms", "bench/c/rabin_karp.c", "bench/haskell/rabin_karp.hs"),
+    BenchmarkEntry("lcs", "bench/numlang/lcs.nl", 15, "String Algorithms", "bench/c/lcs.c", "bench/haskell/lcs.hs"),
+
+    # 2. Sorting
+    BenchmarkEntry("merge_sort", "bench/numlang/merge_sort.nl", 1, "Sorting", "bench/c/merge_sort.c", "bench/haskell/merge_sort.hs"),
+    BenchmarkEntry("quick_sort", "bench/numlang/quick_sort.nl", 2, "Sorting", "bench/c/quick_sort.c", "bench/haskell/quick_sort.hs"),
+    BenchmarkEntry("radix_sort", "bench/numlang/radix_sort.nl", 2, "Sorting", "bench/c/radix_sort.c", "bench/haskell/radix_sort.hs"),
+
+    # 3. Graph Algorithms
+    BenchmarkEntry("bfs", "bench/numlang/bfs.nl", 5, "Graph Algorithms", "bench/c/bfs.c", "bench/haskell/bfs.hs"),
+    BenchmarkEntry("dijkstra", "bench/numlang/dijkstra.nl", 25, "Graph Algorithms", "bench/c/dijkstra.c", "bench/haskell/dijkstra.hs"),
+    BenchmarkEntry("floyd_warshall", "bench/numlang/floyd_warshall.nl", 24, "Graph Algorithms", "bench/c/floyd_warshall.c", "bench/haskell/floyd_warshall.hs"),
+
+    # 4. Numerical & Scientific
+    BenchmarkEntry("newton_sqrt", "bench/numlang/newton_sqrt.nl", 134, "Numerical & Scientific", "bench/c/newton_sqrt.c", "bench/haskell/newton_sqrt.hs"),
+    BenchmarkEntry("euler_pi", "bench/numlang/euler_pi.nl", 183, "Numerical & Scientific", "bench/c/euler_pi.c", "bench/haskell/euler_pi.hs"),
+    BenchmarkEntry("sieve", "bench/numlang/sieve.nl", 128, "Numerical & Scientific", "bench/c/sieve.c", "bench/haskell/sieve.hs"),
+    BenchmarkEntry("power_spec", "bench/numlang/power_spec.nl", 202, "Numerical & Scientific", "bench/c/power_spec.c", "bench/haskell/power_spec.hs"),
+    BenchmarkEntry("peano_mul", "bench/numlang/peano_mul.nl", 176, "Numerical & Scientific", "bench/c/peano_mul.c", "bench/haskell/peano_mul.hs"),
+
+    # 5. Dynamic Programming & Recursion
+    BenchmarkEntry("fib_matrix", "bench/numlang/fib_matrix.nl", 46, "Dynamic Programming", "bench/c/fib_matrix.c", "bench/haskell/fib_matrix.hs"),
+    BenchmarkEntry("tribonacci", "bench/numlang/tribonacci.nl", 127, "Dynamic Programming", "bench/c/tribonacci.c", "bench/haskell/tribonacci.hs"),
+    BenchmarkEntry("hofstadter", "bench/numlang/hofstadter.nl", 62, "Dynamic Programming", "bench/c/hofstadter.c", "bench/haskell/hofstadter.hs"),
+    BenchmarkEntry("ackermann", "bench/numlang/ackermann.nl", 106, "Dynamic Programming", "bench/c/ackermann.c", "bench/haskell/ackermann.hs"),
+
+    # 6. List & Tree Recursion
+    BenchmarkEntry("nrev", "bench/numlang/nrev.nl", 224, "List & Tree Recursion", "bench/c/nrev.c", "bench/haskell/nrev.hs"),
+    BenchmarkEntry("double_nrev", "bench/numlang/double_nrev.nl", 224, "List & Tree Recursion", "bench/c/double_nrev.c", "bench/haskell/double_nrev.hs"),
+    BenchmarkEntry("append3", "bench/numlang/append3.nl", 164, "List & Tree Recursion", "bench/c/append3.c", "bench/haskell/append3.hs"),
+    BenchmarkEntry("tree_flip", "bench/numlang/tree_flip.nl", 224, "List & Tree Recursion", "bench/c/tree_flip.c", "bench/haskell/tree_flip.hs"),
+
+    # 7. Linear Algebra & Graphics
+    BenchmarkEntry("matvec_4x4", "bench/numlang/matvec_4x4.nl", 24, "Linear Algebra", "bench/c/matvec_4x4.c", "bench/haskell/matvec_4x4.hs"),
+    BenchmarkEntry("matrix_multiply", "bench/numlang/matrix_multiply.nl", 11, "Linear Algebra", "bench/c/matrix_multiply.c", "bench/haskell/matrix_multiply.hs"),
+    BenchmarkEntry("raytracer_sphere", "bench/numlang/raytracer_sphere.nl", 77, "Linear Algebra", "bench/c/raytracer_sphere.c", "bench/haskell/raytracer_sphere.hs"),
+
+    # 8. Stencils & Stream Fusion
+    BenchmarkEntry("jacobi_stencil", "bench/numlang/jacobi_stencil.nl", 33, "Stencils & Fusion", "bench/c/jacobi_stencil.c", "bench/haskell/jacobi_stencil.hs"),
+    BenchmarkEntry("stream_fusion", "bench/numlang/stream_fusion.nl", 0, "Stencils & Fusion", "bench/c/stream_fusion.c", "bench/haskell/stream_fusion.hs"),
+    BenchmarkEntry("map_map_fusion", "bench/numlang/map_map_fusion.nl", 164, "Stencils & Fusion", "bench/c/map_map_fusion.c", "bench/haskell/map_map_fusion.hs"),
+    BenchmarkEntry("fold_map", "bench/numlang/fold_map.nl", 129, "Stencils & Fusion", "bench/c/fold_map.c", "bench/haskell/fold_map.hs"),
 ]
 
 def pin_cpu_affinity():
@@ -252,8 +298,10 @@ def main():
 
     records = []
 
-    for bench in BENCHMARKS:
-        print(f"\n[BENCHMARK] >>> {bench}")
+    for bench_item in BENCHMARKS:
+        bench = bench_item.name if isinstance(bench_item, BenchmarkEntry) else bench_item
+        expected_exit = bench_item.expected_exit if isinstance(bench_item, BenchmarkEntry) else None
+        print(f"\n[BENCHMARK] >>> {bench} (expected_exit={expected_exit})")
         baseline_times = None
 
         for cfg in configs:
@@ -263,6 +311,8 @@ def main():
                 continue
 
             status, exit_code, times = measure_execution_times(exe_path, warmups=5, rounds=30)
+            if expected_exit is not None and exit_code != expected_exit and status != "CRASH":
+                print(f"  [WARN] {bench} ({cfg}) exit code {exit_code} != expected {expected_exit}")
 
             if status == "CRASH":
                 print(f"  [{cfg:14s}] CRASH (exit code: {exit_code}) - recorded transparently")
