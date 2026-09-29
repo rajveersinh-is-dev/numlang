@@ -11,3 +11,4 @@ __pycache__/
 *.pyc
 _panic.nl
 *.pdb
+.numlang_cache/

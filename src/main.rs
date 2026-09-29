@@ -175,6 +175,19 @@ pub struct Cli {
     )]
     pub parallel_residualize: bool,
 
+    #[arg(
+        long = "cache-dir",
+        help = "Path to specialization cache directory (default: .numlang_cache/)",
+        default_value = ".numlang_cache"
+    )]
+    pub cache_dir: PathBuf,
+
+    #[arg(
+        long = "no-cache",
+        help = "Disable the specialization cache for this invocation"
+    )]
+    pub no_cache: bool,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -242,6 +255,19 @@ pub enum Commands {
             help = "Emit parallel Fork/Join regions for data-independent loop residuals"
         )]
         parallel_residualize: bool,
+
+        #[arg(
+            long = "cache-dir",
+            help = "Path to specialization cache directory (default: .numlang_cache/)",
+            default_value = ".numlang_cache"
+        )]
+        cache_dir: PathBuf,
+
+        #[arg(
+            long = "no-cache",
+            help = "Disable the specialization cache for this invocation"
+        )]
+        no_cache: bool,
 
         #[arg(
             long = "mode",
@@ -314,6 +340,19 @@ pub enum Commands {
             help = "Emit parallel Fork/Join regions for data-independent loop residuals"
         )]
         parallel_residualize: bool,
+
+        #[arg(
+            long = "cache-dir",
+            help = "Path to specialization cache directory (default: .numlang_cache/)",
+            default_value = ".numlang_cache"
+        )]
+        cache_dir: PathBuf,
+
+        #[arg(
+            long = "no-cache",
+            help = "Disable the specialization cache for this invocation"
+        )]
+        no_cache: bool,
 
         #[arg(
             long = "mode",
@@ -423,19 +462,28 @@ fn compile_program_to_obj_bytes(
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
     parallel_residualize: bool,
+    cache_dir: &Path,
+    no_cache: bool,
 ) -> Result<Vec<u8>> {
     let opt: numlang::codegen::OptLevel = opt_level
         .parse()
         .map_err(|e: String| miette::miette!("{}", e))?;
 
+    let opt_cache = if (supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic) && !no_cache {
+        Some(numlang::mir::supercompiler::SpecializationCache::open(cache_dir))
+    } else {
+        None
+    };
+
     match backend {
         Backend::Cranelift => {
             if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
-                numlang::codegen::compile_supercompiled_to_obj_with_mode_options(
+                numlang::codegen::compile_supercompiled_to_obj_with_cache(
                     typed_program,
                     mode,
                     mrsc_objective,
                     parallel_residualize,
+                    opt_cache.as_ref(),
                 )
                 .map_err(|e| miette::miette!("Codegen error: {}", e))
             } else if use_mir {
@@ -450,11 +498,12 @@ fn compile_program_to_obj_bytes(
         Backend::Llvm => {
             let mut mir = numlang::mir::lower::lower_program(typed_program);
             if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
-                numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
+                numlang::mir::supercompiler::supercompile_mir_program_with_cache(
                     &mut mir,
                     mode,
                     mrsc_objective,
                     parallel_residualize,
+                    opt_cache.as_ref(),
                 );
             }
             let mut compiler = numlang::codegen::LlvmCompiler::new(opt);
@@ -476,6 +525,8 @@ fn build_executable(
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
     parallel_residualize: bool,
+    cache_dir: &Path,
+    no_cache: bool,
 ) -> Result<()> {
     let obj_bytes = compile_program_to_obj_bytes(
         typed_program,
@@ -486,6 +537,8 @@ fn build_executable(
         mode,
         mrsc_objective,
         parallel_residualize,
+        cache_dir,
+        no_cache,
     )?;
 
     let temp_dir = std::env::temp_dir();
@@ -519,6 +572,8 @@ fn handle_run(
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
     parallel_residualize: bool,
+    cache_dir: &Path,
+    no_cache: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -544,6 +599,8 @@ fn handle_run(
         mode,
         mrsc_objective,
         parallel_residualize,
+        cache_dir,
+        no_cache,
     )?;
 
     let status = Command::new(&temp_exe)
@@ -576,6 +633,8 @@ fn handle_build(
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
     parallel_residualize: bool,
+    cache_dir: &Path,
+    no_cache: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -589,6 +648,8 @@ fn handle_build(
         mode,
         mrsc_objective,
         parallel_residualize,
+        cache_dir,
+        no_cache,
     )?;
 
     if let Some(ref obj_path) = emit_obj {
@@ -760,6 +821,8 @@ fn real_main() -> Result<()> {
                 bench,
                 supercompile,
                 parallel_residualize,
+                cache_dir,
+                no_cache,
                 mode,
                 mrsc_objective,
                 use_mir,
@@ -778,6 +841,8 @@ fn real_main() -> Result<()> {
                     mode.into(),
                     &mrsc_objective,
                     parallel_residualize,
+                    &cache_dir,
+                    no_cache,
                 );
             }
             Commands::Build {
@@ -787,6 +852,8 @@ fn real_main() -> Result<()> {
                 bench,
                 supercompile,
                 parallel_residualize,
+                cache_dir,
+                no_cache,
                 mode,
                 mrsc_objective,
                 use_mir,
@@ -807,6 +874,8 @@ fn real_main() -> Result<()> {
                     mode.into(),
                     &mrsc_objective,
                     parallel_residualize,
+                    &cache_dir,
+                    no_cache,
                 );
             }
             Commands::Check { file } => return handle_check(&file),
@@ -904,11 +973,17 @@ fn real_main() -> Result<()> {
 
     if cli.emit_supercompiled_mir {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
+        let opt_cache = if !cli.no_cache {
+            Some(numlang::mir::supercompiler::SpecializationCache::open(&cli.cache_dir))
+        } else {
+            None
+        };
+        numlang::mir::supercompiler::supercompile_mir_program_with_cache(
             &mut mir_program,
             cli.mode.into(),
             &cli.mrsc_objective,
             cli.parallel_residualize,
+            opt_cache.as_ref(),
         );
         println!("{:#?}", mir_program);
         return Ok(());
@@ -969,11 +1044,17 @@ fn real_main() -> Result<()> {
 
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
+        let opt_cache = if !cli.no_cache {
+            Some(numlang::mir::supercompiler::SpecializationCache::open(&cli.cache_dir))
+        } else {
+            None
+        };
+        let stats = numlang::mir::supercompiler::supercompile_mir_program_with_cache(
             &mut mir_program,
             cli.mode.into(),
             &cli.mrsc_objective,
             cli.parallel_residualize,
+            opt_cache.as_ref(),
         );
         println!("{}", stats);
         println!("  residual blocks:   {}", stats.residual_block_count);
@@ -1029,6 +1110,8 @@ fn real_main() -> Result<()> {
             cli.mode.into(),
             &cli.mrsc_objective,
             cli.parallel_residualize,
+            &cli.cache_dir,
+            cli.no_cache,
         )?;
 
         if let Some(ref obj_path) = cli.emit_obj {

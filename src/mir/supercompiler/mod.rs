@@ -4,6 +4,7 @@
 //! detects growth via fast homeomorphic embedding, solves recurrence closed forms ($O(N) \to O(1)$),
 //! and residualizes back into optimized SSA Control Flow Graphs.
 
+pub mod cache;
 pub mod compact;
 pub mod distill;
 pub mod drive;
@@ -20,6 +21,7 @@ pub mod term;
 pub mod validate;
 pub mod whistle;
 
+pub use cache::{sha256_str, CacheKey, CachedSpecialization, SpecializationCache};
 pub use compact::{compact_mir_function, compact_process_tree};
 pub use distill::DistillationEngine;
 pub use drive::{
@@ -87,6 +89,17 @@ pub fn supercompile_mir_program_with_mode_options(
     objective: &str,
     parallel_residualize: bool,
 ) -> SupercompilerStats {
+    supercompile_mir_program_with_cache(program, mode, objective, parallel_residualize, None)
+}
+
+/// Supercompiles an entire MIR program with explicit mode, objective, parallel residualization, and optional specialization cache.
+pub fn supercompile_mir_program_with_cache(
+    program: &mut MirProgram,
+    mode: SupercompileMode,
+    objective: &str,
+    parallel_residualize: bool,
+    opt_cache: Option<&SpecializationCache>,
+) -> SupercompilerStats {
     let mut total_stats = SupercompilerStats::default();
 
     // Pass 1: Phase 6 Higher-Order Deforestation & Stream Fusion
@@ -126,6 +139,31 @@ pub fn supercompile_mir_program_with_mode_options(
 
         match mode {
             SupercompileMode::Classic => {
+                // 1. Compute the CacheKey for this function
+                let cache_key = CacheKey {
+                    function_name: func.name.clone(),
+                    function_source_hash: sha256_str(&format!("{:?}", func)),
+                    argument_fingerprint: "generic".to_string(), // Phase 37: generic specialization only
+                };
+
+                // 2. Cache lookup
+                if let Some(cache) = opt_cache {
+                    if let Some(cached) = cache.lookup(&cache_key) {
+                        if let Ok(residual) = serde_json::from_str::<MirFunction>(&cached.residual_json) {
+                            *func = residual;
+                            total_stats.nodes_explored += cached.stats_nodes_explored;
+                            total_stats.branches_pruned += cached.stats_branches_pruned;
+                            total_stats.loops_collapsed += cached.stats_loops_collapsed;
+                            total_stats.knots_tied += cached.stats_knots_tied;
+                            total_stats.calls_inlined += cached.stats_calls_inlined;
+                            total_stats.sc_bce_eliminated += cached.stats_sc_bce_eliminated;
+                            total_stats.residual_block_count += cached.stats_residual_block_count;
+                            total_stats.residual_stmt_count += cached.stats_residual_stmt_count;
+                            continue; // skip driving entirely
+                        }
+                    }
+                }
+
                 let (new_func, stats) = supercompile_mir_function_with_program_options(func, &funcs_snapshot, parallel_residualize);
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops {
@@ -139,6 +177,23 @@ pub fn supercompile_mir_program_with_mode_options(
                 total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
                 total_stats.residual_block_count += stats.residual_block_count;
                 total_stats.residual_stmt_count += stats.residual_stmt_count;
+
+                // 4. Cache store
+                if let Some(cache) = opt_cache {
+                    let entry = CachedSpecialization {
+                        key: cache_key,
+                        residual_json: serde_json::to_string(&func).unwrap_or_default(),
+                        stats_nodes_explored: stats.nodes_explored,
+                        stats_branches_pruned: stats.branches_pruned,
+                        stats_loops_collapsed: stats.loops_collapsed,
+                        stats_knots_tied: stats.knots_tied,
+                        stats_calls_inlined: stats.calls_inlined,
+                        stats_sc_bce_eliminated: stats.sc_bce_eliminated,
+                        stats_residual_block_count: stats.residual_block_count,
+                        stats_residual_stmt_count: stats.residual_stmt_count,
+                    };
+                    let _ = cache.store(&entry);
+                }
             }
             SupercompileMode::Distill => {
                 let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
