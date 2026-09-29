@@ -499,7 +499,7 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
 
 fn collect_terminator_reads(term: &Terminator) -> Vec<Place> {
     match term {
-        Terminator::Branch { .. } | Terminator::Unreachable => vec![],
+        Terminator::Branch { .. } | Terminator::Unreachable | Terminator::Fork { .. } => vec![],
         Terminator::BranchIf { condition, .. } => vec![condition.clone()],
         Terminator::Switch { value, .. } => vec![value.clone()],
         Terminator::Return { value } => value.iter().cloned().collect(),

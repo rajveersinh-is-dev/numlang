@@ -7,8 +7,19 @@ use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, Rvalue, Statem
 use crate::mir::{BasicBlockId, Place, Terminator};
 use crate::typecheck::types::Type;
 
-/// Residualizes a ProcessTree back into an optimized MirFunction.
+use super::independence::find_parallel_knot_pairs;
+
+/// Residualizes a ProcessTree back into an optimized MirFunction (sequential mode).
 pub fn residualize_process_tree(tree: &ProcessTree, original_func: &MirFunction) -> MirFunction {
+    residualize_process_tree_parallel(tree, original_func, false)
+}
+
+/// Phase 36: Residualizes a ProcessTree back into an optimized MirFunction with optional parallel code emission.
+pub fn residualize_process_tree_parallel(
+    tree: &ProcessTree,
+    original_func: &MirFunction,
+    emit_parallel: bool,
+) -> MirFunction {
     if tree.nodes.is_empty() {
         return original_func.clone();
     }
@@ -17,6 +28,16 @@ pub fn residualize_process_tree(tree: &ProcessTree, original_func: &MirFunction)
     let mut node_to_block: HashMap<ProcessNodeId, BasicBlockId> = HashMap::new();
     let mut new_locals = original_func.locals.clone();
     let mut next_temp_id = original_func.locals.len();
+    let mut extra_blocks: Vec<MirBasicBlock> = Vec::new();
+
+    let pair_map: HashMap<ProcessNodeId, (ProcessNodeId, ProcessNodeId)> = if emit_parallel {
+        find_parallel_knot_pairs(tree)
+            .into_iter()
+            .map(|(from, l, r)| (from, (l, r)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
 
     // 1. Assign a BasicBlockId to each reachable process tree node
     for (i, node) in tree.nodes.iter().enumerate() {
@@ -92,6 +113,78 @@ pub fn residualize_process_tree(tree: &ProcessTree, original_func: &MirFunction)
         } else if node.edges.is_empty() {
             residual_blocks[b_idx].statements = stmts;
             residual_blocks[b_idx].terminator = Terminator::Return { value: None };
+        } else if emit_parallel && pair_map.contains_key(&node.id) {
+            let (k1, k2) = pair_map[&node.id];
+            let left_bb = node_to_block[&k1].clone();
+            let right_bb = node_to_block[&k2].clone();
+            let join_bb = BasicBlockId(tree.nodes.len() + extra_blocks.len());
+
+            let mut join_stmts = Vec::new();
+            if k1.0 < tree.nodes.len() {
+                let anc1_state = &tree.nodes[k1.0].state;
+                let mut transfers1 = Vec::new();
+                for (place, &anc_term) in &anc1_state.env {
+                    if place.projections.is_empty() {
+                        if let Some(&curr_term) = node.state.env.get(place) {
+                            if curr_term != anc_term {
+                                transfers1.push((place.clone(), curr_term));
+                            }
+                        }
+                    }
+                }
+                transfers1.sort_by(|a, b| a.0.local.cmp(&b.0.local));
+                for (dest_place, curr_term) in transfers1 {
+                    let val_place = emit_term_eval(
+                        curr_term,
+                        &tree.interner,
+                        &mut join_stmts,
+                        &mut new_locals,
+                        &mut next_temp_id,
+                        &phi_remap,
+                    );
+                    join_stmts.push(Statement::Assign(dest_place, Rvalue::Use(val_place)));
+                }
+            }
+
+            if k2.0 < tree.nodes.len() {
+                let anc2_state = &tree.nodes[k2.0].state;
+                let mut transfers2 = Vec::new();
+                for (place, &anc_term) in &anc2_state.env {
+                    if place.projections.is_empty() {
+                        if let Some(&curr_term) = node.state.env.get(place) {
+                            if curr_term != anc_term {
+                                transfers2.push((place.clone(), curr_term));
+                            }
+                        }
+                    }
+                }
+                transfers2.sort_by(|a, b| a.0.local.cmp(&b.0.local));
+                for (dest_place, curr_term) in transfers2 {
+                    let val_place = emit_term_eval(
+                        curr_term,
+                        &tree.interner,
+                        &mut join_stmts,
+                        &mut new_locals,
+                        &mut next_temp_id,
+                        &phi_remap,
+                    );
+                    join_stmts.push(Statement::Assign(dest_place, Rvalue::Use(val_place)));
+                }
+            }
+
+            extra_blocks.push(MirBasicBlock {
+                id: join_bb.clone(),
+                arguments: Vec::new(),
+                statements: join_stmts,
+                terminator: Terminator::Branch { target: left_bb.clone() },
+            });
+
+            residual_blocks[b_idx].statements = stmts;
+            residual_blocks[b_idx].terminator = Terminator::Fork {
+                left: left_bb,
+                right: right_bb,
+                join: join_bb,
+            };
         } else if node.edges.len() == 1 {
             match &node.edges[0] {
                 ProcessEdge::Step(next_node) => {
@@ -254,6 +347,8 @@ pub fn residualize_process_tree(tree: &ProcessTree, original_func: &MirFunction)
             }
         }
     }
+
+    residual_blocks.extend(extra_blocks);
 
     MirFunction {
         name: original_func.name.clone(),

@@ -307,6 +307,7 @@ fn record_terminator_uses(term: &Terminator, uses: &mut HashMap<String, usize>) 
         }
         Terminator::Branch { .. }
         | Terminator::Return { value: None }
-        | Terminator::Unreachable => {}
+        | Terminator::Unreachable
+        | Terminator::Fork { .. } => {}
     }
 }

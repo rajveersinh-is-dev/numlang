@@ -479,6 +479,10 @@ impl LlvmCompiler {
                 Terminator::Unreachable => {
                     builder.build_unreachable().unwrap();
                 }
+                Terminator::Fork { left, .. } => {
+                    let target_bb = bb_map.get(left).unwrap();
+                    builder.build_unconditional_branch(*target_bb).unwrap();
+                }
             }
         }
 

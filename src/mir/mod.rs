@@ -31,6 +31,13 @@ pub enum Terminator {
         dest: Place,
         next: BasicBlockId,
     },
+    /// Parallel fork: spawn two independent MIR regions, reconverge at `join`.
+    /// Only emitted when --parallel-residualize is active.
+    Fork {
+        left: BasicBlockId,
+        right: BasicBlockId,
+        join: BasicBlockId,
+    },
 }
 
 impl Terminator {
@@ -49,6 +56,9 @@ impl Terminator {
                 succs
             }
             Terminator::IndirectCall { next, .. } => vec![next.clone()],
+            Terminator::Fork { left, right, join } => {
+                vec![left.clone(), right.clone(), join.clone()]
+            }
             Terminator::Return { .. } | Terminator::Unreachable => vec![],
         }
     }
