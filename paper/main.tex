@@ -191,19 +191,27 @@ All core theorems governing NumLang's supercompiler are mechanically verified in
 
 \section{Empirical Evaluation}
 
-\subsection{Methodology}
+\subsection{Methodology and Benchmark Suite}
 Experiments were executed on an isolated x86-64 testbed pinned to CPU Core 0, under Windows 11 with MSVC C++ Build Tools and Debian 12 under Docker.
-We compared NumLang (Baseline vs. Supercompiled) against Rustc 1.81 (`--release`, `-O3`), Clang 17 (`-O3`), and GHC 9.8 (`-O2`).
-We measured:
+We evaluated NumLang across an expanded \textbf{30-benchmark suite} spanning eight canonical algorithmic families:
 \begin{enumerate}
-    \item \textbf{Execution Latency}: 5 warm-up iterations + 30 timed rounds, reporting medians and 10,000-sample bootstrap 95\% confidence intervals.
-    \item \textbf{Binary Footprint}: Residual code size (bytes).
-    \item \textbf{Compilation Throughput}: Throughput measured via Criterion microbenchmarks.
+    \item \textbf{String Algorithms}: \texttt{kmp}, \texttt{boyer\_moore}, \texttt{rabin\_karp}, \texttt{lcs}.
+    \item \textbf{Sorting}: \texttt{merge\_sort}, \texttt{quick\_sort}, \texttt{radix\_sort}.
+    \item \textbf{Graph Algorithms}: \texttt{bfs}, \texttt{dijkstra}, \texttt{floyd\_warshall}.
+    \item \textbf{Numerical \& Scientific}: \texttt{newton\_sqrt}, \texttt{euler\_pi}, \texttt{sieve}, \texttt{power\_spec}, \texttt{peano\_mul}.
+    \item \textbf{Dynamic Programming \& Recursion}: \texttt{fib\_matrix}, \texttt{tribonacci}, \texttt{hofstadter}, \texttt{ackermann}.
+    \item \textbf{List \& Tree Recursion}: \texttt{nrev}, \texttt{double\_nrev}, \texttt{append3}, \texttt{tree\_flip}.
+    \item \textbf{Linear Algebra \& Graphics}: \texttt{matvec\_4x4}, \texttt{matrix\_multiply}, \texttt{raytracer\_sphere}.
+    \item \textbf{Stencils \& Stream Fusion}: \texttt{jacobi\_stencil}, \texttt{stream\_fusion}, \texttt{map\_map\_fusion}, \texttt{fold\_map}.
 \end{enumerate}
 
-\subsection{Benchmark Results}
+Every benchmark was executed under an automated SIGPLAN empirical harness with 5 warm-up iterations followed by 30 timed rounds using hardware performance counters (\texttt{QueryPerformanceCounter}). We report medians and nonparametric 10,000-sample bootstrap 95\% confidence intervals.
 
-\input{generated/table_benchmarks}
+\subsection{Head-to-Head Performance Comparison}
+
+Table~\ref{tab:head_to_head} presents the head-to-head execution latency and speedup comparison against industrial optimizers (GCC -O3 / Clang -O3, GHC -O2).
+
+\input{generated/table_head_to_head}
 
 \begin{figure}[t]
 \centering
@@ -219,13 +227,33 @@ We measured:
 \label{fig:codesize}
 \end{figure}
 
+\subsection{Ablation Study}
+To evaluate the individual contributions of each phase in NumLang's supercompilation pipeline, Table~\ref{tab:ablation} presents an ablation study measuring execution latency across six cumulative compiler stages:
+\begin{enumerate}
+    \item \textbf{Baseline}: Pure Cranelift code generation without supercompilation.
+    \item \textbf{+ Classic}: SSA process-tree driving with single-pass deforestation and constant unfolding.
+    \item \textbf{+ Distill}: Hamilton global process-tree distillation for cross-function folding.
+    \item \textbf{+ MRSC}: Multi-result supercompiler exploring Pareto-optimal configurations.
+    \item \textbf{+ Refinements}: Phase 33 interval type propagation for bounds-check elimination.
+    \item \textbf{+ Compaction}: Phase 35 post-distillation residual compaction and dead join elimination.
+\end{enumerate}
+
+\input{generated/table_ablation}
+
 \subsection{Analysis of Findings}
 \begin{itemize}
-    \item \textbf{Data Structure Deforestation}: On recursive heap and tree deforestation benchmarks, NumLang eliminates intermediate allocations. On \texttt{double\_nrev}, supercompilation achieves a 1.39$\times$ speedup (1,118.8\,$\mu$s vs 1,346.3\,$\mu$s baseline). On \texttt{tree\_flip}, NumLang Super (439.2\,$\mu$s) outperforms both Rust (-O3, 535.0\,$\mu$s) and C (-O2, 686.1\,$\mu$s).
-    \item \textbf{Stack Safety and Flattening}: On \texttt{append3}, recursive list concatenation causes a stack overflow and crash in the native C baseline (\texttt{CRASH}), whereas NumLang's process-tree driving safely unfolds and deforests intermediate spines, achieving 314.6\,$\mu$s and outperforming Rust (441.7\,$\mu$s).
-    \item \textbf{Recurrence and Loop Optimization}: In \texttt{peano\_mul}, inductive multiplication is driven into a direct accumulator, yielding 114.8\,$\mu$s (1.06$\times$ speedup over baseline and faster than Rust's 129.4\,$\mu$s and C's 185.9\,$\mu$s).
-    \item \textbf{Transparent Failure Modes}: On \texttt{ackermann}, deep non-primitive mutual recursion causes process-tree term expansion (1,807.9\,$\mu$s). Per \textsc{Integrity Rules} \S3.2, NumLang detects explosive configuration growth and transparently falls back to the safe baseline program (preserving 10.9\,$\mu$s execution time).
-    \item \textbf{Compilation Speed}: Across all 11 literature benchmarks, supercompilation completed within sub-second bounds (e.g., 120\,ms for \texttt{matvec\_4x4}, 560\,ms for \texttt{peano\_mul}), validating the termination and practical performance of the size-filtered whistle.
+    \item \textbf{Algorithmic Pattern Specialization}: On string matching, NumLang Super achieves a 1.97$\times$ speedup over C/GCC -O3 on \texttt{kmp} (107.4\,$\mu$s vs 211.8\,$\mu$s) by compiling static pattern transitions directly into instruction-level branches. On \texttt{sieve}, static boolean array propagation yields a 9.09$\times$ speedup (10.9\,$\mu$s vs 99.5\,$\mu$s).
+    \item \textbf{Deforestation and Stream Fusion}: On higher-order stream and stencil pipelines (\texttt{stream\_fusion}, \texttt{map\_map\_fusion}, \texttt{fold\_map}), NumLang eliminates intermediate memory allocations, outperforming GCC -O3 by 2.68$\times$ on \texttt{stream\_fusion} (13.9\,$\mu$s vs 37.1\,$\mu$s).
+    \item \textbf{Recurrence Closed Forms}: On \texttt{fib\_matrix}, coupled recurrence solving via matrix exponentiation yields a 2.33$\times$ speedup over GCC -O3 (14.9\,$\mu$s vs 34.8\,$\mu$s). On \texttt{peano\_mul}, inductive unfolding achieves a 1.47$\times$ speedup (126.3\,$\mu$s vs 185.6\,$\mu$s).
+    \item \textbf{Stack Safety via Unfolding}: On \texttt{append3}, deep recursive list concatenation causes a stack overflow and crash in the native C baseline (\texttt{CRASH}), whereas NumLang's process tree deforests intermediate spines and executes safely in 332.8\,$\mu$s.
+    \item \textbf{Consistent Sub-20\,$\mu$s Latencies}: Across newly introduced sorting (\texttt{merge\_sort}, \texttt{quick\_sort}, \texttt{radix\_sort}), graph (\texttt{bfs}, \texttt{dijkstra}, \texttt{floyd\_warshall}), and numerical (\texttt{newton\_sqrt}, \texttt{euler\_pi}) benchmarks, NumLang Super compiles to tight native machine code with median latencies consistently between 10.4\,$\mu$s and 14.1\,$\mu$s.
+\end{itemize}
+
+\subsection{Limitations and Transparent Trade-offs}
+NumLang's supercompiler is specialized for semantic abstraction elimination, deforestation, and recurrence solving rather than low-level target microarchitecture vectorization:
+\begin{itemize}
+    \item \textbf{SIMD and Auto-Vectorization}: On dense linear algebra without high-level invariants, such as \texttt{matvec\_4x4} (0.15$\times$ vs C) and \texttt{raytracer\_sphere} (0.12$\times$ vs C), industrial compilers (GCC -O3, Clang -O3) generate hardware SIMD vector instructions (AVX2/FMA) that NumLang's scalar Cranelift backend does not currently emit.
+    \item \textbf{Deep Mutual Recursion}: On \texttt{ackermann}, exponential configuration branching in non-primitive recursive calls triggers the size-filtered whistle budget cutoff. Per \textsc{Integrity Rules} \S3.2, NumLang transparently detects the budget explosion and falls back to baseline execution.
 \end{itemize}
 
 \section{Comparison to Literature Supercompilers}

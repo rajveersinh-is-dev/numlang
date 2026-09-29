@@ -566,7 +566,9 @@ fn find_fusible_pipelines(
                     let cons_dom = domains.iter().find(|d| d.body_block == rd.block_id);
 
                     if let (Some(p_dom), Some(c_dom)) = (prod_dom, cons_dom) {
-                        if p_dom.is_compatible(c_dom) {
+                        let all_reads_in_consumer = reads.iter().all(|r| r.block_id == c_dom.body_block);
+                        let all_writes_in_producer = writes.iter().all(|w| w.block_id == p_dom.body_block);
+                        if all_reads_in_consumer && all_writes_in_producer && p_dom.is_compatible(c_dom) {
                             // Compute dependence distance: d = index_cons - index_prod
                             let p_aff_norm = wr.index_expr.sub(&AffineExpr::variable(&p_dom.loop_var));
                             let c_aff_norm = rd.index_expr.sub(&AffineExpr::variable(&c_dom.loop_var));
