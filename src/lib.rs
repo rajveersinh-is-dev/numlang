@@ -11,4 +11,5 @@ pub mod explain;
 pub mod fmt;
 pub mod doc;
 pub mod mir;
+pub mod runtime;
 pub mod testing;

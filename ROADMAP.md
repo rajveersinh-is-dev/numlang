@@ -29,7 +29,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Remediation & Frontier Roadmap (Phases 20–35)
+### Remediation & Frontier Roadmap (Phases 20–40)
 
 *Formulated to systematically resolve all findings from the comprehensive audit (`honest_review.md`).*
 
@@ -51,6 +51,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 | **Phase 33** | **Refinement Type Propagation Through Process Tree**<br>Add `Interval` arithmetic and `refinements` mapping to `SymbolicState`; interval propagation across arithmetic ops (`Add`, `Sub`, `Mul`); branch narrowing across 6 comparison operators; dead-branch pruning on empty intervals; call-site argument refinement propagation into inlined callees; supercompiler-level bounds-check elimination (`sc_bce_eliminated`). | **Completed** | Full suite green (100%), 5/5 new tests passing |
 | **Phase 34** | **Full Higher-Order Closure Driving**<br>Add `SymTerm::ClosureVal(String, Vec<SymTermId>, Type)` for symbolic closures; track `Rvalue::ClosureAlloc` and `Rvalue::FnPtr` in `drive_statement`; drive through `Terminator::IndirectCall` in `drive_node` via `resolve_closure_function` and `try_drive_closure_call`; bind captured variables and call arguments into callee initial state with interval refinement propagation; fold closure invocations and deforest higher-order loops. | **Completed** | Full suite green (100%), 6/6 new tests passing |
 | **Phase 35** | **Optimal Residual Code Size (Post-Distillation Compaction)**<br>Implement pre-residualization process-tree compaction (`compact_process_tree`) with dead overflow node elimination and alpha-equivalent knot deduplication; implement post-residualization MIR peephole pass (`compact_mir_function`) with identity assignment removal and conservative copy propagation (eta-reduction); add `residual_block_count` and `residual_stmt_count` to `SupercompilerStats` and `--supercompile-stats` CLI. | **Completed** | Full suite green (100%), 5/5 new tests passing |
+| **Phase 36** | **Parallel Residualization (Independence Detection)**<br>Extend MIR with `Terminator::Fork { left, right, join }`; implement subtree/knot independence analysis (`ReadWriteSet`, `sets_are_independent`, `find_parallel_knot_pairs`) in `src/mir/supercompiler/independence.rs`; add `residualize_process_tree_parallel`; lower `Fork` in native backends with runtime shim `__numlang_fork_join`; expose opt-in `--parallel-residualize` CLI flag. | **Completed** | Full suite green (100%), 5/5 new tests passing |
 
 ---
 

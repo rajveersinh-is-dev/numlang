@@ -9,6 +9,7 @@ pub mod distill;
 pub mod drive;
 pub mod fusion;
 pub mod generalize;
+pub mod independence;
 pub mod mrsc;
 pub mod parallel;
 pub mod polyhedral;
@@ -26,6 +27,9 @@ pub use drive::{
     TerminationWitness, WhistleFiring, WhistleKind,
 };
 pub use fusion::{find_fusion_candidates, fuse_loops, fuse_map_filter, FusionCandidate};
+pub use independence::{
+    collect_subtree_rw_set, find_parallel_knot_pairs, sets_are_independent, ReadWriteSet,
+};
 pub use mrsc::{
     MinCodeSizeObjective, MinDynamicBranchObjective, MultiResultEngine, ParetoObjective,
     ResidualObjective,
@@ -33,7 +37,7 @@ pub use mrsc::{
 pub use parallel::supercompile_mir_program_parallel;
 pub use polyhedral::fuse_polyhedral_stencils;
 pub use recurrence::{detect_nway_linear_system, solve_nway_recurrence, NWayLinearSystem};
-use residualize::residualize_process_tree;
+pub use residualize::{residualize_process_tree, residualize_process_tree_parallel};
 pub use state::Interval;
 pub use validate::{
     check_satisfiability, verify_formula_validity, verify_program_equivalence, BoolFormula,
@@ -72,6 +76,16 @@ pub fn supercompile_mir_program_with_mode(
     program: &mut MirProgram,
     mode: SupercompileMode,
     objective: &str,
+) -> SupercompilerStats {
+    supercompile_mir_program_with_mode_options(program, mode, objective, false)
+}
+
+/// Supercompiles an entire MIR program with explicit mode, objective, and parallel residualization toggle.
+pub fn supercompile_mir_program_with_mode_options(
+    program: &mut MirProgram,
+    mode: SupercompileMode,
+    objective: &str,
+    parallel_residualize: bool,
 ) -> SupercompilerStats {
     let mut total_stats = SupercompilerStats::default();
 
@@ -112,7 +126,7 @@ pub fn supercompile_mir_program_with_mode(
 
         match mode {
             SupercompileMode::Classic => {
-                let (new_func, stats) = supercompile_mir_function_with_program(func, &funcs_snapshot);
+                let (new_func, stats) = supercompile_mir_function_with_program_options(func, &funcs_snapshot, parallel_residualize);
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops {
                     *func = new_func;
@@ -137,7 +151,7 @@ pub fn supercompile_mir_program_with_mode(
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops && (is_profitable(&stats, budget, &tree) || (tree.nodes.len() < budget && folds > 0)) {
                     let (_dead, _deduped) = compact_process_tree(&mut tree);
-                    let mut new_func = residualize_process_tree(&tree, func);
+                    let mut new_func = residualize_process_tree_parallel(&tree, func, parallel_residualize);
                     let _stmts_removed = compact_mir_function(&mut new_func);
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
@@ -254,6 +268,15 @@ pub fn supercompile_mir_function_with_program(
     func: &MirFunction,
     program_funcs: &[MirFunction],
 ) -> (MirFunction, SupercompilerStats) {
+    supercompile_mir_function_with_program_options(func, program_funcs, false)
+}
+
+/// Supercompiles a single MIR function with program context and optional parallel residualization.
+pub fn supercompile_mir_function_with_program_options(
+    func: &MirFunction,
+    program_funcs: &[MirFunction],
+    parallel_residualize: bool,
+) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
     let budget = driver.config.max_inline_nodes;
     let mut tree = driver.run();
@@ -265,7 +288,7 @@ pub fn supercompile_mir_function_with_program(
         return (func.clone(), stats);
     }
     let (_dead, _deduped) = compact_process_tree(&mut tree);
-    let mut new_func = residualize_process_tree(&tree, func);
+    let mut new_func = residualize_process_tree_parallel(&tree, func, parallel_residualize);
     let _stmts_removed = compact_mir_function(&mut new_func);
     stats.residual_block_count = new_func.blocks.len();
     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();

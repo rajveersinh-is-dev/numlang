@@ -9151,6 +9151,16 @@ impl CraneliftCompiler {
                     let next_block = *block_map.get(next).unwrap();
                     builder.ins().jump(next_block, &[]);
                 }
+                crate::mir::Terminator::Fork { left, right, join } => {
+                    let left_block = *block_map.get(left).unwrap();
+                    let right_block = *block_map.get(right).unwrap();
+                    let join_block = *block_map.get(join).unwrap();
+                    let zero = builder.ins().iconst(types::I32, 0);
+                    let dummy_branch = builder.create_block();
+                    builder.ins().brif(zero, dummy_branch, &[], left_block, &[]);
+                    builder.switch_to_block(dummy_branch);
+                    builder.ins().brif(zero, right_block, &[], join_block, &[]);
+                }
             }
         }
 
@@ -9259,11 +9269,20 @@ pub fn compile_supercompiled_to_obj_with_mode(
     mode: crate::mir::supercompiler::SupercompileMode,
     objective: &str,
 ) -> Result<Vec<u8>, CodegenError> {
+    compile_supercompiled_to_obj_with_mode_options(program, mode, objective, false)
+}
+
+pub fn compile_supercompiled_to_obj_with_mode_options(
+    program: &TypedProgram,
+    mode: crate::mir::supercompiler::SupercompileMode,
+    objective: &str,
+    parallel_residualize: bool,
+) -> Result<Vec<u8>, CodegenError> {
     let mut typed = program.clone();
     crate::opt::monomorphize::monomorphize(&mut typed);
     crate::opt::supercompiler::supercompile_program(&mut typed, None);
     let mut mir_program = crate::mir::lower::lower_program(&typed);
-    crate::mir::supercompiler::supercompile_mir_program_with_mode(&mut mir_program, mode, objective);
+    crate::mir::supercompiler::supercompile_mir_program_with_mode_options(&mut mir_program, mode, objective, parallel_residualize);
     compile_mir_to_obj(&mir_program)
 }
 

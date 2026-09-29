@@ -169,6 +169,12 @@ pub struct Cli {
     )]
     pub threads: usize,
 
+    #[arg(
+        long = "parallel-residualize",
+        help = "Emit parallel Fork/Join regions for data-independent loop residuals"
+    )]
+    pub parallel_residualize: bool,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -230,6 +236,12 @@ pub enum Commands {
             help = "Supercompile MIR and compile directly via Cranelift"
         )]
         supercompile: bool,
+
+        #[arg(
+            long = "parallel-residualize",
+            help = "Emit parallel Fork/Join regions for data-independent loop residuals"
+        )]
+        parallel_residualize: bool,
 
         #[arg(
             long = "mode",
@@ -296,6 +308,12 @@ pub enum Commands {
             help = "Supercompile MIR and compile directly via Cranelift"
         )]
         supercompile: bool,
+
+        #[arg(
+            long = "parallel-residualize",
+            help = "Emit parallel Fork/Join regions for data-independent loop residuals"
+        )]
+        parallel_residualize: bool,
 
         #[arg(
             long = "mode",
@@ -404,6 +422,7 @@ fn compile_program_to_obj_bytes(
     opt_level: &str,
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
+    parallel_residualize: bool,
 ) -> Result<Vec<u8>> {
     let opt: numlang::codegen::OptLevel = opt_level
         .parse()
@@ -412,8 +431,13 @@ fn compile_program_to_obj_bytes(
     match backend {
         Backend::Cranelift => {
             if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
-                numlang::codegen::compile_supercompiled_to_obj_with_mode(typed_program, mode, mrsc_objective)
-                    .map_err(|e| miette::miette!("Codegen error: {}", e))
+                numlang::codegen::compile_supercompiled_to_obj_with_mode_options(
+                    typed_program,
+                    mode,
+                    mrsc_objective,
+                    parallel_residualize,
+                )
+                .map_err(|e| miette::miette!("Codegen error: {}", e))
             } else if use_mir {
                 let mir = numlang::mir::lower::lower_program(typed_program);
                 numlang::codegen::compile_mir_to_obj(&mir)
@@ -426,7 +450,12 @@ fn compile_program_to_obj_bytes(
         Backend::Llvm => {
             let mut mir = numlang::mir::lower::lower_program(typed_program);
             if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
-                numlang::mir::supercompiler::supercompile_mir_program_with_mode(&mut mir, mode, mrsc_objective);
+                numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
+                    &mut mir,
+                    mode,
+                    mrsc_objective,
+                    parallel_residualize,
+                );
             }
             let mut compiler = numlang::codegen::LlvmCompiler::new(opt);
             compiler
@@ -446,6 +475,7 @@ fn build_executable(
     opt_level: &str,
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
+    parallel_residualize: bool,
 ) -> Result<()> {
     let obj_bytes = compile_program_to_obj_bytes(
         typed_program,
@@ -455,6 +485,7 @@ fn build_executable(
         opt_level,
         mode,
         mrsc_objective,
+        parallel_residualize,
     )?;
 
     let temp_dir = std::env::temp_dir();
@@ -478,6 +509,7 @@ fn build_executable(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_run(
     file: &Path,
     supercompile: bool,
@@ -486,6 +518,7 @@ fn handle_run(
     opt_level: &str,
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
+    parallel_residualize: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -510,6 +543,7 @@ fn handle_run(
         opt_level,
         mode,
         mrsc_objective,
+        parallel_residualize,
     )?;
 
     let status = Command::new(&temp_exe)
@@ -541,6 +575,7 @@ fn handle_build(
     opt_level: &str,
     mode: numlang::mir::supercompiler::SupercompileMode,
     mrsc_objective: &str,
+    parallel_residualize: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
     numlang::opt::optimize_program(&mut typed_program);
@@ -553,6 +588,7 @@ fn handle_build(
         opt_level,
         mode,
         mrsc_objective,
+        parallel_residualize,
     )?;
 
     if let Some(ref obj_path) = emit_obj {
@@ -723,6 +759,7 @@ fn real_main() -> Result<()> {
                 file,
                 bench,
                 supercompile,
+                parallel_residualize,
                 mode,
                 mrsc_objective,
                 use_mir,
@@ -740,6 +777,7 @@ fn real_main() -> Result<()> {
                     &opt_level,
                     mode.into(),
                     &mrsc_objective,
+                    parallel_residualize,
                 );
             }
             Commands::Build {
@@ -748,6 +786,7 @@ fn real_main() -> Result<()> {
                 emit_obj,
                 bench,
                 supercompile,
+                parallel_residualize,
                 mode,
                 mrsc_objective,
                 use_mir,
@@ -767,6 +806,7 @@ fn real_main() -> Result<()> {
                     &opt_level,
                     mode.into(),
                     &mrsc_objective,
+                    parallel_residualize,
                 );
             }
             Commands::Check { file } => return handle_check(&file),
@@ -864,10 +904,11 @@ fn real_main() -> Result<()> {
 
     if cli.emit_supercompiled_mir {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+        numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
             &mut mir_program,
             cli.mode.into(),
             &cli.mrsc_objective,
+            cli.parallel_residualize,
         );
         println!("{:#?}", mir_program);
         return Ok(());
@@ -928,10 +969,11 @@ fn real_main() -> Result<()> {
 
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
-        let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+        let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode_options(
             &mut mir_program,
             cli.mode.into(),
             &cli.mrsc_objective,
+            cli.parallel_residualize,
         );
         println!("{}", stats);
         println!("  residual blocks:   {}", stats.residual_block_count);
@@ -986,6 +1028,7 @@ fn real_main() -> Result<()> {
             &cli.opt_level,
             cli.mode.into(),
             &cli.mrsc_objective,
+            cli.parallel_residualize,
         )?;
 
         if let Some(ref obj_path) = cli.emit_obj {

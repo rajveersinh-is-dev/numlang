@@ -644,6 +644,11 @@ impl<'a> SupercompilerDriver<'a> {
                 self.drive_node(next_node, ancestor_stack, depth + 1);
                 ancestor_stack.pop();
             }
+            Terminator::Fork { left, .. } => {
+                let mut next_state = working_state;
+                next_state.block = left.clone();
+                self.handle_transition(node_id, next_state, ancestor_stack, depth);
+            }
             Terminator::Unreachable => {}
         }
     }
