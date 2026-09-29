@@ -5,6 +5,7 @@ Cargo.lock
 !src/codegen/entry_bench.obj
 *.exe
 proof/.lake/
+lean/.lake/
 fuzz_report.json
 bench/bin/
 __pycache__/
