@@ -13,3 +13,4 @@ __pycache__/
 _panic.nl
 *.pdb
 .numlang_cache/
+graphify-out/
