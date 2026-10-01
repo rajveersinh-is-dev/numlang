@@ -226,6 +226,8 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     Ok(())
 }
 
+static ENTRY_BENCH_C: &str = include_str!("entry_bench.c");
+
 pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     let compiler = ["cc", "clang", "gcc"]
         .iter()
@@ -233,9 +235,21 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
         .copied()
         .ok_or(LinkerError::LinkerNotFound)?;
 
+    let bench_mode = std::env::var("NUMLANG_BENCH").is_ok();
+    let bench_c_path = if bench_mode {
+        let p = obj_path.with_file_name(format!("entry_bench_{}.c", std::process::id()));
+        let _ = std::fs::write(&p, ENTRY_BENCH_C);
+        Some(p)
+    } else {
+        None
+    };
+
     let mut cmd = Command::new(compiler);
-    cmd.arg(obj_path)
-        .arg("-o")
+    cmd.arg(obj_path);
+    if let Some(ref bp) = bench_c_path {
+        cmd.arg(bp);
+    }
+    cmd.arg("-o")
         .arg(exe_path)
         .arg("-lm")
         .arg("-no-pie");
@@ -246,11 +260,15 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
             message: e.to_string(),
         })?;
 
+    if let Some(ref bp) = bench_c_path {
+        let _ = std::fs::remove_file(bp);
+    }
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         return Err(LinkerError::LinkFailed {
-            message: format!("{}\\n{}", stderr, stdout),
+            message: format!("{}\n{}", stderr, stdout),
         });
     }
 

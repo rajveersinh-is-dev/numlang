@@ -660,7 +660,13 @@ fn handle_build(
     }
 
     if output.is_some() || emit_obj.is_none() {
-        let out_exe = output.unwrap_or_else(|| file.with_extension("exe"));
+        let out_exe = output.unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                file.with_extension("exe")
+            } else {
+                file.with_extension("")
+            }
+        });
         let temp_dir = std::env::temp_dir();
         let obj_file = if let Some(ref obj_path) = emit_obj {
             obj_path.clone()

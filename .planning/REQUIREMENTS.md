@@ -10,10 +10,10 @@
 ## Hardening & Soundness Requirements
 
 ### 1. Decouple Win32 & True POSIX Native Codegen (Phase 41)
-- [ ] **PORT-01**: Abstract runtime platform imports across native code generators (`src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs`): target Windows API on `target_os = "windows"` (`ExitProcess`, `GetStdHandle`, `WriteFile`, `LocalAlloc`) and standard POSIX libc on `not(target_os = "windows")` (`exit`, `write(1, ...)`, `malloc`/`mmap`).
-- [ ] **PORT-02**: Update `src/codegen/entry_bench.c` to use standard ISO C `exit((int)ret);` rather than Win32 `ExitProcess`.
-- [ ] **PORT-03**: Fix `link_unix` in `src/codegen/linker.rs` and verify clean linking and execution of test programs and microbenchmarks on Linux.
-- [ ] **PORT-04**: Validate that the Dockerfile (`docker/Dockerfile`) build and `docker/entrypoint.sh` complete end-to-end without unresolved Win32 symbols.
+- [x] **PORT-01**: Abstract runtime platform imports across native code generators (`src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs`): target Windows API on `target_os = "windows"` (`ExitProcess`, `GetStdHandle`, `WriteFile`, `LocalAlloc`) and standard POSIX libc on `not(target_os = "windows")` (`exit`, `write(1, ...)`, `malloc`/`mmap`).
+- [x] **PORT-02**: Update `src/codegen/entry_bench.c` to use standard ISO C `exit((int)ret);` rather than Win32 `ExitProcess`.
+- [x] **PORT-03**: Fix `link_unix` in `src/codegen/linker.rs` and verify clean linking and execution of test programs and microbenchmarks on Linux.
+- [x] **PORT-04**: Validate that the Dockerfile (`docker/Dockerfile`) build and `docker/entrypoint.sh` complete end-to-end without unresolved Win32 symbols.
 
 ### 2. Constructive Lean 4 Soundness Proofs (Phase 42)
 - [ ] **LEAN-04**: Connect small-step transition `Step` to `Evaluates` in `lean/Supercompiler/Semantics.lean`: Define `Evaluates fn env res` as existence of a terminating execution trace $\exists s_f, \text{Step}^* \langle 0, env \rangle s_f \land s_f.term = \text{Return}(\text{res})$.
@@ -46,8 +46,24 @@
 
 | Requirement | Phase | Status | Target File(s) |
 | :--- | :---: | :---: | :--- |
-| **PORT-01..04** | Phase 41 | Planned | `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs`, `src/codegen/linker.rs`, `src/codegen/entry_bench.c`, `docker/Dockerfile` |
-| **LEAN-04..07** | Phase 42 | Planned | `lean/Supercompiler/Semantics.lean`, `lean/Supercompiler/Compaction.lean`, `lean/Supercompiler/Refinement.lean`, `lean/Supercompiler/Main.lean` |
-| **FUTA-05..08** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/true_futamura_projections_tests.rs`, `tests/third_futamura_tests.rs` |
-| **MEM-01..04** | Phase 44 | Planned | `src/runtime/`, `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs`, `tests/heap_supercompile_tests.rs` |
-| **ARCH-01..05** | Phase 45 | Planned | `src/opt/supercompiler/` (retire), `src/codegen/cranelift_backend.rs` (decompose), `src/mir/supercompiler/generalize.rs` |
+| **PORT-01** | Phase 41 | Complete | `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs` |
+| **PORT-02** | Phase 41 | Complete | `src/codegen/entry_bench.c` |
+| **PORT-03** | Phase 41 | Complete | `src/codegen/linker.rs`, `bench/harness/runner.py`, `bench/c/*.c` |
+| **PORT-04** | Phase 41 | Complete | `docker/Dockerfile`, `docker/entrypoint.sh`, `tests/platform_portability_tests.rs` |
+| **LEAN-04** | Phase 42 | Planned | `lean/Supercompiler/Semantics.lean` |
+| **LEAN-05** | Phase 42 | Planned | `lean/Supercompiler/Compaction.lean`, `Refinement.lean` |
+| **LEAN-06** | Phase 42 | Planned | `lean/Supercompiler/Semantics.lean`, `Main.lean` |
+| **LEAN-07** | Phase 42 | Planned | `lean/Supercompiler/Main.lean` |
+| **FUTA-05** | Phase 43 | Planned | `src/stdlib/minspec.nl` |
+| **FUTA-06** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/true_futamura_projections_tests.rs` |
+| **FUTA-07** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/true_futamura_projections_tests.rs` |
+| **FUTA-08** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/third_futamura_tests.rs` |
+| **MEM-01** | Phase 44 | Planned | `src/runtime/` |
+| **MEM-02** | Phase 44 | Planned | `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs` |
+| **MEM-03** | Phase 44 | Planned | `src/codegen/cranelift_backend.rs` |
+| **MEM-04** | Phase 44 | Planned | `tests/heap_supercompile_tests.rs` |
+| **ARCH-01** | Phase 45 | Planned | `src/opt/supercompiler/` (retire) |
+| **ARCH-02** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs` (decompose) |
+| **ARCH-03** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs` (unify) |
+| **ARCH-04** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs`, `src/typecheck/` |
+| **ARCH-05** | Phase 45 | Planned | `src/mir/supercompiler/generalize.rs` |

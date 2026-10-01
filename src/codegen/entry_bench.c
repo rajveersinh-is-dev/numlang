@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #include <windows.h>
 #include <stdint.h>
 #include <intrin.h>
@@ -5,7 +6,6 @@
 extern long long main(void);
 
 void mainCRTStartup() {
-
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
@@ -32,3 +32,32 @@ void mainCRTStartup() {
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, len, &written, NULL);
     ExitProcess((UINT)ret);
 }
+#else
+#define _POSIX_C_SOURCE 199309L
+#include <time.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+
+extern long long numlang_main(void);
+
+int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    long long ret = numlang_main();
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
+    long long ns = (long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
+
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "COMPUTE_NS: %lld\n", ns);
+    if (len > 0) {
+        ssize_t _w = write(1, buf, (size_t)len);
+        (void)_w;
+    }
+    exit((int)ret);
+}
+#endif
