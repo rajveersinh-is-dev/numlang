@@ -180,7 +180,12 @@ impl LlvmCompiler {
                 ret_llvm.fn_type(&param_tys, false)
             };
 
-            let fn_val = module.add_function(&func.name, fn_type, Some(Linkage::External));
+            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
+                "numlang_main"
+            } else {
+                func.name.as_str()
+            };
+            let fn_val = module.add_function(export_name, fn_type, Some(Linkage::External));
             func_vals.insert(func.name.clone(), fn_val);
         }
 
@@ -192,9 +197,12 @@ impl LlvmCompiler {
             self.compile_mir_function(func, &module, &builder, &struct_types, &func_vals)?;
         }
 
-        // 5. Emit Windows entry point `mainCRTStartup` if `main` is present
-        if let Some(&main_fn) = func_vals.get("main") {
-            self.emit_windows_entry_point(&module, &builder, main_fn);
+        // 5. Emit Windows entry point `mainCRTStartup` on Windows if `main` is present
+        #[cfg(target_os = "windows")]
+        if std::env::var("NUMLANG_BENCH").is_err() {
+            if let Some(&main_fn) = func_vals.get("main") {
+                self.emit_windows_entry_point(&module, &builder, main_fn);
+            }
         }
 
         // 6. Run LLVM optimization pipeline
@@ -202,7 +210,7 @@ impl LlvmCompiler {
 
         // 7. Emit object file bytes via TargetMachine
         Target::initialize_x86(&InitializationConfig::default());
-        let triple = TargetTriple::create("x86_64-pc-windows-msvc");
+        let triple = inkwell::targets::TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple)
             .map_err(|e| LlvmError::TargetInitError(e.to_string()))?;
 
@@ -240,40 +248,70 @@ impl LlvmCompiler {
     ) {
         use inkwell::module::Linkage;
 
-        // ExitProcess from kernel32.lib
-        if !func_vals.contains_key("ExitProcess") {
-            let exit_fn_ty = self.context.void_type().fn_type(
-                &[self.context.i32_type().into()],
-                false,
-            );
-            let exit_fn = module.add_function("ExitProcess", exit_fn_ty, Some(Linkage::External));
-            func_vals.insert("ExitProcess".to_string(), exit_fn);
+        #[cfg(target_os = "windows")]
+        {
+            // ExitProcess from kernel32.lib
+            if !func_vals.contains_key("ExitProcess") {
+                let exit_fn_ty = self.context.void_type().fn_type(
+                    &[self.context.i32_type().into()],
+                    false,
+                );
+                let exit_fn = module.add_function("ExitProcess", exit_fn_ty, Some(Linkage::External));
+                func_vals.insert("ExitProcess".to_string(), exit_fn);
+            }
+
+            // GetStdHandle from kernel32.lib
+            if !func_vals.contains_key("GetStdHandle") {
+                let gsh_fn_ty = self.context.i64_type().fn_type(
+                    &[self.context.i32_type().into()],
+                    false,
+                );
+                let gsh_fn = module.add_function("GetStdHandle", gsh_fn_ty, Some(Linkage::External));
+                func_vals.insert("GetStdHandle".to_string(), gsh_fn);
+            }
+
+            // WriteFile from kernel32.lib
+            if !func_vals.contains_key("WriteFile") {
+                let wf_fn_ty = self.context.i32_type().fn_type(
+                    &[
+                        self.context.i64_type().into(),
+                        self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context.i32_type().into(),
+                        self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                    ],
+                    false,
+                );
+                let wf_fn = module.add_function("WriteFile", wf_fn_ty, Some(Linkage::External));
+                func_vals.insert("WriteFile".to_string(), wf_fn);
+            }
         }
 
-        // GetStdHandle from kernel32.lib
-        if !func_vals.contains_key("GetStdHandle") {
-            let gsh_fn_ty = self.context.i64_type().fn_type(
-                &[self.context.i32_type().into()],
-                false,
-            );
-            let gsh_fn = module.add_function("GetStdHandle", gsh_fn_ty, Some(Linkage::External));
-            func_vals.insert("GetStdHandle".to_string(), gsh_fn);
-        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // libc exit(int)
+            if !func_vals.contains_key("exit") {
+                let exit_fn_ty = self.context.void_type().fn_type(
+                    &[self.context.i32_type().into()],
+                    false,
+                );
+                let exit_fn = module.add_function("exit", exit_fn_ty, Some(Linkage::External));
+                func_vals.insert("exit".to_string(), exit_fn);
+            }
 
-        // WriteFile from kernel32.lib
-        if !func_vals.contains_key("WriteFile") {
-            let wf_fn_ty = self.context.i32_type().fn_type(
-                &[
-                    self.context.i64_type().into(),
-                    self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
-                    self.context.i32_type().into(),
-                    self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
-                    self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
-                ],
-                false,
-            );
-            let wf_fn = module.add_function("WriteFile", wf_fn_ty, Some(Linkage::External));
-            func_vals.insert("WriteFile".to_string(), wf_fn);
+            // libc write(int, const void*, size_t) -> ssize_t
+            if !func_vals.contains_key("write") {
+                let wf_fn_ty = self.context.i64_type().fn_type(
+                    &[
+                        self.context.i32_type().into(),
+                        self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context.i64_type().into(),
+                    ],
+                    false,
+                );
+                let wf_fn = module.add_function("write", wf_fn_ty, Some(Linkage::External));
+                func_vals.insert("write".to_string(), wf_fn);
+            }
         }
     }
 
@@ -294,6 +332,7 @@ impl LlvmCompiler {
         pass_manager.run_on(module);
     }
 
+    #[cfg(target_os = "windows")]
     fn emit_windows_entry_point(
         &self,
         module: &inkwell::module::Module,

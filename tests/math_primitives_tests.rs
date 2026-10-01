@@ -1,14 +1,18 @@
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn run_numlang_code(code: &str) -> Option<i32> {
     let test_dir = std::env::temp_dir().join("numlang_test_math");
     fs::create_dir_all(&test_dir).unwrap();
+    let cnt = FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let src_file = test_dir.join(format!("test_{}.nl", id));
+    let src_file = test_dir.join(format!("test_{}_{}_{}.nl", std::process::id(), id, cnt));
     fs::write(&src_file, code).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))

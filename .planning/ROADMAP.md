@@ -29,7 +29,7 @@ NumLang combines Cranelift and LLVM code generation with a first-of-its-kind SSA
 
 *Governed by [`INTEGRITY_RULES.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).*
 
-### Phase 41: Decouple Win32 & True POSIX Native Codegen [PLANNED]
+### Phase 41: Decouple Win32 & True POSIX Native Codegen [COMPLETE]
 - **Goal**: Enable clean, native Linux/macOS compilation and ensure the Docker reproduction container executes without unresolved Windows kernel32 symbols.
 - **Scope**:
   - `src/codegen/cranelift_backend.rs` & `src/codegen/llvm_backend.rs`: Abstract libc calls (`exit`, `write`, `malloc`). Only declare `ExitProcess`/`GetStdHandle`/`WriteFile` when `target_os = "windows"`.

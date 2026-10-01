@@ -1422,9 +1422,16 @@ pub struct CraneliftCompiler {
     func_ids: HashMap<String, FuncId>,
     pub struct_layouts: HashMap<String, StructLayout>,
     pub enum_layouts: HashMap<String, EnumLayout>,
+    #[cfg(target_os = "windows")]
     exit_process_id: FuncId,
+    #[cfg(target_os = "windows")]
     get_std_handle_id: FuncId,
+    #[cfg(target_os = "windows")]
     write_file_id: FuncId,
+    #[cfg(not(target_os = "windows"))]
+    exit_id: FuncId,
+    #[cfg(not(target_os = "windows"))]
+    write_id: FuncId,
     print_str_id: FuncId,
     print_newline_id: FuncId,
     print_i64_id: FuncId,
@@ -1492,32 +1499,59 @@ impl CraneliftCompiler {
 
         let mut module = ObjectModule::new(builder);
 
-        // Declare ExitProcess from kernel32.lib
-        let mut exit_sig = module.make_signature();
-        exit_sig.params.push(AbiParam::new(types::I32));
-        let exit_process_id = module
-            .declare_function("ExitProcess", Linkage::Import, &exit_sig)
-            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        #[cfg(target_os = "windows")]
+        let (exit_process_id, get_std_handle_id, write_file_id) = {
+            // Declare ExitProcess from kernel32.lib
+            let mut exit_sig = module.make_signature();
+            exit_sig.params.push(AbiParam::new(types::I32));
+            let exit_process_id = module
+                .declare_function("ExitProcess", Linkage::Import, &exit_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-        // Declare GetStdHandle from kernel32.lib
-        let mut gsh_sig = module.make_signature();
-        gsh_sig.params.push(AbiParam::new(types::I32));
-        gsh_sig.returns.push(AbiParam::new(types::I64));
-        let get_std_handle_id = module
-            .declare_function("GetStdHandle", Linkage::Import, &gsh_sig)
-            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            // Declare GetStdHandle from kernel32.lib
+            let mut gsh_sig = module.make_signature();
+            gsh_sig.params.push(AbiParam::new(types::I32));
+            gsh_sig.returns.push(AbiParam::new(types::I64));
+            let get_std_handle_id = module
+                .declare_function("GetStdHandle", Linkage::Import, &gsh_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-        // Declare WriteFile from kernel32.lib
-        let mut wf_sig = module.make_signature();
-        wf_sig.params.push(AbiParam::new(types::I64));
-        wf_sig.params.push(AbiParam::new(types::I64));
-        wf_sig.params.push(AbiParam::new(types::I32));
-        wf_sig.params.push(AbiParam::new(types::I64));
-        wf_sig.params.push(AbiParam::new(types::I64));
-        wf_sig.returns.push(AbiParam::new(types::I32));
-        let write_file_id = module
-            .declare_function("WriteFile", Linkage::Import, &wf_sig)
-            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+            // Declare WriteFile from kernel32.lib
+            let mut wf_sig = module.make_signature();
+            wf_sig.params.push(AbiParam::new(types::I64));
+            wf_sig.params.push(AbiParam::new(types::I64));
+            wf_sig.params.push(AbiParam::new(types::I32));
+            wf_sig.params.push(AbiParam::new(types::I64));
+            wf_sig.params.push(AbiParam::new(types::I64));
+            wf_sig.returns.push(AbiParam::new(types::I32));
+            let write_file_id = module
+                .declare_function("WriteFile", Linkage::Import, &wf_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+            (exit_process_id, get_std_handle_id, write_file_id)
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let (exit_id, write_id) = {
+            // libc exit(int)
+            let mut exit_sig = module.make_signature();
+            exit_sig.params.push(AbiParam::new(types::I32));
+            let exit_id = module
+                .declare_function("exit", Linkage::Import, &exit_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+            // libc write(int fd, const void *buf, size_t count) -> ssize_t
+            let mut write_sig = module.make_signature();
+            write_sig.params.push(AbiParam::new(types::I32));
+            write_sig.params.push(AbiParam::new(types::I64));
+            write_sig.params.push(AbiParam::new(types::I64));
+            write_sig.returns.push(AbiParam::new(types::I64));
+            let write_id = module
+                .declare_function("write", Linkage::Import, &write_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+            (exit_id, write_id)
+        };
 
         let mut print_str_sig = module.make_signature();
         print_str_sig.params.push(AbiParam::new(types::I64));
@@ -1622,9 +1656,16 @@ impl CraneliftCompiler {
             func_ids: HashMap::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
+            #[cfg(target_os = "windows")]
             exit_process_id,
+            #[cfg(target_os = "windows")]
             get_std_handle_id,
+            #[cfg(target_os = "windows")]
             write_file_id,
+            #[cfg(not(target_os = "windows"))]
+            exit_id,
+            #[cfg(not(target_os = "windows"))]
+            write_id,
             print_str_id,
             print_newline_id,
             print_i64_id,
@@ -1673,9 +1714,14 @@ impl CraneliftCompiler {
                 }
             }
 
+            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
+                "numlang_main".to_string()
+            } else {
+                func.name.clone()
+            };
             let func_id = self
                 .module
-                .declare_function(&func.name, Linkage::Export, &sig)
+                .declare_function(&export_name, Linkage::Export, &sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
             self.func_ids.insert(func.name.clone(), func_id);
         }
@@ -1688,7 +1734,8 @@ impl CraneliftCompiler {
             self.compile_function(func, &mut ctx, &mut fn_builder_ctx)?;
         }
 
-        // Step 3: Emit entry point (mainCRTStartup) if main exists and benchmarking mode is disabled
+        // Step 3: Emit entry point (mainCRTStartup) on Windows if main exists and benchmarking mode is disabled
+        #[cfg(target_os = "windows")]
         if std::env::var("NUMLANG_BENCH").is_err() {
             if let Some(&main_id) = self.func_ids.get("main") {
                 self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
@@ -1789,17 +1836,28 @@ impl CraneliftCompiler {
         builder.switch_to_block(write_block);
         builder.seal_block(write_block);
 
-        let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
-        let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
+        #[cfg(target_os = "windows")]
+        {
+            let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+            let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
 
-        let std_out_handle = builder.ins().iconst(types::I32, -11); // STD_OUTPUT_HANDLE
-        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
-        let h_call = builder.ins().call(get_std_handle_func, &[std_out_handle]);
-        let h_stdout = builder.inst_results(h_call)[0];
+            let std_out_handle = builder.ins().iconst(types::I32, -11); // STD_OUTPUT_HANDLE
+            let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
+            let h_call = builder.ins().call(get_std_handle_func, &[std_out_handle]);
+            let h_stdout = builder.inst_results(h_call)[0];
 
-        let zero64 = builder.ins().iconst(types::I64, 0);
-        let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-        builder.ins().call(write_file_func, &[h_stdout, ptr, len, written_addr, zero64]);
+            let zero64 = builder.ins().iconst(types::I64, 0);
+            let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+            builder.ins().call(write_file_func, &[h_stdout, ptr, len, written_addr, zero64]);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let stdout_fd = builder.ins().iconst(types::I32, 1);
+            let len64 = builder.ins().uextend(types::I64, len);
+            let write_func = self.module.declare_func_in_func(self.write_id, builder.func);
+            builder.ins().call(write_func, &[stdout_fd, ptr, len64]);
+        }
         builder.ins().jump(ret_block, &[]);
 
         builder.switch_to_block(ret_block);
@@ -2239,6 +2297,7 @@ impl CraneliftCompiler {
         Ok(())
     }
 
+    #[cfg(target_os = "windows")]
     fn compile_entry_point(
         &mut self,
         main_id: FuncId,
@@ -2652,9 +2711,16 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             struct_layouts: &self.struct_layouts,
             enum_layouts: &self.enum_layouts,
             current_sret_ptr,
+            #[cfg(target_os = "windows")]
             exit_process_id: self.exit_process_id,
+            #[cfg(target_os = "windows")]
             get_std_handle_id: self.get_std_handle_id,
+            #[cfg(target_os = "windows")]
             write_file_id: self.write_file_id,
+            #[cfg(not(target_os = "windows"))]
+            exit_id: self.exit_id,
+            #[cfg(not(target_os = "windows"))]
+            write_id: self.write_id,
             print_str_id: self.print_str_id,
             print_newline_id: self.print_newline_id,
             print_i64_id: self.print_i64_id,
@@ -2828,9 +2894,16 @@ struct FunctionTranslationState<'a> {
     struct_layouts: &'a HashMap<String, StructLayout>,
     enum_layouts: &'a HashMap<String, EnumLayout>,
     current_sret_ptr: Option<Value>,
+    #[cfg(target_os = "windows")]
     exit_process_id: FuncId,
+    #[cfg(target_os = "windows")]
     get_std_handle_id: FuncId,
+    #[cfg(target_os = "windows")]
     write_file_id: FuncId,
+    #[cfg(not(target_os = "windows"))]
+    exit_id: FuncId,
+    #[cfg(not(target_os = "windows"))]
+    write_id: FuncId,
     print_str_id: FuncId,
     print_newline_id: FuncId,
     print_i64_id: FuncId,
@@ -3351,26 +3424,43 @@ impl<'a> FunctionTranslationState<'a> {
             builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
         }
 
-        let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
-        let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
-        let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
+        #[cfg(target_os = "windows")]
+        {
+            let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+            let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
+            let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
 
-        let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
-        let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
-        let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
-        let h_stderr = builder.inst_results(h_call)[0];
+            let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
+            let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
+            let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
+            let h_stderr = builder.inst_results(h_call)[0];
 
-        let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
-        let zero64 = builder.ins().iconst(types::I64, 0);
-        let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-        builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
+            let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
+            let zero64 = builder.ins().iconst(types::I64, 0);
+            let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+            builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
 
-        let exit_code = builder.ins().iconst(types::I32, 101);
-        let exit_func = self
-            .module
-            .declare_func_in_func(self.exit_process_id, builder.func);
-        builder.ins().call(exit_func, &[exit_code]);
-        builder.ins().trap(TrapCode::user(2).unwrap());
+            let exit_code = builder.ins().iconst(types::I32, 101);
+            let exit_func = self
+                .module
+                .declare_func_in_func(self.exit_process_id, builder.func);
+            builder.ins().call(exit_func, &[exit_code]);
+            builder.ins().trap(TrapCode::user(2).unwrap());
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
+            let stderr_fd = builder.ins().iconst(types::I32, 2);
+            let msg_len = builder.ins().iconst(types::I64, msg.len() as i64);
+            let write_func = self.module.declare_func_in_func(self.write_id, builder.func);
+            builder.ins().call(write_func, &[stderr_fd, msg_addr, msg_len]);
+
+            let exit_code = builder.ins().iconst(types::I32, 101);
+            let exit_func = self.module.declare_func_in_func(self.exit_id, builder.func);
+            builder.ins().call(exit_func, &[exit_code]);
+            builder.ins().trap(TrapCode::user(2).unwrap());
+        }
 
         builder.switch_to_block(ok_block);
         builder.seal_block(ok_block);
@@ -9198,9 +9288,14 @@ impl CraneliftCompiler {
                     sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
                 }
             }
+            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
+                "numlang_main".to_string()
+            } else {
+                func.name.clone()
+            };
             let func_id = self
                 .module
-                .declare_function(&func.name, Linkage::Export, &sig)
+                .declare_function(&export_name, Linkage::Export, &sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
             self.func_ids.insert(func.name.clone(), func_id);
         }
@@ -9214,6 +9309,7 @@ impl CraneliftCompiler {
         }
 
         // Step 3: Emit entry wrapper if main exists and benchmarking mode is disabled
+        #[cfg(target_os = "windows")]
         if std::env::var("NUMLANG_BENCH").is_err() {
             if let Some(&main_id) = self.func_ids.get("main") {
                 self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
