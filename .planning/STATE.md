@@ -34,18 +34,20 @@ Last activity: 2026-10-02 — Phase 45 completed and verified. Adversarial Remed
 - [x] **Phase 26: Rigorous Lean 4 Verification — Zero Axioms, Recursive Semantics** (COMMITTED `55fe450`)
 - [x] **Phase 27: Honest High-Precision Benchmarks & Direct Supercompiler Comparisons** (COMMITTED `fd030fa`)
 - [x] **Phase 28: Paper Rewrite & 1-Click Reproducible Artifact Package** (COMPLETED)
+- [x] **Phase 41: Decouple Win32 and True POSIX Native Codegen** (COMMITTED `f7396c0`)
+- [x] **Phase 42: Constructive Lean 4 Soundness Proofs** (COMMITTED `f7396c0`)
+- [x] **Phase 43: Complete Futamura Projections (1st, 2nd, 3rd)** (COMMITTED `f7396c0`)
+- [x] **Phase 44: Adversarial Fuzzing & Memory Safety Verification** (COMMITTED `f7396c0`)
+- [x] **Phase 45: Monolith Decomposition & Codegen Unification** (COMMITTED `f7396c0`)
 
 ## Accumulated Context
 
 ### Critical Audit Findings & Decisions
 - All algorithmic stubs resolved: Phases 21–24.
-- Futamura projections: Resolved in Phase 25 via `src/stdlib/minspec.nl`.
-- Lean 4 proofs: Resolved in Phase 26 — zero `axiom`, zero `sorry`, recursive semantics modeled.
+- Futamura projections: Resolved in Phase 25 & 43 via `src/stdlib/minspec.nl` (projections 1, 2, and 3 proven structurally distinct).
+- Lean 4 proofs: Resolved in Phase 26 & 42 — zero `axiom`, zero `sorry`, constructive `StepStar` operational semantics.
 - Benchmark timing: Fixed in Phase 27 — in-process per-iteration measurement, 30 rounds, 95% CI.
-- **Paper integrity** (Phase 28 — CURRENT FOCUS):
-  - `paper/main.tex` contains hardcoded claims e.g. "12,000--85,000 lines/second" throughput not backed by verified pipeline.
-  - `\begin{tabular}...\toprule\end{tabular}` is empty — Table 1 benchmark data must be auto-generated from `bench/data/results.csv`.
-  - `bench/harness/generate_tables.py` does NOT exist yet — must be created.
-  - `docker/Dockerfile` has `RUN lake build || true` — Lean build failure is silently swallowed; must be `RUN lake build` (no `|| true`).
-  - `docker/Dockerfile` CMD references `scripts/run_all_experiments.sh` — must verify this script exists and runs cleanly.
-  - Sections 4 (Futamura), 5 (Lean 4 proofs), and 6 (Evaluation) need rewriting with verified data.
+- Cross-platform portability: Resolved in Phase 41 — decoupled Win32/POSIX syscalls.
+- Runtime memory management: Resolved in Phase 44 — scoped arena allocator and non-escaping loop reset latch.
+- Codegen modularity & translation validation: Resolved in Phase 45 — decomposed Cranelift into 7 submodules (all <= 2,500 lines), implemented inductive SMT loop validation ($k$-induction).
+

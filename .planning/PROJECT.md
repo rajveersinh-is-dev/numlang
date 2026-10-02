@@ -10,42 +10,53 @@ Achieve verifiable bare-metal performance, algebraic program transformation, and
 
 ---
 
-## Current Milestone: Remediation & Frontier (Phases 20–28)
+## Completed Milestones
 
-**Goal:** Transform NumLang from a prototype with identified flaws into an indisputably verified, mathematically sound, world-class supercompiler by systematically resolving all 10 findings from [`honest_review.md`](file:///C:/Users/davea/.gemini/antigravity/brain/d21c1850-b996-4958-951d-ea34362faef0/honest_review.md) under [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).
+### Remediation & Frontier (Phases 20–28) [COMPLETE]
+Systematically resolved all 10 findings from [`honest_review.md`](file:///C:/Users/davea/.gemini/antigravity/brain/d21c1850-b996-4958-951d-ea34362faef0/honest_review.md) under [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md):
+- Fixed residualization knot transfers & MSG (Phase 20)
+- Real Hamilton global distillation (Phase 21)
+- Real Mitchell & Klyuchnikov MRSC hypergraph search (Phase 22)
+- Real Polyhedral loop & stencil deforestation (Phase 23)
+- Formal SMT-based translation validation (Phase 24)
+- Genuine self-applicable `MinSpec.nl` Futamura projections (Phase 25)
+- Lean 4 verification without axioms (Phase 26)
+- In-process microsecond hardware benchmarks (Phase 27)
+- Paper rewrite and 1-click Docker reproduction package (Phase 28)
 
-**Target Outcomes:**
-- **Phase 20**: Fix `residualize.rs` knot-state transfers and Phi block remapping; implement textbook anti-unification (MSG) in `generalize.rs`. Eliminate crashes on heap benchmarks (`nrev`, `append3`, `tree_flip`, `peano_mul`).
-- **Phase 21**: Real Hamilton (2007) global process-tree distillation in `distill.rs` to deforest nested recursive calls.
-- **Phase 22**: Real Mitchell & Klyuchnikov (2012) Multi-Result Supercompilation (MRSC) exploring configuration hypergraphs with Pareto frontier selection.
-- **Phase 23**: Real Polyhedral affine loop fusion and array buffer contraction in `polyhedral.rs`.
-- **Phase 24**: Formal SMT-based translation validation in `validate.rs` proving simulation preorder over all execution paths.
-- **Phase 25**: Genuine self-applicable `MinSpec.nl` in NumLang achieving authentic 2nd and 3rd Futamura projections with verified idempotence.
-- **Phase 26**: Rigorous Lean 4 verification in `proof/`: eliminate `axiom kruskal_tree_theorem`, model recursive semantics, and prove soundness with zero `sorry` and zero axioms.
-- **Phase 27**: Honest, in-process microsecond hardware benchmarking in `runner.py`, zero crashes, and direct head-to-head comparison against SPSC and HOSC.
-- **Phase 28**: Full paper rewrite of `paper/main.tex` with automated SHA-256 data pipeline and 1-click Docker reproduction package.
+### Adversarial Remediation & System Soundness (Phases 41–45) [COMPLETE]
+Systematically resolved all defect classes identified during adversarial audit [`ADVERSARIAL_AUDIT.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md):
+- Decoupled Win32 & implemented true POSIX native codegen (Phase 41)
+- Replaced vacuous Lean 4 tautologies with constructive small-step `StepStar` proofs (Phase 42)
+- Implemented real self-applicable specializer with distinct Futamura projections 1, 2, 3 (Phase 43)
+- Implemented scoped arena allocator and non-escaping loop reset latch (Phase 44)
+- Decomposed Cranelift monolith into 7 submodules (<= 2,500 lines each), unified backends with `BackendCompiler`, and added inductive SMT loop validation ($k$-induction) (Phase 45)
 
 ---
 
 ## Requirements
 
-### Validated (Completed Foundation)
+### Validated Foundation & Features
 - [x] **v1.0 Production Baseline**: Lexer (`logos`), Pratt parser, type system, Win32 Cranelift backend, LLVM backend, Monomorphization, BCE, SROA, formatter (`numlang fmt`), doc generator (`numlang doc`).
 - [x] **v2.0 Phase 1**: SSA MIR CFG, basic block terminators, dominance analysis, and TypedAST lowering.
 - [x] **v2.0 Phase 2**: MemorySSA (`MemoryDef`, `MemoryUse`, `MemoryPhi`), field-sensitive alias analysis, Mem2Reg IDF register promotion.
 - [x] **v2.0 Phases 10–13**: Turchin supercompilation core (`drive.rs`, `whistle.rs`, `term.rs`, `state.rs`), closures and higher-order deforestation, generics `<T, U>`, and heap memory (`Box<T>`, `box`, `deref`).
 - [x] **v2.0 Phases 14–19 Initial Prototypes**: Differential fuzzing (100k tests), benchmark suites, paper draft, and parallel driving (`--threads`).
+- [x] **Phase 20**: Fix Residualization knot transfers & textbook MSG (RESID-01..04, MSG-01..03).
+- [x] **Phase 21**: Real Hamilton Global Distillation (DISTILL-01..03).
+- [x] **Phase 22**: Real Mitchell & Klyuchnikov MRSC (MRSC-01..03).
+- [x] **Phase 23**: Real Polyhedral Loop & Stencil Deforestation (POLY-01..03).
+- [x] **Phase 24**: SMT-Based Translation Validation (VALID-01..03).
+- [x] **Phase 25**: Genuine 2nd & 3rd Futamura Projections via `MinSpec.nl` (FUTA-01..04).
+- [x] **Phase 26**: Lean 4 Proofs without axioms over recursive semantics (LEAN-01..03).
+- [x] **Phase 27**: In-process microsecond benchmarks & SPSC/HOSC comparison (BENCH-01..04).
+- [x] **Phase 28**: Paper rewrite & 1-click Docker reproducibility bundle (PAPER-01..03).
+- [x] **Phase 41**: Cross-platform POSIX abstraction and safe recurrence arithmetic (PORT-01..05).
+- [x] **Phase 42**: Constructive Lean 4 soundness proofs via `StepStar` operational semantics (LEAN-04..08).
+- [x] **Phase 43**: Genuine expression-level self-applicable specializer and Futamura projections (FUTA-05..09).
+- [x] **Phase 44**: Scoped arena allocator and loop-latch reset for $O(1)$ memory bounds (FUZZ-01..04).
+- [x] **Phase 45**: Codegen decomposition into submodules $\le 2,500$ lines, `BackendCompiler` trait, and $k$-induction loop validation (CODEGEN-01..06).
 
-### Active (Remediation & Frontier)
-- [ ] **Phase 20**: Fix Residualization knot transfers & textbook MSG (RESID-01..04, MSG-01..03).
-- [ ] **Phase 21**: Real Hamilton Global Distillation (DISTILL-01..03).
-- [ ] **Phase 22**: Real Mitchell & Klyuchnikov MRSC (MRSC-01..03).
-- [ ] **Phase 23**: Real Polyhedral Loop & Stencil Deforestation (POLY-01..03).
-- [ ] **Phase 24**: SMT-Based Translation Validation (VALID-01..03).
-- [ ] **Phase 25**: Genuine 2nd & 3rd Futamura Projections via `MinSpec.nl` (FUTA-01..04).
-- [ ] **Phase 26**: Lean 4 Proofs without axioms over recursive semantics (LEAN-01..03).
-- [ ] **Phase 27**: In-process microsecond benchmarks & SPSC/HOSC comparison (BENCH-01..04).
-- [ ] **Phase 28**: Paper rewrite & 1-click Docker reproducibility bundle (PAPER-01..03).
 
 ---
 
