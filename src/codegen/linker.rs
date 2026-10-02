@@ -159,6 +159,7 @@ fn scan_and_append_sdk_libs(base: &Path, dirs: &mut Vec<PathBuf>) {
 }
 
 static ENTRY_BENCH_OBJ: &[u8] = include_bytes!("entry_bench.obj");
+static ENTRY_BENCH_C: &str = include_str!("entry_bench.c");
 
 pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     let linker = find_windows_linker().ok_or(LinkerError::LinkerNotFound)?;
@@ -226,8 +227,6 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     Ok(())
 }
 
-static ENTRY_BENCH_C: &str = include_str!("entry_bench.c");
-
 pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     let compiler = ["cc", "clang", "gcc"]
         .iter()
@@ -245,11 +244,11 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     };
 
     let mut cmd = Command::new(compiler);
-    cmd.arg(obj_path);
     if let Some(ref bp) = bench_c_path {
         cmd.arg(bp);
     }
-    cmd.arg("-o")
+    cmd.arg(obj_path)
+        .arg("-o")
         .arg(exe_path)
         .arg("-lm")
         .arg("-no-pie");
@@ -268,7 +267,7 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         return Err(LinkerError::LinkFailed {
-            message: format!("{}\n{}", stderr, stdout),
+            message: format!("{}\\n{}", stderr, stdout),
         });
     }
 

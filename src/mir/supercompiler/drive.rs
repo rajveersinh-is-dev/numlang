@@ -150,7 +150,7 @@ impl Default for DriverConfig {
             max_unroll_depth: 0,
             solve_recurrences: true,
             inline_calls: true,
-            max_inline_depth: 3,
+            max_inline_depth: 8,
             max_inline_nodes: 512,
             inline_loop_body_calls: false,
         }
@@ -1477,6 +1477,18 @@ impl<'a> SupercompilerDriver<'a> {
         let blocks = self.natural_loops.get(&curr.block)?;
         let header_block = self.block_map.get(&curr.block)?;
 
+        // If the loop contains internal branches (e.g. if-statements),
+        // body execution cannot be simulated as a linear sequence of statements.
+        for b_id in blocks {
+            if *b_id != curr.block {
+                if let Some(b) = self.block_map.get(b_id) {
+                    if matches!(b.terminator, Terminator::BranchIf { .. } | Terminator::Switch { .. }) {
+                        return None;
+                    }
+                }
+            }
+        }
+
         // Find loop condition: iv < bound or iv <= bound
         let iv = match &header_block.terminator {
             Terminator::BranchIf { condition, .. } => {
@@ -1780,11 +1792,16 @@ impl<'a> SupercompilerDriver<'a> {
 
     fn resolve_closure_function(
         &self,
-        _fn_name: &str,
+        fn_name: &str,
         n_captured: usize,
         n_args: usize,
     ) -> Option<&'a MirFunction> {
         let expected_arity = n_captured + n_args;
+        if let Some(f) = self.program_funcs.get(fn_name) {
+            if f.params.len() == expected_arity {
+                return Some(f);
+            }
+        }
         let candidates: Vec<_> = self
             .program_funcs
             .values()

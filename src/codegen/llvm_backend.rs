@@ -180,12 +180,7 @@ impl LlvmCompiler {
                 ret_llvm.fn_type(&param_tys, false)
             };
 
-            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
-                "numlang_main"
-            } else {
-                func.name.as_str()
-            };
-            let fn_val = module.add_function(export_name, fn_type, Some(Linkage::External));
+            let fn_val = module.add_function(&func.name, fn_type, Some(Linkage::External));
             func_vals.insert(func.name.clone(), fn_val);
         }
 
@@ -197,12 +192,10 @@ impl LlvmCompiler {
             self.compile_mir_function(func, &module, &builder, &struct_types, &func_vals)?;
         }
 
-        // 5. Emit Windows entry point `mainCRTStartup` on Windows if `main` is present
+        // 5. Emit Windows entry point `mainCRTStartup` if `main` is present on Windows
         #[cfg(target_os = "windows")]
-        if std::env::var("NUMLANG_BENCH").is_err() {
-            if let Some(&main_fn) = func_vals.get("main") {
-                self.emit_windows_entry_point(&module, &builder, main_fn);
-            }
+        if let Some(&main_fn) = func_vals.get("main") {
+            self.emit_windows_entry_point(&module, &builder, main_fn);
         }
 
         // 6. Run LLVM optimization pipeline
@@ -210,7 +203,15 @@ impl LlvmCompiler {
 
         // 7. Emit object file bytes via TargetMachine
         Target::initialize_x86(&InitializationConfig::default());
-        let triple = inkwell::targets::TargetMachine::get_default_triple();
+        #[cfg(target_os = "windows")]
+        let triple_str = "x86_64-pc-windows-msvc";
+        #[cfg(target_os = "linux")]
+        let triple_str = "x86_64-unknown-linux-gnu";
+        #[cfg(target_os = "macos")]
+        let triple_str = "x86_64-apple-darwin";
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        let triple_str = "x86_64-unknown-linux-gnu";
+        let triple = TargetTriple::create(triple_str);
         let target = Target::from_triple(&triple)
             .map_err(|e| LlvmError::TargetInitError(e.to_string()))?;
 
@@ -289,7 +290,7 @@ impl LlvmCompiler {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // libc exit(int)
+            // exit from libc
             if !func_vals.contains_key("exit") {
                 let exit_fn_ty = self.context.void_type().fn_type(
                     &[self.context.i32_type().into()],
@@ -299,9 +300,9 @@ impl LlvmCompiler {
                 func_vals.insert("exit".to_string(), exit_fn);
             }
 
-            // libc write(int, const void*, size_t) -> ssize_t
+            // write from libc
             if !func_vals.contains_key("write") {
-                let wf_fn_ty = self.context.i64_type().fn_type(
+                let write_fn_ty = self.context.i64_type().fn_type(
                     &[
                         self.context.i32_type().into(),
                         self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
@@ -309,8 +310,8 @@ impl LlvmCompiler {
                     ],
                     false,
                 );
-                let wf_fn = module.add_function("write", wf_fn_ty, Some(Linkage::External));
-                func_vals.insert("write".to_string(), wf_fn);
+                let write_fn = module.add_function("write", write_fn_ty, Some(Linkage::External));
+                func_vals.insert("write".to_string(), write_fn);
             }
         }
     }
@@ -332,7 +333,6 @@ impl LlvmCompiler {
         pass_manager.run_on(module);
     }
 
-    #[cfg(target_os = "windows")]
     fn emit_windows_entry_point(
         &self,
         module: &inkwell::module::Module,
@@ -1004,3 +1004,19 @@ pub fn compile_mir_to_obj(
     let mut compiler = LlvmCompiler::new(opt_level);
     compiler.compile_mir_to_obj(program, output_path)
 }
+
+impl crate::codegen::backend_trait::BackendCompiler for LlvmCompiler {
+    fn name(&self) -> &'static str {
+        "llvm"
+    }
+
+    fn compile_to_obj_bytes(&mut self, program: &crate::typecheck::typed_ast::TypedProgram) -> Result<Vec<u8>, String> {
+        let mir = crate::mir::lower::lower_program(program);
+        self.compile_mir_to_obj_bytes(&mir).map_err(|e| e.to_string())
+    }
+
+    fn compile_mir_to_obj_bytes(&mut self, mir: &MirProgram) -> Result<Vec<u8>, String> {
+        self.compile_mir_to_obj_bytes(mir).map_err(|e| e.to_string())
+    }
+}
+

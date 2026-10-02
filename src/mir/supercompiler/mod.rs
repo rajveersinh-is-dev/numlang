@@ -43,8 +43,8 @@ pub use residualize::{residualize_process_tree, residualize_process_tree_paralle
 pub use state::Interval;
 pub use validate::{
     check_satisfiability, verify_formula_validity, verify_program_equivalence, BoolFormula,
-    BvExpr, SmtLib2Printer, SmtResult, TranslationValidator, ValidationCertificate,
-    ValidationError,
+    BvExpr, KInductionCertificate, KInductionValidator, LoopInductionCandidate, SmtLib2Printer,
+    SmtResult, TranslationValidator, ValidationCertificate, ValidationError,
 };
 
 use crate::mir::lower::{MirFunction, MirProgram};

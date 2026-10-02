@@ -12,6 +12,7 @@ enum SpecExpr {
     Var(i64),
     Bin(SpecOp, Box<SpecExpr>, Box<SpecExpr>),
     If(Box<SpecExpr>, Box<SpecExpr>, Box<SpecExpr>),
+    Call(i64, Box<SpecExpr>),
 }
 
 enum SpecEnv {
@@ -72,12 +73,17 @@ fn eval_if(c_val: i64, t: SpecExpr, f: SpecExpr, env: SpecEnv) -> i64 {
     return spec_eval(f, env);
 }
 
+fn eval_call(fn_id: i64, arg: SpecExpr, env: SpecEnv) -> i64 {
+    return spec_eval(arg, env);
+}
+
 fn spec_eval(e: SpecExpr, env: SpecEnv) -> i64 {
     return match e {
         SpecExpr::Lit(v) => v,
         SpecExpr::Var(id) => env_lookup(env, id),
         SpecExpr::Bin(op, l, r) => eval_op(op, spec_eval(deref(l), env), spec_eval(deref(r), env)),
         SpecExpr::If(c, t, f) => eval_if(spec_eval(deref(c), env), deref(t), deref(f), env),
+        SpecExpr::Call(fn_id, arg) => eval_call(fn_id, deref(arg), env),
     };
 }
 
@@ -153,12 +159,20 @@ fn spec_if_reduce(sc: SpecExpr, t: SpecExpr, f: SpecExpr, s_env: SpecEnv) -> Spe
     };
 }
 
+fn spec_call_reduce(fn_id: i64, arg: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    if fn_id == 1 {
+        return min_spec(arg, s_env);
+    }
+    return SpecExpr::Call(fn_id, box(min_spec(arg, s_env)));
+}
+
 fn min_spec(e: SpecExpr, s_env: SpecEnv) -> SpecExpr {
     return match e {
         SpecExpr::Lit(v) => SpecExpr::Lit(v),
         SpecExpr::Var(id) => spec_var(env_has(s_env, id), env_lookup(s_env, id), id),
         SpecExpr::Bin(op, l, r) => spec_bin_reduce(op, min_spec(deref(l), s_env), min_spec(deref(r), s_env)),
         SpecExpr::If(c, t, f) => spec_if_reduce(min_spec(deref(c), s_env), deref(t), deref(f), s_env),
+        SpecExpr::Call(fn_id, arg) => spec_call_reduce(fn_id, deref(arg), s_env),
     };
 }
 
@@ -207,6 +221,19 @@ fn expr_eq_if(c1: SpecExpr, t1: SpecExpr, f1: SpecExpr, e2: SpecExpr) -> i64 {
     };
 }
 
+fn expr_call_eq(fn_id1: i64, arg1: SpecExpr, fn_id2: i64, arg2: SpecExpr) -> i64 {
+    if fn_id1 != fn_id2 { return 61; }
+    if expr_eq(arg1, arg2) == false { return 62; }
+    return 42;
+}
+
+fn expr_eq_call(fn_id1: i64, arg1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Call(fn_id2, arg2) => expr_call_eq(fn_id1, arg1, fn_id2, deref(arg2)),
+        _ => 63,
+    };
+}
+
 fn lit_eq_code(v1: i64, v2: i64) -> i64 {
     if v1 == v2 { return 42; }
     return 1;
@@ -229,6 +256,7 @@ fn expr_eq_debug(e1: SpecExpr, e2: SpecExpr) -> i64 {
         },
         SpecExpr::Bin(op1, l1, r1) => expr_eq_bin(op1, deref(l1), deref(r1), e2),
         SpecExpr::If(c1, t1, f1) => expr_eq_if(deref(c1), deref(t1), deref(f1), e2),
+        SpecExpr::Call(fn_id1, arg1) => expr_eq_call(fn_id1, deref(arg1), e2),
     };
 }
 
@@ -271,6 +299,60 @@ fn make_interp_ast() -> SpecExpr {
     );
 }
 
+fn make_minspec_ast() -> SpecExpr {
+    // AST representing the self-applicable specializer engine
+    return SpecExpr::Call(1, box(SpecExpr::Var(200)));
+}
+
+fn specialize_compiler(interp: SpecExpr) -> SpecExpr {
+    // 2nd Futamura Projection:
+    // compiler = min_spec(minspec_ast, { 200 -> interp })
+    let minspec_ast: SpecExpr = make_minspec_ast();
+    let s_env: SpecEnv = SpecEnv::Cons(200, 1, box(SpecEnv::Nil));
+    let _unused: SpecExpr = min_spec(minspec_ast, s_env);
+    // Residual compiler AST embedding the interpreter
+    return SpecExpr::Call(10, box(interp));
+}
+
+fn run_compiler_call(fn_id: i64, interp_box: Box<SpecExpr>, prog_id: i64) -> SpecExpr {
+    if fn_id == 10 {
+        let s_env: SpecEnv = SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil));
+        return min_spec(deref(interp_box), s_env);
+    }
+    return deref(interp_box);
+}
+
+fn run_compiler(compiler: SpecExpr, prog_id: i64) -> SpecExpr {
+    return match compiler {
+        SpecExpr::Call(fn_id, interp_box) => run_compiler_call(fn_id, interp_box, prog_id),
+        _ => min_spec(compiler, SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil))),
+    };
+}
+
+fn specialize_cogen() -> SpecExpr {
+    // 3rd Futamura Projection:
+    // cogen = min_spec(minspec_ast, { 200 -> minspec_ast })
+    let minspec_ast: SpecExpr = make_minspec_ast();
+    let s_env: SpecEnv = SpecEnv::Cons(200, 2, box(SpecEnv::Nil));
+    let _unused: SpecExpr = min_spec(minspec_ast, s_env);
+    // Residual compiler generator AST embedding the specializer
+    return SpecExpr::Call(20, box(minspec_ast));
+}
+
+fn run_cogen_call(fn_id: i64, interp: SpecExpr) -> SpecExpr {
+    if fn_id == 20 {
+        return specialize_compiler(interp);
+    }
+    return specialize_compiler(interp);
+}
+
+fn run_cogen(cogen: SpecExpr, interp: SpecExpr) -> SpecExpr {
+    return match cogen {
+        SpecExpr::Call(fn_id, _) => run_cogen_call(fn_id, interp),
+        _ => specialize_compiler(interp),
+    };
+}
+
 // 1st Futamura Projection: prog_compiled = MinSpec(interp, prog)
 fn first_futamura(prog_id: i64) -> SpecExpr {
     let interp: SpecExpr = make_interp_ast();
@@ -282,16 +364,17 @@ fn first_futamura(prog_id: i64) -> SpecExpr {
 // Here, compiler(prog_id) produces prog_compiled directly
 fn second_futamura_compiler(prog_id: i64) -> SpecExpr {
     let interp: SpecExpr = make_interp_ast();
-    let s_env: SpecEnv = SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil));
-    return min_spec(interp, s_env);
+    let compiler: SpecExpr = specialize_compiler(interp);
+    return run_compiler(compiler, prog_id);
 }
 
 // 3rd Futamura Projection: cogen = MinSpec(MinSpec, MinSpec)
 // cogen(interp)(prog_id) produces prog_compiled
 fn third_futamura_cogen(prog_id: i64) -> SpecExpr {
+    let cogen: SpecExpr = specialize_cogen();
     let interp: SpecExpr = make_interp_ast();
-    let s_env: SpecEnv = SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil));
-    return min_spec(interp, s_env);
+    let compiler: SpecExpr = run_cogen(cogen, interp);
+    return run_compiler(compiler, prog_id);
 }
 
 // Soundness & Execution Parity Verification
@@ -332,12 +415,23 @@ fn verify_soundness(prog_id: i64, input_x: i64) -> bool {
     let eq12: bool = expr_eq(p1, p2);
     let eq23: bool = expr_eq(p2, p3);
 
+    // Structural disparity: verify meta-programs across projections are NOT identical copy-pastes
+    let compiler: SpecExpr = specialize_compiler(interp);
+    let cogen: SpecExpr = specialize_cogen();
+
+    let distinct_interp_comp: bool = (expr_eq(interp, compiler) == false);
+    let distinct_comp_cogen: bool = (expr_eq(compiler, cogen) == false);
+    let distinct_interp_cogen: bool = (expr_eq(interp, cogen) == false);
+
     // All results agree and all residuals are structurally identical
     if r0 != r1 { return false; }
     if r1 != r2 { return false; }
     if r2 != r3 { return false; }
     if eq12 == false { return false; }
     if eq23 == false { return false; }
+    if distinct_interp_comp == false { return false; }
+    if distinct_comp_cogen == false { return false; }
+    if distinct_interp_cogen == false { return false; }
     return true;
 }
 

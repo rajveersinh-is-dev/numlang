@@ -186,17 +186,17 @@ This plan systematically addresses the 5 critical defect classes identified duri
 - `src/opt/` (delete obsolete modules)
 
 #### 3. Technical Tasks
-- [ ] **Cranelift Monolith Refactoring**:
+- [x] **Cranelift Monolith Refactoring**:
   - Partition `cranelift_backend.rs`:
     - `abi.rs`: Target machine flags, system calling conventions, stack slot layout, struct/enum layout maps.
     - `intrinsics.rs`: Trigonometric, exponential, logarithmic, recurrence, and syscall wrapper declarations.
     - `emit.rs`: Translating SSA blocks, statements, and terminators into Cranelift IR.
     - `mod.rs`: Top-level `CraneliftCompiler` orchestrator.
-- [ ] **Panicking `.unwrap()` Audit**:
+- [x] **Panicking `.unwrap()` Audit**:
   - Eliminate every bare `.unwrap()` in codegen, returning descriptive `CodegenError::BackendError` with function and block context.
-- [ ] **Legacy Pass Purge**:
+- [x] **Legacy Pass Purge**:
   - Remove all dead code in `src/opt/supercompiler/` to eliminate confusing dual-path optimizations.
-- [ ] **Inductive SMT Loop Validation**:
+- [x] **Inductive SMT Loop Validation**:
   - In `validate.rs`, replace bounded path depth cutoff ($K=64$) with $k$-induction: prove base case $P(0)$ and inductive step $\forall k, P(k) \implies P(k+1)$ using SMT solver loop invariants.
 
 #### 4. Verification Gate

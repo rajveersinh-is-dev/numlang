@@ -33,27 +33,23 @@ void mainCRTStartup() {
     ExitProcess((UINT)ret);
 }
 #else
-#define _POSIX_C_SOURCE 199309L
-#include <time.h>
-#include <unistd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <time.h>
+#include <unistd.h>
 
 extern long long numlang_main(void);
 
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+int main(void) {
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long long ret = numlang_main();
     clock_gettime(CLOCK_MONOTONIC, &t1);
 
-    long long ns = (long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
-
+    long long ns = (t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
     char buf[64];
-    int len = snprintf(buf, sizeof(buf), "COMPUTE_NS: %lld\n", ns);
+    int len = snprintf(buf, sizeof(buf), "COMPUTE_NS: %lld\n", (long long)ns);
     if (len > 0) {
         ssize_t _w = write(1, buf, (size_t)len);
         (void)_w;

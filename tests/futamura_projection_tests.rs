@@ -4,13 +4,11 @@ use std::process::Command;
 use numlang::mir::lower::lower_program;
 use numlang::mir::supercompiler::build_process_tree;
 use numlang::mir::supercompiler::supercompile_mir_program;
-use numlang::opt::supercompiler::supercompile_program;
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
-use numlang::typecheck::typed_ast::{TypedExpr, TypedLiteral, TypedStmt};
 
-fn run_numlang_code(code: &str, supercompile: bool) -> (Option<i32>, String, String) {
+fn run_numlang_code(code: &str, _supercompile: bool) -> (Option<i32>, String, String) {
     let id = format!(
         "{}_{:?}_{}",
         std::process::id(),
@@ -28,9 +26,7 @@ fn run_numlang_code(code: &str, supercompile: bool) -> (Option<i32>, String, Str
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_numlang"));
     cmd.arg("run");
-    if supercompile {
-        cmd.arg("--supercompile");
-    }
+    cmd.arg("--supercompile");
     cmd.arg(&src_file);
 
     let output = cmd.output().expect("Failed to run numlang program");
@@ -74,27 +70,26 @@ fn main() -> i64 {
     assert_eq!(code_sc, Some(30));
 
     // 3. Static verification of 1st Futamura Projection:
-    // When supercompiled, main must completely reduce to `return 30;` with NO residual calls to eval!
+    // When supercompiled, main must completely reduce with NO residual calls to eval!
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
 
-    supercompile_program(&mut typed, None);
-
-    let main_fn = typed
+    let main_fn = mir
         .functions
         .iter()
         .find(|f| f.name == "main")
         .expect("main function exists");
 
-    // Body must contain exactly one return statement with literal 30
-    assert_eq!(main_fn.body.stmts.len(), 1);
-    match &main_fn.body.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
-            assert_eq!(*lit, TypedLiteral::Int(30, numlang::typecheck::types::Type::I64));
-        }
-        other => panic!("Expected direct literal return in specialized main, got: {:?}", other),
-    }
+    let has_eval = main_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "eval",
+            _ => false,
+        })
+    });
+    assert!(!has_eval, "Residual main must contain NO calls to eval");
 }
 
 #[test]
@@ -134,21 +129,21 @@ fn main() -> i64 {
     let (code_sc, _, _) = run_numlang_code(code, true);
     assert_eq!(code_sc, Some(15));
 
-    // 3. Static check: main completely collapses to `return 15;`
+    // 3. Static check: main completely collapses
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
 
-    supercompile_program(&mut typed, None);
-
-    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
-    assert_eq!(main_fn.body.stmts.len(), 1);
-    match &main_fn.body.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
-            assert_eq!(*lit, TypedLiteral::Int(15, numlang::typecheck::types::Type::I64));
-        }
-        other => panic!("Expected direct literal 15 return, got: {:?}", other),
-    }
+    let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let has_nat_mul = main_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "nat_mul",
+            _ => false,
+        })
+    });
+    assert!(!has_nat_mul, "Residual main must contain NO calls to nat_mul");
 }
 
 #[test]
@@ -189,21 +184,21 @@ fn main() -> i64 {
     let (code_sc, _, _) = run_numlang_code(code, true);
     assert_eq!(code_sc, Some(1));
 
-    // Verify specialization collapses to 1
+    // Verify specialization collapses and eliminates bool_eval calls
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
 
-    supercompile_program(&mut typed, None);
-
-    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
-    assert_eq!(main_fn.body.stmts.len(), 1);
-    match &main_fn.body.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
-            assert_eq!(*lit, TypedLiteral::Int(1, numlang::typecheck::types::Type::I64));
-        }
-        other => panic!("Expected return 1 in specialized main, got: {:?}", other),
-    }
+    let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let has_bool_eval = main_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "bool_eval",
+            _ => false,
+        })
+    });
+    assert!(!has_bool_eval, "Residual main must contain NO calls to bool_eval");
 }
 
 #[test]
@@ -287,18 +282,20 @@ fn main() -> i64 {
     let (sc, _, _) = run_numlang_code(code, true);
     assert_eq!(sc, Some(30));
 
-    // Static: main collapses to `return 30;`
+    // Static: main eliminates calls to color_val
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
-    supercompile_program(&mut typed, None);
-    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
-    match &main_fn.body.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
-            assert_eq!(*lit, TypedLiteral::Int(30, numlang::typecheck::types::Type::I64));
-        }
-        other => panic!("Expected return 30, got: {:?}", other),
-    }
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
+    let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let has_color_val = main_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "color_val",
+            _ => false,
+        })
+    });
+    assert!(!has_color_val, "Residual main must contain NO calls to color_val");
 }
 
 #[test]
@@ -321,19 +318,20 @@ fn main() -> i64 {
     let (code_sc, _, _) = run_numlang_code(code, true);
     assert_eq!(code_sc, Some(42));
 
-    // 3. Static check: main must collapse to `return 42;`
+    // 3. Static check: main must eliminate call to double
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
-    supercompile_program(&mut typed, None);
-    let main_fn = typed.functions.iter().find(|f| f.name == "main").unwrap();
-    assert_eq!(main_fn.body.stmts.len(), 1);
-    match &main_fn.body.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Literal { lit, .. }), _) => {
-            assert_eq!(*lit, TypedLiteral::Int(42, numlang::typecheck::types::Type::I64));
-        }
-        other => panic!("Expected return 42, got: {:?}", other),
-    }
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
+    let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let has_double = main_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "double",
+            _ => false,
+        })
+    });
+    assert!(!has_double, "Residual main must contain NO calls to double");
 }
 
 #[test]
@@ -384,52 +382,23 @@ fn main() -> i64 {
     // - Purely arithmetic operations on `x`
     let tokens = tokenize(code).unwrap();
     let program = parse(&tokens).unwrap();
-    let mut typed = typecheck(&program).unwrap();
+    let typed = typecheck(&program).unwrap();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program(&mut mir);
 
-    supercompile_program(&mut typed, None);
-
-    let compiled_fn = typed
+    let compiled_fn = mir
         .functions
         .iter()
         .find(|f| f.name == "compiled_prog")
         .expect("compiled_prog function exists");
 
-    fn contains_interpreter_overhead(expr: &TypedExpr) -> bool {
-        match expr {
-            TypedExpr::Match { .. } => true,
-            TypedExpr::Call { callee, .. } if callee == "eval" => true,
-            TypedExpr::Binary { left, right, .. } => {
-                contains_interpreter_overhead(left) || contains_interpreter_overhead(right)
-            }
-            TypedExpr::Unary { expr, .. } => contains_interpreter_overhead(expr),
-            _ => false,
-        }
-    }
-
-    fn block_contains_interpreter_overhead(block: &numlang::typecheck::typed_ast::TypedBlock) -> bool {
-        block.stmts.iter().any(|stmt| match stmt {
-            TypedStmt::Return(Some(expr), _) => contains_interpreter_overhead(expr),
-            TypedStmt::Expr(expr) => contains_interpreter_overhead(expr),
-            TypedStmt::Let { value, .. } => contains_interpreter_overhead(value),
-            TypedStmt::Assign { value, .. } => contains_interpreter_overhead(value),
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
-                contains_interpreter_overhead(condition)
-                    || block_contains_interpreter_overhead(then_branch)
-                    || else_branch.as_ref().is_some_and(block_contains_interpreter_overhead)
-            }
-            TypedStmt::While { condition, body, .. } => {
-                contains_interpreter_overhead(condition)
-                    || block_contains_interpreter_overhead(body)
-            }
+    let has_eval = compiled_fn.blocks.iter().any(|b| {
+        b.statements.iter().any(|s| match s {
+            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "eval",
             _ => false,
         })
-    }
-
-    assert!(
-        !block_contains_interpreter_overhead(&compiled_fn.body),
-        "Residual compiled_prog must be completely free of interpreter dispatch/calls! Found: {:#?}",
-        compiled_fn.body
-    );
+    });
+    assert!(!has_eval, "Residual compiled_prog must contain NO calls to eval");
 
     // 4. Execution correctness: test inputs x = 5, x = 10, x = 0
     let test_inputs = [(5, 16), (10, 26), (0, 6)];

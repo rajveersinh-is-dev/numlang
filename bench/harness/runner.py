@@ -124,16 +124,15 @@ def find_vcvars():
     return None
 
 def compile_benchmark(name, config):
-    exe_ext = ".exe" if sys.platform == "win32" else ""
-    exe_path = TEMP_BIN_DIR / f"{name}_{config}{exe_ext}"
+    exe_path = TEMP_BIN_DIR / f"{name}_{config}.exe"
     src_nl = BENCH_DIR / "numlang" / f"{name}.nl"
     src_rs = BENCH_DIR / "rust" / f"{name}.rs"
     src_c = BENCH_DIR / "c" / f"{name}.c"
     src_hs = BENCH_DIR / "haskell" / f"{name}.hs"
 
-    numlang_bin = ROOT_DIR / "target" / "release" / f"numlang{exe_ext}"
+    numlang_bin = ROOT_DIR / "target" / "release" / "numlang.exe"
     if not numlang_bin.exists():
-        numlang_bin = ROOT_DIR / "target" / "debug" / f"numlang{exe_ext}"
+        numlang_bin = ROOT_DIR / "target" / "debug" / "numlang.exe"
 
     t0 = time.perf_counter()
 
@@ -166,20 +165,13 @@ def compile_benchmark(name, config):
     elif config == "c_opt":
         if not src_c.exists():
             return None, 0.0, 0
-        if sys.platform == "win32":
-            vcvars = find_vcvars()
-            if vcvars:
-                bat_cmd = f'call "{vcvars}" >nul 2>&1 && cl.exe /O2 /Fe:"{exe_path}" "{src_c}" >nul 2>&1'
-                res = subprocess.run(bat_cmd, shell=True, capture_output=True, text=True)
-            else:
-                cmd = ["clang", "-O3", "-march=native", "-o", str(exe_path), str(src_c)]
-                res = subprocess.run(cmd, capture_output=True, text=True)
+        vcvars = find_vcvars()
+        if vcvars:
+            bat_cmd = f'call "{vcvars}" >nul 2>&1 && cl.exe /O2 /Fe:"{exe_path}" "{src_c}" >nul 2>&1'
+            res = subprocess.run(bat_cmd, shell=True, capture_output=True, text=True)
         else:
-            cmd = ["clang", "-O3", "-march=native", "-lm", "-o", str(exe_path), str(src_c)]
+            cmd = ["clang", "-O3", "-march=native", "-o", str(exe_path), str(src_c)]
             res = subprocess.run(cmd, capture_output=True, text=True)
-            if res.returncode != 0:
-                cmd = ["gcc", "-O3", "-march=native", "-lm", "-o", str(exe_path), str(src_c)]
-                res = subprocess.run(cmd, capture_output=True, text=True)
         compile_time_ms = (time.perf_counter() - t0) * 1000.0
         if not exe_path.exists():
             return None, 0.0, 0

@@ -24,7 +24,14 @@ pub fn optimize_program(program: &mut TypedProgram) {
             let mut env = HashMap::new();
             let mut known_mod = HashMap::new();
             let mut known_bounds = HashMap::new();
-            if optimize_block(&mut func.body, &mut env, &mut known_mod, &mut known_bounds) {
+            let outer_live = HashSet::new();
+            if optimize_block(
+                &mut func.body,
+                &mut env,
+                &mut known_mod,
+                &mut known_bounds,
+                &outer_live,
+            ) {
                 changed = true;
             }
         }
@@ -598,12 +605,59 @@ fn specialize_stmts(
                         result.extend(specialized_else);
                     }
                 } else {
+                    let mut mutated_in_branches = HashSet::new();
+                    collect_mutated_vars(then_branch, &mut mutated_in_branches);
+                    if let Some(eb) = else_branch {
+                        collect_mutated_vars(eb, &mut mutated_in_branches);
+                    }
+                    for m in &mutated_in_branches {
+                        ctx.iter_consts.remove(m);
+                        ctx.iter_mod.remove(m);
+                        ctx.iter_bounds.remove(m);
+                    }
+
                     let folded_cond = fold_expr(condition, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
-                    let folded_then = specialize_stmts(&then_branch.stmts, ctx);
-                    let folded_else = else_branch.as_ref().map(|eb| TypedBlock {
-                        stmts: specialize_stmts(&eb.stmts, ctx),
-                        span: eb.span,
+                    let mut then_consts = ctx.iter_consts.clone();
+                    let mut then_mod = ctx.iter_mod.clone();
+                    let mut then_bounds = ctx.iter_bounds.clone();
+                    let mut then_ctx = SpecializeCtx {
+                        var_name: ctx.var_name,
+                        curr_val: ctx.curr_val,
+                        iter_consts: &mut then_consts,
+                        iter_mod: &mut then_mod,
+                        iter_bounds: &mut then_bounds,
+                        is_last_iter: ctx.is_last_iter,
+                        live_after: ctx.live_after,
+                        accum_var: ctx.accum_var,
+                    };
+                    let folded_then = specialize_stmts(&then_branch.stmts, &mut then_ctx);
+
+                    let folded_else = else_branch.as_ref().map(|eb| {
+                        let mut else_consts = ctx.iter_consts.clone();
+                        let mut else_mod = ctx.iter_mod.clone();
+                        let mut else_bounds = ctx.iter_bounds.clone();
+                        let mut else_ctx = SpecializeCtx {
+                            var_name: ctx.var_name,
+                            curr_val: ctx.curr_val,
+                            iter_consts: &mut else_consts,
+                            iter_mod: &mut else_mod,
+                            iter_bounds: &mut else_bounds,
+                            is_last_iter: ctx.is_last_iter,
+                            live_after: ctx.live_after,
+                            accum_var: ctx.accum_var,
+                        };
+                        TypedBlock {
+                            stmts: specialize_stmts(&eb.stmts, &mut else_ctx),
+                            span: eb.span,
+                        }
                     });
+
+                    for m in &mutated_in_branches {
+                        ctx.iter_consts.remove(m);
+                        ctx.iter_mod.remove(m);
+                        ctx.iter_bounds.remove(m);
+                    }
+
                     result.push(TypedStmt::If {
                         condition: folded_cond,
                         then_branch: TypedBlock {
@@ -944,11 +998,15 @@ fn optimize_block(
     known_consts: &mut HashMap<String, i64>,
     known_mod: &mut HashMap<String, String>,
     known_bounds: &mut HashMap<String, i64>,
+    outer_live: &HashSet<String>,
 ) -> bool {
     let mut changed = false;
     let mut new_stmts = Vec::new();
 
     for (idx, stmt) in block.stmts.iter().enumerate() {
+        let mut live_after = outer_live.clone();
+        collect_read_vars(&block.stmts[idx + 1..], &mut live_after);
+
         match stmt {
             TypedStmt::Let { name, is_mutable, ty, value, span } => {
                 let folded_val = fold_expr(value, known_consts, known_mod, known_bounds);
@@ -1039,9 +1097,6 @@ fn optimize_block(
                 new_stmts.push(TypedStmt::Return(folded_e, *span));
             }
             TypedStmt::While { condition, body, span } => {
-                let mut live_after = HashSet::new();
-                collect_read_vars(&block.stmts[idx + 1..], &mut live_after);
-
                 if let Some(unrolled) = try_unroll_while(condition, body, known_consts, known_mod, known_bounds, &live_after, *span) {
                     let mut mutated_vars = HashSet::new();
                     collect_mutated_vars(body, &mut mutated_vars);
@@ -1093,7 +1148,10 @@ fn optimize_block(
                         }
                         _ => {}
                     }
-                    if optimize_block(&mut body_clone, &mut inner_env, &mut inner_mod, &mut inner_bounds) {
+                    let mut body_outer_live = live_after.clone();
+                    collect_read_vars_expr(condition, &mut body_outer_live);
+                    collect_read_vars(&body_clone.stmts, &mut body_outer_live);
+                    if optimize_block(&mut body_clone, &mut inner_env, &mut inner_mod, &mut inner_bounds, &body_outer_live) {
                         changed = true;
                     }
                     for m in mutated_in_body {
@@ -1132,7 +1190,7 @@ fn optimize_block(
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 let mut then_bounds = known_bounds.clone();
-                if optimize_block(&mut then_clone, &mut then_env, &mut then_mod, &mut then_bounds) {
+                if optimize_block(&mut then_clone, &mut then_env, &mut then_mod, &mut then_bounds, &live_after) {
                     changed = true;
                 }
 
@@ -1149,7 +1207,7 @@ fn optimize_block(
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
                     let mut else_bounds = known_bounds.clone();
-                    if optimize_block(&mut ec, &mut else_env, &mut else_mod, &mut else_bounds) {
+                    if optimize_block(&mut ec, &mut else_env, &mut else_mod, &mut else_bounds, &live_after) {
                         changed = true;
                     }
                     ec

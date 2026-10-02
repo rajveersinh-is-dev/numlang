@@ -94,8 +94,8 @@ structure MirState where
   deriving Repr, DecidableEq
 
 inductive StmtStep : MirEnv → Statement → MirEnv → Prop where
-  | assign_rvalue (env : MirEnv) (x : Local) (v : Val) :
-      StmtStep env (Statement.Assign x (Rvalue.Constant 0)) (update env x v)
+  | assign_const (env : MirEnv) (x : Local) (n : Int) :
+      StmtStep env (Statement.Assign x (Rvalue.Constant n)) (update env x (Val.intVal n))
   | assign_use (env : MirEnv) (x y : Local) (v : Val) :
       lookup env y = some v →
       StmtStep env (Statement.Assign x (Rvalue.Use y)) (update env x v)
@@ -109,15 +109,29 @@ inductive StmtStep : MirEnv → Statement → MirEnv → Prop where
   | nop (env : MirEnv) :
       StmtStep env Statement.Nop env
 
+def getStmt (stmts : List Statement) (idx : Nat) : Option Statement :=
+  match stmts, idx with
+  | [], _ => none
+  | x :: _, 0 => some x
+  | _ :: xs, n + 1 => getStmt xs n
+
 inductive Step (fn : MirFunction) : MirState → MirState → Prop where
+  | stmt (s : MirState) (b : MirBasicBlock) (st : Statement) (env' : MirEnv) :
+      b ∈ fn.blocks →
+      b.id = s.pc →
+      getStmt b.stmts s.stmtIdx = some st →
+      StmtStep s.env st env' →
+      Step fn s { s with stmtIdx := s.stmtIdx + 1, env := env' }
   | branch (s : MirState) (b : MirBasicBlock) (target : BasicBlockId) :
       b ∈ fn.blocks →
       b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
       b.term = Terminator.Branch target →
       Step fn s { s with pc := target, stmtIdx := 0 }
   | branchIf_true (s : MirState) (b : MirBasicBlock) (cond : Local) (then_t else_t : BasicBlockId) (n : Int) :
       b ∈ fn.blocks →
       b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
       b.term = Terminator.BranchIf cond then_t else_t →
       lookup s.env cond = some (Val.intVal n) →
       n ≠ 0 →
@@ -125,37 +139,63 @@ inductive Step (fn : MirFunction) : MirState → MirState → Prop where
   | branchIf_false (s : MirState) (b : MirBasicBlock) (cond : Local) (then_t else_t : BasicBlockId) :
       b ∈ fn.blocks →
       b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
       b.term = Terminator.BranchIf cond then_t else_t →
       lookup s.env cond = some (Val.intVal 0) →
       Step fn s { s with pc := else_t, stmtIdx := 0 }
   | switch (s : MirState) (b : MirBasicBlock) (var : Local) (targets : List (Int × BasicBlockId)) (default_t : BasicBlockId) (target : BasicBlockId) :
       b ∈ fn.blocks →
       b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
       b.term = Terminator.Switch var targets default_t →
       Step fn s { s with pc := target, stmtIdx := 0 }
-  | ret (s : MirState) (b : MirBasicBlock) (optVal : Option Local) :
-      b ∈ fn.blocks →
-      b.id = s.pc →
-      b.term = Terminator.Return optVal →
-      Step fn s s
-  | unreachable (s : MirState) (b : MirBasicBlock) :
-      b ∈ fn.blocks →
-      b.id = s.pc →
-      b.term = Terminator.Unreachable →
-      Step fn s s
   | fork (s : MirState) (b : MirBasicBlock) (left right join : BasicBlockId) :
       b ∈ fn.blocks →
       b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
       b.term = Terminator.Fork left right join →
       Step fn s { s with pc := join, stmtIdx := 0 }
 
-inductive Evaluates : MirFunction → MirEnv → Val → Prop where
-  | base (fn : MirFunction) (env : MirEnv) (retVar : Local) (v : Val) :
-      lookup env retVar = some v →
-      Evaluates fn env v
+inductive TerminatesWith (fn : MirFunction) (s : MirState) (res : Val) : Prop where
+  | ret_some (b : MirBasicBlock) (retVar : Local) :
+      b ∈ fn.blocks →
+      b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
+      b.term = Terminator.Return (some retVar) →
+      lookup s.env retVar = some res →
+      TerminatesWith fn s res
+  | ret_none (b : MirBasicBlock) :
+      b ∈ fn.blocks →
+      b.id = s.pc →
+      s.stmtIdx = b.stmts.length →
+      b.term = Terminator.Return none →
+      res = Val.intVal 0 →
+      TerminatesWith fn s res
+
+inductive StepStar (fn : MirFunction) : MirState → MirState → Prop where
+  | refl (s : MirState) : StepStar fn s s
+  | step (s1 s2 s3 : MirState) : Step fn s1 s2 → StepStar fn s2 s3 → StepStar fn s1 s3
+
+theorem stepstar_trans {fn : MirFunction} {s1 s2 s3 : MirState}
+    (h1 : StepStar fn s1 s2) (h2 : StepStar fn s2 s3) :
+    StepStar fn s1 s3 := by
+  induction h1 with
+  | refl _ => exact h2
+  | step s_a s_b s_c hstep _ ih =>
+    exact StepStar.step s_a s_b s3 hstep (ih h2)
+
+theorem stepstar_single {fn : MirFunction} {s1 s2 : MirState}
+    (h : Step fn s1 s2) : StepStar fn s1 s2 :=
+  StepStar.step s1 s2 s2 h (StepStar.refl s2)
+
+def initState (fn : MirFunction) (args : MirEnv) : MirState :=
+  { pc := fn.entry, stmtIdx := 0, env := args, heap := [] }
+
+def Evaluates (fn : MirFunction) (args : MirEnv) (res : Val) : Prop :=
+  ∃ s_final, StepStar fn (initState fn args) s_final ∧ TerminatesWith fn s_final res
 
 def SemanticEquivalent (f1 f2 : MirFunction) : Prop :=
-  ∀ args result, Evaluates f1 args result ↔ Evaluates f2 args result
+  ∀ args res, Evaluates f1 args res ↔ Evaluates f2 args res
 
 theorem semantic_equiv_refl (f : MirFunction) : SemanticEquivalent f f := by
   intro args res
@@ -171,5 +211,68 @@ theorem semantic_equiv_trans {f1 f2 f3 : MirFunction}
     SemanticEquivalent f1 f3 := by
   intro args res
   exact (h1 args res).trans (h2 args res)
+
+theorem const_fold_stmt_equiv (env : MirEnv) (x y z : Local) (op : Op) (n1 n2 n3 : Int)
+    (hy : lookup env y = some (Val.intVal n1))
+    (hz : lookup env z = some (Val.intVal n2))
+    (hop : evalOp op n1 n2 = some n3) :
+    StmtStep env (Statement.Assign x (Rvalue.BinOp op y z)) (update env x (Val.intVal n3)) ∧
+    StmtStep env (Statement.Assign x (Rvalue.Constant n3)) (update env x (Val.intVal n3)) := by
+  constructor
+  · exact StmtStep.assign_binop env x y z op n1 n2 n3 hy hz hop
+  · exact StmtStep.assign_const env x n3
+
+theorem step_blocks_equiv {f1 f2 : MirFunction}
+    (h_blocks : ∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks)
+    {s s' : MirState} (h : Step f1 s s') : Step f2 s s' := by
+  cases h with
+  | stmt b st env' hb hpc hst hstmt =>
+    exact Step.stmt s b st env' ((h_blocks b).mp hb) hpc hst hstmt
+  | branch b target hb hpc hlen hterm =>
+    exact Step.branch s b target ((h_blocks b).mp hb) hpc hlen hterm
+  | branchIf_true b cond then_t else_t n hb hpc hlen hterm hcond hnz =>
+    exact Step.branchIf_true s b cond then_t else_t n ((h_blocks b).mp hb) hpc hlen hterm hcond hnz
+  | branchIf_false b cond then_t else_t hb hpc hlen hterm hcond =>
+    exact Step.branchIf_false s b cond then_t else_t ((h_blocks b).mp hb) hpc hlen hterm hcond
+  | switch b var targets default_t target hb hpc hlen hterm =>
+    exact Step.switch s b var targets default_t target ((h_blocks b).mp hb) hpc hlen hterm
+  | fork b left right join hb hpc hlen hterm =>
+    exact Step.fork s b left right join ((h_blocks b).mp hb) hpc hlen hterm
+
+theorem stepstar_blocks_equiv {f1 f2 : MirFunction}
+    (h_blocks : ∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks)
+    {s s' : MirState} (h : StepStar f1 s s') : StepStar f2 s s' := by
+  induction h with
+  | refl s => exact StepStar.refl s
+  | step s1 s2 s3 hstep _ ih =>
+    exact StepStar.step s1 s2 s3 (step_blocks_equiv h_blocks hstep) ih
+
+theorem terminates_blocks_equiv {f1 f2 : MirFunction}
+    (h_blocks : ∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks)
+    {s : MirState} {res : Val} (h : TerminatesWith f1 s res) : TerminatesWith f2 s res := by
+  cases h with
+  | ret_some b retVar hb hpc hlen hterm hlookup =>
+    exact TerminatesWith.ret_some b retVar ((h_blocks b).mp hb) hpc hlen hterm hlookup
+  | ret_none b hb hpc hlen hterm hres =>
+    exact TerminatesWith.ret_none b ((h_blocks b).mp hb) hpc hlen hterm hres
+
+theorem semantic_equiv_of_blocks_equiv {f1 f2 : MirFunction}
+    (h_entry : f1.entry = f2.entry)
+    (h_blocks : ∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks) :
+    SemanticEquivalent f1 f2 := by
+  intro args res
+  have h_init : initState f1 args = initState f2 args := by
+    dsimp [initState]
+    rw [h_entry]
+  have h_blocks_rev : ∀ b, b ∈ f2.blocks ↔ b ∈ f1.blocks := by
+    intro b
+    exact (h_blocks b).symm
+  constructor
+  · intro ⟨s_f, h_star, h_term⟩
+    rw [h_init] at h_star
+    exact ⟨s_f, stepstar_blocks_equiv h_blocks h_star, terminates_blocks_equiv h_blocks h_term⟩
+  · intro ⟨s_f, h_star, h_term⟩
+    rw [← h_init] at h_star
+    exact ⟨s_f, stepstar_blocks_equiv h_blocks_rev h_star, terminates_blocks_equiv h_blocks_rev h_term⟩
 
 end Supercompiler

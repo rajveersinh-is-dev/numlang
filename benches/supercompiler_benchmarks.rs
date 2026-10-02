@@ -21,8 +21,8 @@ fn bench_supercompile_all(c: &mut Criterion) {
 
         c.bench_function(&format!("supercompile_{}", name), |b| {
             b.iter(|| {
-                let mut p = typed.clone();
-                numlang::opt::supercompiler::supercompile_program(black_box(&mut p), None);
+                let mut mir = numlang::mir::lower::lower_program(black_box(&typed));
+                numlang::mir::supercompiler::supercompile_mir_program(black_box(&mut mir));
             });
         });
     }

@@ -1,7 +1,7 @@
 ---
 milestone: adversarial-remediation
 name: "Adversarial Remediation & System Soundness (Phases 41-45)"
-status: in_progress
+status: complete
 governance: "INTEGRITY_RULES.md"
 audit: "ADVERSARIAL_AUDIT.md"
 ---
@@ -10,10 +10,10 @@ audit: "ADVERSARIAL_AUDIT.md"
 
 ## Current Position
 
-Phase: **Phase 44 — Add Memory Management (Scoped Arena or Ref-Counting)** (COMPLETED)
+Phase: **Phase 45 — Monolith Decomposition & Codegen Unification** (COMPLETED)
 Plan: `.planning/phases/PHASE_41_45_PLAN.md`
-Status: Phase 44 completed and verified. Implemented scoped chunked arena allocator runtime in `src/runtime/arena.rs` and `src/runtime/arena.c`. Integrated ultra-fast bump pointer allocator and loop reset latches (`__nl_loop_reset`) into `src/codegen/cranelift_backend.rs` and `src/mir/supercompiler/residualize.rs` via automated loop escape analysis (`should_reset_loop_iteration`). Enhanced `src/opt/while_unroll.rs` variable liveness analysis for all ADT and heap types. Created `tests/memory_leak_tests.rs` (6/6 passing) verifying bounded $O(1)$ memory across 50,000-iteration `nrev` and `tree_flip` workloads and preserving escaping allocations. All 77 test suites green (100%), 0 Clippy warnings. Ready for Phase 45.
-Last activity: 2026-10-02 — Phase 44 completed and verified. Ready for Phase 45.
+Status: Phase 45 completed and verified. Decomposed Cranelift codegen monolith into 7 focused files under `src/codegen/cranelift/` (all strictly <= 2,500 lines). Converted all bare unwraps in codegen to structured `CodegenError` types. Unified compiler backends under `BackendCompiler` trait. Purged deprecated legacy AST supercompiler prototype (`src/opt/supercompiler/`). Implemented $k$-induction loop validation in `src/mir/supercompiler/validate.rs`. Fixed lambda codegen, closure symbol collision, Bareiss integer overflow, const_args unrolled-loop shadowing, and accumulator conditional loop checks. All 77 test targets passing (100% green), 0 Clippy warnings.
+Last activity: 2026-10-02 — Phase 45 completed and verified. Adversarial Remediation milestone (Phases 41-45) fully finished.
 
 ## Progress
 

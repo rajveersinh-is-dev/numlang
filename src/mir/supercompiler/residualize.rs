@@ -643,7 +643,7 @@ fn emit_term_eval(
                 local: temp_name,
                 projections: vec![],
             };
-            let rval = if cap_places.is_empty() && fn_name != "closure_stub" {
+            let rval = if cap_places.is_empty() && !fn_name.starts_with("closure_stub") {
                 Rvalue::FnPtr(fn_name.clone())
             } else {
                 Rvalue::ClosureAlloc {

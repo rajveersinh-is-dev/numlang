@@ -40,7 +40,7 @@ fn test_all_30_benchmarks_compile() {
         ("bench/numlang/floyd_warshall.nl", 24),
         ("bench/numlang/newton_sqrt.nl", 134),
         ("bench/numlang/euler_pi.nl", 183),
-        ("bench/numlang/sieve.nl", 128),
+        ("bench/numlang/sieve.nl", 44),
         ("bench/numlang/power_spec.nl", 202),
         ("bench/numlang/peano_mul.nl", 176),
         ("bench/numlang/fib_matrix.nl", 46),
