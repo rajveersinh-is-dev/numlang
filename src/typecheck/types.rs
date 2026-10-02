@@ -97,6 +97,16 @@ impl Type {
         matches!(self, Type::Array(_, _))
     }
 
+    pub fn contains_heap(&self) -> bool {
+        match self {
+            Type::Box(_) | Type::Closure(_) => true,
+            Type::Array(elem, _) => elem.contains_heap(),
+            Type::Ptr(inner) => inner.contains_heap(),
+            Type::Struct(_) | Type::Enum(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_compatible_with(&self, other: &Type) -> bool {
         if self == other {
             return true;
