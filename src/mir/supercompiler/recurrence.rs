@@ -54,13 +54,13 @@ pub fn mat_pow_nxn(m: &[Vec<i64>], mut exp: i64) -> Vec<Vec<i64>> {
 }
 
 /// Fraction-free Bareiss algorithm for integer matrix determinant.
-fn det_bareiss(matrix: &[Vec<i128>]) -> i128 {
+fn det_bareiss(matrix: &[Vec<i128>]) -> Option<i128> {
     let n = matrix.len();
     if n == 0 {
-        return 1;
+        return Some(1);
     }
     if n == 1 {
-        return matrix[0][0];
+        return Some(matrix[0][0]);
     }
     let mut m = matrix.to_vec();
     let mut sign: i128 = 1;
@@ -79,21 +79,23 @@ fn det_bareiss(matrix: &[Vec<i128>]) -> i128 {
                 m.swap(k, r);
                 sign = -sign;
             } else {
-                return 0;
+                return Some(0);
             }
         }
 
         let pivot = m[k][k];
         for i in (k + 1)..n {
             for j in (k + 1)..n {
-                let num = pivot * m[i][j] - m[i][k] * m[k][j];
+                let term1 = pivot.checked_mul(m[i][j])?;
+                let term2 = m[i][k].checked_mul(m[k][j])?;
+                let num = term1.checked_sub(term2)?;
                 m[i][j] = num / prev_pivot;
             }
         }
         prev_pivot = pivot;
     }
 
-    sign * m[n - 1][n - 1]
+    sign.checked_mul(m[n - 1][n - 1])
 }
 
 /// Solve M * x = b using Cramer's rule in exact integer arithmetic.
@@ -103,7 +105,7 @@ fn solve_cramer(m: &[Vec<i64>], b: &[i64]) -> Option<Vec<i64>> {
         .iter()
         .map(|row| row.iter().map(|&x| x as i128).collect())
         .collect();
-    let det_m = det_bareiss(&m_128);
+    let det_m = det_bareiss(&m_128)?;
     if det_m == 0 {
         return None;
     }
@@ -113,7 +115,7 @@ fn solve_cramer(m: &[Vec<i64>], b: &[i64]) -> Option<Vec<i64>> {
         for r in 0..dim {
             m_col[r][col] = b[r] as i128;
         }
-        let det_col = det_bareiss(&m_col);
+        let det_col = det_bareiss(&m_col)?;
         if det_col % det_m != 0 {
             return None;
         }
@@ -179,7 +181,9 @@ fn solve_gaussian_integer(equations: &[Vec<i64>], targets: &[i64]) -> Option<Vec
             if aug[row_idx][col] != 0 {
                 let factor = aug[row_idx][col];
                 for c in col..=d {
-                    aug[row_idx][c] = aug[row_idx][c] * p_val - aug[pivot_row][c] * factor;
+                    let term1 = aug[row_idx][c].checked_mul(p_val)?;
+                    let term2 = aug[pivot_row][c].checked_mul(factor)?;
+                    aug[row_idx][c] = term1.checked_sub(term2)?;
                 }
                 let mut g: i128 = 0;
                 for c in col..=d {
@@ -205,7 +209,8 @@ fn solve_gaussian_integer(equations: &[Vec<i64>], targets: &[i64]) -> Option<Vec
     for &(r, c) in pivot_cols.iter().rev() {
         let mut rhs = aug[r][d];
         for j in (c + 1)..d {
-            rhs -= aug[r][j] * sol[j];
+            let prod = aug[r][j].checked_mul(sol[j])?;
+            rhs = rhs.checked_sub(prod)?;
         }
         let coeff = aug[r][c];
         if coeff == 0 || rhs % coeff != 0 {

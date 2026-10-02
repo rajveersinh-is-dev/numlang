@@ -10,43 +10,50 @@ Achieve verifiable bare-metal performance, algebraic program transformation, and
 
 ---
 
-## Current Milestone: Hardening, Soundness & Architecture Remediation (Phases 41–45)
+## Current Milestone: Remediation & Frontier (Phases 20–28)
 
-**Goal:** Transform NumLang from an academically vulnerable prototype with formal verification tautologies, broken cross-platform compilation, unbounded memory leaks, and pseudo-self-applicable Futamura projections into an indisputably sound, robust, and cleanly architected systems compiler.
-
-**Origin:** Systematic remediation of all findings from the comprehensive adversarial audit in [`ADVERSARIAL_AUDIT.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md).
+**Goal:** Transform NumLang from a prototype with identified flaws into an indisputably verified, mathematically sound, world-class supercompiler by systematically resolving all 10 findings from [`honest_review.md`](file:///C:/Users/davea/.gemini/antigravity/brain/d21c1850-b996-4958-951d-ea34362faef0/honest_review.md) under [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).
 
 **Target Outcomes:**
-- **Phase 41**: Decouple Win32 & True POSIX Native Codegen (Linux/macOS support, Docker reproduction fix, libc abstraction).
-- **Phase 42**: Constructive Lean 4 Soundness Proofs (Connect Step* to Evaluates, genuine semantic preservation without tautological constructors).
-- **Phase 43**: Authentic Self-Applicable Specializer & Futamura Projections (Real partial evaluator in `MinSpec.nl`, genuine 2nd and 3rd projections).
-- **Phase 44**: Scoped Arena Allocator & Memory Safety (Arena runtime, reset blocks, zero heap leaks in loops).
-- **Phase 45**: Architecture Decomposition, Codegen Unification & Hardening (Retire AST supercompiler, break 9.3k LOC `cranelift_backend.rs`, eliminate unchecked unwrap/overflows).
+- **Phase 20**: Fix `residualize.rs` knot-state transfers and Phi block remapping; implement textbook anti-unification (MSG) in `generalize.rs`. Eliminate crashes on heap benchmarks (`nrev`, `append3`, `tree_flip`, `peano_mul`).
+- **Phase 21**: Real Hamilton (2007) global process-tree distillation in `distill.rs` to deforest nested recursive calls.
+- **Phase 22**: Real Mitchell & Klyuchnikov (2012) Multi-Result Supercompilation (MRSC) exploring configuration hypergraphs with Pareto frontier selection.
+- **Phase 23**: Real Polyhedral affine loop fusion and array buffer contraction in `polyhedral.rs`.
+- **Phase 24**: Formal SMT-based translation validation in `validate.rs` proving simulation preorder over all execution paths.
+- **Phase 25**: Genuine self-applicable `MinSpec.nl` in NumLang achieving authentic 2nd and 3rd Futamura projections with verified idempotence.
+- **Phase 26**: Rigorous Lean 4 verification in `proof/`: eliminate `axiom kruskal_tree_theorem`, model recursive semantics, and prove soundness with zero `sorry` and zero axioms.
+- **Phase 27**: Honest, in-process microsecond hardware benchmarking in `runner.py`, zero crashes, and direct head-to-head comparison against SPSC and HOSC.
+- **Phase 28**: Full paper rewrite of `paper/main.tex` with automated SHA-256 data pipeline and 1-click Docker reproduction package.
 
 ---
 
 ## Requirements
 
-### Validated (Completed Foundation: Phases 1–40)
-- [x] **v1.0 Production Baseline (Phases 1–13)**: Lexer (`logos`), Pratt parser, type system, Cranelift & LLVM backends, MemorySSA, Mem2Reg, BCE, SROA, formatter (`numlang fmt`), doc generator (`numlang doc`), closures, generics, and initial heap primitives.
-- [x] **Remediation & Frontier (Phases 20–28)**: Core residualization knot transfers, textbook MSG anti-unification, Hamilton global distillation, Mitchell & Klyuchnikov MRSC, polyhedral stencil deforestation, SMT-based translation validation, initial `MinSpec.nl`, hardware performance timing harness, and paper packaging.
-- [x] **Stabilization & Frontier Extensions (Phases 29–40)**: Supercompiler regression fixes, MSG knot materialization, termination witnesses, N-way mutual recurrence solver, refinement type propagation, higher-order closure driving, residual code compaction, parallel residualization (`Fork`/`Join`), cross-module specialization cache, and 30 canonical literature benchmarks.
+### Validated (Completed Foundation)
+- [x] **v1.0 Production Baseline**: Lexer (`logos`), Pratt parser, type system, Win32 Cranelift backend, LLVM backend, Monomorphization, BCE, SROA, formatter (`numlang fmt`), doc generator (`numlang doc`).
+- [x] **v2.0 Phase 1**: SSA MIR CFG, basic block terminators, dominance analysis, and TypedAST lowering.
+- [x] **v2.0 Phase 2**: MemorySSA (`MemoryDef`, `MemoryUse`, `MemoryPhi`), field-sensitive alias analysis, Mem2Reg IDF register promotion.
+- [x] **v2.0 Phases 10–13**: Turchin supercompilation core (`drive.rs`, `whistle.rs`, `term.rs`, `state.rs`), closures and higher-order deforestation, generics `<T, U>`, and heap memory (`Box<T>`, `box`, `deref`).
+- [x] **v2.0 Phases 14–19 Initial Prototypes**: Differential fuzzing (100k tests), benchmark suites, paper draft, and parallel driving (`--threads`).
 
-### Active (Hardening, Soundness & Architecture Remediation: Phases 41–45)
-- [ ] **Phase 41**: Decouple Win32 & True POSIX Native Codegen (PORT-01..04).
-- [ ] **Phase 42**: Constructive Lean 4 Soundness Proofs (LEAN-04..07).
-- [ ] **Phase 43**: Authentic Self-Applicable Specializer & Futamura Projections (FUTA-05..08).
-- [ ] **Phase 44**: Scoped Arena Allocator & Memory Safety (MEM-01..04).
-- [ ] **Phase 45**: Architecture Decomposition, Codegen Unification & Hardening (ARCH-01..05).
+### Active (Remediation & Frontier)
+- [ ] **Phase 20**: Fix Residualization knot transfers & textbook MSG (RESID-01..04, MSG-01..03).
+- [ ] **Phase 21**: Real Hamilton Global Distillation (DISTILL-01..03).
+- [ ] **Phase 22**: Real Mitchell & Klyuchnikov MRSC (MRSC-01..03).
+- [ ] **Phase 23**: Real Polyhedral Loop & Stencil Deforestation (POLY-01..03).
+- [ ] **Phase 24**: SMT-Based Translation Validation (VALID-01..03).
+- [ ] **Phase 25**: Genuine 2nd & 3rd Futamura Projections via `MinSpec.nl` (FUTA-01..04).
+- [ ] **Phase 26**: Lean 4 Proofs without axioms over recursive semantics (LEAN-01..03).
+- [ ] **Phase 27**: In-process microsecond benchmarks & SPSC/HOSC comparison (BENCH-01..04).
+- [ ] **Phase 28**: Paper rewrite & 1-click Docker reproducibility bundle (PAPER-01..03).
 
 ---
 
 ## Out of Scope
 - Dynamic runtime language reflection (NumLang is strictly AOT compiled).
-- Full garbage collector with stop-the-world tracing (scoped arenas provide deterministic performance for numerical computing).
-- Non-x86 architectures (ARM/RISC-V support deferred to post-v1.0 roadmap).
+- Raw unchecked pointer casting (memory safety is maintained through affine heap types).
 
 ---
 
 ## Evolution & Governance
-All changes strictly enforce [`INTEGRITY_RULES.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md) and address vulnerabilities documented in [`ADVERSARIAL_AUDIT.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md).
+All changes strictly enforce [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md). No data may be manually entered into paper tables; all results must be cryptographically hashed from automated execution.

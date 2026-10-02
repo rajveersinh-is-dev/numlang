@@ -3,8 +3,8 @@ use std::process::Command;
 
 use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::validate::{
-    check_satisfiability, verify_formula_validity, BoolFormula, BvExpr, SmtLib2Printer,
-    SmtResult, TranslationValidator, ValidationError,
+    check_satisfiability, verify_formula_validity, BoolFormula, BvExpr, KInductionValidator,
+    LoopInductionCandidate, SmtLib2Printer, SmtResult, TranslationValidator, ValidationError,
 };
 use numlang::mir::supercompiler::{
     supercompile_mir_program_with_mode, verify_program_equivalence, SupercompileMode,
@@ -386,3 +386,55 @@ fn test_smt_cli_verify_equivalence_with_mutations() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_k_induction_loop_validation() {
+    use std::collections::HashMap;
+
+    // Loop:
+    // let mut i = 0;
+    // while i < 10 {
+    //     i = i + 1;
+    // }
+    // Invariant: i <= 10
+    // Postcondition: i == 10
+    let mut initial_state = HashMap::new();
+    initial_state.insert("i".to_string(), BvExpr::constant(0, 64));
+
+    let mut step_transition = HashMap::new();
+    step_transition.insert(
+        "i".to_string(),
+        BvExpr::Add(
+            Box::new(BvExpr::var("i", 64)),
+            Box::new(BvExpr::constant(1, 64)),
+        ),
+    );
+
+    let loop_candidate = LoopInductionCandidate {
+        name: "count_to_10".to_string(),
+        variables: vec!["i".to_string()],
+        initial_state,
+        step_transition,
+        loop_condition: BoolFormula::Slt(
+            Box::new(BvExpr::var("i", 64)),
+            Box::new(BvExpr::constant(10, 64)),
+        ),
+        invariant: BoolFormula::Sle(
+            Box::new(BvExpr::var("i", 64)),
+            Box::new(BvExpr::constant(10, 64)),
+        ),
+        postcondition: BoolFormula::Eq(
+            Box::new(BvExpr::var("i", 64)),
+            Box::new(BvExpr::constant(10, 64)),
+        ),
+    };
+
+    let validator = KInductionValidator::new(&loop_candidate);
+    let cert = validator.verify_k_induction(1).expect("k-induction verification must succeed for count_to_10");
+
+    assert!(cert.base_case_proved);
+    assert!(cert.inductive_step_proved);
+    assert!(cert.postcondition_proved);
+    assert_eq!(cert.k_depth, 1);
+}
+

@@ -42,7 +42,6 @@ fn wrap_c(src: &str) -> String {
 #define main __user_main
 {}
 #undef main
-#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
@@ -65,24 +64,6 @@ int main() {{
     printf("COMPUTE_NS: %lld\n", ns);
     return ret;
 }}
-#else
-#define _POSIX_C_SOURCE 199309L
-#include <stdio.h>
-#include <time.h>
-
-int __user_main(void);
-
-int main() {{
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    volatile int ret = __user_main();
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-    long long ns = (long long)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
-    if (ns < 0) ns = 0;
-    printf("COMPUTE_NS: %lld\n", ns);
-    return ret;
-}}
-#endif
 "#,
         src
     )

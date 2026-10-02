@@ -1,7 +1,10 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt};
 use crate::typecheck::types::Type;
+
+static CLOSURE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Rvalue {
@@ -306,7 +309,8 @@ impl MirBuilder {
                 for (cap_name, _) in captured {
                     captured_places.push(Place { local: cap_name.clone(), projections: vec![] });
                 }
-                let closure_name = "closure_stub".to_string();
+                let closure_id = CLOSURE_COUNTER.fetch_add(1, Ordering::SeqCst);
+                let closure_name = format!("closure_stub_{}", closure_id);
                 self.blocks[self.current_block.clone().unwrap().0]
                     .statements
                     .push(Statement::Assign(

@@ -1294,9 +1294,9 @@ impl BitBlaster {
     fn ult_bv(&mut self, a: &[Lit], b: &[Lit]) -> Lit {
         let width = a.len().min(b.len());
         let mut lt = self.solver.lit_false();
-        for i in (0..width).rev() {
+        for i in 0..width {
             let diff = self.solver.xor_gate(a[i], b[i]);
-            // If bits differ, a < b iff b[i] == 1
+            // If higher bit differs, it decides; otherwise keep lower bits decision
             lt = self.solver.ite_gate(diff, b[i], lt);
         }
         lt
@@ -1776,6 +1776,20 @@ pub enum ValidationError {
         expected: String,
         actual: String,
     },
+    InvariantViolation {
+        func: String,
+        step: usize,
+        message: String,
+    },
+    InductiveStepFailed {
+        func: String,
+        k: usize,
+        message: String,
+    },
+    PostconditionFailed {
+        func: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -1789,6 +1803,15 @@ impl fmt::Display for ValidationError {
             }
             ValidationError::OutputMismatch { func, expected, actual } => {
                 write!(f, "Semantic equivalence violation in `{}`: expected `{}`, got `{}`", func, expected, actual)
+            }
+            ValidationError::InvariantViolation { func, step, message } => {
+                write!(f, "Loop invariant violation in `{}` at step {}: {}", func, step, message)
+            }
+            ValidationError::InductiveStepFailed { func, k, message } => {
+                write!(f, "Inductive step failed in `{}` for k={}: {}", func, k, message)
+            }
+            ValidationError::PostconditionFailed { func, message } => {
+                write!(f, "Loop postcondition failed in `{}`: {}", func, message)
             }
         }
     }
@@ -1926,4 +1949,161 @@ pub fn verify_program_equivalence(
     }
 
     Ok(certs)
+}
+
+// ============================================================================
+// 7. Inductive SMT Loop Invariant Validation (k-Induction)
+// ============================================================================
+
+/// Formal specification of a loop candidate for inductive SMT verification.
+#[derive(Debug, Clone)]
+pub struct LoopInductionCandidate {
+    pub name: String,
+    pub variables: Vec<String>,
+    pub initial_state: HashMap<String, BvExpr>,
+    pub step_transition: HashMap<String, BvExpr>,
+    pub loop_condition: BoolFormula,
+    pub invariant: BoolFormula,
+    pub postcondition: BoolFormula,
+}
+
+/// Certificate of formal k-inductive verification.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct KInductionCertificate {
+    pub loop_name: String,
+    pub k_depth: usize,
+    pub base_case_proved: bool,
+    pub inductive_step_proved: bool,
+    pub postcondition_proved: bool,
+    pub smt_queries_proved: usize,
+}
+
+/// SMT-based k-induction validator for inductive invariants over loops.
+pub struct KInductionValidator<'a> {
+    pub candidate: &'a LoopInductionCandidate,
+}
+
+impl<'a> KInductionValidator<'a> {
+    pub fn new(candidate: &'a LoopInductionCandidate) -> Self {
+        Self { candidate }
+    }
+
+    /// Verifies base case for k steps:
+    /// InitialState => Invariant(0) /\ (Condition(0) /\ Step(0, 1) => Invariant(1) ... )
+    pub fn verify_base_case(&self, k: usize) -> Result<bool, ValidationError> {
+        let mut current_state = self.candidate.initial_state.clone();
+
+        for step in 0..k {
+            // Check invariant at step
+            let inv_at_step = subst_bool(&self.candidate.invariant, &current_state);
+            let not_inv = BoolFormula::Not(Box::new(inv_at_step));
+            if let SmtResult::Sat(_) = check_satisfiability(&not_inv) {
+                return Err(ValidationError::InvariantViolation {
+                    func: self.candidate.name.clone(),
+                    step,
+                    message: format!("Base case failed at step {step}: invariant does not hold"),
+                });
+            }
+
+            // Transition to next state
+            let cond_at_step = subst_bool(&self.candidate.loop_condition, &current_state);
+            if let SmtResult::Unsat = check_satisfiability(&cond_at_step) {
+                // Loop terminates before k steps; base case holds vacuously for remaining steps
+                break;
+            }
+
+            let mut next_state = HashMap::new();
+            for (var, step_expr) in &self.candidate.step_transition {
+                let evaluated_step = subst_bv(step_expr, &current_state).simplify();
+                next_state.insert(var.clone(), evaluated_step);
+            }
+            current_state = next_state;
+        }
+
+        Ok(true)
+    }
+
+    /// Verifies inductive step of depth k:
+    /// [Invariant(s_0) /\ Condition(s_0) /\ ... /\ Invariant(s_{k-1}) /\ Condition(s_{k-1})] => Invariant(s_k)
+    pub fn verify_inductive_step(&self, k: usize) -> Result<bool, ValidationError> {
+        let mut hypotheses = Vec::new();
+
+        // Create symbolic states s_0 .. s_k
+        let mut state_k = HashMap::new();
+        for var in &self.candidate.variables {
+            state_k.insert(var.clone(), BvExpr::var(format!("{var}_step0"), 64));
+        }
+
+        for _ in 0..k {
+            let inv_i = subst_bool(&self.candidate.invariant, &state_k);
+            let cond_i = subst_bool(&self.candidate.loop_condition, &state_k);
+            hypotheses.push(inv_i);
+            hypotheses.push(cond_i);
+
+            // Compute state i+1
+            let mut next_state = HashMap::new();
+            for (var, step_expr) in &self.candidate.step_transition {
+                let evaluated_step = subst_bv(step_expr, &state_k);
+                next_state.insert(var.clone(), evaluated_step);
+            }
+            state_k = next_state;
+        }
+
+        // Invariant must hold at state k
+        let inv_k = subst_bool(&self.candidate.invariant, &state_k);
+        let goal = BoolFormula::Implies(
+            Box::new(BoolFormula::And(hypotheses)),
+            Box::new(inv_k),
+        );
+
+        // Check validity: negating the goal must be UNSAT
+        let not_goal = BoolFormula::Not(Box::new(goal));
+        match check_satisfiability(&not_goal) {
+            SmtResult::Unsat => Ok(true),
+            SmtResult::Sat(counterexample) => Err(ValidationError::InductiveStepFailed {
+                func: self.candidate.name.clone(),
+                k,
+                message: format!("Inductive step failed at depth {k} with counterexample {counterexample:?}"),
+            }),
+        }
+    }
+
+    /// Verifies loop postcondition:
+    /// Invariant /\ Not(Condition) => Postcondition
+    pub fn verify_postcondition(&self) -> Result<bool, ValidationError> {
+        let not_cond = BoolFormula::Not(Box::new(self.candidate.loop_condition.clone()));
+        let antecedent = BoolFormula::And(vec![
+            self.candidate.invariant.clone(),
+            not_cond,
+        ]);
+        let goal = BoolFormula::Implies(
+            Box::new(antecedent),
+            Box::new(self.candidate.postcondition.clone()),
+        );
+
+        let not_goal = BoolFormula::Not(Box::new(goal));
+        match check_satisfiability(&not_goal) {
+            SmtResult::Unsat => Ok(true),
+            SmtResult::Sat(cex) => Err(ValidationError::PostconditionFailed {
+                func: self.candidate.name.clone(),
+                message: format!("Postcondition failed with counterexample {cex:?}"),
+            }),
+        }
+    }
+
+    /// Runs full k-induction validation pipeline.
+    pub fn verify_k_induction(&self, k: usize) -> Result<KInductionCertificate, ValidationError> {
+        let base_ok = self.verify_base_case(k)?;
+        let ind_ok = self.verify_inductive_step(k)?;
+        let post_ok = self.verify_postcondition()?;
+
+        Ok(KInductionCertificate {
+            loop_name: self.candidate.name.clone(),
+            k_depth: k,
+            base_case_proved: base_ok,
+            inductive_step_proved: ind_ok,
+            postcondition_proved: post_ok,
+            smt_queries_proved: k + 2,
+        })
+    }
 }

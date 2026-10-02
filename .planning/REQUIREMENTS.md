@@ -1,69 +1,76 @@
-# Requirements: NumLang Hardening, Soundness & Architecture (Phases 41–45)
+# Requirements: NumLang Remediation & Frontier (Phases 20–28)
 
-**Defined:** 2026-10-01  
-**Governing Standard:** [`INTEGRITY_RULES.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md)  
-**Origin Audit:** [`ADVERSARIAL_AUDIT.md`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md)  
-**Core Value:** Mathematically sound, independently reproducible, memory-safe, world-class systems supercompilation without tautological shortcuts, platform lock-in, or unbounded memory leakage.
+**Defined:** 2026-09-25  
+**Governing Standard:** [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md)  
+**Core Value:** Mathematically sound, independently reproducible, world-class supercompilation with zero benchmark cheats, zero fake stubs, zero unproven formal axioms, and 100% genuine algorithmic implementations.
 
 ---
 
-## Hardening & Soundness Requirements
+## Remediation & Frontier Requirements
 
-### 1. Decouple Win32 & True POSIX Native Codegen (Phase 41)
-- [x] **PORT-01**: Abstract runtime platform imports across native code generators (`src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs`): target Windows API on `target_os = "windows"` (`ExitProcess`, `GetStdHandle`, `WriteFile`, `LocalAlloc`) and standard POSIX libc on `not(target_os = "windows")` (`exit`, `write(1, ...)`, `malloc`/`mmap`).
-- [x] **PORT-02**: Update `src/codegen/entry_bench.c` to use standard ISO C `exit((int)ret);` rather than Win32 `ExitProcess`.
-- [x] **PORT-03**: Fix `link_unix` in `src/codegen/linker.rs` and verify clean linking and execution of test programs and microbenchmarks on Linux.
-- [x] **PORT-04**: Validate that the Dockerfile (`docker/Dockerfile`) build and `docker/entrypoint.sh` complete end-to-end without unresolved Win32 symbols.
+### 1. Residualization & Generalization (Phase 20)
+- [ ] **RESID-01**: In `src/mir/supercompiler/residualize.rs`, compute state substitution $\theta$ for every knot edge $N_{\text{curr}} \xrightarrow{\text{Knot}} N_{\text{anc}}$ and emit parallel copy variable assignments or block argument passing.
+- [ ] **RESID-02**: Remap all `SymTerm::Phi` incoming predecessor basic block IDs to their residual CFG block IDs.
+- [ ] **RESID-03**: Verify that supercompiled executables for `nrev.nl`, `append3.nl`, `tree_flip.nl`, and `peano_mul.nl` run to completion with exit code `0` and zero crashes.
+- [ ] **MSG-01**: Implement textbook first-order anti-unification (Sørensen & Glück 1995; Plotkin 1970) in `src/mir/supercompiler/generalize.rs`.
+- [ ] **MSG-02**: Compute Most-Specific Generalization $\text{msg}(t_1, t_2) = (t_0, \theta_1, \theta_2)$ over symbolic terms when the whistle triggers.
+- [ ] **MSG-03**: Generalize state environments component-wise and resume driving with fresh generalization variables.
 
-### 2. Constructive Lean 4 Soundness Proofs (Phase 42)
-- [ ] **LEAN-04**: Connect small-step transition `Step` to `Evaluates` in `lean/Supercompiler/Semantics.lean`: Define `Evaluates fn env res` as existence of a terminating execution trace $\exists s_f, \text{Step}^* \langle 0, env \rangle s_f \land s_f.term = \text{Return}(\text{res})$.
-- [ ] **LEAN-05**: Implement constructive optimization transforms as Lean definitions: dead-node elimination (`eliminate_dead_nodes`), no-op removal (`remove_nops`), and refinement branch pruning (`prune_unreachable_branches`).
-- [ ] **LEAN-06**: Eliminate the tautological constructor definitions (`SupercompilerProduces.pipeline`, `FoldStep.fold`, `NoopRemoval.remove_nop`, `EtaReduction.copy_prop`) that assume `SemanticEquivalent` as an input premise.
-- [ ] **LEAN-07**: Prove constructive semantic preservation theorems: for each constructive pass $T$, prove $\forall \text{fn}, \text{SemanticEquivalent} \; \text{fn} \; (T(\text{fn}))$, verifying under `lake build` with zero `sorry` and zero axioms.
+### 2. Hamilton Global Distillation (Phase 21)
+- [ ] **DISTILL-01**: Implement a global process tree representation in `src/mir/supercompiler/distill.rs` modeling call configurations across the entire call graph.
+- [ ] **DISTILL-02**: Implement a global whistle and inter-procedural folding mechanism across distinct function definitions.
+- [ ] **DISTILL-03**: Verify automated deforestation of composed recursive functions (e.g., `append (append xs ys) zs` $\to$ single-pass 3-argument function without intermediate list allocations).
 
-### 3. Authentic Self-Applicable Specializer & Futamura Projections (Phase 43)
-- [ ] **FUTA-05**: Rewrite `src/stdlib/minspec.nl` so that `min_spec(prog: SpecExpr, env: SpecEnv) -> SpecExpr` is a genuine, non-trivial partial evaluator capable of evaluating static expressions and preserving dynamic variables.
-- [ ] **FUTA-06**: Implement authentic 1st Futamura projection: specialize an interpreter with respect to a static program expression, eliminating all interpreter interpretation dispatch.
-- [ ] **FUTA-07**: Implement authentic 2nd Futamura projection: specialize `min_spec` with respect to an interpreter, producing a standalone compiled representation without hardcoded copy-paste shortcuts.
-- [ ] **FUTA-08**: Implement authentic 3rd Futamura projection: specialize `min_spec` with respect to `min_spec`, yielding a compiler generator (`cogen`), and verify that $\text{cogen}(\text{interp})$ generates the expected compiled program.
+### 3. Multi-Result Supercompilation (Phase 22)
+- [ ] **MRSC-01**: Implement a non-deterministic configuration hypergraph generator in `src/mir/supercompiler/mrsc.rs` branching on driving, folding, and generalization choices.
+- [ ] **MRSC-02**: Build a configuration lattice search exploring the space of valid residual programs.
+- [ ] **MRSC-03**: Implement Pareto-optimal residualization search extracting optimal programs according to user-selected metrics (code size, step count, branch count).
 
-### 4. Scoped Arena Allocator & Memory Safety (Phase 44)
-- [ ] **MEM-01**: Implement a fast scoped bump-arena runtime in `src/runtime/` with native Cranelift/LLVM lowerings (`__nl_arena_create`, `__nl_arena_alloc`, `__nl_arena_reset`, `__nl_arena_destroy`).
-- [ ] **MEM-02**: Lower `box(expr)`, vector allocations, and closure environment allocations to the active scoped arena by default.
-- [ ] **MEM-03**: Introduce scoped arena resets at loop headers and function boundaries for temporary allocations, eliminating monotonic memory growth.
-- [ ] **MEM-04**: Add memory profiling tests verifying that looping allocation benchmarks (`nrev`, `append3`, closures) run with $O(1)$ peak heap residency rather than unbounded leakage.
+### 4. Polyhedral Loop & Stencil Deforestation (Phase 23)
+- [ ] **POLY-01**: Extract affine iteration domain polyhedra $\{ \vec{i} \mid A \vec{i} + \vec{b} \ge \vec{0} \}$ and access matrices in `src/mir/supercompiler/polyhedral.rs`.
+- [ ] **POLY-02**: Compute data dependence distance vectors between producer loops and consumer loops.
+- [ ] **POLY-03**: Perform legal affine loop fusion and contract intermediate array buffers to $O(1)$ scalar temporaries or sliding windows.
 
-### 5. Architecture Decomposition, Codegen Unification & Hardening (Phase 45)
-- [ ] **ARCH-01**: Decommission and remove the legacy AST-level supercompiler (`src/opt/supercompiler/`), unifying all supercompilation passes exclusively onto SSA MIR (`src/mir/supercompiler/`).
-- [ ] **ARCH-02**: Decompose the 9,306-line `src/codegen/cranelift_backend.rs` into focused submodules: `abi.rs`, `builder.rs`, `intrinsics.rs`, `emit.rs`.
-- [ ] **ARCH-03**: Remove duplicate AST-based Cranelift codegen, standardizing the compiler pipeline on `TypedAST -> MIR -> Cranelift/LLVM`.
-- [ ] **ARCH-04**: Replace raw `.unwrap()` calls across codegen and typechecker lookups with structured error propagation using `CodegenError` and `TypeError`.
-- [ ] **ARCH-05**: Fix unchecked integer arithmetic in `src/mir/supercompiler/generalize.rs` (`d * d`, `c1 + d`, precision loss in `disc as f64`) by using safe integer square roots and checked/saturating arithmetic.
+### 5. Formal SMT-Based Translation Validation (Phase 24)
+- [ ] **VALID-01**: Extract Verification Conditions (VCs) and relational path formulas between original and residual MIR CFGs in `src/mir/supercompiler/validate.rs`.
+- [ ] **VALID-02**: Encode paths and invariant assertions into QF_BV (quantifier-free bit-vectors) SMT formulas.
+- [ ] **VALID-03**: Formally prove simulation preorder over all execution paths under `--verify-equivalence`.
+
+### 6. Genuine Futamura Projections (Phase 25)
+- [ ] **FUTA-01**: Implement a self-contained, self-applicable partial evaluator `MinSpec.nl` in NumLang source code (`src/stdlib/minspec.nl`).
+- [ ] **FUTA-02**: Verify 1st Futamura projection: $\text{MinSpec}(\text{interp}, \text{prog}) \to \text{prog\_compiled}$.
+- [ ] **FUTA-03**: Verify 2nd Futamura projection: $\text{MinSpec}(\text{MinSpec}, \text{interp}) \to \text{compiler}$.
+- [ ] **FUTA-04**: Verify 3rd Futamura projection: $\text{MinSpec}(\text{MinSpec}, \text{MinSpec}) \to \text{cogen}$ and prove $\text{cogen}(\text{interp}) \equiv \text{compiler}$.
+
+### 7. Rigorous Lean 4 Formal Verification (Phase 26)
+- [ ] **LEAN-01**: Remove `axiom kruskal_tree_theorem` from `proof/NumLangProofs/Termination.lean` and prove termination constructively without axioms.
+- [ ] **LEAN-02**: Extend `proof/NumLangProofs/Semantics.lean` to model recursive function environments, heap memory, and control flow.
+- [ ] **LEAN-03**: Mechanize the soundness theorem proving that driving, folding, and generalization preserve big-step operational semantics, compiling cleanly with 0 `sorry` and 0 `axiom`s.
+
+### 8. Honest High-Precision Benchmarks (Phase 27)
+- [ ] **BENCH-01**: Rewrite `bench/harness/runner.py` to use in-process microsecond hardware performance counter timing across $\ge 10,000$ iterations.
+- [ ] **BENCH-02**: Validate process exit codes (`assert returncode == 0`) and report any crashes explicitly as `ERROR`.
+- [ ] **BENCH-03**: Fix memory bugs in C baselines (fix `append3` double-free).
+- [ ] **BENCH-04**: Benchmark NumLang head-to-head against SPSC and HOSC on canonical literature benchmarks (KMP, Wadler deforestation, Peano multiplication, etc.).
+
+### 9. Paper Rewrite & Artifact Evaluation (Phase 28)
+- [ ] **PAPER-01**: Rewrite `paper/main.tex` with automated SHA-256 data pipeline directly populating tables from `bench/data/results.csv`.
+- [ ] **PAPER-02**: Accurately describe verified algorithms, honest limitations, and measured speedups without data fabrication.
+- [ ] **PAPER-03**: Package a hermetic multi-stage Docker container where `make reproduce` compiles `paper/main.pdf` in one command.
 
 ---
 
 ## Traceability Matrix
 
-| Requirement | Phase | Status | Target File(s) |
-| :--- | :---: | :---: | :--- |
-| **PORT-01** | Phase 41 | Complete | `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs` |
-| **PORT-02** | Phase 41 | Complete | `src/codegen/entry_bench.c` |
-| **PORT-03** | Phase 41 | Complete | `src/codegen/linker.rs`, `bench/harness/runner.py`, `bench/c/*.c` |
-| **PORT-04** | Phase 41 | Complete | `docker/Dockerfile`, `docker/entrypoint.sh`, `tests/platform_portability_tests.rs` |
-| **LEAN-04** | Phase 42 | Planned | `lean/Supercompiler/Semantics.lean` |
-| **LEAN-05** | Phase 42 | Planned | `lean/Supercompiler/Compaction.lean`, `Refinement.lean` |
-| **LEAN-06** | Phase 42 | Planned | `lean/Supercompiler/Semantics.lean`, `Main.lean` |
-| **LEAN-07** | Phase 42 | Planned | `lean/Supercompiler/Main.lean` |
-| **FUTA-05** | Phase 43 | Planned | `src/stdlib/minspec.nl` |
-| **FUTA-06** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/true_futamura_projections_tests.rs` |
-| **FUTA-07** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/true_futamura_projections_tests.rs` |
-| **FUTA-08** | Phase 43 | Planned | `src/stdlib/minspec.nl`, `tests/third_futamura_tests.rs` |
-| **MEM-01** | Phase 44 | Planned | `src/runtime/` |
-| **MEM-02** | Phase 44 | Planned | `src/codegen/cranelift_backend.rs`, `src/codegen/llvm_backend.rs` |
-| **MEM-03** | Phase 44 | Planned | `src/codegen/cranelift_backend.rs` |
-| **MEM-04** | Phase 44 | Planned | `tests/heap_supercompile_tests.rs` |
-| **ARCH-01** | Phase 45 | Planned | `src/opt/supercompiler/` (retire) |
-| **ARCH-02** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs` (decompose) |
-| **ARCH-03** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs` (unify) |
-| **ARCH-04** | Phase 45 | Planned | `src/codegen/cranelift_backend.rs`, `src/typecheck/` |
-| **ARCH-05** | Phase 45 | Planned | `src/mir/supercompiler/generalize.rs` |
+| Requirement | Phase | Status | Target File |
+|:---|:---:|:---:|:---|
+| RESID-01..03 | Phase 20 | Planned | `src/mir/supercompiler/residualize.rs` |
+| MSG-01..03 | Phase 20 | Planned | `src/mir/supercompiler/generalize.rs` |
+| DISTILL-01..03 | Phase 21 | Planned | `src/mir/supercompiler/distill.rs` |
+| MRSC-01..03 | Phase 22 | Planned | `src/mir/supercompiler/mrsc.rs` |
+| POLY-01..03 | Phase 23 | Planned | `src/mir/supercompiler/polyhedral.rs` |
+| VALID-01..03 | Phase 24 | Planned | `src/mir/supercompiler/validate.rs` |
+| FUTA-01..04 | Phase 25 | Planned | `src/stdlib/minspec.nl` |
+| LEAN-01..03 | Phase 26 | Planned | `proof/NumLangProofs/*.lean` |
+| BENCH-01..04 | Phase 27 | Planned | `bench/harness/runner.py` |
+| PAPER-01..03 | Phase 28 | Planned | `paper/main.tex` |

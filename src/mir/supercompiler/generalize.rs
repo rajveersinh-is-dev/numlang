@@ -440,15 +440,15 @@ pub fn solve_order2_recurrence(
     let disc = c1.wrapping_mul(c1).wrapping_add(4i64.wrapping_mul(c2));
     if disc >= 0 {
         let d = (disc as f64).sqrt().round() as i64;
-        if d * d == disc && (c1 + d) % 2 == 0 {
-            let r1 = (c1 + d) / 2;
-            let r2 = (c1 - d) / 2;
+        if d.checked_mul(d) == Some(disc) && c1.checked_add(d).is_some_and(|sum| sum % 2 == 0) {
+            let r1 = c1.wrapping_add(d) / 2;
+            let r2 = c1.wrapping_sub(d) / 2;
             if r1 != r2 {
                 let num_a = s1.wrapping_sub(s0.wrapping_mul(r2));
-                let den_a = r1 - r2;
+                let den_a = r1.wrapping_sub(r2);
                 if den_a != 0 && num_a % den_a == 0 {
                     let a = num_a / den_a;
-                    let b = s0 - a;
+                    let b = s0.wrapping_sub(a);
                     let a_term = interner.intern_int(a);
                     let b_term = interner.intern_int(b);
                     let r1_term = interner.intern_int(r1);

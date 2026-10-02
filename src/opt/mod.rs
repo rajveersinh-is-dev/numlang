@@ -5,7 +5,6 @@ pub mod inlining;
 pub mod loop_opt;
 pub mod monomorphize;
 pub mod recursion;
-pub mod supercompiler;
 pub mod while_unroll;
 
 use crate::typecheck::typed_ast::TypedProgram;
@@ -28,9 +27,6 @@ pub fn optimize_program(program: &mut TypedProgram) {
             break;
         }
     }
-
-    // Supercompiler derives closed forms for pure functions and bounded loops
-    supercompiler::supercompile_program(program, None);
 
     // Loop unrolling for remaining small or vectorizable loops
     while_unroll::optimize_program(program);

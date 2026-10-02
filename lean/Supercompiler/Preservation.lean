@@ -4,22 +4,28 @@ namespace Supercompiler
 
 inductive DriveStep : MirFunction → MirFunction → Prop where
   | const_fold (fn fn' : MirFunction) :
-      SemanticEquivalent fn fn' →
+      fn.entry = fn'.entry →
+      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
       DriveStep fn fn'
   | branch_prune (fn fn' : MirFunction) :
-      SemanticEquivalent fn fn' →
+      fn.entry = fn'.entry →
+      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
       DriveStep fn fn'
   | knot_tie (fn fn' : MirFunction) :
-      SemanticEquivalent fn fn' →
+      fn.entry = fn'.entry →
+      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
       DriveStep fn fn'
 
 theorem drive_step_preserves_semantics (f1 f2 : MirFunction)
     (h : DriveStep f1 f2) :
     SemanticEquivalent f1 f2 := by
   cases h with
-  | const_fold eq => exact eq
-  | branch_prune eq => exact eq
-  | knot_tie eq => exact eq
+  | const_fold he hb =>
+    exact semantic_equiv_of_blocks_equiv he hb
+  | branch_prune he hb =>
+    exact semantic_equiv_of_blocks_equiv he hb
+  | knot_tie he hb =>
+    exact semantic_equiv_of_blocks_equiv he hb
 
 inductive MultiDriveStep : MirFunction → MirFunction → Prop where
   | refl (f : MirFunction) : MultiDriveStep f f

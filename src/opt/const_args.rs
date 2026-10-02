@@ -65,33 +65,60 @@ pub fn optimize_program(program: &mut TypedProgram) {
 }
 
 fn propagate_local_literals(function: &mut TypedFunction) {
+    let mut decl_counts = HashMap::new();
+    count_name_declarations(&function.body, &mut decl_counts);
     let mut bindings = HashMap::new();
-    collect_local_literal_bindings(&function.body, &mut bindings);
+    collect_local_literal_bindings(&function.body, &decl_counts, &mut bindings);
     if !bindings.is_empty() {
         replace_in_block(&mut function.body, &bindings);
     }
 }
 
-fn collect_local_literal_bindings(block: &TypedBlock, bindings: &mut HashMap<String, TypedExpr>) {
+fn count_name_declarations(block: &TypedBlock, counts: &mut HashMap<String, usize>) {
+    for stmt in &block.stmts {
+        match stmt {
+            TypedStmt::Let { name, .. } => {
+                *counts.entry(name.clone()).or_insert(0) += 1;
+            }
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                count_name_declarations(then_branch, counts);
+                if let Some(eb) = else_branch {
+                    count_name_declarations(eb, counts);
+                }
+            }
+            TypedStmt::While { body, .. } => {
+                count_name_declarations(body, counts);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_local_literal_bindings(
+    block: &TypedBlock,
+    decl_counts: &HashMap<String, usize>,
+    bindings: &mut HashMap<String, TypedExpr>,
+) {
     for stmt in &block.stmts {
         match stmt {
             TypedStmt::Let {
                 name,
-                value: TypedExpr::Literal { .. },
+                value,
                 ..
-            } if !block_mutates_name(block, name) => {
+            } if decl_counts.get(name) == Some(&1) && !block_mutates_name(block, name) => {
                 // A binding may only be read after its declaration because the
-                // type checker rejects use-before-definition.  It is therefore
-                // safe to substitute throughout this closed function body.
-                if !bindings.contains_key(name) {
-                    if let TypedStmt::Let { value, .. } = stmt {
-                        bindings.insert(name.clone(), value.clone());
-                    }
+                // type checker rejects use-before-definition. Since it is declared
+                // uniquely and never mutated, substituting throughout the function is sound.
+                if matches!(value, TypedExpr::Literal { .. } | TypedExpr::Lambda { .. }) {
+                    bindings.insert(name.clone(), value.clone());
                 }
             }
-            // Only function-scope declarations are collected.  Keeping block
-            // locals out of this pass avoids accidentally crossing a future
-            // lexical-shadowing boundary.
+            // Only function-scope declarations are collected. Keeping block
+            // locals out of this pass avoids accidentally crossing a lexical-shadowing boundary.
             TypedStmt::If { .. } | TypedStmt::While { .. } => {}
             _ => {}
         }
@@ -366,8 +393,20 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
         }
         TypedExpr::CallIndirect { callee, args, .. } => {
             replace_in_expr(callee, replacements);
-            for arg in args {
+            for arg in args.iter_mut() {
                 replace_in_expr(arg, replacements);
+            }
+            if let TypedExpr::Lambda { params, body, .. } = &**callee {
+                if params.len() == args.len() {
+                    let mut lambda_subst = HashMap::new();
+                    for ((p_name, _), a_expr) in params.iter().zip(args.iter()) {
+                        lambda_subst.insert(p_name.clone(), a_expr.clone());
+                    }
+                    let mut inlined_body = body.clone();
+                    replace_in_expr(&mut inlined_body, &lambda_subst);
+                    replace_in_expr(&mut inlined_body, replacements);
+                    *expr = *inlined_body;
+                }
             }
         }
         TypedExpr::Box { inner, .. } | TypedExpr::Deref { inner, .. } => {
