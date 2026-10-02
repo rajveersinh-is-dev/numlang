@@ -1,12 +1,38 @@
 {
   "contract": "1.0.0",
   "flavor": "core",
-  "milestone": "hardening-and-soundness",
-  "phases": [],
+  "milestone": "adversarial-remediation",
+  "phases": [
+    {
+      "id": "41",
+      "name": "decouple-win32-and-true-posix-native-codegen",
+      "status": "completed"
+    },
+    {
+      "id": "42",
+      "name": "constructive-lean-4-soundness-proofs",
+      "status": "completed"
+    },
+    {
+      "id": "43",
+      "name": "complete-futamura-projections",
+      "status": "completed"
+    },
+    {
+      "id": "44",
+      "name": "adversarial-fuzzing-and-memory-safety",
+      "status": "completed"
+    },
+    {
+      "id": "45",
+      "name": "monolith-decomposition-and-codegen-unification",
+      "status": "completed"
+    }
+  ],
   "next": {
-    "command": "/gsd-discuss-phase",
-    "label": "Discuss the first phase",
-    "reason": "Project initialized — plan your first phase"
+    "command": "/gsd-audit-milestone",
+    "label": "Audit completed milestone",
+    "reason": "All phases in adversarial-remediation milestone (Phases 41-45) are completed and verified"
   },
-  "updated_at": "2026-10-01T07:55:00.432Z"
+  "updated_at": "2026-10-02T14:51:00.000Z"
 }
