@@ -323,6 +323,12 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
                 collect_read_vars_expr(a, reads);
             }
         }
+        TypedExpr::CallIndirect { callee, args, .. } => {
+            collect_read_vars_expr(callee, reads);
+            for a in args {
+                collect_read_vars_expr(a, reads);
+            }
+        }
         TypedExpr::ArrayLiteral { elements, .. } => {
             for e in elements {
                 collect_read_vars_expr(e, reads);
@@ -331,6 +337,36 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
         TypedExpr::Index { target, index, .. } => {
             collect_read_vars_expr(target, reads);
             collect_read_vars_expr(index, reads);
+        }
+        TypedExpr::Box { inner, .. } => {
+            collect_read_vars_expr(inner, reads);
+        }
+        TypedExpr::Deref { inner, .. } => {
+            collect_read_vars_expr(inner, reads);
+        }
+        TypedExpr::StructLiteral { fields, .. } => {
+            for (_, fexpr) in fields {
+                collect_read_vars_expr(fexpr, reads);
+            }
+        }
+        TypedExpr::EnumConstructor { args, .. } => {
+            for a in args {
+                collect_read_vars_expr(a, reads);
+            }
+        }
+        TypedExpr::FieldAccess { target, .. } => {
+            collect_read_vars_expr(target, reads);
+        }
+        TypedExpr::Match { scrutinee, arms, .. } => {
+            collect_read_vars_expr(scrutinee, reads);
+            for arm in arms {
+                collect_read_vars_expr(&arm.body, reads);
+            }
+        }
+        TypedExpr::Lambda { captured, .. } => {
+            for (name, _) in captured {
+                reads.insert(name.clone());
+            }
         }
         _ => {}
     }
@@ -342,8 +378,13 @@ fn collect_read_vars(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
             TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } | TypedStmt::Expr(value) => {
                 collect_read_vars_expr(value, reads);
             }
-            TypedStmt::IndexAssign { index, value, .. } => {
+            TypedStmt::IndexAssign { target, index, value, .. } => {
+                reads.insert(target.clone());
                 collect_read_vars_expr(index, reads);
+                collect_read_vars_expr(value, reads);
+            }
+            TypedStmt::FieldAssign { target, value, .. } => {
+                reads.insert(target.clone());
                 collect_read_vars_expr(value, reads);
             }
             TypedStmt::Return(Some(expr), _) => {
@@ -358,6 +399,11 @@ fn collect_read_vars(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
             }
             TypedStmt::While { condition, body, .. } => {
                 collect_read_vars_expr(condition, reads);
+                collect_read_vars(&body.stmts, reads);
+            }
+            TypedStmt::For { lo, hi, body, .. } => {
+                collect_read_vars_expr(lo, reads);
+                collect_read_vars_expr(hi, reads);
                 collect_read_vars(&body.stmts, reads);
             }
             _ => {}

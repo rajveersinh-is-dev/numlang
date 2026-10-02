@@ -226,8 +226,30 @@ pub fn residualize_process_tree_parallel(
                         evaled_transfers.push((dest_place, val_place));
                     }
                     // Then assign all dest places from temporaries
+                    let mut has_heap_transfers = false;
                     for (dest_place, val_place) in evaled_transfers {
+                        let escapes_heap = new_locals.iter().find(|decl| decl.name == dest_place.local).is_some_and(|decl| decl.ty.contains_heap());
+                        if escapes_heap {
+                            has_heap_transfers = true;
+                        }
                         stmts.push(Statement::Assign(dest_place, Rvalue::Use(val_place)));
+                    }
+
+                    // Phase 44: If intermediate allocations do not escape across the knot back-edge,
+                    // emit an arena loop reset to guarantee O(1) resident memory usage.
+                    if !has_heap_transfers {
+                        let reset_name = format!("_loop_reset_{}", next_temp_id);
+                        next_temp_id += 1;
+                        new_locals.push(MirLocalDecl {
+                            name: reset_name.clone(),
+                            ty: Type::I64,
+                            mutable: false,
+                        });
+                        let reset_tmp = Place {
+                            local: reset_name,
+                            projections: Vec::new(),
+                        };
+                        stmts.push(Statement::Assign(reset_tmp, Rvalue::Call("__nl_loop_reset".to_string(), vec![])));
                     }
 
                     residual_blocks[b_idx].statements = stmts;

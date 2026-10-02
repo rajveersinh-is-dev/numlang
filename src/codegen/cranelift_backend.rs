@@ -6,7 +6,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{FuncId, Linkage, Module};
+use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_native;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use thiserror::Error;
@@ -1422,16 +1422,9 @@ pub struct CraneliftCompiler {
     func_ids: HashMap<String, FuncId>,
     pub struct_layouts: HashMap<String, StructLayout>,
     pub enum_layouts: HashMap<String, EnumLayout>,
-    #[cfg(target_os = "windows")]
     exit_process_id: FuncId,
-    #[cfg(target_os = "windows")]
-    get_std_handle_id: FuncId,
-    #[cfg(target_os = "windows")]
+    get_std_handle_id: Option<FuncId>,
     write_file_id: FuncId,
-    #[cfg(not(target_os = "windows"))]
-    exit_id: FuncId,
-    #[cfg(not(target_os = "windows"))]
-    write_id: FuncId,
     print_str_id: FuncId,
     print_newline_id: FuncId,
     print_i64_id: FuncId,
@@ -1447,7 +1440,16 @@ pub struct CraneliftCompiler {
     log10_id: FuncId,
     pow_id: FuncId,
     malloc_id: FuncId,
+    #[allow(dead_code)]
     local_alloc_id: Option<FuncId>,
+    #[allow(dead_code)]
+    os_malloc_id: Option<FuncId>,
+    loop_reset_id: FuncId,
+    arena_alloc_id: FuncId,
+    arena_reset_id: FuncId,
+    arena_cur_id: DataId,
+    arena_end_id: DataId,
+    arena_start_id: DataId,
 }
 
 impl CraneliftCompiler {
@@ -1500,23 +1502,32 @@ impl CraneliftCompiler {
         let mut module = ObjectModule::new(builder);
 
         #[cfg(target_os = "windows")]
-        let (exit_process_id, get_std_handle_id, write_file_id) = {
-            // Declare ExitProcess from kernel32.lib
+        let exit_process_id = {
             let mut exit_sig = module.make_signature();
             exit_sig.params.push(AbiParam::new(types::I32));
-            let exit_process_id = module
+            module
                 .declare_function("ExitProcess", Linkage::Import, &exit_sig)
-                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?
+        };
 
-            // Declare GetStdHandle from kernel32.lib
+        #[cfg(not(target_os = "windows"))]
+        let exit_process_id = {
+            let mut exit_sig = module.make_signature();
+            exit_sig.params.push(AbiParam::new(types::I32));
+            module
+                .declare_function("exit", Linkage::Import, &exit_sig)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?
+        };
+
+        #[cfg(target_os = "windows")]
+        let (get_std_handle_id, write_file_id) = {
             let mut gsh_sig = module.make_signature();
             gsh_sig.params.push(AbiParam::new(types::I32));
             gsh_sig.returns.push(AbiParam::new(types::I64));
-            let get_std_handle_id = module
+            let gsh_id = module
                 .declare_function("GetStdHandle", Linkage::Import, &gsh_sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-            // Declare WriteFile from kernel32.lib
             let mut wf_sig = module.make_signature();
             wf_sig.params.push(AbiParam::new(types::I64));
             wf_sig.params.push(AbiParam::new(types::I64));
@@ -1524,23 +1535,14 @@ impl CraneliftCompiler {
             wf_sig.params.push(AbiParam::new(types::I64));
             wf_sig.params.push(AbiParam::new(types::I64));
             wf_sig.returns.push(AbiParam::new(types::I32));
-            let write_file_id = module
+            let wf_id = module
                 .declare_function("WriteFile", Linkage::Import, &wf_sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-
-            (exit_process_id, get_std_handle_id, write_file_id)
+            (Some(gsh_id), wf_id)
         };
 
         #[cfg(not(target_os = "windows"))]
-        let (exit_id, write_id) = {
-            // libc exit(int)
-            let mut exit_sig = module.make_signature();
-            exit_sig.params.push(AbiParam::new(types::I32));
-            let exit_id = module
-                .declare_function("exit", Linkage::Import, &exit_sig)
-                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-
-            // libc write(int fd, const void *buf, size_t count) -> ssize_t
+        let (get_std_handle_id, write_file_id) = {
             let mut write_sig = module.make_signature();
             write_sig.params.push(AbiParam::new(types::I32));
             write_sig.params.push(AbiParam::new(types::I64));
@@ -1549,8 +1551,7 @@ impl CraneliftCompiler {
             let write_id = module
                 .declare_function("write", Linkage::Import, &write_sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-
-            (exit_id, write_id)
+            (None, write_id)
         };
 
         let mut print_str_sig = module.make_signature();
@@ -1628,8 +1629,50 @@ impl CraneliftCompiler {
         sig_malloc.params.push(AbiParam::new(types::I64));
         sig_malloc.returns.push(AbiParam::new(types::I64));
 
+        let sig_void = module.make_signature();
+
+        let mut data_desc = DataDescription::new();
+        data_desc.define_zeroinit(8);
+
+        let arena_cur_id = module
+            .declare_data("__nl_arena_cur", Linkage::Local, true, false)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        module
+            .define_data(arena_cur_id, &data_desc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let arena_end_id = module
+            .declare_data("__nl_arena_end", Linkage::Local, true, false)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        module
+            .define_data(arena_end_id, &data_desc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let arena_start_id = module
+            .declare_data("__nl_arena_start", Linkage::Local, true, false)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+        module
+            .define_data(arena_start_id, &data_desc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let malloc_id = module
+            .declare_function("__nl_malloc", Linkage::Export, &sig_malloc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let arena_alloc_id = module
+            .declare_function("__nl_arena_alloc", Linkage::Export, &sig_malloc)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let loop_reset_id = module
+            .declare_function("__nl_loop_reset", Linkage::Export, &sig_void)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
+        let arena_reset_id = module
+            .declare_function("__nl_arena_reset", Linkage::Export, &sig_void)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         #[cfg(target_os = "windows")]
-        let (malloc_id, local_alloc_id) = {
+        let (local_alloc_id, os_malloc_id) = {
             let mut sig_local_alloc = module.make_signature();
             sig_local_alloc.params.push(AbiParam::new(types::I32));
             sig_local_alloc.params.push(AbiParam::new(types::I64));
@@ -1637,18 +1680,15 @@ impl CraneliftCompiler {
             let local_alloc_id = module
                 .declare_function("LocalAlloc", Linkage::Import, &sig_local_alloc)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-            let malloc_id = module
-                .declare_function("__nl_malloc", Linkage::Local, &sig_malloc)
-                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-            (malloc_id, Some(local_alloc_id))
+            (Some(local_alloc_id), None)
         };
 
         #[cfg(not(target_os = "windows"))]
-        let (malloc_id, local_alloc_id) = {
-            let malloc_id = module
+        let (local_alloc_id, os_malloc_id) = {
+            let os_malloc_id = module
                 .declare_function("malloc", Linkage::Import, &sig_malloc)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-            (malloc_id, None)
+            (None, Some(os_malloc_id))
         };
 
         Ok(Self {
@@ -1656,16 +1696,9 @@ impl CraneliftCompiler {
             func_ids: HashMap::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
-            #[cfg(target_os = "windows")]
             exit_process_id,
-            #[cfg(target_os = "windows")]
             get_std_handle_id,
-            #[cfg(target_os = "windows")]
             write_file_id,
-            #[cfg(not(target_os = "windows"))]
-            exit_id,
-            #[cfg(not(target_os = "windows"))]
-            write_id,
             print_str_id,
             print_newline_id,
             print_i64_id,
@@ -1682,6 +1715,13 @@ impl CraneliftCompiler {
             pow_id,
             malloc_id,
             local_alloc_id,
+            os_malloc_id,
+            loop_reset_id,
+            arena_alloc_id,
+            arena_reset_id,
+            arena_cur_id,
+            arena_end_id,
+            arena_start_id,
         })
     }
 
@@ -1714,14 +1754,14 @@ impl CraneliftCompiler {
                 }
             }
 
-            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
-                "numlang_main".to_string()
+            let export_name = if func.name == "main" && std::env::var("NUMLANG_BENCH").is_ok() && !cfg!(target_os = "windows") {
+                "numlang_main"
             } else {
-                func.name.clone()
+                &func.name
             };
             let func_id = self
                 .module
-                .declare_function(&export_name, Linkage::Export, &sig)
+                .declare_function(export_name, Linkage::Export, &sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
             self.func_ids.insert(func.name.clone(), func_id);
         }
@@ -1734,17 +1774,18 @@ impl CraneliftCompiler {
             self.compile_function(func, &mut ctx, &mut fn_builder_ctx)?;
         }
 
-        // Step 3: Emit entry point (mainCRTStartup) on Windows if main exists and benchmarking mode is disabled
-        #[cfg(target_os = "windows")]
+        // Step 3: Emit entry point (mainCRTStartup) if main exists and benchmarking mode is disabled
         if std::env::var("NUMLANG_BENCH").is_err() {
             if let Some(&main_id) = self.func_ids.get("main") {
                 self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
             }
         }
 
-        // Step 3b: Emit print and alloc helpers
+        // Step 3b: Emit print, alloc, and arena helpers
         self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
         self.emit_helper_malloc(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_loop_reset(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_arena_wrappers(&mut ctx, &mut fn_builder_ctx)?;
 
         // Step 4: Emit final object file
         let product = self.module.finish();
@@ -1755,41 +1796,193 @@ impl CraneliftCompiler {
         Ok(obj_bytes)
     }
 
-
     fn emit_helper_malloc(
         &mut self,
         ctx: &mut cranelift_codegen::Context,
         fn_builder_ctx: &mut FunctionBuilderContext,
     ) -> Result<(), CodegenError> {
-        if let Some(local_alloc_id) = self.local_alloc_id {
-            let mut sig = self.module.make_signature();
-            sig.params.push(AbiParam::new(types::I64));
-            sig.returns.push(AbiParam::new(types::I64));
-            ctx.func.signature = sig;
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        ctx.func.signature = sig;
 
-            let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
-            let entry = builder.create_block();
-            builder.append_block_params_for_function_params(entry);
-            builder.switch_to_block(entry);
-            builder.seal_block(entry);
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+        let entry = builder.create_block();
+        let fast_path = builder.create_block();
+        let slow_path = builder.create_block();
 
-            let size_val = builder.block_params(entry)[0];
-            let flags_val = builder.ins().iconst(types::I32, 0x0040); // LPTR = LMEM_FIXED | LMEM_ZEROINIT
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
 
-            let local_alloc = self.module.declare_func_in_func(local_alloc_id, builder.func);
-            let call = builder.ins().call(local_alloc, &[flags_val, size_val]);
-            let ptr = builder.inst_results(call)[0];
+        let raw_size = builder.block_params(entry)[0];
+        // Align raw_size to 8 bytes: (raw_size + 7) & ~7
+        let c7 = builder.ins().iconst(types::I64, 7);
+        let cm8 = builder.ins().iconst(types::I64, -8);
+        let raw_plus_7 = builder.ins().iadd(raw_size, c7);
+        let aligned_size = builder.ins().band(raw_plus_7, cm8);
 
-            builder.ins().return_(&[ptr]);
+        let gv_cur = self.module.declare_data_in_func(self.arena_cur_id, builder.func);
+        let addr_cur = builder.ins().symbol_value(types::I64, gv_cur);
+        let cur_val = builder.ins().load(types::I64, MemFlagsData::trusted(), addr_cur, 0);
 
-            let config = self.module.target_config();
-            builder.finalize(config);
+        let gv_end = self.module.declare_data_in_func(self.arena_end_id, builder.func);
+        let addr_end = builder.ins().symbol_value(types::I64, gv_end);
+        let end_val = builder.ins().load(types::I64, MemFlagsData::trusted(), addr_end, 0);
 
-            self.module
-                .define_function(self.malloc_id, ctx)
-                .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_malloc: {:#?}", e)))?;
-            self.module.clear_context(ctx);
-        }
+        let next_cur = builder.ins().iadd(cur_val, aligned_size);
+
+        // Check: cur_val != 0 && next_cur <= end_val
+        let zero64 = builder.ins().iconst(types::I64, 0);
+        let not_null = builder.ins().icmp(IntCC::NotEqual, cur_val, zero64);
+        let fits = builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, next_cur, end_val);
+        let can_bump = builder.ins().band(not_null, fits);
+
+        builder.ins().brif(can_bump, fast_path, &[], slow_path, &[]);
+        builder.seal_block(entry);
+
+        // Fast path: store new cur, return cur_val
+        builder.switch_to_block(fast_path);
+        builder.seal_block(fast_path);
+        builder.ins().store(MemFlagsData::trusted(), next_cur, addr_cur, 0);
+        builder.ins().return_(&[cur_val]);
+
+        // Slow path: allocate 2MB chunk (or 2 * aligned_size if larger)
+        builder.switch_to_block(slow_path);
+        builder.seal_block(slow_path);
+
+        let min_chunk_size = builder.ins().iconst(types::I64, 2 * 1024 * 1024); // 2 MB
+        let doubled_size = builder.ins().imul_imm_s(aligned_size, 2);
+        let is_huge = builder.ins().icmp(IntCC::UnsignedGreaterThan, doubled_size, min_chunk_size);
+        let alloc_size = builder.ins().select(is_huge, doubled_size, min_chunk_size);
+
+        let new_chunk_ptr = {
+            #[cfg(target_os = "windows")]
+            {
+                let flags_val = builder.ins().iconst(types::I32, 0x0040); // LPTR = LMEM_FIXED | LMEM_ZEROINIT
+                let local_alloc = self.module.declare_func_in_func(self.local_alloc_id.unwrap(), builder.func);
+                let call = builder.ins().call(local_alloc, &[flags_val, alloc_size]);
+                builder.inst_results(call)[0]
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let malloc_func = self.module.declare_func_in_func(self.os_malloc_id.unwrap(), builder.func);
+                let call = builder.ins().call(malloc_func, &[alloc_size]);
+                builder.inst_results(call)[0]
+            }
+        };
+
+        let gv_start_s = self.module.declare_data_in_func(self.arena_start_id, builder.func);
+        let addr_start_s = builder.ins().symbol_value(types::I64, gv_start_s);
+        let gv_cur_s = self.module.declare_data_in_func(self.arena_cur_id, builder.func);
+        let addr_cur_s = builder.ins().symbol_value(types::I64, gv_cur_s);
+        let gv_end_s = self.module.declare_data_in_func(self.arena_end_id, builder.func);
+        let addr_end_s = builder.ins().symbol_value(types::I64, gv_end_s);
+
+        let new_end = builder.ins().iadd(new_chunk_ptr, alloc_size);
+        let new_cur = builder.ins().iadd(new_chunk_ptr, aligned_size);
+
+        builder.ins().store(MemFlagsData::trusted(), new_chunk_ptr, addr_start_s, 0);
+        builder.ins().store(MemFlagsData::trusted(), new_end, addr_end_s, 0);
+        builder.ins().store(MemFlagsData::trusted(), new_cur, addr_cur_s, 0);
+
+        builder.ins().return_(&[new_chunk_ptr]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.malloc_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_malloc: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_loop_reset(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        let sig = self.module.make_signature();
+        ctx.func.signature = sig;
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let gv_cur = self.module.declare_data_in_func(self.arena_cur_id, builder.func);
+        let addr_cur = builder.ins().symbol_value(types::I64, gv_cur);
+
+        let gv_start = self.module.declare_data_in_func(self.arena_start_id, builder.func);
+        let addr_start = builder.ins().symbol_value(types::I64, gv_start);
+
+        let start_val = builder.ins().load(types::I64, MemFlagsData::trusted(), addr_start, 0);
+        builder.ins().store(MemFlagsData::trusted(), start_val, addr_cur, 0);
+
+        builder.ins().return_(&[]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.loop_reset_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_loop_reset: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+        Ok(())
+    }
+
+    fn emit_helper_arena_wrappers(
+        &mut self,
+        ctx: &mut cranelift_codegen::Context,
+        fn_builder_ctx: &mut FunctionBuilderContext,
+    ) -> Result<(), CodegenError> {
+        // __nl_arena_alloc(size) -> call __nl_malloc(size)
+        let mut sig_malloc = self.module.make_signature();
+        sig_malloc.params.push(AbiParam::new(types::I64));
+        sig_malloc.returns.push(AbiParam::new(types::I64));
+        ctx.func.signature = sig_malloc;
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let sz = builder.block_params(entry)[0];
+        let malloc_fn = self.module.declare_func_in_func(self.malloc_id, builder.func);
+        let call = builder.ins().call(malloc_fn, &[sz]);
+        let res = builder.inst_results(call)[0];
+        builder.ins().return_(&[res]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.arena_alloc_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_arena_alloc: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+
+        // __nl_arena_reset() -> call __nl_loop_reset()
+        let sig_void = self.module.make_signature();
+        ctx.func.signature = sig_void;
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let reset_fn = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+        builder.ins().call(reset_fn, &[]);
+        builder.ins().return_(&[]);
+
+        let config = self.module.target_config();
+        builder.finalize(config);
+
+        self.module
+            .define_function(self.arena_reset_id, ctx)
+            .map_err(|e| CodegenError::BackendError(format!("Verifier error in __nl_arena_reset: {:#?}", e)))?;
+        self.module.clear_context(ctx);
+
         Ok(())
     }
 
@@ -1842,23 +2035,26 @@ impl CraneliftCompiler {
             let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
 
             let std_out_handle = builder.ins().iconst(types::I32, -11); // STD_OUTPUT_HANDLE
-            let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
-            let h_call = builder.ins().call(get_std_handle_func, &[std_out_handle]);
-            let h_stdout = builder.inst_results(h_call)[0];
+            if let Some(gsh_id) = self.get_std_handle_id {
+                let get_std_handle_func = self.module.declare_func_in_func(gsh_id, builder.func);
+                let h_call = builder.ins().call(get_std_handle_func, &[std_out_handle]);
+                let h_stdout = builder.inst_results(h_call)[0];
 
-            let zero64 = builder.ins().iconst(types::I64, 0);
-            let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-            builder.ins().call(write_file_func, &[h_stdout, ptr, len, written_addr, zero64]);
+                let zero64 = builder.ins().iconst(types::I64, 0);
+                let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+                builder.ins().call(write_file_func, &[h_stdout, ptr, len, written_addr, zero64]);
+            }
+            builder.ins().jump(ret_block, &[]);
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let stdout_fd = builder.ins().iconst(types::I32, 1);
+            let fd_stdout = builder.ins().iconst(types::I32, 1);
             let len64 = builder.ins().uextend(types::I64, len);
-            let write_func = self.module.declare_func_in_func(self.write_id, builder.func);
-            builder.ins().call(write_func, &[stdout_fd, ptr, len64]);
+            let write_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+            builder.ins().call(write_func, &[fd_stdout, ptr, len64]);
+            builder.ins().jump(ret_block, &[]);
         }
-        builder.ins().jump(ret_block, &[]);
 
         builder.switch_to_block(ret_block);
         builder.seal_block(ret_block);
@@ -2297,7 +2493,6 @@ impl CraneliftCompiler {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
     fn compile_entry_point(
         &mut self,
         main_id: FuncId,
@@ -2711,16 +2906,9 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             struct_layouts: &self.struct_layouts,
             enum_layouts: &self.enum_layouts,
             current_sret_ptr,
-            #[cfg(target_os = "windows")]
             exit_process_id: self.exit_process_id,
-            #[cfg(target_os = "windows")]
             get_std_handle_id: self.get_std_handle_id,
-            #[cfg(target_os = "windows")]
             write_file_id: self.write_file_id,
-            #[cfg(not(target_os = "windows"))]
-            exit_id: self.exit_id,
-            #[cfg(not(target_os = "windows"))]
-            write_id: self.write_id,
             print_str_id: self.print_str_id,
             print_newline_id: self.print_newline_id,
             print_i64_id: self.print_i64_id,
@@ -2747,6 +2935,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             f32_pool,
             array_load_cache: HashMap::new(),
             malloc_id: self.malloc_id,
+            loop_reset_id: self.loop_reset_id,
         };
 
         let terminated = state.translate_block(&body_to_translate, &mut builder)?;
@@ -2894,16 +3083,9 @@ struct FunctionTranslationState<'a> {
     struct_layouts: &'a HashMap<String, StructLayout>,
     enum_layouts: &'a HashMap<String, EnumLayout>,
     current_sret_ptr: Option<Value>,
-    #[cfg(target_os = "windows")]
     exit_process_id: FuncId,
-    #[cfg(target_os = "windows")]
-    get_std_handle_id: FuncId,
-    #[cfg(target_os = "windows")]
+    get_std_handle_id: Option<FuncId>,
     write_file_id: FuncId,
-    #[cfg(not(target_os = "windows"))]
-    exit_id: FuncId,
-    #[cfg(not(target_os = "windows"))]
-    write_id: FuncId,
     print_str_id: FuncId,
     print_newline_id: FuncId,
     print_i64_id: FuncId,
@@ -2930,6 +3112,7 @@ struct FunctionTranslationState<'a> {
     f32_pool: HashMap<u32, Value>,
     array_load_cache: HashMap<(String, String), (TypedExpr, Value)>,
     malloc_id: FuncId,
+    loop_reset_id: FuncId,
 }
 
 impl<'a> FunctionTranslationState<'a> {
@@ -2940,6 +3123,131 @@ impl<'a> FunctionTranslationState<'a> {
             Type::Array(elem, len) => self.get_type_size(elem) * len,
             _ => ty.size_bytes(),
         }
+    }
+
+    fn should_reset_loop_iteration(&self, body: &TypedBlock) -> bool {
+        let outer_vars: HashSet<String> = self.variables.keys().cloned().collect();
+        if !Self::block_has_allocations(body) {
+            return false;
+        }
+        !Self::block_allocations_escape(body, &outer_vars)
+    }
+
+    fn block_has_allocations(body: &TypedBlock) -> bool {
+        for stmt in &body.stmts {
+            match stmt {
+                TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } | TypedStmt::Expr(value) => {
+                    if Self::expr_has_allocations(value) {
+                        return true;
+                    }
+                }
+                TypedStmt::If { condition, then_branch, else_branch, .. } => {
+                    if Self::expr_has_allocations(condition)
+                        || Self::block_has_allocations(then_branch)
+                        || else_branch.as_ref().is_some_and(Self::block_has_allocations)
+                    {
+                        return true;
+                    }
+                }
+                TypedStmt::While { condition, body, .. } => {
+                    if Self::expr_has_allocations(condition) || Self::block_has_allocations(body) {
+                        return true;
+                    }
+                }
+                TypedStmt::For { lo, hi, body, .. }
+                    if Self::expr_has_allocations(lo)
+                        || Self::expr_has_allocations(hi)
+                        || Self::block_has_allocations(body) =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn expr_has_allocations(expr: &TypedExpr) -> bool {
+        match expr {
+            TypedExpr::Box { .. } | TypedExpr::Lambda { .. } => true,
+            TypedExpr::Call { .. } | TypedExpr::CallIndirect { .. } => true,
+            TypedExpr::Binary { left, right, .. } => {
+                Self::expr_has_allocations(left) || Self::expr_has_allocations(right)
+            }
+            TypedExpr::Unary { expr, .. } => Self::expr_has_allocations(expr),
+            TypedExpr::StructLiteral { fields, .. } => {
+                fields.iter().any(|(_, e)| Self::expr_has_allocations(e))
+            }
+            TypedExpr::EnumConstructor { args, .. } => {
+                args.iter().any(Self::expr_has_allocations)
+            }
+            TypedExpr::FieldAccess { target, .. } => Self::expr_has_allocations(target),
+            TypedExpr::Index { target, index, .. } => {
+                Self::expr_has_allocations(target) || Self::expr_has_allocations(index)
+            }
+            TypedExpr::Match { scrutinee, arms, .. } => {
+                Self::expr_has_allocations(scrutinee)
+                    || arms.iter().any(|arm| Self::expr_has_allocations(&arm.body))
+            }
+            _ => false,
+        }
+    }
+
+    fn block_allocations_escape(body: &TypedBlock, outer_vars: &HashSet<String>) -> bool {
+        let mut local_vars = HashSet::new();
+        Self::stmt_allocations_escape_inner(body, outer_vars, &mut local_vars)
+    }
+
+    fn stmt_allocations_escape_inner(
+        body: &TypedBlock,
+        outer_vars: &HashSet<String>,
+        local_vars: &mut HashSet<String>,
+    ) -> bool {
+        for stmt in &body.stmts {
+            match stmt {
+                TypedStmt::Let { name, .. } => {
+                    local_vars.insert(name.clone());
+                }
+                TypedStmt::Assign { name, value, .. } => {
+                    if !local_vars.contains(name) && outer_vars.contains(name) && value.ty().contains_heap() {
+                        return true;
+                    }
+                }
+                TypedStmt::IndexAssign { target, value, .. } => {
+                    if !local_vars.contains(target) && outer_vars.contains(target) && value.ty().contains_heap() {
+                        return true;
+                    }
+                }
+                TypedStmt::FieldAssign { target, value, .. } => {
+                    if !local_vars.contains(target) && outer_vars.contains(target) && value.ty().contains_heap() {
+                        return true;
+                    }
+                }
+                TypedStmt::If { then_branch, else_branch, .. } => {
+                    if Self::stmt_allocations_escape_inner(then_branch, outer_vars, local_vars) {
+                        return true;
+                    }
+                    if let Some(eb) = else_branch {
+                        if Self::stmt_allocations_escape_inner(eb, outer_vars, local_vars) {
+                            return true;
+                        }
+                    }
+                }
+                TypedStmt::While { body, .. } => {
+                    if Self::stmt_allocations_escape_inner(body, outer_vars, local_vars) {
+                        return true;
+                    }
+                }
+                TypedStmt::For { var, body, .. } => {
+                    local_vars.insert(var.clone());
+                    if Self::stmt_allocations_escape_inner(body, outer_vars, local_vars) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn emit_copy_bytes(builder: &mut FunctionBuilder, src_ptr: Value, dst_ptr: Value, total_bytes: usize) {
@@ -3250,6 +3558,9 @@ impl<'a> FunctionTranslationState<'a> {
     }
 
     fn is_simple_induction_body(body: &TypedBlock, var_name: &str) -> bool {
+        if Self::block_has_allocations(body) {
+            return false;
+        }
         if Self::var_mutations_in_block(body, var_name) != 1 {
             return false;
         }
@@ -3423,44 +3734,40 @@ impl<'a> FunctionTranslationState<'a> {
             let addr = builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
             builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
         }
+        let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
 
         #[cfg(target_os = "windows")]
         {
             let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
             let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
-            let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
 
             let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
-            let get_std_handle_func = self.module.declare_func_in_func(self.get_std_handle_id, builder.func);
-            let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
-            let h_stderr = builder.inst_results(h_call)[0];
+            if let Some(gsh_id) = self.get_std_handle_id {
+                let get_std_handle_func = self.module.declare_func_in_func(gsh_id, builder.func);
+                let h_call = builder.ins().call(get_std_handle_func, &[std_err_handle]);
+                let h_stderr = builder.inst_results(h_call)[0];
 
-            let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
-            let zero64 = builder.ins().iconst(types::I64, 0);
-            let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-            builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
-
-            let exit_code = builder.ins().iconst(types::I32, 101);
-            let exit_func = self
-                .module
-                .declare_func_in_func(self.exit_process_id, builder.func);
-            builder.ins().call(exit_func, &[exit_code]);
-            builder.ins().trap(TrapCode::user(2).unwrap());
+                let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
+                let zero64 = builder.ins().iconst(types::I64, 0);
+                let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+                builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
+            }
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let msg_addr = builder.ins().stack_addr(types::I64, slot, 0);
-            let stderr_fd = builder.ins().iconst(types::I32, 2);
+            let fd_stderr = builder.ins().iconst(types::I32, 2);
             let msg_len = builder.ins().iconst(types::I64, msg.len() as i64);
-            let write_func = self.module.declare_func_in_func(self.write_id, builder.func);
-            builder.ins().call(write_func, &[stderr_fd, msg_addr, msg_len]);
-
-            let exit_code = builder.ins().iconst(types::I32, 101);
-            let exit_func = self.module.declare_func_in_func(self.exit_id, builder.func);
-            builder.ins().call(exit_func, &[exit_code]);
-            builder.ins().trap(TrapCode::user(2).unwrap());
+            let write_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
+            builder.ins().call(write_func, &[fd_stderr, msg_addr, msg_len]);
         }
+
+        let exit_code = builder.ins().iconst(types::I32, 101);
+        let exit_func = self
+            .module
+            .declare_func_in_func(self.exit_process_id, builder.func);
+        builder.ins().call(exit_func, &[exit_code]);
+        builder.ins().trap(TrapCode::user(2).unwrap());
 
         builder.switch_to_block(ok_block);
         builder.seal_block(ok_block);
@@ -5840,6 +6147,7 @@ impl<'a> FunctionTranslationState<'a> {
                 ..
             } => {
                 self.array_load_cache.clear();
+                let should_reset = self.should_reset_loop_iteration(body);
 
                 let induction_info = match condition {
                     TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
@@ -5896,6 +6204,10 @@ impl<'a> FunctionTranslationState<'a> {
                             for _ in 0..4 {
                                 self.translate_block(body, builder)?;
                             }
+                            if should_reset {
+                                let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                                builder.ins().call(loop_reset_func, &[]);
+                            }
                             builder.ins().jump(unroll_head_block, &[]);
                             builder.seal_block(unroll_head_block);
 
@@ -5921,6 +6233,10 @@ impl<'a> FunctionTranslationState<'a> {
                             builder.switch_to_block(cleanup_body_block);
                             builder.seal_block(cleanup_body_block);
                             self.translate_block(body, builder)?;
+                            if should_reset {
+                                let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                                builder.ins().call(loop_reset_func, &[]);
+                            }
                             builder.ins().jump(cleanup_head_block, &[]);
                             builder.seal_block(cleanup_head_block);
 
@@ -5968,6 +6284,10 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 builder.switch_to_block(latch_block);
+                if should_reset {
+                    let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                    builder.ins().call(loop_reset_func, &[]);
+                }
                 if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
                     builder.ins().jump(body_block, &[]);
                 } else {
@@ -5994,6 +6314,7 @@ impl<'a> FunctionTranslationState<'a> {
                 ..
             } => {
                 self.array_load_cache.clear();
+                let should_reset = self.should_reset_loop_iteration(body);
 
                 let lo_val = self.translate_expr(lo, builder)?;
                 let lo_ty = lo.ty();
@@ -6034,6 +6355,10 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 builder.switch_to_block(latch_block);
+                if should_reset {
+                    let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                    builder.ins().call(loop_reset_func, &[]);
+                }
                 let cur_val = builder.use_var(var_id);
                 let next_val = builder.ins().iadd_imm_s(cur_val, 1);
                 builder.def_var(var_id, next_val);
@@ -6642,6 +6967,21 @@ impl<'a> FunctionTranslationState<'a> {
 
             TypedExpr::Call { callee, args, ty, .. } => {
                 match callee.as_str() {
+                    "__nl_loop_reset" | "__nl_arena_reset" => {
+                        let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                        builder.ins().call(loop_reset_func, &[]);
+                        return Ok(builder.ins().iconst(types::I64, 0));
+                    }
+                    "__nl_arena_alloc" => {
+                        let size_val = if !args.is_empty() {
+                            self.translate_expr(&args[0], builder)?
+                        } else {
+                            builder.ins().iconst(types::I64, 8)
+                        };
+                        let malloc_func = self.module.declare_func_in_func(self.malloc_id, builder.func);
+                        let call_inst = builder.ins().call(malloc_func, &[size_val]);
+                        return Ok(builder.inst_results(call_inst)[0]);
+                    }
                     "print" | "println" => {
                         let is_nl = callee == "println";
                         if args.is_empty() {
@@ -8664,7 +9004,16 @@ impl CraneliftCompiler {
                         }
                     }
                     crate::mir::lower::Rvalue::Call(callee, args) => {
-                        if callee == "__numlang_fib" && !args.is_empty() {
+                        if callee == "__nl_loop_reset" || callee == "__nl_arena_reset" {
+                            let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                            builder.ins().call(loop_reset_func, &[]);
+                            builder.ins().iconst(types::I64, 0)
+                        } else if callee == "__nl_arena_alloc" && !args.is_empty() {
+                            let size_arg = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let malloc_func = self.module.declare_func_in_func(self.malloc_id, builder.func);
+                            let call_inst = builder.ins().call(malloc_func, &[size_arg]);
+                            builder.inst_results(call_inst)[0]
+                        } else if callee == "__numlang_fib" && !args.is_empty() {
                             let n_arg = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
                             let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
                                 builder.ins().uextend(types::I64, n_arg)
@@ -9288,14 +9637,14 @@ impl CraneliftCompiler {
                     sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
                 }
             }
-            let export_name = if cfg!(not(target_os = "windows")) && std::env::var("NUMLANG_BENCH").is_ok() && func.name == "main" {
-                "numlang_main".to_string()
+            let export_name = if func.name == "main" && std::env::var("NUMLANG_BENCH").is_ok() && !cfg!(target_os = "windows") {
+                "numlang_main"
             } else {
-                func.name.clone()
+                &func.name
             };
             let func_id = self
                 .module
-                .declare_function(&export_name, Linkage::Export, &sig)
+                .declare_function(export_name, Linkage::Export, &sig)
                 .map_err(|e| CodegenError::BackendError(e.to_string()))?;
             self.func_ids.insert(func.name.clone(), func_id);
         }
@@ -9309,16 +9658,17 @@ impl CraneliftCompiler {
         }
 
         // Step 3: Emit entry wrapper if main exists and benchmarking mode is disabled
-        #[cfg(target_os = "windows")]
         if std::env::var("NUMLANG_BENCH").is_err() {
             if let Some(&main_id) = self.func_ids.get("main") {
                 self.compile_entry_point(main_id, &mut ctx, &mut fn_builder_ctx)?;
             }
         }
 
-        // Step 3b: Emit print and alloc helpers
+        // Step 3b: Emit print, alloc, and arena helpers
         self.emit_print_helpers(&mut ctx, &mut fn_builder_ctx)?;
         self.emit_helper_malloc(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_loop_reset(&mut ctx, &mut fn_builder_ctx)?;
+        self.emit_helper_arena_wrappers(&mut ctx, &mut fn_builder_ctx)?;
 
         // Step 4: Emit final object file
         let product = self.module.finish();
