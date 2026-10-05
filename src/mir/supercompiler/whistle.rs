@@ -4,12 +4,22 @@ use crate::mir::Place;
 
 /// Fast homeomorphic embedding check: returns true if `t1` is homeomorphically embedded in `t2` (t1 ⊴ t2).
 pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> bool {
+    // 0. O(1) identity check via canonical hash-consing
     if t1 == t2 {
         return true;
     }
 
+    let s1 = interner.size(t1);
+    let s2 = interner.size(t2);
     // Fast size filter: a larger term cannot be embedded in a smaller term!
-    if interner.size(t1) > interner.size(t2) {
+    if s1 > s2 {
+        return false;
+    }
+
+    let d1 = interner.depth(t1);
+    let d2 = interner.depth(t2);
+    // Fast depth filter: a deeper term cannot be embedded in a shallower term!
+    if d1 > d2 {
         return false;
     }
 
@@ -17,31 +27,42 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
     let term2 = interner.get(t2);
 
     // 1. Diving test: does t1 embed in any child of t2?
-    let embedded_in_child = match term2 {
-        SymTerm::Binary(_, l2, r2, _) => {
-            is_embedded(t1, *l2, interner) || is_embedded(t1, *r2, interner)
+    // Pruning: all children of t2 have strictly smaller size (< s2) and depth (< d2).
+    // If s1 == s2 or d1 == d2, t1 cannot possibly embed in any child of t2.
+    if s1 < s2 && d1 < d2 {
+        let embedded_in_child = match term2 {
+            SymTerm::Binary(_, l2, r2, _) => {
+                (interner.size(*l2) >= s1 && interner.depth(*l2) >= d1 && is_embedded(t1, *l2, interner))
+                    || (interner.size(*r2) >= s1 && interner.depth(*r2) >= d1 && is_embedded(t1, *r2, interner))
+            }
+            SymTerm::Unary(_, inner2, _) => {
+                interner.size(*inner2) >= s1 && interner.depth(*inner2) >= d1 && is_embedded(t1, *inner2, interner)
+            }
+            SymTerm::Constructor(_, _, fields2, _) => {
+                fields2.iter().any(|&f| interner.size(f) >= s1 && interner.depth(f) >= d1 && is_embedded(t1, f, interner))
+            }
+            SymTerm::Call(_, args2, _) => {
+                args2.iter().any(|&a| interner.size(a) >= s1 && interner.depth(a) >= d1 && is_embedded(t1, a, interner))
+            }
+            SymTerm::Select(c2, th2, el2, _) => {
+                (interner.size(*c2) >= s1 && interner.depth(*c2) >= d1 && is_embedded(t1, *c2, interner))
+                    || (interner.size(*th2) >= s1 && interner.depth(*th2) >= d1 && is_embedded(t1, *th2, interner))
+                    || (interner.size(*el2) >= s1 && interner.depth(*el2) >= d1 && is_embedded(t1, *el2, interner))
+            }
+            SymTerm::Phi(incoming2, _) => incoming2.iter().any(|(_, t)| {
+                interner.size(*t) >= s1 && interner.depth(*t) >= d1 && is_embedded(t1, *t, interner)
+            }),
+            SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => {
+                interner.size(*inner2) >= s1 && interner.depth(*inner2) >= d1 && is_embedded(t1, *inner2, interner)
+            }
+            SymTerm::ClosureVal(_, captured2, _) | SymTerm::Thunk(_, captured2, _) => {
+                captured2.iter().any(|&c| interner.size(c) >= s1 && interner.depth(c) >= d1 && is_embedded(t1, c, interner))
+            }
+            _ => false,
+        };
+        if embedded_in_child {
+            return true;
         }
-        SymTerm::Unary(_, inner2, _) => is_embedded(t1, *inner2, interner),
-        SymTerm::Constructor(_, _, fields2, _) => {
-            fields2.iter().any(|&f| is_embedded(t1, f, interner))
-        }
-        SymTerm::Call(_, args2, _) => {
-            args2.iter().any(|&a| is_embedded(t1, a, interner))
-        }
-        SymTerm::Select(c2, th2, el2, _) => {
-            is_embedded(t1, *c2, interner)
-                || is_embedded(t1, *th2, interner)
-                || is_embedded(t1, *el2, interner)
-        }
-        SymTerm::Phi(incoming2, _) => incoming2.iter().any(|(_, t)| is_embedded(t1, *t, interner)),
-        SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => is_embedded(t1, *inner2, interner),
-        SymTerm::ClosureVal(_, captured2, _) => {
-            captured2.iter().any(|&c| is_embedded(t1, c, interner))
-        }
-        _ => false,
-    };
-    if embedded_in_child {
-        return true;
     }
 
     // 2. Coupling test: do t1 and t2 share the same constructor and pairwise embed?
@@ -82,6 +103,14 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
                     .zip(c2.iter())
                     .all(|(&a, &b)| is_embedded(a, b, interner))
         }
+        (SymTerm::Thunk(b1, c1, _), SymTerm::Thunk(b2, c2, _)) => {
+            b1 == b2
+                && c1.len() == c2.len()
+                && c1
+                    .iter()
+                    .zip(c2.iter())
+                    .all(|(&a, &b)| is_embedded(a, b, interner))
+        }
         (SymTerm::Select(c1, th1, el1, _), SymTerm::Select(c2, th2, el2, _)) => {
             is_embedded(*c1, *c2, interner)
                 && is_embedded(*th1, *th2, interner)
@@ -106,6 +135,30 @@ pub fn state_embeds(
     let mut any_embedded = false;
     for place in active_places {
         if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
+            // Fast O(1) identity check via canonical hash-consing:
+            // if term IDs are identical, t_anc trivially embeds in t_curr!
+            if t_anc == t_curr {
+                if let SymTerm::ConstInt(_, _) = interner.get(t_anc) {
+                    continue;
+                }
+                any_embedded = true;
+                continue;
+            }
+
+            // Concrete constant values represent finite loop unrolling progress, not unbounded symbolic expression growth.
+            if let (SymTerm::ConstInt(_, _), SymTerm::ConstInt(_, _)) =
+                (interner.get(t_anc), interner.get(t_curr))
+            {
+                continue;
+            }
+
+            // Fast O(1) size and depth filters:
+            if interner.size(t_anc) > interner.size(t_curr)
+                || interner.depth(t_anc) > interner.depth(t_curr)
+            {
+                return false;
+            }
+
             if is_embedded(t_anc, t_curr, interner) {
                 any_embedded = true;
             } else {

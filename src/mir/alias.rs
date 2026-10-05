@@ -209,6 +209,11 @@ fn collect_reads_for_alias(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         Rvalue::Alloc(p) | Rvalue::Load(p) => {
             reads.push(p.clone());
         }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                reads.push(Place { local: e.clone(), projections: vec![] });
+            }
+        }
     }
 
     reads

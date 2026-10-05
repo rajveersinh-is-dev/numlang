@@ -492,6 +492,11 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         Rvalue::Alloc(p) | Rvalue::Load(p) => {
             reads.push(p.clone());
         }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                reads.push(Place { local: e.clone(), projections: vec![] });
+            }
+        }
     }
 
     reads
@@ -507,6 +512,12 @@ fn collect_terminator_reads(term: &Terminator) -> Vec<Place> {
             let mut r = vec![callee.clone()];
             r.extend(args.iter().cloned());
             r
+        }
+        Terminator::Force { thunk, .. } => {
+            vec![Place { local: thunk.clone(), projections: vec![] }]
+        }
+        Terminator::TypeGuard { local, .. } => {
+            vec![local.clone()]
         }
     }
 }
@@ -587,5 +598,8 @@ fn format_rvalue(rv: &Rvalue) -> String {
         }
         Rvalue::Alloc(p) => format!("alloc({})", format_place(p)),
         Rvalue::Load(p) => format!("load({})", format_place(p)),
+        Rvalue::Thunk { body, env } => {
+            format!("thunk({}; env=[{}])", body, env.join(", "))
+        }
     }
 }

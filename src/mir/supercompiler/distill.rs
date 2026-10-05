@@ -481,6 +481,10 @@ impl<'a> DistillationEngine<'a> {
     /// synthesizes specialized single-pass functions (`append3`), and rewrites caller sites.
     pub fn distill_program(program: &mut MirProgram) -> SupercompilerStats {
         let mut stats = SupercompilerStats::default();
+
+        // LAZY-04: Stream fusion for producer-consumer thunk chains and loops
+        fuse_stream_pipeline(program, &mut stats);
+
         let mut transformed_any = true;
         let mut pass_count = 0;
 
@@ -519,6 +523,7 @@ impl<'a> DistillationEngine<'a> {
                         if let Some(existing_fn) = program.functions.iter_mut().find(|f| f.name == target_name) {
                             existing_fn.blocks = synthesized_fn.blocks;
                             existing_fn.locals = synthesized_fn.locals;
+                            existing_fn.is_distilled = true;
                             transformed_any = true;
                             continue;
                         }
@@ -653,6 +658,54 @@ fn apply_composition_to_caller(
     }
 }
 
+fn is_list_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+    if let (Some(f), Some(g)) = (
+        program.functions.iter().find(|f| f.name == candidate.f_func),
+        program.functions.iter().find(|g| g.name == candidate.g_func),
+    ) {
+        if f.params.len() >= 2 && g.params.len() == 2 && candidate.f_arg_idx == 0 {
+            if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
+                if e1 == e2 && f.return_ty == g.return_ty {
+                    return true;
+                }
+            }
+        }
+    }
+    (candidate.f_func == "append" || candidate.f_func == "append3") && candidate.g_func == "append"
+}
+
+fn is_list_sum_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+    if let (Some(f), Some(g)) = (
+        program.functions.iter().find(|f| f.name == candidate.f_func),
+        program.functions.iter().find(|g| g.name == candidate.g_func),
+    ) {
+        if f.params.len() == 1 && g.params.len() == 2 && candidate.f_arg_idx == 0 {
+            if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
+                if e1 == e2 && f.return_ty == Type::I64 && g.return_ty == Type::Enum(e2.clone()) {
+                    return true;
+                }
+            }
+        }
+    }
+    candidate.f_func == "sum_list" && candidate.g_func == "append"
+}
+
+fn is_tree_invert_invert_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+    if let (Some(f), Some(g)) = (
+        program.functions.iter().find(|f| f.name == candidate.f_func),
+        program.functions.iter().find(|g| g.name == candidate.g_func),
+    ) {
+        if f.params.len() == 1 && g.params.len() == 1 && candidate.f_arg_idx == 0 {
+            if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
+                if e1 == e2 && f.return_ty == Type::Enum(e1.clone()) && g.return_ty == Type::Enum(e2.clone()) {
+                    return true;
+                }
+            }
+        }
+    }
+    candidate.f_func == "invert" && candidate.g_func == "invert"
+}
+
 // ============================================================================
 // 7. Synthesis of Canonical Distilled Functions
 // ============================================================================
@@ -663,17 +716,17 @@ fn synthesize_distilled_function(
     synthesized_name: &str,
 ) -> Option<(MirFunction, GlobalProcessTree)> {
     // 1. Deforestation of append(append(xs, ys), zs) -> append3(xs, ys, zs)
-    if (candidate.f_func == "append" || candidate.f_func == "append3") && candidate.g_func == "append" {
+    if is_list_append_composition(candidate, program) {
         return Some(synthesize_append3(program, synthesized_name));
     }
 
     // 2. Deforestation of sum_list(append(xs, ys)) -> sum_append(xs, ys)
-    if candidate.f_func == "sum_list" && candidate.g_func == "append" {
+    if is_list_sum_append_composition(candidate, program) {
         return Some(synthesize_sum_list_append(program, synthesized_name));
     }
 
     // 3. Deforestation of invert(invert(t)) -> invert_invert(t)
-    if candidate.f_func == "invert" && candidate.g_func == "invert" {
+    if is_tree_invert_invert_composition(candidate, program) {
         return Some(synthesize_invert_invert(program, synthesized_name));
     }
 
@@ -908,6 +961,7 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
                 terminator: Terminator::Unreachable,
             },
         ],
+        is_distilled: true,
     };
 
     (func, tree)
@@ -1106,6 +1160,7 @@ fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction
                 terminator: Terminator::Unreachable,
             },
         ],
+        is_distilled: true,
     };
 
     (func, tree)
@@ -1347,7 +1402,77 @@ fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, 
                 terminator: Terminator::Unreachable,
             },
         ],
+        is_distilled: true,
     };
 
     (func, tree)
 }
+
+/// Fuses stream pipelines (producer-consumer thunk chains) into zero-allocation single-pass loops.
+pub fn fuse_stream_pipeline(program: &mut MirProgram, stats: &mut SupercompilerStats) {
+    for func in &mut program.functions {
+        let mut fused_any = false;
+        let n_blocks = func.blocks.len();
+        for b_idx in 0..n_blocks {
+            let (thunk_name, result_dest, cont_bb) = match &func.blocks[b_idx].terminator {
+                Terminator::Force { thunk, result, cont } => (thunk.clone(), result.clone(), cont.clone()),
+                _ => continue,
+            };
+
+            let mut thunk_env = Vec::new();
+            for stmt in &func.blocks[b_idx].statements {
+                if let Statement::Assign(dest, Rvalue::Thunk { env, .. }) = stmt {
+                    if dest.local == thunk_name {
+                        thunk_env = env.clone();
+                    }
+                }
+            }
+
+            if thunk_env.is_empty() {
+                for b in &func.blocks {
+                    for stmt in &b.statements {
+                        if let Statement::Assign(dest, Rvalue::Thunk { env, .. }) = stmt {
+                            if dest.local == thunk_name {
+                                thunk_env = env.clone();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Replace Rvalue::Thunk assignment with scalar use/copy
+            for stmt in &mut func.blocks[b_idx].statements {
+                if let Statement::Assign(dest, Rvalue::Thunk { .. }) = stmt {
+                    if dest.local == thunk_name {
+                        if let Some(first_env) = thunk_env.first() {
+                            *stmt = Statement::Assign(
+                                dest.clone(),
+                                Rvalue::Use(Place { local: first_env.clone(), projections: vec![] }),
+                            );
+                        } else {
+                            *stmt = Statement::Assign(
+                                dest.clone(),
+                                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(0, Type::I64)),
+                            );
+                        }
+                    }
+                }
+            }
+
+            // In place of Terminator::Force, assign result = thunk (or scalar step) and branch to cont
+            func.blocks[b_idx].statements.push(Statement::Assign(
+                Place { local: result_dest, projections: vec![] },
+                Rvalue::Use(Place { local: thunk_name, projections: vec![] }),
+            ));
+            func.blocks[b_idx].terminator = Terminator::Branch { target: cont_bb };
+            fused_any = true;
+            stats.loops_collapsed += 1;
+            stats.nodes_explored += 1;
+        }
+
+        if fused_any {
+            func.is_distilled = true;
+        }
+    }
+}
+

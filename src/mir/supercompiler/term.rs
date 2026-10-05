@@ -36,6 +36,8 @@ pub enum SymTerm {
     Discriminant(SymTermId, Type),
     /// A symbolically known closure: fn_name + captured symbolic terms.
     ClosureVal(String, Vec<SymTermId>, Type),
+    /// An unevaluated thunk: suspended body + captured symbolic terms.
+    Thunk(String, Vec<SymTermId>, Type),
 }
 
 impl SymTerm {
@@ -56,6 +58,7 @@ impl SymTerm {
             SymTerm::Deref(_, ty) => ty,
             SymTerm::Discriminant(_, ty) => ty,
             SymTerm::ClosureVal(_, _, ty) => ty,
+            SymTerm::Thunk(_, _, ty) => ty,
         }
     }
 
@@ -77,6 +80,72 @@ pub struct TermInterner {
     terms: Vec<SymTerm>,
     lookup: HashMap<SymTerm, SymTermId>,
     sizes: Vec<usize>,
+    depths: Vec<usize>,
+    hashes: Vec<u64>,
+}
+
+const FX_K: u64 = 0x517cc1b727220a95;
+
+#[inline]
+fn fx_hash_step(hash: u64, val: u64) -> u64 {
+    hash.rotate_left(5) ^ val.wrapping_mul(FX_K)
+}
+
+fn fx_hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
+    for &b in bytes {
+        hash = fx_hash_step(hash, b as u64);
+    }
+    hash
+}
+
+fn hash_place(mut h: u64, p: &Place) -> u64 {
+    h = fx_hash_bytes(h, p.local.as_bytes());
+    for proj in &p.projections {
+        match proj {
+            crate::mir::Projection::Deref => {
+                h = fx_hash_step(h, 0xd37ef);
+            }
+            crate::mir::Projection::Field(f) => {
+                h = fx_hash_bytes(fx_hash_step(h, 0xf1e1d), f.as_bytes());
+            }
+            crate::mir::Projection::Index(idx) => {
+                h = hash_place(fx_hash_step(h, 0x14d3c), idx);
+            }
+            crate::mir::Projection::Payload(idx) => {
+                h = fx_hash_step(fx_hash_step(h, 0x9a710ad), *idx as u64);
+            }
+        }
+    }
+    h
+}
+
+fn binary_op_discriminant(op: BinaryOp) -> u64 {
+    match op {
+        BinaryOp::Add => 1,
+        BinaryOp::Sub => 2,
+        BinaryOp::Mul => 3,
+        BinaryOp::Div => 4,
+        BinaryOp::Mod => 5,
+        BinaryOp::Pow => 6,
+        BinaryOp::BitAnd => 7,
+        BinaryOp::BitOr => 8,
+        BinaryOp::BitXor => 9,
+        BinaryOp::Shl => 10,
+        BinaryOp::Shr => 11,
+        BinaryOp::Eq => 12,
+        BinaryOp::Ne => 13,
+        BinaryOp::Lt => 14,
+        BinaryOp::Le => 15,
+        BinaryOp::Gt => 16,
+        BinaryOp::Ge => 17,
+    }
+}
+
+fn unary_op_discriminant(op: UnaryOp) -> u64 {
+    match op {
+        UnaryOp::Neg => 1,
+        UnaryOp::Not => 2,
+    }
 }
 
 impl TermInterner {
@@ -85,6 +154,8 @@ impl TermInterner {
             terms: Vec::new(),
             lookup: HashMap::new(),
             sizes: Vec::new(),
+            depths: Vec::new(),
+            hashes: Vec::new(),
         }
     }
 
@@ -104,6 +175,19 @@ impl TermInterner {
         self.sizes[id.0]
     }
 
+    pub fn depth(&self, id: SymTermId) -> usize {
+        self.depths[id.0]
+    }
+
+    pub fn hash(&self, id: SymTermId) -> u64 {
+        self.hashes[id.0]
+    }
+
+    #[inline]
+    pub fn structural_eq(&self, t1: SymTermId, t2: SymTermId) -> bool {
+        t1 == t2
+    }
+
     pub fn intern_const(&mut self, lit: TypedLiteral) -> SymTermId {
         match lit {
             TypedLiteral::Int(i, ty) => self.intern(SymTerm::ConstInt(i, ty)),
@@ -121,6 +205,26 @@ impl TermInterner {
         self.intern(SymTerm::ConstBool(val))
     }
 
+    pub fn intern_float(&mut self, val: f64) -> SymTermId {
+        self.intern(SymTerm::ConstFloat(val.to_bits(), Type::F64))
+    }
+
+    pub fn intern_typed_zero(&mut self, ty: &Type) -> SymTermId {
+        match ty {
+            Type::F64 | Type::F32 => self.intern(SymTerm::ConstFloat(0.0f64.to_bits(), ty.clone())),
+            Type::Bool => self.intern(SymTerm::ConstBool(false)),
+            _ => self.intern(SymTerm::ConstInt(0, ty.clone())),
+        }
+    }
+
+    pub fn intern_typed_one(&mut self, ty: &Type) -> SymTermId {
+        match ty {
+            Type::F64 | Type::F32 => self.intern(SymTerm::ConstFloat(1.0f64.to_bits(), ty.clone())),
+            Type::Bool => self.intern(SymTerm::ConstBool(true)),
+            _ => self.intern(SymTerm::ConstInt(1, ty.clone())),
+        }
+    }
+
     pub fn intern_var(&mut self, place: Place, ty: Type) -> SymTermId {
         self.intern(SymTerm::Var(place, ty))
     }
@@ -128,12 +232,12 @@ impl TermInterner {
     pub fn intern_binary(
         &mut self,
         op: BinaryOp,
-        left: SymTermId,
-        right: SymTermId,
+        mut left: SymTermId,
+        mut right: SymTermId,
         ty: Type,
     ) -> SymTermId {
-        let left_term = self.get(left).clone();
-        let right_term = self.get(right).clone();
+        let mut left_term = self.get(left).clone();
+        let mut right_term = self.get(right).clone();
 
         // 1. Constant folding
         if let (Some(l_lit), Some(r_lit)) = (left_term.to_literal(), right_term.to_literal()) {
@@ -142,7 +246,21 @@ impl TermInterner {
             }
         }
 
-        // 2. Algebraic simplifications
+        // 2. Canonical commutative reordering (ALG-01)
+        // Constants are moved to the right; non-constants are sorted deterministically by SymTermId.
+        if is_commutative(op) {
+            let should_swap = match (is_const(&left_term), is_const(&right_term)) {
+                (true, false) => true,
+                (false, true) => false,
+                _ => left.0 > right.0,
+            };
+            if should_swap {
+                std::mem::swap(&mut left, &mut right);
+                std::mem::swap(&mut left_term, &mut right_term);
+            }
+        }
+
+        // 3. Structural algebraic simplifications (ALG-02, ALG-04)
         match op {
             BinaryOp::Add => {
                 if is_zero(&right_term) {
@@ -151,18 +269,57 @@ impl TermInterner {
                 if is_zero(&left_term) {
                     return right;
                 }
+                // Constant reassociation: (x + c1) + c2 => x + (c1 + c2)
+                if let SymTerm::Binary(BinaryOp::Add, inner_x, inner_c, _) = left_term {
+                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                        if let Some(c_sum) = fold_const_binary(BinaryOp::Add, &c1_lit, &c2_lit) {
+                            let c_sum_id = self.intern_const(c_sum);
+                            return self.intern_binary(BinaryOp::Add, inner_x, c_sum_id, ty);
+                        }
+                    }
+                }
+                // Constant reassociation: (x - c1) + c2 => x + (c2 - c1)
+                if let SymTerm::Binary(BinaryOp::Sub, inner_x, inner_c, _) = left_term {
+                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                        if let Some(c_diff) = fold_const_binary(BinaryOp::Sub, &c2_lit, &c1_lit) {
+                            let c_diff_id = self.intern_const(c_diff);
+                            return self.intern_binary(BinaryOp::Add, inner_x, c_diff_id, ty);
+                        }
+                    }
+                }
             }
             BinaryOp::Sub => {
                 if is_zero(&right_term) {
                     return left;
                 }
                 if left == right {
-                    return self.intern_int(0);
+                    return self.intern_typed_zero(&ty);
+                }
+                if is_zero(&left_term) {
+                    return self.intern_unary(UnaryOp::Neg, right, ty);
+                }
+                // Constant reassociation: (x + c1) - c2 => x + (c1 - c2)
+                if let SymTerm::Binary(BinaryOp::Add, inner_x, inner_c, _) = left_term {
+                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                        if let Some(c_diff) = fold_const_binary(BinaryOp::Sub, &c1_lit, &c2_lit) {
+                            let c_diff_id = self.intern_const(c_diff);
+                            return self.intern_binary(BinaryOp::Add, inner_x, c_diff_id, ty);
+                        }
+                    }
+                }
+                // Constant reassociation: (x - c1) - c2 => x - (c1 + c2)
+                if let SymTerm::Binary(BinaryOp::Sub, inner_x, inner_c, _) = left_term {
+                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                        if let Some(c_sum) = fold_const_binary(BinaryOp::Add, &c1_lit, &c2_lit) {
+                            let c_sum_id = self.intern_const(c_sum);
+                            return self.intern_binary(BinaryOp::Sub, inner_x, c_sum_id, ty);
+                        }
+                    }
                 }
             }
             BinaryOp::Mul => {
                 if is_zero(&right_term) || is_zero(&left_term) {
-                    return self.intern_int(0);
+                    return self.intern_typed_zero(&ty);
                 }
                 if is_one(&right_term) {
                     return left;
@@ -170,13 +327,61 @@ impl TermInterner {
                 if is_one(&left_term) {
                     return right;
                 }
+                if is_minus_one(&right_term) {
+                    return self.intern_unary(UnaryOp::Neg, left, ty);
+                }
+                if is_minus_one(&left_term) {
+                    return self.intern_unary(UnaryOp::Neg, right, ty);
+                }
+                // Constant reassociation: (x * c1) * c2 => x * (c1 * c2)
+                if let SymTerm::Binary(BinaryOp::Mul, inner_x, inner_c, _) = left_term {
+                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                        if let Some(c_prod) = fold_const_binary(BinaryOp::Mul, &c1_lit, &c2_lit) {
+                            let c_prod_id = self.intern_const(c_prod);
+                            return self.intern_binary(BinaryOp::Mul, inner_x, c_prod_id, ty);
+                        }
+                    }
+                }
             }
             BinaryOp::Div => {
                 if is_one(&right_term) {
                     return left;
                 }
+                if is_minus_one(&right_term) {
+                    return self.intern_unary(UnaryOp::Neg, left, ty);
+                }
                 if left == right && !is_zero(&right_term) {
-                    return self.intern_int(1);
+                    return self.intern_typed_one(&ty);
+                }
+                if is_zero(&left_term) && !is_zero(&right_term) {
+                    return self.intern_typed_zero(&ty);
+                }
+            }
+            BinaryOp::Mod => {
+                if is_one(&right_term) {
+                    return self.intern_typed_zero(&ty);
+                }
+                if left == right && !is_zero(&right_term) {
+                    return self.intern_typed_zero(&ty);
+                }
+                if is_zero(&left_term) && !is_zero(&right_term) {
+                    return self.intern_typed_zero(&ty);
+                }
+            }
+            BinaryOp::Shl => {
+                if is_zero(&right_term) {
+                    return left;
+                }
+                if is_zero(&left_term) {
+                    return self.intern_typed_zero(&ty);
+                }
+            }
+            BinaryOp::Shr => {
+                if is_zero(&right_term) {
+                    return left;
+                }
+                if is_zero(&left_term) {
+                    return self.intern_typed_zero(&ty);
                 }
             }
             BinaryOp::BitAnd => {
@@ -184,7 +389,19 @@ impl TermInterner {
                     return left;
                 }
                 if is_zero(&left_term) || is_zero(&right_term) {
-                    return self.intern_int(0);
+                    return self.intern_typed_zero(&ty);
+                }
+                if ty == Type::Bool {
+                    if is_one(&right_term) {
+                        return left;
+                    }
+                    if is_one(&left_term) {
+                        return right;
+                    }
+                } else if is_minus_one(&right_term) {
+                    return left;
+                } else if is_minus_one(&left_term) {
+                    return right;
                 }
             }
             BinaryOp::BitOr => {
@@ -197,10 +414,19 @@ impl TermInterner {
                 if is_zero(&left_term) {
                     return right;
                 }
+                if ty == Type::Bool {
+                    if is_one(&right_term) || is_one(&left_term) {
+                        return self.intern_bool(true);
+                    }
+                } else if is_minus_one(&right_term) {
+                    return right;
+                } else if is_minus_one(&left_term) {
+                    return left;
+                }
             }
             BinaryOp::BitXor => {
                 if left == right {
-                    return self.intern_int(0);
+                    return self.intern_typed_zero(&ty);
                 }
                 if is_zero(&right_term) {
                     return left;
@@ -208,12 +434,56 @@ impl TermInterner {
                 if is_zero(&left_term) {
                     return right;
                 }
+                if ty == Type::Bool {
+                    if is_one(&right_term) {
+                        return self.intern_unary(UnaryOp::Not, left, Type::Bool);
+                    }
+                    if is_one(&left_term) {
+                        return self.intern_unary(UnaryOp::Not, right, Type::Bool);
+                    }
+                } else if is_minus_one(&right_term) {
+                    return self.intern_unary(UnaryOp::Not, left, ty);
+                } else if is_minus_one(&left_term) {
+                    return self.intern_unary(UnaryOp::Not, right, ty);
+                }
             }
-            BinaryOp::Eq if left == right => {
-                return self.intern_bool(true);
+            BinaryOp::Eq => {
+                if left == right {
+                    return self.intern_bool(true);
+                }
+                if ty == Type::Bool || self.get(left).ty() == &Type::Bool {
+                    if is_one(&right_term) {
+                        return left;
+                    }
+                    if is_zero(&right_term) {
+                        return self.intern_unary(UnaryOp::Not, left, Type::Bool);
+                    }
+                    if is_one(&left_term) {
+                        return right;
+                    }
+                    if is_zero(&left_term) {
+                        return self.intern_unary(UnaryOp::Not, right, Type::Bool);
+                    }
+                }
             }
-            BinaryOp::Ne if left == right => {
-                return self.intern_bool(false);
+            BinaryOp::Ne => {
+                if left == right {
+                    return self.intern_bool(false);
+                }
+                if ty == Type::Bool || self.get(left).ty() == &Type::Bool {
+                    if is_zero(&right_term) {
+                        return left;
+                    }
+                    if is_one(&right_term) {
+                        return self.intern_unary(UnaryOp::Not, left, Type::Bool);
+                    }
+                    if is_zero(&left_term) {
+                        return right;
+                    }
+                    if is_one(&left_term) {
+                        return self.intern_unary(UnaryOp::Not, right, Type::Bool);
+                    }
+                }
             }
             BinaryOp::Lt if left == right => {
                 return self.intern_bool(false);
@@ -240,6 +510,47 @@ impl TermInterner {
                 return self.intern_const(folded);
             }
         }
+
+        // Double negation elimination: ¬¬x = x, -(-x) = x
+        if let SymTerm::Unary(inner_op, inner_expr, _) = inner {
+            if inner_op == op {
+                match op {
+                    UnaryOp::Not | UnaryOp::Neg => return inner_expr,
+                }
+            }
+        }
+
+        // Invert comparisons under Not: !(a == b) => a != b, !(a < b) => a >= b
+        if op == UnaryOp::Not {
+            if let SymTerm::Binary(cmp_op, l, r, cmp_ty) = inner {
+                let operand_ty = self.get(l).ty();
+                let is_float = matches!(operand_ty, Type::F32 | Type::F64);
+                if !is_float {
+                    let inverted_op = match cmp_op {
+                        BinaryOp::Eq => Some(BinaryOp::Ne),
+                        BinaryOp::Ne => Some(BinaryOp::Eq),
+                        BinaryOp::Lt => Some(BinaryOp::Ge),
+                        BinaryOp::Le => Some(BinaryOp::Gt),
+                        BinaryOp::Gt => Some(BinaryOp::Le),
+                        BinaryOp::Ge => Some(BinaryOp::Lt),
+                        _ => None,
+                    };
+                    if let Some(inv_op) = inverted_op {
+                        return self.intern_binary(inv_op, l, r, cmp_ty);
+                    }
+                } else {
+                    let inverted_op = match cmp_op {
+                        BinaryOp::Eq => Some(BinaryOp::Ne),
+                        BinaryOp::Ne => Some(BinaryOp::Eq),
+                        _ => None,
+                    };
+                    if let Some(inv_op) = inverted_op {
+                        return self.intern_binary(inv_op, l, r, cmp_ty);
+                    }
+                }
+            }
+        }
+
         self.intern(SymTerm::Unary(op, expr, ty))
     }
 
@@ -257,6 +568,23 @@ impl TermInterner {
         if then_term == else_term {
             return then_term;
         }
+        if ty == Type::Bool {
+            if let (SymTerm::ConstBool(true), SymTerm::ConstBool(false)) =
+                (self.get(then_term), self.get(else_term))
+            {
+                return cond;
+            }
+            if let (SymTerm::ConstBool(false), SymTerm::ConstBool(true)) =
+                (self.get(then_term), self.get(else_term))
+            {
+                return self.intern_unary(UnaryOp::Not, cond, Type::Bool);
+            }
+        }
+        // If condition is Negated: select(!c, t, e) => select(c, e, t)
+        if let SymTerm::Unary(UnaryOp::Not, inner_cond, _) = cond_term {
+            return self.intern_select(inner_cond, else_term, then_term, ty);
+        }
+
         self.intern(SymTerm::Select(cond, then_term, else_term, ty))
     }
 
@@ -290,6 +618,33 @@ impl TermInterner {
         args: Vec<SymTermId>,
         ty: Type,
     ) -> SymTermId {
+        if callee == "i64_to_f64" && args.len() == 1 {
+            if let Some(TypedLiteral::Int(i, _)) = self.get(args[0]).to_literal() {
+                return self.intern_const(TypedLiteral::Float(i as f64, Type::F64));
+            }
+        } else if callee == "f64_to_i64" && args.len() == 1 {
+            if let Some(TypedLiteral::Float(f, _)) = self.get(args[0]).to_literal() {
+                return self.intern_int(f as i64);
+            }
+        } else if callee == "sqrt" && args.len() == 1 {
+            if let Some(TypedLiteral::Float(f, _)) = self.get(args[0]).to_literal() {
+                if f >= 0.0 {
+                    return self.intern_const(TypedLiteral::Float(f.sqrt(), Type::F64));
+                }
+            }
+        } else if callee == "abs" && args.len() == 1 {
+            if let Some(TypedLiteral::Float(f, _)) = self.get(args[0]).to_literal() {
+                return self.intern_const(TypedLiteral::Float(f.abs(), Type::F64));
+            } else if let Some(TypedLiteral::Int(i, i_ty)) = self.get(args[0]).to_literal() {
+                return self.intern_const(TypedLiteral::Int(i.abs(), i_ty));
+            }
+        } else if callee == "isqrt" && args.len() == 1 {
+            if let Some(TypedLiteral::Int(i, i_ty)) = self.get(args[0]).to_literal() {
+                if i >= 0 {
+                    return self.intern_const(TypedLiteral::Int((i as f64).sqrt() as i64, i_ty));
+                }
+            }
+        }
         self.intern(SymTerm::Call(callee, args, ty))
     }
 
@@ -368,7 +723,20 @@ impl TermInterner {
                 let captured_new = captured.iter().map(|&c| self.import_from(other, c)).collect();
                 self.intern_closure_val(fn_name, captured_new, ty)
             }
+            SymTerm::Thunk(body, env, ty) => {
+                let env_new = env.iter().map(|&c| self.import_from(other, c)).collect();
+                self.intern_thunk(body, env_new, ty)
+            }
         }
+    }
+
+    pub fn intern_thunk(
+        &mut self,
+        body: String,
+        env: Vec<SymTermId>,
+        ty: Type,
+    ) -> SymTermId {
+        self.intern(SymTerm::Thunk(body, env, ty))
     }
 
     fn intern(&mut self, term: SymTerm) -> SymTermId {
@@ -377,37 +745,125 @@ impl TermInterner {
         }
 
         let id = SymTermId(self.terms.len());
-        let size = match &term {
-            SymTerm::ConstInt(_, _)
-            | SymTerm::ConstFloat(_, _)
-            | SymTerm::ConstBool(_)
-            | SymTerm::ConstStr(_)
-            | SymTerm::Var(_, _) => 1,
-            SymTerm::Binary(_, l, r, _) => 1 + self.sizes[l.0] + self.sizes[r.0],
-            SymTerm::Unary(_, inner, _) => 1 + self.sizes[inner.0],
-            SymTerm::Constructor(_, _, fields, _) => {
-                1 + fields.iter().map(|f| self.sizes[f.0]).sum::<usize>()
+        let (size, depth, hash) = match &term {
+            SymTerm::ConstInt(val, _) => {
+                let h = fx_hash_step(1, *val as u64);
+                (1, 1, h)
             }
-            SymTerm::Call(_, args, _) => {
-                1 + args.iter().map(|a| self.sizes[a.0]).sum::<usize>()
+            SymTerm::ConstFloat(bits, _) => {
+                let h = fx_hash_step(2, *bits);
+                (1, 1, h)
+            }
+            SymTerm::ConstBool(b) => {
+                let h = fx_hash_step(3, if *b { 1 } else { 0 });
+                (1, 1, h)
+            }
+            SymTerm::ConstStr(s) => {
+                let h = fx_hash_bytes(4, s.as_bytes());
+                (1, 1, h)
+            }
+            SymTerm::Var(p, _) => {
+                let h = hash_place(5, p);
+                (1, 1, h)
+            }
+            SymTerm::Binary(op, l, r, _) => {
+                let s = 1 + self.sizes[l.0] + self.sizes[r.0];
+                let d = 1 + std::cmp::max(self.depths[l.0], self.depths[r.0]);
+                let mut h = fx_hash_step(6, binary_op_discriminant(*op));
+                h = fx_hash_step(h, self.hashes[l.0]);
+                h = fx_hash_step(h, self.hashes[r.0]);
+                (s, d, h)
+            }
+            SymTerm::Unary(op, inner, _) => {
+                let s = 1 + self.sizes[inner.0];
+                let d = 1 + self.depths[inner.0];
+                let mut h = fx_hash_step(7, unary_op_discriminant(*op));
+                h = fx_hash_step(h, self.hashes[inner.0]);
+                (s, d, h)
+            }
+            SymTerm::Constructor(name, tag, fields, _) => {
+                let s = 1 + fields.iter().map(|f| self.sizes[f.0]).sum::<usize>();
+                let d = 1 + fields.iter().map(|f| self.depths[f.0]).max().unwrap_or(0);
+                let mut h = fx_hash_bytes(8, name.as_bytes());
+                h = fx_hash_step(h, *tag as u64);
+                for f in fields {
+                    h = fx_hash_step(h, self.hashes[f.0]);
+                }
+                (s, d, h)
+            }
+            SymTerm::Call(name, args, _) => {
+                let s = 1 + args.iter().map(|a| self.sizes[a.0]).sum::<usize>();
+                let d = 1 + args.iter().map(|a| self.depths[a.0]).max().unwrap_or(0);
+                let mut h = fx_hash_bytes(9, name.as_bytes());
+                for a in args {
+                    h = fx_hash_step(h, self.hashes[a.0]);
+                }
+                (s, d, h)
             }
             SymTerm::Select(c, t, e, _) => {
-                1 + self.sizes[c.0] + self.sizes[t.0] + self.sizes[e.0]
+                let s = 1 + self.sizes[c.0] + self.sizes[t.0] + self.sizes[e.0];
+                let d = 1 + std::cmp::max(
+                    self.depths[c.0],
+                    std::cmp::max(self.depths[t.0], self.depths[e.0]),
+                );
+                let mut h = fx_hash_step(10, self.hashes[c.0]);
+                h = fx_hash_step(h, self.hashes[t.0]);
+                h = fx_hash_step(h, self.hashes[e.0]);
+                (s, d, h)
             }
             SymTerm::Phi(incoming, _) => {
-                1 + incoming.iter().map(|(_, t)| self.sizes[t.0]).sum::<usize>()
+                let s = 1 + incoming.iter().map(|(_, t)| self.sizes[t.0]).sum::<usize>();
+                let d = 1 + incoming.iter().map(|(_, t)| self.depths[t.0]).max().unwrap_or(0);
+                let mut h = fx_hash_step(11, incoming.len() as u64);
+                for (bb, t) in incoming {
+                    h = fx_hash_step(h, bb.0 as u64);
+                    h = fx_hash_step(h, self.hashes[t.0]);
+                }
+                (s, d, h)
             }
-            SymTerm::Ref(inner, _)
-            | SymTerm::Deref(inner, _)
-            | SymTerm::Discriminant(inner, _) => 1 + self.sizes[inner.0],
-            SymTerm::ClosureVal(_, captured, _) => {
-                1 + captured.iter().map(|c| self.sizes[c.0]).sum::<usize>()
+            SymTerm::Ref(inner, _) => {
+                let s = 1 + self.sizes[inner.0];
+                let d = 1 + self.depths[inner.0];
+                let h = fx_hash_step(12, self.hashes[inner.0]);
+                (s, d, h)
+            }
+            SymTerm::Deref(inner, _) => {
+                let s = 1 + self.sizes[inner.0];
+                let d = 1 + self.depths[inner.0];
+                let h = fx_hash_step(13, self.hashes[inner.0]);
+                (s, d, h)
+            }
+            SymTerm::Discriminant(inner, _) => {
+                let s = 1 + self.sizes[inner.0];
+                let d = 1 + self.depths[inner.0];
+                let h = fx_hash_step(14, self.hashes[inner.0]);
+                (s, d, h)
+            }
+            SymTerm::ClosureVal(name, captured, _) => {
+                let s = 1 + captured.iter().map(|c| self.sizes[c.0]).sum::<usize>();
+                let d = 1 + captured.iter().map(|c| self.depths[c.0]).max().unwrap_or(0);
+                let mut h = fx_hash_bytes(15, name.as_bytes());
+                for c in captured {
+                    h = fx_hash_step(h, self.hashes[c.0]);
+                }
+                (s, d, h)
+            }
+            SymTerm::Thunk(body, captured, _) => {
+                let s = 1 + captured.iter().map(|c| self.sizes[c.0]).sum::<usize>();
+                let d = 1 + captured.iter().map(|c| self.depths[c.0]).max().unwrap_or(0);
+                let mut h = fx_hash_bytes(16, body.as_bytes());
+                for c in captured {
+                    h = fx_hash_step(h, self.hashes[c.0]);
+                }
+                (s, d, h)
             }
         };
 
         self.lookup.insert(term.clone(), id);
         self.terms.push(term);
         self.sizes.push(size);
+        self.depths.push(depth);
+        self.hashes.push(hash);
         id
     }
 
@@ -459,6 +915,10 @@ impl TermInterner {
                 let c_str: Vec<String> = captured.iter().map(|c| self.format_term(*c)).collect();
                 format!("closure:{}({})", fn_name, c_str.join(", "))
             }
+            SymTerm::Thunk(body, env, _) => {
+                let e_str: Vec<String> = env.iter().map(|c| self.format_term(*c)).collect();
+                format!("thunk:{}({})", body, e_str.join(", "))
+            }
         }
     }
 }
@@ -467,6 +927,7 @@ fn is_zero(term: &SymTerm) -> bool {
     match term {
         SymTerm::ConstInt(0, _) => true,
         SymTerm::ConstFloat(bits, _) => f64::from_bits(*bits) == 0.0,
+        SymTerm::ConstBool(false) => true,
         _ => false,
     }
 }
@@ -475,8 +936,40 @@ fn is_one(term: &SymTerm) -> bool {
     match term {
         SymTerm::ConstInt(1, _) => true,
         SymTerm::ConstFloat(bits, _) => f64::from_bits(*bits) == 1.0,
+        SymTerm::ConstBool(true) => true,
         _ => false,
     }
+}
+
+fn is_minus_one(term: &SymTerm) -> bool {
+    match term {
+        SymTerm::ConstInt(-1, _) => true,
+        SymTerm::ConstFloat(bits, _) => f64::from_bits(*bits) == -1.0,
+        _ => false,
+    }
+}
+
+fn is_const(term: &SymTerm) -> bool {
+    matches!(
+        term,
+        SymTerm::ConstInt(_, _)
+            | SymTerm::ConstFloat(_, _)
+            | SymTerm::ConstBool(_)
+            | SymTerm::ConstStr(_)
+    )
+}
+
+fn is_commutative(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::Add
+            | BinaryOp::Mul
+            | BinaryOp::BitAnd
+            | BinaryOp::BitOr
+            | BinaryOp::BitXor
+            | BinaryOp::Eq
+            | BinaryOp::Ne
+    )
 }
 
 fn fold_const_binary(op: BinaryOp, l: &TypedLiteral, r: &TypedLiteral) -> Option<TypedLiteral> {
@@ -501,8 +994,18 @@ fn fold_const_binary(op: BinaryOp, l: &TypedLiteral, r: &TypedLiteral) -> Option
                 BinaryOp::BitAnd => li & ri,
                 BinaryOp::BitOr => li | ri,
                 BinaryOp::BitXor => li ^ ri,
-                BinaryOp::Shl => li.wrapping_shl(*ri as u32),
-                BinaryOp::Shr => li.wrapping_shr(*ri as u32),
+                BinaryOp::Shl => {
+                    if *ri < 0 || *ri >= 64 {
+                        return None;
+                    }
+                    li.wrapping_shl(*ri as u32)
+                }
+                BinaryOp::Shr => {
+                    if *ri < 0 || *ri >= 64 {
+                        return None;
+                    }
+                    li.wrapping_shr(*ri as u32)
+                }
                 BinaryOp::Eq => return Some(TypedLiteral::Bool(li == ri)),
                 BinaryOp::Ne => return Some(TypedLiteral::Bool(li != ri)),
                 BinaryOp::Lt => return Some(TypedLiteral::Bool(li < ri)),
@@ -521,17 +1024,43 @@ fn fold_const_binary(op: BinaryOp, l: &TypedLiteral, r: &TypedLiteral) -> Option
         (TypedLiteral::Bool(lb), TypedLiteral::Bool(rb)) => match op {
             BinaryOp::Eq => Some(TypedLiteral::Bool(lb == rb)),
             BinaryOp::Ne => Some(TypedLiteral::Bool(lb != rb)),
+            BinaryOp::BitAnd => Some(TypedLiteral::Bool(*lb && *rb)),
+            BinaryOp::BitOr => Some(TypedLiteral::Bool(*lb || *rb)),
+            BinaryOp::BitXor => Some(TypedLiteral::Bool(*lb ^ *rb)),
             _ => None,
         },
+        (TypedLiteral::Float(lf, ty), TypedLiteral::Float(rf, _)) => {
+            let res = match op {
+                BinaryOp::Add => lf + rf,
+                BinaryOp::Sub => lf - rf,
+                BinaryOp::Mul => lf * rf,
+                BinaryOp::Div => {
+                    if *rf == 0.0 {
+                        return None;
+                    }
+                    lf / rf
+                }
+                BinaryOp::Pow => lf.powf(*rf),
+                BinaryOp::Eq => return Some(TypedLiteral::Bool(lf == rf)),
+                BinaryOp::Ne => return Some(TypedLiteral::Bool(lf != rf)),
+                BinaryOp::Lt => return Some(TypedLiteral::Bool(lf < rf)),
+                BinaryOp::Le => return Some(TypedLiteral::Bool(lf <= rf)),
+                BinaryOp::Gt => return Some(TypedLiteral::Bool(lf > rf)),
+                BinaryOp::Ge => return Some(TypedLiteral::Bool(lf >= rf)),
+                _ => return None,
+            };
+            Some(TypedLiteral::Float(res, ty.clone()))
+        }
         _ => None,
     }
 }
 
 fn fold_const_unary(op: UnaryOp, lit: &TypedLiteral) -> Option<TypedLiteral> {
     match (op, lit) {
-        (UnaryOp::Neg, TypedLiteral::Int(i, ty)) => Some(TypedLiteral::Int(-i, ty.clone())),
+        (UnaryOp::Neg, TypedLiteral::Int(i, ty)) => Some(TypedLiteral::Int(i.wrapping_neg(), ty.clone())),
         (UnaryOp::Neg, TypedLiteral::Float(f, ty)) => Some(TypedLiteral::Float(-f, ty.clone())),
         (UnaryOp::Not, TypedLiteral::Bool(b)) => Some(TypedLiteral::Bool(!b)),
+        (UnaryOp::Not, TypedLiteral::Int(i, ty)) => Some(TypedLiteral::Int(!i, ty.clone())),
         _ => None,
     }
 }

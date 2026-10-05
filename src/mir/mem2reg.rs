@@ -112,6 +112,11 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
         Rvalue::Alloc(p) | Rvalue::Load(p) => {
             places.push(p.clone());
         }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                places.push(Place { local: e.clone(), projections: vec![] });
+            }
+        }
     }
     places
 }
@@ -435,6 +440,14 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
         Rvalue::Alloc(p) | Rvalue::Load(p) => {
             if let Some(r) = replacements.get(p) {
                 *p = r.clone();
+            }
+        }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                let p = Place { local: e.clone(), projections: vec![] };
+                if let Some(r) = replacements.get(&p) {
+                    *e = r.local.clone();
+                }
             }
         }
     }

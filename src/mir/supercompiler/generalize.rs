@@ -101,6 +101,15 @@ fn msg_helper(
             }
             interner.intern_closure_val(fn1.clone(), common_c, ty1.clone())
         }
+        (SymTerm::Thunk(b1, c1, ty1), SymTerm::Thunk(b2, c2, _))
+            if b1 == b2 && c1.len() == c2.len() =>
+        {
+            let mut common_c = Vec::with_capacity(c1.len());
+            for (&a, &b) in c1.iter().zip(c2.iter()) {
+                common_c.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_thunk(b1.clone(), common_c, ty1.clone())
+        }
         (SymTerm::Ref(i1, ty1), SymTerm::Ref(i2, _)) => {
             let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
             interner.intern_ref(common, ty1.clone())
@@ -361,6 +370,11 @@ pub fn solve_recurrence(
                 Type::I64,
             ));
         }
+    }
+
+    // Nonlinear recurrence detection (polynomial sums, geometric series, power towers)
+    if let Some(nonlin) = crate::mir::supercompiler::recurrence::detect_nonlinear_recurrence(samples, interner) {
+        return Some(crate::mir::supercompiler::recurrence::solve_nonlinear_recurrence(&nonlin, num_iters, interner));
     }
 
     // Order-2 linear recurrence: s_k = c1 * s_{k-1} + c2 * s_{k-2} (Fibonacci, Lucas, coupled systems)

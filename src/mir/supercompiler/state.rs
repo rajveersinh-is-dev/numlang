@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::term::{SymTerm, SymTermId, TermInterner};
 use crate::ast::BinaryOp;
-use crate::mir::memory_ssa::MemoryVersionId;
+pub use crate::mir::memory_ssa::MemoryVersionId;
 use crate::mir::{BasicBlockId, Place};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
