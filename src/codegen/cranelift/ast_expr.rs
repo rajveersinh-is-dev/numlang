@@ -64,7 +64,7 @@ impl<'a> FunctionTranslationState<'a> {
                     .variables
                     .get(name)
                     .cloned()
-                    .unwrap_or_else(|| panic!("Variable '{}' must be found in scope", name));
+                    .ok_or_else(|| CodegenError::BackendError(format!("Variable '{name}' must be found in scope")))?;
                 match storage {
                     Storage::Scalar(var) => Ok(builder.use_var(var)),
                     Storage::Array { slot, .. } => {
@@ -75,9 +75,6 @@ impl<'a> FunctionTranslationState<'a> {
                     }
                     Storage::Struct { slot, .. } | Storage::Enum { slot, .. } => {
                         Ok(builder.ins().stack_addr(types::I64, slot, 0))
-                    }
-                    Storage::EnumPtr { var, .. } => {
-                        Ok(builder.use_var(var))
                     }
                 }
             }
@@ -571,7 +568,7 @@ impl<'a> FunctionTranslationState<'a> {
                                 }
                                 Ok(loaded_val)
                             }
-                            _ => panic!("Index target must be an array variable"),
+                            _ => Err(CodegenError::BackendError("Index target must be an array variable".to_string())),
                         }
                     }
                     _ => {
