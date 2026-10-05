@@ -71,9 +71,13 @@ fn test_linker_handles_posix_bench_mode() {
 
 #[test]
 fn test_cranelift_backend_abstracts_win32_symbols() {
-    let raw = fs::read_to_string("src/codegen/cranelift/mod.rs")
+    let mut raw = fs::read_to_string("src/codegen/cranelift/mod.rs")
         .or_else(|_| fs::read_to_string("src/codegen/cranelift_backend.rs"))
         .expect("cranelift backend must exist");
+    if let Ok(intrinsics) = fs::read_to_string("src/codegen/cranelift/intrinsics.rs") {
+        raw.push('\n');
+        raw.push_str(&intrinsics);
+    }
     let content = raw.replace("\r\n", "\n");
 
     // Ensure conditional compilation guards exist for Windows vs POSIX

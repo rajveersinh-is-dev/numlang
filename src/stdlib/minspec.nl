@@ -5,6 +5,10 @@ enum SpecOp {
     Div,
     Eq,
     Lt,
+    Gt,
+    Le,
+    Ge,
+    Ne,
 }
 
 enum SpecExpr {
@@ -13,6 +17,18 @@ enum SpecExpr {
     Bin(SpecOp, Box<SpecExpr>, Box<SpecExpr>),
     If(Box<SpecExpr>, Box<SpecExpr>, Box<SpecExpr>),
     Call(i64, Box<SpecExpr>),
+    Let(i64, Box<SpecExpr>, Box<SpecExpr>),
+    Seq(Box<SpecExpr>, Box<SpecExpr>),
+}
+
+enum SpecStream {
+    Nil,
+    Cons(i64, Box<SpecStream>),
+}
+
+enum DecodeResult {
+    Done(SpecExpr, Box<SpecStream>),
+    Fail,
 }
 
 enum SpecEnv {
@@ -35,6 +51,10 @@ fn eval_op(op: SpecOp, vl: i64, vr: i64) -> i64 {
         SpecOp::Div => vl / vr,
         SpecOp::Eq  => bool_to_int(vl == vr),
         SpecOp::Lt  => bool_to_int(vl < vr),
+        SpecOp::Gt  => bool_to_int(vl > vr),
+        SpecOp::Le  => bool_to_int(vl <= vr),
+        SpecOp::Ge  => bool_to_int(vl >= vr),
+        SpecOp::Ne  => bool_to_int(vl != vr),
     };
 }
 
@@ -77,6 +97,17 @@ fn eval_call(fn_id: i64, arg: SpecExpr, env: SpecEnv) -> i64 {
     return spec_eval(arg, env);
 }
 
+fn eval_let(id: i64, val: SpecExpr, body: SpecExpr, env: SpecEnv) -> i64 {
+    let v: i64 = spec_eval(val, env);
+    let b_env: Box<SpecEnv> = box(env);
+    return spec_eval(body, SpecEnv::Cons(id, v, b_env));
+}
+
+fn eval_seq(first: SpecExpr, second: SpecExpr, env: SpecEnv) -> i64 {
+    let _unused: i64 = spec_eval(first, env);
+    return spec_eval(second, env);
+}
+
 fn spec_eval(e: SpecExpr, env: SpecEnv) -> i64 {
     return match e {
         SpecExpr::Lit(v) => v,
@@ -84,6 +115,8 @@ fn spec_eval(e: SpecExpr, env: SpecEnv) -> i64 {
         SpecExpr::Bin(op, l, r) => eval_op(op, spec_eval(deref(l), env), spec_eval(deref(r), env)),
         SpecExpr::If(c, t, f) => eval_if(spec_eval(deref(c), env), deref(t), deref(f), env),
         SpecExpr::Call(fn_id, arg) => eval_call(fn_id, deref(arg), env),
+        SpecExpr::Let(id, val, body) => eval_let(id, deref(val), deref(body), env),
+        SpecExpr::Seq(first, second) => eval_seq(deref(first), deref(second), env),
     };
 }
 
@@ -166,6 +199,31 @@ fn spec_call_reduce(fn_id: i64, arg: SpecExpr, s_env: SpecEnv) -> SpecExpr {
     return SpecExpr::Call(fn_id, box(min_spec(arg, s_env)));
 }
 
+fn spec_let_lit(id: i64, v: i64, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_env: Box<SpecEnv> = box(s_env);
+    return min_spec(body, SpecEnv::Cons(id, v, b_env));
+}
+
+fn spec_let_expr(id: i64, s_val: SpecExpr, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_val: Box<SpecExpr> = box(s_val);
+    let b_body: Box<SpecExpr> = box(min_spec(body, s_env));
+    return SpecExpr::Let(id, b_val, b_body);
+}
+
+fn spec_let_reduce(id: i64, val: SpecExpr, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let s_val: SpecExpr = min_spec(val, s_env);
+    return match s_val {
+        SpecExpr::Lit(v) => spec_let_lit(id, v, body, s_env),
+        _ => spec_let_expr(id, s_val, body, s_env),
+    };
+}
+
+fn spec_seq_reduce(first: SpecExpr, second: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_f: Box<SpecExpr> = box(min_spec(first, s_env));
+    let b_s: Box<SpecExpr> = box(min_spec(second, s_env));
+    return SpecExpr::Seq(b_f, b_s);
+}
+
 fn min_spec(e: SpecExpr, s_env: SpecEnv) -> SpecExpr {
     return match e {
         SpecExpr::Lit(v) => SpecExpr::Lit(v),
@@ -173,6 +231,8 @@ fn min_spec(e: SpecExpr, s_env: SpecEnv) -> SpecExpr {
         SpecExpr::Bin(op, l, r) => spec_bin_reduce(op, min_spec(deref(l), s_env), min_spec(deref(r), s_env)),
         SpecExpr::If(c, t, f) => spec_if_reduce(min_spec(deref(c), s_env), deref(t), deref(f), s_env),
         SpecExpr::Call(fn_id, arg) => spec_call_reduce(fn_id, deref(arg), s_env),
+        SpecExpr::Let(id, val, body) => spec_let_reduce(id, deref(val), deref(body), s_env),
+        SpecExpr::Seq(first, second) => spec_seq_reduce(deref(first), deref(second), s_env),
     };
 }
 
@@ -184,6 +244,10 @@ fn op_eq(o1: SpecOp, o2: SpecOp) -> bool {
         SpecOp::Div => match o2 { SpecOp::Div => true, _ => false },
         SpecOp::Eq  => match o2 { SpecOp::Eq  => true, _ => false },
         SpecOp::Lt  => match o2 { SpecOp::Lt  => true, _ => false },
+        SpecOp::Gt  => match o2 { SpecOp::Gt  => true, _ => false },
+        SpecOp::Le  => match o2 { SpecOp::Le  => true, _ => false },
+        SpecOp::Ge  => match o2 { SpecOp::Ge  => true, _ => false },
+        SpecOp::Ne  => match o2 { SpecOp::Ne  => true, _ => false },
     };
 }
 
@@ -234,6 +298,33 @@ fn expr_eq_call(fn_id1: i64, arg1: SpecExpr, e2: SpecExpr) -> i64 {
     };
 }
 
+fn expr_let_eq(id1: i64, v1: SpecExpr, b1: SpecExpr, id2: i64, v2: SpecExpr, b2: SpecExpr) -> i64 {
+    if id1 != id2 { return 71; }
+    if expr_eq(v1, v2) == false { return 72; }
+    if expr_eq(b1, b2) == false { return 73; }
+    return 42;
+}
+
+fn expr_eq_let(id1: i64, v1: SpecExpr, b1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Let(id2, v2, b2) => expr_let_eq(id1, v1, b1, id2, deref(v2), deref(b2)),
+        _ => 74,
+    };
+}
+
+fn expr_seq_eq(f1: SpecExpr, s1: SpecExpr, f2: SpecExpr, s2: SpecExpr) -> i64 {
+    if expr_eq(f1, f2) == false { return 81; }
+    if expr_eq(s1, s2) == false { return 82; }
+    return 42;
+}
+
+fn expr_eq_seq(f1: SpecExpr, s1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Seq(f2, s2) => expr_seq_eq(f1, s1, deref(f2), deref(s2)),
+        _ => 83,
+    };
+}
+
 fn lit_eq_code(v1: i64, v2: i64) -> i64 {
     if v1 == v2 { return 42; }
     return 1;
@@ -257,6 +348,8 @@ fn expr_eq_debug(e1: SpecExpr, e2: SpecExpr) -> i64 {
         SpecExpr::Bin(op1, l1, r1) => expr_eq_bin(op1, deref(l1), deref(r1), e2),
         SpecExpr::If(c1, t1, f1) => expr_eq_if(deref(c1), deref(t1), deref(f1), e2),
         SpecExpr::Call(fn_id1, arg1) => expr_eq_call(fn_id1, deref(arg1), e2),
+        SpecExpr::Let(id1, v1, b1) => expr_eq_let(id1, deref(v1), deref(b1), e2),
+        SpecExpr::Seq(f1, s1) => expr_eq_seq(deref(f1), deref(s1), e2),
     };
 }
 
@@ -435,9 +528,224 @@ fn verify_soundness(prog_id: i64, input_x: i64) -> bool {
     return true;
 }
 
+fn decode_op(op_id: i64) -> SpecOp {
+    if op_id == 1 { return SpecOp::Add; }
+    if op_id == 2 { return SpecOp::Sub; }
+    if op_id == 3 { return SpecOp::Mul; }
+    if op_id == 4 { return SpecOp::Div; }
+    if op_id == 5 { return SpecOp::Eq; }
+    if op_id == 6 { return SpecOp::Lt; }
+    if op_id == 7 { return SpecOp::Gt; }
+    if op_id == 8 { return SpecOp::Le; }
+    if op_id == 9 { return SpecOp::Ge; }
+    return SpecOp::Ne;
+}
+
+fn decode_lit(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(v, r2) => DecodeResult::Done(SpecExpr::Lit(v), r2),
+    };
+}
+
+fn decode_var(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(id, r2) => DecodeResult::Done(SpecExpr::Var(id), r2),
+    };
+}
+
+fn make_bin_result(op: SpecOp, l_expr: SpecExpr, r_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_l: Box<SpecExpr> = box(l_expr);
+    let b_r: Box<SpecExpr> = box(r_expr);
+    return DecodeResult::Done(SpecExpr::Bin(op, b_l, b_r), r4_box);
+}
+
+fn decode_bin_right(op: SpecOp, l_expr: SpecExpr, r_res: DecodeResult) -> DecodeResult {
+    return match r_res {
+        DecodeResult::Done(r_expr, r4_box) => make_bin_result(op, l_expr, r_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_bin_left(op: SpecOp, l_res: DecodeResult) -> DecodeResult {
+    return match l_res {
+        DecodeResult::Done(l_expr, r3_box) => decode_bin_right(op, l_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_bin(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(op_id, r2_box) => decode_bin_left(decode_op(op_id), decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_if_result(c_expr: SpecExpr, t_expr: SpecExpr, f_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_c: Box<SpecExpr> = box(c_expr);
+    let b_t: Box<SpecExpr> = box(t_expr);
+    let b_f: Box<SpecExpr> = box(f_expr);
+    return DecodeResult::Done(SpecExpr::If(b_c, b_t, b_f), r4_box);
+}
+
+fn decode_if_f(c_expr: SpecExpr, t_expr: SpecExpr, f_res: DecodeResult) -> DecodeResult {
+    return match f_res {
+        DecodeResult::Done(f_expr, r4_box) => make_if_result(c_expr, t_expr, f_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if_t(c_expr: SpecExpr, t_res: DecodeResult) -> DecodeResult {
+    return match t_res {
+        DecodeResult::Done(t_expr, r3_box) => decode_if_f(c_expr, t_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if_c(c_res: DecodeResult) -> DecodeResult {
+    return match c_res {
+        DecodeResult::Done(c_expr, r2_box) => decode_if_t(c_expr, decode_expr(deref(r2_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if(rest: SpecStream) -> DecodeResult {
+    return decode_if_c(decode_expr(rest));
+}
+
+fn make_call_result(fn_id: i64, arg_expr: SpecExpr, r3_box: Box<SpecStream>) -> DecodeResult {
+    let b_arg: Box<SpecExpr> = box(arg_expr);
+    return DecodeResult::Done(SpecExpr::Call(fn_id, b_arg), r3_box);
+}
+
+fn decode_call_arg(fn_id: i64, arg_res: DecodeResult) -> DecodeResult {
+    return match arg_res {
+        DecodeResult::Done(arg_expr, r3_box) => make_call_result(fn_id, arg_expr, r3_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_call(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(fn_id, r2_box) => decode_call_arg(fn_id, decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_let_result(id: i64, val_expr: SpecExpr, body_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_val: Box<SpecExpr> = box(val_expr);
+    let b_body: Box<SpecExpr> = box(body_expr);
+    return DecodeResult::Done(SpecExpr::Let(id, b_val, b_body), r4_box);
+}
+
+fn decode_let_body(id: i64, val_expr: SpecExpr, body_res: DecodeResult) -> DecodeResult {
+    return match body_res {
+        DecodeResult::Done(body_expr, r4_box) => make_let_result(id, val_expr, body_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_let_val(id: i64, val_res: DecodeResult) -> DecodeResult {
+    return match val_res {
+        DecodeResult::Done(val_expr, r3_box) => decode_let_body(id, val_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_let(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(id, r2_box) => decode_let_val(id, decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_seq_result(first_expr: SpecExpr, sec_expr: SpecExpr, r3_box: Box<SpecStream>) -> DecodeResult {
+    let b_f: Box<SpecExpr> = box(first_expr);
+    let b_s: Box<SpecExpr> = box(sec_expr);
+    return DecodeResult::Done(SpecExpr::Seq(b_f, b_s), r3_box);
+}
+
+fn decode_seq_second(first_expr: SpecExpr, s_res: DecodeResult) -> DecodeResult {
+    return match s_res {
+        DecodeResult::Done(sec_expr, r3_box) => make_seq_result(first_expr, sec_expr, r3_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_seq_first(f_res: DecodeResult) -> DecodeResult {
+    return match f_res {
+        DecodeResult::Done(first_expr, r2_box) => decode_seq_second(first_expr, decode_expr(deref(r2_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_seq(rest: SpecStream) -> DecodeResult {
+    return decode_seq_first(decode_expr(rest));
+}
+
+fn decode_expr_cons(tag: i64, rest_box: Box<SpecStream>) -> DecodeResult {
+    let rest: SpecStream = deref(rest_box);
+    if tag == 1 { return decode_lit(rest); }
+    if tag == 2 { return decode_var(rest); }
+    if tag == 3 { return decode_bin(rest); }
+    if tag == 4 { return decode_if(rest); }
+    if tag == 5 { return decode_call(rest); }
+    if tag == 6 { return decode_let(rest); }
+    if tag == 7 { return decode_seq(rest); }
+    return DecodeResult::Fail;
+}
+
+fn decode_expr(stream: SpecStream) -> DecodeResult {
+    return match stream {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(tag, rest_box) => decode_expr_cons(tag, rest_box),
+    };
+}
+
+fn decode_ast(stream: SpecStream) -> SpecExpr {
+    let res: DecodeResult = decode_expr(stream);
+    return match res {
+        DecodeResult::Done(e, _) => e,
+        _ => SpecExpr::Lit(0),
+    };
+}
+
+fn eval_stream(stream: SpecStream, env: SpecEnv) -> i64 {
+    let ast: SpecExpr = decode_ast(stream);
+    return spec_eval(ast, env);
+}
+
+fn specialize_stream(stream: SpecStream, s_env: SpecEnv) -> SpecExpr {
+    let ast: SpecExpr = decode_ast(stream);
+    return min_spec(ast, s_env);
+}
+
+fn verify_stream_decoding() -> bool {
+    let b_nil: Box<SpecStream> = box(SpecStream::Nil);
+    let s9: SpecStream = SpecStream::Cons(2, b_nil);
+    let s8: SpecStream = SpecStream::Cons(1, box(s9));
+    let s7: SpecStream = SpecStream::Cons(10, box(s8));
+    let s6: SpecStream = SpecStream::Cons(1, box(s7));
+    let s5: SpecStream = SpecStream::Cons(1, box(s6));
+    let s4: SpecStream = SpecStream::Cons(2, box(s5));
+    let s3: SpecStream = SpecStream::Cons(1, box(s4));
+    let s2: SpecStream = SpecStream::Cons(3, box(s3));
+    let s1: SpecStream = SpecStream::Cons(3, box(s2));
+    let s0: SpecStream = SpecStream::Cons(3, box(s1));
+
+    let decoded: SpecExpr = decode_ast(s0);
+    let e0: SpecEnv = SpecEnv::Nil;
+    let b0: Box<SpecEnv> = box(e0);
+    let env: SpecEnv = SpecEnv::Cons(1, 5, b0);
+    let res: i64 = spec_eval(decoded, env);
+    return res == 30;
+}
+
 fn main() -> i64 {
     if verify_soundness(1, 5) == false { return 1; }
     if verify_soundness(2, 4) == false { return 2; }
     if verify_soundness(3, 8) == false { return 3; }
+    if verify_stream_decoding() == false { return 4; }
     return 42;
 }

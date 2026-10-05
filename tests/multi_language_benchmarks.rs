@@ -179,8 +179,10 @@ fn benchmark_cmd(
     expected_exit: i32,
     iterations: usize,
 ) -> (Duration, Duration, Duration, Duration, i32, bool) {
-    // Warmup
-    let _ = Command::new(cmd).args(args).output();
+    // Warmup: >= 5 discarded warmup iterations per INTEGRITY_RULES §2.2
+    for _ in 0..5 {
+        let _ = Command::new(cmd).args(args).output();
+    }
 
     let mut wall_times = Vec::with_capacity(iterations);
     let mut compute_times = Vec::with_capacity(iterations);
