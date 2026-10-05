@@ -161,6 +161,7 @@ fn test_eta_reduction_copy_binding() {
                 }),
             },
         }],
+        is_distilled: false,
     };
 
     let stmts_removed = compact_mir_function(&mut func);
