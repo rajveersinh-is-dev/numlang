@@ -131,9 +131,21 @@ pub struct Cli {
     #[arg(
         long = "mrsc-objective",
         default_value = "size",
-        help = "MRSC optimization objective (size | branch | pareto)"
+        help = "MRSC optimization objective (size | branch | pareto | speed | balanced)"
     )]
     pub mrsc_objective: String,
+
+    #[arg(
+        long = "mrsc-exhaustive",
+        help = "Enable exhaustive MRSC supercompilation with IDDFS and Pareto cost optimization"
+    )]
+    pub mrsc_exhaustive: bool,
+
+    #[arg(
+        long = "ho-distill",
+        help = "Enable pre-defunctionalization higher-order AST distillation (Hamilton fold/unfold)"
+    )]
+    pub ho_distill: bool,
 
     #[arg(
         long = "use-mir",
@@ -188,6 +200,24 @@ pub struct Cli {
     )]
     pub no_cache: bool,
 
+    #[arg(
+        long = "incremental",
+        help = "Enable incremental modular supercompilation with fine-grained cache invalidation"
+    )]
+    pub incremental: bool,
+
+    #[arg(
+        long = "futamura2",
+        help = "Execute 2nd Futamura projection to generate minspec_cogen executable"
+    )]
+    pub futamura2: bool,
+
+    #[arg(
+        long = "futamura2-out",
+        help = "Output path for the generated minspec_cogen binary"
+    )]
+    pub futamura2_out: Option<PathBuf>,
+
     #[arg(help = "Path to source file (.nl)")]
     pub file: Option<PathBuf>,
 }
@@ -198,6 +228,7 @@ pub enum SupercompileCliMode {
     Classic,
     Distill,
     Mrsc,
+    MrscExhaustive,
 }
 
 impl From<SupercompileCliMode> for numlang::mir::supercompiler::SupercompileMode {
@@ -206,7 +237,21 @@ impl From<SupercompileCliMode> for numlang::mir::supercompiler::SupercompileMode
             SupercompileCliMode::Classic => numlang::mir::supercompiler::SupercompileMode::Classic,
             SupercompileCliMode::Distill => numlang::mir::supercompiler::SupercompileMode::Distill,
             SupercompileCliMode::Mrsc => numlang::mir::supercompiler::SupercompileMode::Mrsc,
+            SupercompileCliMode::MrscExhaustive => {
+                numlang::mir::supercompiler::SupercompileMode::MrscExhaustive
+            }
         }
+    }
+}
+
+fn resolve_supercompile_mode(
+    cli_mode: SupercompileCliMode,
+    exhaustive: bool,
+) -> numlang::mir::supercompiler::SupercompileMode {
+    if exhaustive {
+        numlang::mir::supercompiler::SupercompileMode::MrscExhaustive
+    } else {
+        cli_mode.into()
     }
 }
 
@@ -270,6 +315,12 @@ pub enum Commands {
         no_cache: bool,
 
         #[arg(
+            long = "incremental",
+            help = "Enable incremental modular supercompilation with fine-grained cache invalidation"
+        )]
+        incremental: bool,
+
+        #[arg(
             long = "mode",
             value_enum,
             default_value_t = SupercompileCliMode::Classic,
@@ -280,9 +331,21 @@ pub enum Commands {
         #[arg(
             long = "mrsc-objective",
             default_value = "size",
-            help = "MRSC optimization objective (size | branch | pareto)"
+            help = "MRSC optimization objective (size | branch | pareto | speed | balanced)"
         )]
         mrsc_objective: String,
+
+        #[arg(
+            long = "mrsc-exhaustive",
+            help = "Enable exhaustive MRSC supercompilation with IDDFS and Pareto cost optimization"
+        )]
+        mrsc_exhaustive: bool,
+
+        #[arg(
+            long = "ho-distill",
+            help = "Enable pre-defunctionalization higher-order AST distillation (Hamilton fold/unfold)"
+        )]
+        ho_distill: bool,
 
         #[arg(
             long = "use-mir",
@@ -355,6 +418,12 @@ pub enum Commands {
         no_cache: bool,
 
         #[arg(
+            long = "incremental",
+            help = "Enable incremental modular supercompilation with fine-grained cache invalidation"
+        )]
+        incremental: bool,
+
+        #[arg(
             long = "mode",
             value_enum,
             default_value_t = SupercompileCliMode::Classic,
@@ -365,9 +434,21 @@ pub enum Commands {
         #[arg(
             long = "mrsc-objective",
             default_value = "size",
-            help = "MRSC optimization objective (size | branch | pareto)"
+            help = "MRSC optimization objective (size | branch | pareto | speed | balanced)"
         )]
         mrsc_objective: String,
+
+        #[arg(
+            long = "mrsc-exhaustive",
+            help = "Enable exhaustive MRSC supercompilation with IDDFS and Pareto cost optimization"
+        )]
+        mrsc_exhaustive: bool,
+
+        #[arg(
+            long = "ho-distill",
+            help = "Enable pre-defunctionalization higher-order AST distillation (Hamilton fold/unfold)"
+        )]
+        ho_distill: bool,
 
         #[arg(
             long = "use-mir",
@@ -566,6 +647,7 @@ fn build_executable(
 fn handle_run(
     file: &Path,
     supercompile: bool,
+    ho_distill: bool,
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
@@ -576,7 +658,14 @@ fn handle_run(
     no_cache: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
-    numlang::opt::optimize_program(&mut typed_program);
+    numlang::compiler::distill_and_optimize(
+        &mut typed_program,
+        &numlang::compiler::CompilerConfig {
+            ho_distill,
+            supercompile,
+            ..Default::default()
+        },
+    );
 
     let temp_dir = std::env::temp_dir();
     let timestamp = std::time::SystemTime::now()
@@ -627,6 +716,7 @@ fn handle_build(
     output: Option<PathBuf>,
     emit_obj: Option<PathBuf>,
     supercompile: bool,
+    ho_distill: bool,
     use_mir: bool,
     backend: Backend,
     opt_level: &str,
@@ -637,7 +727,14 @@ fn handle_build(
     no_cache: bool,
 ) -> Result<()> {
     let (_, mut typed_program) = compile_source_to_typed(file)?;
-    numlang::opt::optimize_program(&mut typed_program);
+    numlang::compiler::distill_and_optimize(
+        &mut typed_program,
+        &numlang::compiler::CompilerConfig {
+            ho_distill,
+            supercompile,
+            ..Default::default()
+        },
+    );
 
     let obj_bytes = compile_program_to_obj_bytes(
         &typed_program,
@@ -823,8 +920,11 @@ fn real_main() -> Result<()> {
                 parallel_residualize,
                 cache_dir,
                 no_cache,
+                incremental,
                 mode,
                 mrsc_objective,
+                mrsc_exhaustive,
+                ho_distill,
                 use_mir,
                 backend,
                 opt_level,
@@ -834,11 +934,12 @@ fn real_main() -> Result<()> {
                 }
                 return handle_run(
                     &file,
-                    supercompile,
+                    supercompile || incremental,
+                    ho_distill,
                     use_mir,
                     backend,
                     &opt_level,
-                    mode.into(),
+                    resolve_supercompile_mode(mode, mrsc_exhaustive),
                     &mrsc_objective,
                     parallel_residualize,
                     &cache_dir,
@@ -854,8 +955,11 @@ fn real_main() -> Result<()> {
                 parallel_residualize,
                 cache_dir,
                 no_cache,
+                incremental,
                 mode,
                 mrsc_objective,
+                mrsc_exhaustive,
+                ho_distill,
                 use_mir,
                 backend,
                 opt_level,
@@ -867,11 +971,12 @@ fn real_main() -> Result<()> {
                     &file,
                     output,
                     emit_obj,
-                    supercompile,
+                    supercompile || incremental,
+                    ho_distill,
                     use_mir,
                     backend,
                     &opt_level,
-                    mode.into(),
+                    resolve_supercompile_mode(mode, mrsc_exhaustive),
                     &mrsc_objective,
                     parallel_residualize,
                     &cache_dir,
@@ -885,6 +990,25 @@ fn real_main() -> Result<()> {
                 stdout,
             } => return handle_fmt(&file, check, stdout),
             Commands::Doc { file, output } => return handle_doc(&file, output),
+        }
+    }
+
+    if cli.futamura2 {
+        let out_target = cli
+            .futamura2_out
+            .unwrap_or_else(|| PathBuf::from("target/release").join(if cfg!(windows) { "minspec_cogen.exe" } else { "minspec_cogen" }));
+        match numlang::mir::supercompiler::futamura2::build_minspec_cogen_binary(&out_target) {
+            Ok(path) => {
+                println!(
+                    "numlang: 2nd Futamura projection completed successfully. Generated cogen binary: {}",
+                    path.display()
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("numlang: 2nd Futamura cogen generation failed: {}", e);
+                std::process::exit(1);
+            }
         }
     }
 
@@ -954,7 +1078,14 @@ fn real_main() -> Result<()> {
 
     // Optimization pass (run once)
     let mut typed_program = typed_program;
-    numlang::opt::optimize_program(&mut typed_program);
+    numlang::compiler::distill_and_optimize(
+        &mut typed_program,
+        &numlang::compiler::CompilerConfig {
+            ho_distill: cli.ho_distill,
+            supercompile: cli.supercompile,
+            ..Default::default()
+        },
+    );
 
     if cli.emit_mir {
         let mir_program = numlang::mir::lower::lower_program(&typed_program);
@@ -1042,6 +1173,8 @@ fn real_main() -> Result<()> {
         return Ok(());
     }
 
+    let effective_mode = resolve_supercompile_mode(cli.mode, cli.mrsc_exhaustive);
+
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
         let opt_cache = if !cli.no_cache {
@@ -1051,7 +1184,7 @@ fn real_main() -> Result<()> {
         };
         let stats = numlang::mir::supercompiler::supercompile_mir_program_with_cache(
             &mut mir_program,
-            cli.mode.into(),
+            effective_mode,
             &cli.mrsc_objective,
             cli.parallel_residualize,
             opt_cache.as_ref(),
@@ -1067,7 +1200,7 @@ fn real_main() -> Result<()> {
         let mut sc_mir = orig_mir.clone();
         numlang::mir::supercompiler::supercompile_mir_program_with_mode(
             &mut sc_mir,
-            cli.mode.into(),
+            effective_mode,
             &cli.mrsc_objective,
         );
         match numlang::mir::supercompiler::verify_program_equivalence(&orig_mir, &sc_mir) {
@@ -1103,11 +1236,11 @@ fn real_main() -> Result<()> {
     if should_emit_obj || should_link_exe {
         let obj_bytes = compile_program_to_obj_bytes(
             &typed_program,
-            cli.supercompile,
+            cli.supercompile || cli.incremental,
             cli.use_mir,
             cli.backend,
             &cli.opt_level,
-            cli.mode.into(),
+            effective_mode,
             &cli.mrsc_objective,
             cli.parallel_residualize,
             &cli.cache_dir,
