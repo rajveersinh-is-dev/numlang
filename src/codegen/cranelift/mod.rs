@@ -3,11 +3,13 @@
 pub mod abi;
 pub mod ast_expr;
 pub mod ast_stmt;
+pub mod deopt;
 pub mod escape;
 pub mod intrinsics;
 pub mod mir_emit;
 
 pub use abi::*;
+pub use deopt::*;
 use ast_stmt::{FunctionTranslationState, Storage};
 
 use std::collections::HashMap;
@@ -20,10 +22,7 @@ use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_native;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::ast::BinaryOp;
-use crate::typecheck::{
-    Type, TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
-};
+use crate::typecheck::{Type, TypedFunction, TypedProgram};
 use crate::codegen::backend_trait::BackendCompiler;
 
 pub struct CraneliftCompiler {
@@ -49,10 +48,6 @@ pub struct CraneliftCompiler {
     pub(crate) log10_id: FuncId,
     pub(crate) pow_id: FuncId,
     pub(crate) malloc_id: FuncId,
-    #[allow(dead_code)]
-    pub(crate) local_alloc_id: Option<FuncId>,
-    #[allow(dead_code)]
-    pub(crate) os_malloc_id: Option<FuncId>,
     pub(crate) loop_reset_id: FuncId,
     pub(crate) arena_alloc_id: FuncId,
     pub(crate) arena_reset_id: FuncId,
@@ -281,26 +276,6 @@ impl CraneliftCompiler {
             .declare_function("__nl_arena_reset", Linkage::Export, &sig_void)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-        #[cfg(target_os = "windows")]
-        let (local_alloc_id, os_malloc_id) = {
-            let mut sig_local_alloc = module.make_signature();
-            sig_local_alloc.params.push(AbiParam::new(types::I32));
-            sig_local_alloc.params.push(AbiParam::new(types::I64));
-            sig_local_alloc.returns.push(AbiParam::new(types::I64));
-            let local_alloc_id = module
-                .declare_function("LocalAlloc", Linkage::Import, &sig_local_alloc)
-                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-            (Some(local_alloc_id), None)
-        };
-
-        #[cfg(not(target_os = "windows"))]
-        let (local_alloc_id, os_malloc_id) = {
-            let os_malloc_id = module
-                .declare_function("malloc", Linkage::Import, &sig_malloc)
-                .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-            (None, Some(os_malloc_id))
-        };
-
         Ok(Self {
             module,
             func_ids: HashMap::new(),
@@ -324,8 +299,6 @@ impl CraneliftCompiler {
             log10_id,
             pow_id,
             malloc_id,
-            local_alloc_id,
-            os_malloc_id,
             loop_reset_id,
             arena_alloc_id,
             arena_reset_id,
@@ -462,220 +435,6 @@ impl CraneliftCompiler {
         Ok(())
     }
 
-/// Phase 36: Transform a standard binary Fibonacci-style recurrence
-///   `fn f(n) { if n <= 1 { return n; } else { return f(n-1) + f(n-2); } }`
-/// into a fully iterative O(n) two-variable rolling accumulator:
-///   ```text
-///   let mut a = 0; let mut b = 1;
-///   if n <= 1 { return n; }
-///   let mut i = 2;
-///   while i <= n { let tmp = a + b; a = b; b = tmp; i = i + 1; }
-///   return b;
-///   ```
-/// This eliminates ALL recursive call frames (~14.9M for fib(35)) replacing them
-/// with 33 additions, delivering microsecond-range runtimes vs ~28ms recursive.
-fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> {
-    if func.params.len() != 1 || func.return_ty != Type::I64 {
-        return None;
-    }
-    let p_name = &func.params[0].name;
-    if func.params[0].ty != Type::I64 {
-        return None;
-    }
-    if func.body.stmts.len() != 1 {
-        return None;
-    }
-    let (cond, then_b, else_b) = match &func.body.stmts[0] {
-        TypedStmt::If { condition, then_branch, else_branch: Some(eb), .. } => (condition, then_branch, eb),
-        _ => return None,
-    };
-
-    // Verify condition: n <= K where K is a small non-negative constant
-    let base_limit = match cond {
-        TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
-            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. }) = (&**left, &**right) {
-                if name != p_name || *k < 0 || *k > 8 { return None; }
-                *k
-            } else {
-                return None;
-            }
-        }
-        _ => return None,
-    };
-
-    // Verify then_branch: return n;
-    if then_b.stmts.len() != 1 {
-        return None;
-    }
-    match &then_b.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Ident { name, .. }), _) if name == p_name => {}
-        _ => return None,
-    }
-
-    // Verify else_branch: return f(n - 1) + f(n - 2);
-    if else_b.stmts.len() != 1 {
-        return None;
-    }
-    let (offset_a, offset_b) = match &else_b.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Binary { op: BinaryOp::Add, left, right, .. }), _) => {
-            let get_offset = |e: &TypedExpr| -> Option<i64> {
-                if let TypedExpr::Call { callee, args, .. } = e {
-                    if callee == &func.name && args.len() == 1 {
-                        if let TypedExpr::Binary { op: BinaryOp::Sub, left: al, right: ar, .. } = &args[0] {
-                            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(off, _), .. }) = (&**al, &**ar) {
-                                if name == p_name && *off > 0 && *off <= 8 { return Some(*off); }
-                            }
-                        }
-                    }
-                }
-                None
-            };
-            match (get_offset(left), get_offset(right)) {
-                (Some(a), Some(b)) if a != b => {
-                    let (small, large) = if a < b { (a, b) } else { (b, a) };
-                    (small, large)  // offset_a=1, offset_b=2 for standard Fibonacci
-                }
-                _ => return None,
-            }
-        }
-        _ => return None,
-    };
-
-    // Only handle the standard Fibonacci offsets (n-1) + (n-2)
-    if offset_a != 1 || offset_b != 2 {
-        return None;
-    }
-
-    // Build the true O(n) iterative two-variable rolling accumulator:
-    //   let a = 0; let b = 1;
-    //   if n <= base_limit { return n; }
-    //   let i = base_limit + 1;
-    //   while i <= n { let tmp = a + b; a = b; b = tmp; i = i + 1; }
-    //   return b;
-    let span = func.span;
-    let a_name = format!("__fib_a_{}", p_name);
-    let b_name = format!("__fib_b_{}", p_name);
-    let i_name = format!("__fib_i_{}", p_name);
-    let tmp_name = format!("__fib_tmp_{}", p_name);
-
-    let mk_int = |v: i64| TypedExpr::Literal {
-        lit: TypedLiteral::Int(v, Type::I64),
-        ty: Type::I64,
-        span,
-    };
-    let mk_id = |name: &str| TypedExpr::Ident {
-        name: name.to_string(),
-        ty: Type::I64,
-        span,
-    };
-
-    // Seed: a=0, b=1 for base_limit=1 (n<=1 returns n).
-    // For base_limit > 1 we'd need to seed correctly, but since we only support
-    // offset_a=1/offset_b=2 and enforce base_limit<=1, seeds are always 0 and 1.
-    let seed_a: i64 = 0;
-    let seed_b: i64 = 1;
-    let loop_start: i64 = base_limit + 1;
-
-    let init_a = TypedStmt::Let {
-        name: a_name.clone(),
-        is_mutable: true,
-        ty: Type::I64,
-        value: mk_int(seed_a),
-        span,
-    };
-    let init_b = TypedStmt::Let {
-        name: b_name.clone(),
-        is_mutable: true,
-        ty: Type::I64,
-        value: mk_int(seed_b),
-        span,
-    };
-    let init_i = TypedStmt::Let {
-        name: i_name.clone(),
-        is_mutable: true,
-        ty: Type::I64,
-        value: mk_int(loop_start),
-        span,
-    };
-
-    // Early return for n <= base_limit: return n
-    let early_ret = TypedStmt::If {
-        condition: TypedExpr::Binary {
-            op: BinaryOp::Le,
-            left: Box::new(mk_id(p_name)),
-            right: Box::new(mk_int(base_limit)),
-            ty: Type::Bool,
-            span,
-        },
-        then_branch: TypedBlock {
-            stmts: vec![TypedStmt::Return(Some(mk_id(p_name)), span)],
-            span,
-        },
-        else_branch: None,
-        span,
-    };
-
-    // while i <= n { tmp = a + b; a = b; b = tmp; i = i + 1; }
-    let loop_cond = TypedExpr::Binary {
-        op: BinaryOp::Le,
-        left: Box::new(mk_id(&i_name)),
-        right: Box::new(mk_id(p_name)),
-        ty: Type::Bool,
-        span,
-    };
-
-    let compute_tmp = TypedStmt::Let {
-        name: tmp_name.clone(),
-        is_mutable: false,
-        ty: Type::I64,
-        value: TypedExpr::Binary {
-            op: BinaryOp::Add,
-            left: Box::new(mk_id(&a_name)),
-            right: Box::new(mk_id(&b_name)),
-            ty: Type::I64,
-            span,
-        },
-        span,
-    };
-    let update_a = TypedStmt::Assign {
-        name: a_name.clone(),
-        value: mk_id(&b_name),
-        span,
-    };
-    let update_b = TypedStmt::Assign {
-        name: b_name.clone(),
-        value: mk_id(&tmp_name),
-        span,
-    };
-    let update_i = TypedStmt::Assign {
-        name: i_name.clone(),
-        value: TypedExpr::Binary {
-            op: BinaryOp::Add,
-            left: Box::new(mk_id(&i_name)),
-            right: Box::new(mk_int(1)),
-            ty: Type::I64,
-            span,
-        },
-        span,
-    };
-
-    let while_stmt = TypedStmt::While {
-        condition: loop_cond,
-        body: TypedBlock {
-            stmts: vec![compute_tmp, update_a, update_b, update_i],
-            span,
-        },
-        span,
-    };
-
-    let final_ret = TypedStmt::Return(Some(mk_id(&b_name)), span);
-
-    Some(TypedBlock {
-        stmts: vec![init_a, init_b, init_i, early_ret, while_stmt, final_ret],
-        span,
-    })
-}
-
     fn compile_function(
         &mut self,
         func: &TypedFunction,
@@ -770,7 +529,7 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
             }
         }
 
-        let body_to_translate = Self::try_lower_binary_recurrence_tree(func)
+        let body_to_translate = crate::opt::recursion::try_lower_binary_recurrence_tree(func)
             .or_else(|| crate::opt::recursion::try_lower_tail_calls(func))
             .unwrap_or_else(|| func.body.clone());
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
@@ -860,8 +619,10 @@ fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<TypedBlock> 
 
         let config = self.module.target_config();
         builder.finalize(config);
-        if std::env::var("DUMP_CLIF").is_ok() && func.name == "solve_nqueens" {
-            eprintln!("=== CLIF IR for {} ===\n{}", func.name, ctx.func);
+        if let Ok(dump_target) = std::env::var("DUMP_CLIF") {
+            if dump_target.is_empty() || func.name == dump_target {
+                eprintln!("=== CLIF IR for {} ===\n{}", func.name, ctx.func);
+            }
         }
 
         if let Err(e) = self.module.define_function(func_id, ctx) {
@@ -929,7 +690,14 @@ pub fn compile_supercompiled_to_obj_with_cache(
     opt_cache: Option<&crate::mir::supercompiler::cache::SpecializationCache>,
 ) -> Result<Vec<u8>, CodegenError> {
     let mut typed = program.clone();
-    crate::opt::optimize_program(&mut typed);
+    crate::compiler::distill_and_optimize(
+        &mut typed,
+        &crate::compiler::CompilerConfig {
+            ho_distill: true,
+            supercompile: true,
+            ..Default::default()
+        },
+    );
     let mut mir_program = crate::mir::lower::lower_program(&typed);
     crate::mir::supercompiler::supercompile_mir_program_with_cache(
         &mut mir_program,

@@ -35,12 +35,6 @@ pub(crate) enum Storage {
         slot: StackSlot,
         enum_name: String,
     },
-    #[allow(dead_code)]
-    EnumPtr {
-        var: Variable,
-        #[allow(dead_code)]
-        enum_name: String,
-    },
 }
 
 #[derive(Clone)]
@@ -427,7 +421,7 @@ impl<'a> FunctionTranslationState<'a> {
                     })
                 }
             }
-            _ => panic!("Expected array variable, literal, or array-returning call"),
+            _ => Err(CodegenError::BackendError("Expected array variable, literal, or array-returning call".to_string())),
         }
     }
 
@@ -1028,7 +1022,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 16, false);
                 Ok(i)
             }
-            _ => panic!("Unsupported array op {}", callee),
+            _ => Err(CodegenError::BackendError(format!("Unsupported array op {callee}"))),
         }
     }
 
@@ -1912,10 +1906,6 @@ impl<'a> FunctionTranslationState<'a> {
                             Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
                         }
                     }
-                    Storage::EnumPtr { var, .. } => {
-                        let src_ptr = self.translate_expr(value, builder)?;
-                        builder.def_var(var, src_ptr);
-                    }
                     Storage::Scalar(var) => {
                         let val = self.translate_expr(value, builder)?;
                         builder.def_var(var, val);
@@ -2078,7 +2068,7 @@ impl<'a> FunctionTranslationState<'a> {
                         }
                         Ok(false)
                     }
-                    _ => panic!("Target must be an array variable"),
+                    _ => Err(CodegenError::BackendError("Target must be an array variable".to_string())),
                 }
             }
 

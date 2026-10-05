@@ -190,6 +190,12 @@ impl CraneliftCompiler {
                     let var = builder.declare_var(types::I64);
                     var_map.insert(value.local.clone(), (var, types::I64));
                 }
+                crate::mir::Terminator::TypeGuard { local, .. }
+                    if !var_map.contains_key(&local.local) =>
+                {
+                    let var = builder.declare_var(types::I64);
+                    var_map.insert(local.local.clone(), (var, types::I64));
+                }
                 _ => {}
             }
         }
@@ -275,6 +281,11 @@ impl CraneliftCompiler {
                                 BinaryOp::Le => builder.ins().fcmp(FloatCC::LessThanOrEqual, lv, rv),
                                 BinaryOp::Gt => builder.ins().fcmp(FloatCC::GreaterThan, lv, rv),
                                 BinaryOp::Ge => builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lv, rv),
+                                BinaryOp::Pow => {
+                                    let pow_func = self.module.declare_func_in_func(self.pow_id, builder.func);
+                                    let call = builder.ins().call(pow_func, &[lv, rv]);
+                                    builder.inst_results(call)[0]
+                                }
                                 _ => builder.ins().fadd(lv, rv),
                             }
                         } else {
@@ -303,7 +314,7 @@ impl CraneliftCompiler {
                                 BinaryOp::BitXor => builder.ins().bxor(lv, rv),
                                 BinaryOp::Shl => builder.ins().ishl(lv, rv),
                                 BinaryOp::Shr => builder.ins().sshr(lv, rv),
-                                BinaryOp::Pow => builder.ins().imul(lv, rv),
+                                BinaryOp::Pow => super::ast_stmt::FunctionTranslationState::emit_int_pow_raw(lv, rv, l_ty, &mut builder),
                             }
                         }
                     }
@@ -571,6 +582,34 @@ impl CraneliftCompiler {
                             builder.switch_to_block(loop_done);
                             let safe_target = if target_idx < n { target_idx } else { 0 };
                             builder.use_var(v_vars[safe_target])
+                        } else if (callee == "i64_to_f64" || (callee == "to_float" && !self.func_ids.contains_key("to_float"))) && !args.is_empty() {
+                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let arg_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                builder.ins().uextend(types::I64, arg_val)
+                            } else {
+                                arg_val
+                            };
+                            builder.ins().fcvt_from_sint(types::F64, arg_i64)
+                        } else if (callee == "f64_to_i64" || (callee == "to_int" && !self.func_ids.contains_key("to_int"))) && !args.is_empty() {
+                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            if builder.func.dfg.value_type(arg_val).is_float() {
+                                builder.ins().fcvt_to_sint_sat(types::I64, arg_val)
+                            } else {
+                                arg_val
+                            }
+                        } else if callee == "sqrt" && !args.is_empty() {
+                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            builder.ins().sqrt(arg_val)
+                        } else if callee == "abs" && !args.is_empty() {
+                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let ty = builder.func.dfg.value_type(arg_val);
+                            if ty.is_float() {
+                                builder.ins().fabs(arg_val)
+                            } else {
+                                let shift = builder.ins().sshr_imm_u(arg_val, 63);
+                                let xored = builder.ins().bxor(arg_val, shift);
+                                builder.ins().isub(xored, shift)
+                            }
                         } else if callee == "print" || callee == "println" {
                             let is_nl = callee == "println";
                             if args.is_empty() {
@@ -917,6 +956,18 @@ impl CraneliftCompiler {
                     builder.ins().brif(zero, dummy_branch, &[], left_block, &[]);
                     builder.switch_to_block(dummy_branch);
                     builder.ins().brif(zero, right_block, &[], join_block, &[]);
+                }
+                crate::mir::Terminator::Force { cont, .. } => {
+                    let cont_block = *block_map.get(cont).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", cont.0)))?;
+                    builder.ins().jump(cont_block, &[]);
+                }
+                crate::mir::Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
+                    let fast_block = *block_map.get(fast_path).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", fast_path.0)))?;
+                    let deopt_block = *block_map.get(deopt_stub).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", deopt_stub.0)))?;
+                    let guard_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, local);
+                    let exp_val = builder.ins().iconst(types::I64, *expected_tag);
+                    let is_match = builder.ins().icmp(IntCC::Equal, guard_val, exp_val);
+                    builder.ins().brif(is_match, fast_block, &[], deopt_block, &[]);
                 }
             }
         }

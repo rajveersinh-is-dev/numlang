@@ -6,7 +6,7 @@ use cranelift_codegen::ir::{
     types, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, Value,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_module::Module;
+use cranelift_module::{Linkage, Module};
 use crate::typecheck::Type;
 use super::abi::*;
 use super::ast_stmt::{emit_copy_bytes_raw, FunctionTranslationState};
@@ -18,6 +18,27 @@ impl CraneliftCompiler {
         ctx: &mut cranelift_codegen::Context,
         fn_builder_ctx: &mut FunctionBuilderContext,
     ) -> Result<(), CodegenError> {
+        #[cfg(target_os = "windows")]
+        let os_alloc_id = {
+            let mut sig_local_alloc = self.module.make_signature();
+            sig_local_alloc.params.push(AbiParam::new(types::I32));
+            sig_local_alloc.params.push(AbiParam::new(types::I64));
+            sig_local_alloc.returns.push(AbiParam::new(types::I64));
+            self.module
+                .declare_function("LocalAlloc", Linkage::Import, &sig_local_alloc)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let os_alloc_id = {
+            let mut sig_malloc = self.module.make_signature();
+            sig_malloc.params.push(AbiParam::new(types::I64));
+            sig_malloc.returns.push(AbiParam::new(types::I64));
+            self.module
+                .declare_function("malloc", Linkage::Import, &sig_malloc)
+                .map_err(|e| CodegenError::BackendError(e.to_string()))?
+        };
+
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(types::I64));
         sig.returns.push(AbiParam::new(types::I64));
@@ -76,13 +97,13 @@ impl CraneliftCompiler {
             #[cfg(target_os = "windows")]
             {
                 let flags_val = builder.ins().iconst(types::I32, 0x0040); // LPTR = LMEM_FIXED | LMEM_ZEROINIT
-                let local_alloc = self.module.declare_func_in_func(self.local_alloc_id.ok_or_else(|| CodegenError::BackendError("LocalAlloc symbol not declared".to_string()))?, builder.func);
+                let local_alloc = self.module.declare_func_in_func(os_alloc_id, builder.func);
                 let call = builder.ins().call(local_alloc, &[flags_val, alloc_size]);
                 builder.inst_results(call)[0]
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let malloc_func = self.module.declare_func_in_func(self.os_malloc_id.ok_or_else(|| CodegenError::BackendError("malloc symbol not declared".to_string()))?, builder.func);
+                let malloc_func = self.module.declare_func_in_func(os_alloc_id, builder.func);
                 let call = builder.ins().call(malloc_func, &[alloc_size]);
                 builder.inst_results(call)[0]
             }
@@ -795,48 +816,52 @@ impl<'a> FunctionTranslationState<'a> {
 
     pub(crate) fn emit_int_pow(&mut self, base: Value, exp: Value, ty: &Type, builder: &mut FunctionBuilder) -> Value {
         let clif_ty = type_to_clif(ty.clone());
-        let var_res = builder.declare_var(clif_ty);
-        let var_b = builder.declare_var(clif_ty);
-        let var_e = builder.declare_var(clif_ty);
-
-        let one = self.get_iconst(clif_ty, 1, builder);
-        let zero = self.get_iconst(clif_ty, 0, builder);
-        builder.def_var(var_res, one);
-        builder.def_var(var_b, base);
-        builder.def_var(var_e, exp);
-
-        let loop_header = builder.create_block();
-        let loop_body = builder.create_block();
-        let loop_exit = builder.create_block();
-
-        builder.ins().jump(loop_header, &[]);
-        builder.switch_to_block(loop_header);
-        let cur_e = builder.use_var(var_e);
-        let cond = builder.ins().icmp(IntCC::SignedGreaterThan, cur_e, zero);
-        builder.ins().brif(cond, loop_body, &[], loop_exit, &[]);
-
-        builder.switch_to_block(loop_body);
-        builder.seal_block(loop_body);
-        let is_odd = builder.ins().band_imm_s(cur_e, 1);
-        let is_odd_cond = builder.ins().icmp(IntCC::NotEqual, is_odd, zero);
-        let cur_res = builder.use_var(var_res);
-        let cur_b = builder.use_var(var_b);
-        let mult = builder.ins().imul(cur_res, cur_b);
-        let next_res = builder.ins().select(is_odd_cond, mult, cur_res);
-        builder.def_var(var_res, next_res);
-
-        let next_b = builder.ins().imul(cur_b, cur_b);
-        builder.def_var(var_b, next_b);
-        let next_e = builder.ins().sshr_imm_s(cur_e, 1);
-        builder.def_var(var_e, next_e);
-        builder.ins().jump(loop_header, &[]);
-
-        builder.seal_block(loop_header);
-        builder.switch_to_block(loop_exit);
-        builder.seal_block(loop_exit);
-
-        builder.use_var(var_res)
+        Self::emit_int_pow_raw(base, exp, clif_ty, builder)
     }
+
+pub(crate) fn emit_int_pow_raw(base: Value, exp: Value, clif_ty: types::Type, builder: &mut FunctionBuilder) -> Value {
+    let var_res = builder.declare_var(clif_ty);
+    let var_b = builder.declare_var(clif_ty);
+    let var_e = builder.declare_var(clif_ty);
+
+    let one = builder.ins().iconst(clif_ty, 1);
+    let zero = builder.ins().iconst(clif_ty, 0);
+    builder.def_var(var_res, one);
+    builder.def_var(var_b, base);
+    builder.def_var(var_e, exp);
+
+    let loop_header = builder.create_block();
+    let loop_body = builder.create_block();
+    let loop_exit = builder.create_block();
+
+    builder.ins().jump(loop_header, &[]);
+    builder.switch_to_block(loop_header);
+    let cur_e = builder.use_var(var_e);
+    let cond = builder.ins().icmp(IntCC::SignedGreaterThan, cur_e, zero);
+    builder.ins().brif(cond, loop_body, &[], loop_exit, &[]);
+
+    builder.switch_to_block(loop_body);
+    builder.seal_block(loop_body);
+    let is_odd = builder.ins().band_imm_s(cur_e, 1);
+    let is_odd_cond = builder.ins().icmp(IntCC::NotEqual, is_odd, zero);
+    let cur_res = builder.use_var(var_res);
+    let cur_b = builder.use_var(var_b);
+    let mult = builder.ins().imul(cur_res, cur_b);
+    let next_res = builder.ins().select(is_odd_cond, mult, cur_res);
+    builder.def_var(var_res, next_res);
+
+    let next_b = builder.ins().imul(cur_b, cur_b);
+    builder.def_var(var_b, next_b);
+    let next_e = builder.ins().sshr_imm_s(cur_e, 1);
+    builder.def_var(var_e, next_e);
+    builder.ins().jump(loop_header, &[]);
+
+    builder.seal_block(loop_header);
+    builder.switch_to_block(loop_exit);
+    builder.seal_block(loop_exit);
+
+    builder.use_var(var_res)
+}
 
     pub(crate) fn emit_fast_int_mul(
         &mut self,

@@ -13,6 +13,21 @@ use crate::typecheck::{
 pub enum CodegenError {
     #[error("Cranelift codegen error: {0}")]
     BackendError(String),
+
+    #[error("Variable '{0}' not found in scope")]
+    VariableNotFound(String),
+
+    #[error("Invalid array target: {0}")]
+    InvalidArrayTarget(String),
+
+    #[error("Struct layout missing for struct '{0}'")]
+    MissingLayout(String),
+
+    #[error("Field '{field}' not found in struct '{struct_name}'")]
+    FieldNotFound { struct_name: String, field: String },
+
+    #[error("Unsupported intrinsic or operation: {0}")]
+    UnsupportedOp(String),
 }
 
 pub fn type_to_clif(ty: Type) -> types::Type {
