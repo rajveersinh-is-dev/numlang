@@ -1,0 +1,10 @@
+// HOSC term language: Peano Multiplication
+data Nat = Z | S n;
+
+add Z y = y;
+add (S x) y = S (add x y);
+
+mul Z y = Z;
+mul (S x) y = add y (mul x y);
+
+peano_mul x y = mul x y;

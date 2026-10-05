@@ -1,0 +1,7 @@
+// HOSC term language: Double Tree Flip
+data Tree = Leaf v | Node l r;
+
+flip (Leaf v) = Leaf v;
+flip (Node l r) = Node (flip r) (flip l);
+
+double_flip t = flip (flip t);
