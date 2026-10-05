@@ -1523,6 +1523,20 @@ impl<'a> PathExtractor<'a> {
                     def_hist.push(default.clone());
                     queue.push((default.clone(), env, arrays, def_conds, def_hist, depth + 1));
                 }
+                Terminator::Force { cont, .. } => {
+                    let mut next_hist = history.clone();
+                    next_hist.push(cont.clone());
+                    queue.push((cont.clone(), env, arrays, conds, next_hist, depth + 1));
+                }
+                Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+                    let mut fast_hist = history.clone();
+                    fast_hist.push(fast_path.clone());
+                    queue.push((fast_path.clone(), env.clone(), arrays.clone(), conds.clone(), fast_hist, depth + 1));
+
+                    let mut deopt_hist = history;
+                    deopt_hist.push(deopt_stub.clone());
+                    queue.push((deopt_stub.clone(), env, arrays, conds, deopt_hist, depth + 1));
+                }
                 _ => {}
             }
         }

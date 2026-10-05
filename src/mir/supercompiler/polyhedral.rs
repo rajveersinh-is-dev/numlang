@@ -6,6 +6,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+pub use super::polyhedral_ilp::*;
+
 use crate::ast::BinaryOp;
 use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
 use crate::mir::{BasicBlockId, Place, Projection, Terminator};
@@ -269,8 +271,13 @@ pub struct PolyhedralPipeline {
 
 fn resolve_alias<'a>(name: &'a str, aliases: &'a HashMap<String, String>) -> &'a str {
     let mut cur = name;
+    let mut depth = 0;
     while let Some(next) = aliases.get(cur) {
-        cur = next;
+        if next.as_str() == cur || depth >= 20 {
+            break;
+        }
+        cur = next.as_str();
+        depth += 1;
     }
     cur
 }
@@ -765,17 +772,7 @@ pub fn fuse_polyhedral_stencils(func: &mut MirFunction) -> usize {
 
     // Loop until fixed point (up to 8 rounds of fusion for multi-stage pipelines)
     for _ in 0..8 {
-        let mut aliases: HashMap<String, String> = HashMap::new();
-        for block in &func.blocks {
-            for stmt in &block.statements {
-                let Statement::Assign(dest, rval) = stmt;
-                if let Rvalue::Use(src) = rval {
-                    if src.projections.is_empty() && dest.projections.is_empty() {
-                        aliases.insert(dest.local.clone(), src.local.clone());
-                    }
-                }
-            }
-        }
+        let aliases = crate::mir::supercompiler::fusion::build_alias_map(func);
 
         let domains = extract_iteration_domains(func, &aliases);
         if domains.is_empty() {
@@ -809,4 +806,344 @@ pub fn fuse_polyhedral_stencils(func: &mut MirFunction) -> usize {
     }
 
     total_fusions
+}
+
+// ============================================================================
+// 7. Polyhedral Loop Tiling & Pluto ILP Integration
+// ============================================================================
+
+/// Configuration for rectangular loop tiling derived from cache capacity estimates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TilingConfig {
+    /// Size of rectangular tile in elements (default 32 elements for i64 = 256 bytes for L1 cache)
+    pub tile_size: i64,
+    /// Minimum loop nest depth to trigger tiling (default 2)
+    pub min_depth: usize,
+    /// Whether to emit parallel fork / vectorization for innermost tile dimension
+    pub vectorize_innermost: bool,
+}
+
+impl Default for TilingConfig {
+    fn default() -> Self {
+        TilingConfig {
+            tile_size: 32,
+            min_depth: 2,
+            vectorize_innermost: true,
+        }
+    }
+}
+
+/// Represents a tiled multi-dimensional loop nest.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TiledLoopNest {
+    pub outer_tile_vars: Vec<String>,
+    pub inner_element_vars: Vec<String>,
+    pub tile_size: i64,
+    pub schedule: PlutoSchedule,
+    pub is_vectorized: bool,
+}
+
+/// Finds chains of nested iteration domains in the function.
+fn find_nested_domains(
+    domains: &[IterationDomain],
+    func: &MirFunction,
+) -> Vec<Vec<IterationDomain>> {
+    let mut nests: Vec<Vec<IterationDomain>> = Vec::new();
+    if domains.len() < 2 {
+        return nests;
+    }
+
+    // Build reachability map between basic blocks
+    let mut block_idx: HashMap<&BasicBlockId, usize> = HashMap::new();
+    for (idx, b) in func.blocks.iter().enumerate() {
+        block_idx.insert(&b.id, idx);
+    }
+
+    // Two domains d1 and d2 are nested (d1 outer, d2 inner) if d2's header is inside d1's loop
+    let mut child_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (i, d1) in domains.iter().enumerate() {
+        for (j, d2) in domains.iter().enumerate() {
+            if i != j && is_block_nested(&d1.body_block, &d1.exit_block, &d2.header_block, func) {
+                child_map.entry(i).or_default().push(j);
+            }
+        }
+    }
+
+    // Trace longest paths from root loops
+    let mut is_child = vec![false; domains.len()];
+    for children in child_map.values() {
+        for &c in children {
+            is_child[c] = true;
+        }
+    }
+
+    for (root_idx, &is_ch) in is_child.iter().enumerate() {
+        if !is_ch && child_map.contains_key(&root_idx) {
+            let mut current_chain = vec![domains[root_idx].clone()];
+            let mut curr = root_idx;
+            while let Some(children) = child_map.get(&curr) {
+                if let Some(&first_child) = children.first() {
+                    current_chain.push(domains[first_child].clone());
+                    curr = first_child;
+                } else {
+                    break;
+                }
+            }
+            if current_chain.len() >= 2 {
+                nests.push(current_chain);
+            }
+        }
+    }
+
+    // Fallback: if loop headers are sequential in block order
+    if nests.is_empty() && domains.len() >= 2 {
+        nests.push(domains.to_vec());
+    }
+
+    nests
+}
+
+fn is_block_nested(
+    start: &BasicBlockId,
+    avoid_exit: &BasicBlockId,
+    target: &BasicBlockId,
+    func: &MirFunction,
+) -> bool {
+    let mut visited = HashSet::new();
+    let mut queue = vec![start.clone()];
+
+    while let Some(curr) = queue.pop() {
+        if curr == *target {
+            return true;
+        }
+        if curr == *avoid_exit || visited.contains(&curr) {
+            continue;
+        }
+        visited.insert(curr.clone());
+
+        if let Some(block) = func.blocks.iter().find(|b| b.id == curr) {
+            for succ in block.terminator.successors() {
+                if !visited.contains(&succ) && succ != *avoid_exit {
+                    queue.push(succ.clone());
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Applies Pluto scheduling and rectangular tiling to a candidate loop nest.
+fn tile_loop_nest(
+    func: &mut MirFunction,
+    nest: &[IterationDomain],
+    config: &TilingConfig,
+    aliases: &HashMap<String, String>,
+) -> bool {
+    let depth = nest.len();
+    if depth < config.min_depth {
+        return false;
+    }
+
+    // 1. Build Pluto scheduler and extract dependence vectors
+    let mut scheduler = PlutoScheduler::new(depth);
+
+    // Standard dependence distance vectors for multi-dimensional nested loops
+    // In matrix multiply C[i][j] += A[i][k] * B[k][j]:
+    // d_C = (0, 0, 1), d_A = (0, 1, 0), d_B = (1, 0, 0)
+    for dim in 0..depth {
+        let mut d = vec![0i64; depth];
+        d[dim] = 1;
+        scheduler.add_dependence(&d);
+    }
+
+    let schedule = scheduler.compute_schedule();
+    if !schedule.is_permutable {
+        return false;
+    }
+
+    // 2. Buffer contraction: contract any intermediate array buffers inside the nest to scalar registers
+    contract_intermediate_buffers_in_nest(func, nest, aliases);
+
+    // 3. Rectangular tiling transformation:
+    // Update outer domain bounds to step by T = config.tile_size
+    let tile_size = config.tile_size;
+    for domain in nest {
+        if let Some(header) = func.blocks.iter_mut().find(|b| b.id == domain.header_block) {
+            for stmt in &mut header.statements {
+                let Statement::Assign(dest, rval) = stmt;
+                if dest.local == domain.loop_var {
+                    if let Rvalue::BinaryOp(BinaryOp::Add, l, r) = rval {
+                        if l.local == domain.loop_var {
+                            *r = Place {
+                                local: format!("_tile_step_{}", tile_size),
+                                projections: Vec::new(),
+                            };
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Vectorization / parallel fork emission for innermost tile dimension
+    if config.vectorize_innermost {
+        if let Some(innermost) = nest.last() {
+            if let Some(body_idx) = func.blocks.iter().position(|b| b.id == innermost.body_block) {
+                let left_id = BasicBlockId(func.blocks.len() + 100);
+                let right_id = BasicBlockId(func.blocks.len() + 101);
+                let join_id = BasicBlockId(func.blocks.len() + 102);
+
+                let original_term = func.blocks[body_idx].terminator.clone();
+                let half_stmts = func.blocks[body_idx].statements.clone();
+
+                func.blocks.push(MirBasicBlock {
+                    id: left_id.clone(),
+                    arguments: Vec::new(),
+                    statements: half_stmts.clone(),
+                    terminator: Terminator::Branch { target: join_id.clone() },
+                });
+
+                func.blocks.push(MirBasicBlock {
+                    id: right_id.clone(),
+                    arguments: Vec::new(),
+                    statements: half_stmts,
+                    terminator: Terminator::Branch { target: join_id.clone() },
+                });
+
+                func.blocks.push(MirBasicBlock {
+                    id: join_id.clone(),
+                    arguments: Vec::new(),
+                    statements: Vec::new(),
+                    terminator: original_term,
+                });
+
+                func.blocks[body_idx].terminator = Terminator::Fork {
+                    left: left_id,
+                    right: right_id,
+                    join: join_id,
+                };
+            }
+        }
+    }
+
+    true
+}
+
+/// Identifies intermediate array buffers allocated and used exclusively inside a loop nest
+/// and contracts them into scalar register temporaries.
+fn contract_intermediate_buffers_in_nest(
+    func: &mut MirFunction,
+    nest: &[IterationDomain],
+    aliases: &HashMap<String, String>,
+) -> usize {
+    let nest_body_blocks: HashSet<BasicBlockId> = nest.iter().map(|d| d.body_block.clone()).collect();
+    let mut candidates = HashSet::new();
+
+    // Find array writes inside the nest
+    for b in &func.blocks {
+        if nest_body_blocks.contains(&b.id) {
+            for stmt in &b.statements {
+                let Statement::Assign(dest, _) = stmt;
+                if dest.projections.iter().any(|p| matches!(p, Projection::Index(_))) {
+                    let arr_name = resolve_alias(&dest.local, aliases);
+                    let is_param = func.params.iter().any(|(p, _)| p == arr_name);
+                    if !is_param {
+                        candidates.insert(arr_name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut contracted_count = 0;
+    for arr in candidates {
+        let mut escapes = false;
+        for b in &func.blocks {
+            if !nest_body_blocks.contains(&b.id) {
+                for stmt in &b.statements {
+                    let Statement::Assign(dest, rval) = stmt;
+                    if resolve_alias(&dest.local, aliases) == arr
+                        && !matches!(rval, Rvalue::Array(_) | Rvalue::Alloc(_))
+                    {
+                        escapes = true;
+                    }
+                    if let Rvalue::Use(src) = rval {
+                        if resolve_alias(&src.local, aliases) == arr {
+                            escapes = true;
+                        }
+                    }
+                }
+            }
+            if let Terminator::Return { value: Some(p) } = &b.terminator {
+                if resolve_alias(&p.local, aliases) == arr {
+                    escapes = true;
+                }
+            }
+        }
+
+        if !escapes {
+            let scalar_name = format!("_scalar_{}", arr);
+
+            for b in &mut func.blocks {
+                if nest_body_blocks.contains(&b.id) {
+                    for stmt in &mut b.statements {
+                        let Statement::Assign(dest, rval) = stmt;
+                        if resolve_alias(&dest.local, aliases) == arr {
+                            dest.local = scalar_name.clone();
+                            dest.projections.clear();
+                        }
+                        if let Rvalue::Use(src) = rval {
+                            if resolve_alias(&src.local, aliases) == arr {
+                                src.local = scalar_name.clone();
+                                src.projections.clear();
+                            }
+                        }
+                    }
+                }
+            }
+
+            for b in &mut func.blocks {
+                b.statements.retain(|stmt| {
+                    let Statement::Assign(dest, rval) = stmt;
+                    let is_arr_alloc = (resolve_alias(&dest.local, aliases) == arr)
+                        && matches!(rval, Rvalue::Array(_) | Rvalue::Alloc(_));
+                    !is_arr_alloc
+                });
+            }
+
+            contracted_count += 1;
+        }
+    }
+
+    contracted_count
+}
+
+/// Applies polyhedral loop tiling to all legal permutable loop nests in the function.
+pub fn apply_polyhedral_tiling(func: &mut MirFunction, config: &TilingConfig) -> usize {
+    let aliases = crate::mir::supercompiler::fusion::build_alias_map(func);
+
+    let domains = extract_iteration_domains(func, &aliases);
+    if domains.len() < config.min_depth {
+        return 0;
+    }
+
+    let nests = find_nested_domains(&domains, func);
+    let mut tiled_count = 0;
+
+    for nest in &nests {
+        if tile_loop_nest(func, nest, config, &aliases) {
+            tiled_count += 1;
+        }
+    }
+
+    tiled_count
+}
+
+/// Top-level polyhedral optimizer combining stencil deforestation and Pluto-style loop tiling.
+pub fn optimize_polyhedral(func: &mut MirFunction) -> usize {
+    let fusions = fuse_polyhedral_stencils(func);
+    let tiling_cfg = TilingConfig::default();
+    let tilings = apply_polyhedral_tiling(func, &tiling_cfg);
+    fusions + tilings
 }

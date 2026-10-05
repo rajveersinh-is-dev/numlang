@@ -285,6 +285,11 @@ fn record_rvalue_uses(rvalue: &Rvalue, uses: &mut HashMap<String, usize>) {
             }
         }
         Rvalue::Constant(_) | Rvalue::FnPtr(_) => {}
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                *uses.entry(e.clone()).or_insert(0) += 1;
+            }
+        }
     }
 }
 
@@ -304,6 +309,12 @@ fn record_terminator_uses(term: &Terminator, uses: &mut HashMap<String, usize>) 
             for a in args {
                 record_place_uses(a, uses);
             }
+        }
+        Terminator::Force { thunk, .. } => {
+            *uses.entry(thunk.clone()).or_insert(0) += 1;
+        }
+        Terminator::TypeGuard { local, .. } => {
+            record_place_uses(local, uses);
         }
         Terminator::Branch { .. }
         | Terminator::Return { value: None }

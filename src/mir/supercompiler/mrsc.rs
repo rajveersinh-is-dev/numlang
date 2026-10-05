@@ -604,3 +604,151 @@ impl<'a> MultiResultEngine<'a> {
         }
     }
 }
+
+// ============================================================================
+// 5. 4-Dimensional MRSC Cost Model & Objective (Phase 53)
+// ============================================================================
+
+/// 4-dimensional cost vector for candidate residual programs:
+/// 1. Dynamic steps estimated from symbolic evaluation and unrolling
+/// 2. Heap allocation count
+/// 3. Residual basic block count
+/// 4. Live register pressure
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MrscCostVector {
+    /// Dynamic step count estimated from symbolic unrolling and loops.
+    pub dynamic_steps: f64,
+    /// Count of heap allocation operations in the residual code.
+    pub allocation_count: usize,
+    /// Number of basic blocks in the residual MIR CFG.
+    pub residual_blocks: usize,
+    /// Maximum live register pressure in any basic block.
+    pub register_pressure: usize,
+}
+
+impl MrscCostVector {
+    /// Checks Pareto dominance: self dominates other iff self is no worse on all
+    /// 4 dimensions and strictly better on at least one dimension.
+    pub fn dominates(&self, other: &MrscCostVector) -> bool {
+        let no_worse = self.dynamic_steps <= other.dynamic_steps
+            && self.allocation_count <= other.allocation_count
+            && self.residual_blocks <= other.residual_blocks
+            && self.register_pressure <= other.register_pressure;
+        let strictly_better = self.dynamic_steps < other.dynamic_steps
+            || self.allocation_count < other.allocation_count
+            || self.residual_blocks < other.residual_blocks
+            || self.register_pressure < other.register_pressure;
+        no_worse && strictly_better
+    }
+}
+
+/// Optimization objectives for selecting from the Pareto frontier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum MrscObjective {
+    /// Prioritizes minimizing dynamic steps and memory allocations.
+    #[default]
+    Speed,
+    /// Prioritizes minimizing code size (basic blocks) and register pressure.
+    Size,
+    /// Harmonious weighted balance across all 4 dimensions.
+    Balanced,
+}
+
+/// 4-dimensional cost model evaluating candidate residual programs.
+#[derive(Debug, Clone, Default)]
+pub struct MrscCostModel;
+
+impl MrscCostModel {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Compute the 4-dimensional cost vector for a candidate residual and its process tree.
+    pub fn evaluate(&self, residual: &MirFunction, tree: &ProcessTree) -> MrscCostVector {
+        let mut allocation_count = 0;
+        let mut max_live_registers = 0;
+
+        for block in &residual.blocks {
+            let mut block_locals = std::collections::HashSet::new();
+            for stmt in &block.statements {
+                let crate::mir::lower::Statement::Assign(dest, rval) = stmt;
+                block_locals.insert(dest.local.clone());
+                match rval {
+                    crate::mir::lower::Rvalue::Alloc(_)
+                    | crate::mir::lower::Rvalue::ClosureAlloc { .. }
+                    | crate::mir::lower::Rvalue::Thunk { .. } => {
+                        allocation_count += 1;
+                    }
+                    crate::mir::lower::Rvalue::Use(p)
+                    | crate::mir::lower::Rvalue::UnaryOp(_, p)
+                    | crate::mir::lower::Rvalue::Discriminant(p) => {
+                        block_locals.insert(p.local.clone());
+                    }
+                    crate::mir::lower::Rvalue::BinaryOp(_, l, r) => {
+                        block_locals.insert(l.local.clone());
+                        block_locals.insert(r.local.clone());
+                    }
+                    crate::mir::lower::Rvalue::Call(_, args) => {
+                        for a in args {
+                            block_locals.insert(a.local.clone());
+                        }
+                    }
+                    crate::mir::lower::Rvalue::EnumVariant { fields, .. } => {
+                        for f in fields {
+                            block_locals.insert(f.local.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if block_locals.len() > max_live_registers {
+                max_live_registers = block_locals.len();
+            }
+        }
+
+        let residual_blocks = residual.blocks.len();
+        let mut dynamic_steps = residual.blocks.iter().map(|b| b.statements.len()).sum::<usize>() as f64;
+        for block in &residual.blocks {
+            match &block.terminator {
+                Terminator::BranchIf { .. } => dynamic_steps += 10.0,
+                Terminator::Switch { targets, .. } => dynamic_steps += (targets.len() * 5) as f64,
+                _ => {}
+            }
+        }
+        dynamic_steps += (tree.stats.knots_tied * 10) as f64;
+        if tree.stats.loops_collapsed > 0 {
+            dynamic_steps = 1.0;
+        }
+
+        MrscCostVector {
+            dynamic_steps,
+            allocation_count,
+            residual_blocks,
+            register_pressure: max_live_registers.max(1),
+        }
+    }
+
+    /// Calculate scalar fitness score for an objective (lower score is better).
+    pub fn score(&self, cost: &MrscCostVector, objective: MrscObjective) -> f64 {
+        match objective {
+            MrscObjective::Speed => {
+                cost.dynamic_steps * 10.0
+                    + (cost.allocation_count as f64) * 50.0
+                    + (cost.residual_blocks as f64) * 1.0
+                    + (cost.register_pressure as f64) * 0.5
+            }
+            MrscObjective::Size => {
+                (cost.residual_blocks as f64) * 20.0
+                    + (cost.register_pressure as f64) * 10.0
+                    + (cost.allocation_count as f64) * 5.0
+                    + cost.dynamic_steps * 0.5
+            }
+            MrscObjective::Balanced => {
+                cost.dynamic_steps * 2.0
+                    + (cost.allocation_count as f64) * 15.0
+                    + (cost.residual_blocks as f64) * 5.0
+                    + (cost.register_pressure as f64) * 2.0
+            }
+        }
+    }
+}

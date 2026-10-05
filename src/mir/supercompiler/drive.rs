@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
 use crate::ast::{BinaryOp, UnaryOp};
@@ -21,6 +21,22 @@ pub enum ProcessEdge {
     BranchTrue(ProcessNodeId, SymTermId),
     BranchFalse(ProcessNodeId, SymTermId),
     Knot(ProcessNodeId),
+}
+
+/// CPS Driving task representing explicit steps in the work-queue trampoline.
+#[derive(Debug, Clone)]
+pub enum DriveTask {
+    /// Process the current basic block and evaluate statements & terminator.
+    ProcessNode {
+        node_id: ProcessNodeId,
+        depth: usize,
+    },
+    /// Handle CFG transition to `next_state` (instance checking, whistle & recurrence test, stepping).
+    HandleTransition {
+        from_id: ProcessNodeId,
+        next_state: Box<SymbolicState>,
+        depth: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +81,24 @@ pub struct WhistleFiring {
     pub ancestor_id: ProcessNodeId,
     /// The kind of stopping: HE whistle or header-visit cutoff.
     pub kind: WhistleKind,
+}
+
+/// Result of attempting to solve a loop recurrence to closed form.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecurrenceResult {
+    /// Successfully solved to a scalar closed-form state.
+    Solved(Box<SymbolicState>),
+    /// Loop contains internal branches (e.g. if-statements in body) and cannot be collapsed.
+    UnsolvableBranchingBody,
+    /// Loop history did not match any recognizable recurrence pattern.
+    UnsolvableNoPattern,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum AccumulatorLoopResult {
+    Solved(Vec<(Place, SymTermId)>, Place),
+    BranchingBody,
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,7 +180,7 @@ pub struct DriverConfig {
 impl Default for DriverConfig {
     fn default() -> Self {
         DriverConfig {
-            max_depth: 128,
+            max_depth: 2048,
             max_unroll_depth: 0,
             solve_recurrences: true,
             inline_calls: true,
@@ -160,6 +194,7 @@ impl Default for DriverConfig {
 pub struct SupercompilerDriver<'a> {
     func: &'a MirFunction,
     nodes: Vec<ProcessNode>,
+    parents: Vec<Option<ProcessNodeId>>,
     interner: TermInterner,
     block_map: HashMap<BasicBlockId, &'a MirBasicBlock>,
     loop_headers: std::collections::HashSet<BasicBlockId>,
@@ -197,12 +232,13 @@ impl<'a> SupercompilerDriver<'a> {
         SupercompilerDriver {
             func,
             nodes: Vec::new(),
+            parents: Vec::new(),
             interner: TermInterner::new(),
             block_map,
             loop_headers: loop_info.headers,
             natural_loops: loop_info.natural_loops,
             next_node_id: 0,
-            max_depth: 128,
+            max_depth: 2048,
             active_places,
             stats: SupercompilerStats::default(),
             program_funcs: HashMap::new(),
@@ -252,7 +288,6 @@ impl<'a> SupercompilerDriver<'a> {
     pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
         self.program_funcs = funcs
             .iter()
-            .filter(|f| f.name != self.func.name)
             .map(|f| (f.name.clone(), f))
             .collect();
         self
@@ -323,9 +358,13 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         let root_id = self.alloc_node(initial_state);
-        let mut ancestor_stack = Vec::new();
+        let mut work_queue = VecDeque::new();
+        work_queue.push_back(DriveTask::ProcessNode {
+            node_id: root_id,
+            depth: 0,
+        });
 
-        self.drive_node(root_id, &mut ancestor_stack, 0);
+        self.trampoline_drive(&mut work_queue);
 
         self.stats.nodes_explored = self.nodes.len();
 
@@ -348,14 +387,68 @@ impl<'a> SupercompilerDriver<'a> {
             return_term: None,
             overflow: false,
         });
+        self.parents.push(None);
         id
     }
 
-    fn drive_node(
+    fn alloc_child_node(&mut self, parent_id: ProcessNodeId, state: SymbolicState) -> ProcessNodeId {
+        let id = ProcessNodeId(self.next_node_id);
+        self.next_node_id += 1;
+        self.nodes.push(ProcessNode {
+            id,
+            state,
+            edges: Vec::new(),
+            return_term: None,
+            overflow: false,
+        });
+        self.parents.push(Some(parent_id));
+        id
+    }
+
+    pub fn reconstruct_ancestors(&self, start_id: ProcessNodeId) -> Vec<ProcessNodeId> {
+        let mut ancestors = Vec::new();
+        let mut curr = self.parents.get(start_id.0).copied().flatten();
+        while let Some(node_id) = curr {
+            ancestors.push(node_id);
+            curr = self.parents.get(node_id.0).copied().flatten();
+        }
+        ancestors.reverse();
+        ancestors
+    }
+
+    pub fn trampoline_drive(&mut self, work_queue: &mut VecDeque<DriveTask>) {
+        while let Some(task) = work_queue.pop_back() {
+            match task {
+                DriveTask::ProcessNode { node_id, depth } => {
+                    self.execute_process_node(node_id, depth, work_queue);
+                }
+                DriveTask::HandleTransition {
+                    from_id,
+                    next_state,
+                    depth,
+                } => {
+                    self.execute_handle_transition(from_id, *next_state, depth, work_queue);
+                }
+            }
+        }
+    }
+
+    pub fn drive_node(
         &mut self,
         node_id: ProcessNodeId,
-        ancestor_stack: &mut Vec<ProcessNodeId>,
+        _ancestor_stack: &mut Vec<ProcessNodeId>,
         depth: usize,
+    ) {
+        let mut work_queue = VecDeque::new();
+        work_queue.push_back(DriveTask::ProcessNode { node_id, depth });
+        self.trampoline_drive(&mut work_queue);
+    }
+
+    fn execute_process_node(
+        &mut self,
+        node_id: ProcessNodeId,
+        depth: usize,
+        work_queue: &mut VecDeque<DriveTask>,
     ) {
         if depth >= self.max_depth || self.nodes.len() >= self.config.max_inline_nodes {
             self.nodes[node_id.0].overflow = true;
@@ -384,7 +477,11 @@ impl<'a> SupercompilerDriver<'a> {
             Terminator::Branch { target } => {
                 let mut next_state = working_state;
                 next_state.block = target.clone();
-                self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                work_queue.push_back(DriveTask::HandleTransition {
+                    from_id: node_id,
+                    next_state: Box::new(next_state),
+                    depth,
+                });
             }
             Terminator::BranchIf {
                 condition,
@@ -431,7 +528,11 @@ impl<'a> SupercompilerDriver<'a> {
                         next_state.block = then_target.clone();
                         next_state.path_constraints.add_condition(cond_term, true, &self.interner);
                         narrow_condition_intervals(cond_term, true, &mut next_state, &self.interner);
-                        self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                        work_queue.push_back(DriveTask::HandleTransition {
+                            from_id: node_id,
+                            next_state: Box::new(next_state),
+                            depth,
+                        });
                     }
                     Some(false) => {
                         self.stats.branches_pruned += 1;
@@ -439,7 +540,11 @@ impl<'a> SupercompilerDriver<'a> {
                         next_state.block = else_target.clone();
                         next_state.path_constraints.add_condition(cond_term, false, &self.interner);
                         narrow_condition_intervals(cond_term, false, &mut next_state, &self.interner);
-                        self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                        work_queue.push_back(DriveTask::HandleTransition {
+                            from_id: node_id,
+                            next_state: Box::new(next_state),
+                            depth,
+                        });
                     }
                     None => {
                         let mut then_state = working_state.clone();
@@ -462,12 +567,20 @@ impl<'a> SupercompilerDriver<'a> {
 
                         if then_dead && !else_dead {
                             self.stats.branches_pruned += 1;
-                            self.handle_transition(node_id, else_state, ancestor_stack, depth);
+                            work_queue.push_back(DriveTask::HandleTransition {
+                                from_id: node_id,
+                                next_state: Box::new(else_state),
+                                depth,
+                            });
                             return;
                         }
                         if else_dead && !then_dead {
                             self.stats.branches_pruned += 1;
-                            self.handle_transition(node_id, then_state, ancestor_stack, depth);
+                            work_queue.push_back(DriveTask::HandleTransition {
+                                from_id: node_id,
+                                next_state: Box::new(then_state),
+                                depth,
+                            });
                             return;
                         }
                         if then_dead && else_dead {
@@ -476,7 +589,8 @@ impl<'a> SupercompilerDriver<'a> {
                         }
 
                         if self.nodes.len() >= self.config.max_inline_nodes {
-                            for &anc_id in ancestor_stack.iter().rev() {
+                            let ancestors = self.reconstruct_ancestors(node_id);
+                            for &anc_id in ancestors.iter().rev() {
                                 if self.nodes[anc_id.0].state.block == self.nodes[node_id.0].state.block {
                                     self.stats.knots_tied += 1;
                                     self.nodes[node_id.0].edges.push(ProcessEdge::Knot(anc_id));
@@ -488,20 +602,25 @@ impl<'a> SupercompilerDriver<'a> {
                         }
 
                         // Split into two child branches in the process tree
-                        let then_node = self.alloc_node(then_state);
+                        let then_node = self.alloc_child_node(node_id, then_state);
                         self.nodes[node_id.0]
                             .edges
                             .push(ProcessEdge::BranchTrue(then_node, cond_term));
 
-                        let else_node = self.alloc_node(else_state);
+                        let else_node = self.alloc_child_node(node_id, else_state);
                         self.nodes[node_id.0]
                             .edges
                             .push(ProcessEdge::BranchFalse(else_node, cond_term));
 
-                        ancestor_stack.push(node_id);
-                        self.drive_node(then_node, ancestor_stack, depth + 1);
-                        self.drive_node(else_node, ancestor_stack, depth + 1);
-                        ancestor_stack.pop();
+                        // Push else_node first, then then_node second so then_node is popped and explored first (DFS order)
+                        work_queue.push_back(DriveTask::ProcessNode {
+                            node_id: else_node,
+                            depth: depth + 1,
+                        });
+                        work_queue.push_back(DriveTask::ProcessNode {
+                            node_id: then_node,
+                            depth: depth + 1,
+                        });
                     }
                 }
             }
@@ -523,7 +642,11 @@ impl<'a> SupercompilerDriver<'a> {
                             self.stats.branches_pruned += targets.len() - 1;
                             let mut next_state = working_state.clone();
                             next_state.block = target_bb.clone();
-                            self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                            work_queue.push_back(DriveTask::HandleTransition {
+                                from_id: node_id,
+                                next_state: Box::new(next_state),
+                                depth,
+                            });
                             matched = true;
                             break;
                         }
@@ -532,10 +655,15 @@ impl<'a> SupercompilerDriver<'a> {
                         self.stats.branches_pruned += targets.len();
                         let mut next_state = working_state;
                         next_state.block = default.clone();
-                        self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                        work_queue.push_back(DriveTask::HandleTransition {
+                            from_id: node_id,
+                            next_state: Box::new(next_state),
+                            depth,
+                        });
                     }
                 } else {
                     let all_case_vals: Vec<i64> = targets.iter().map(|(v, _)| *v).collect();
+                    let mut arm_nodes = Vec::new();
 
                     for (i, (case_val, target_bb)) in targets.iter().enumerate() {
                         let mut arm_state = working_state.clone();
@@ -557,13 +685,11 @@ impl<'a> SupercompilerDriver<'a> {
                             }
                         }
 
-                        let arm_node = self.alloc_node(arm_state);
+                        let arm_node = self.alloc_child_node(node_id, arm_state);
                         self.nodes[node_id.0]
                             .edges
                             .push(ProcessEdge::BranchTrue(arm_node, cond_eq));
-                        ancestor_stack.push(node_id);
-                        self.drive_node(arm_node, ancestor_stack, depth + 1);
-                        ancestor_stack.pop();
+                        arm_nodes.push(arm_node);
                     }
 
                     let mut def_state = working_state;
@@ -571,13 +697,22 @@ impl<'a> SupercompilerDriver<'a> {
                     for &v in &all_case_vals {
                         def_state.path_constraints.add_not_equal_int(val_term, v);
                     }
-                    let def_node = self.alloc_node(def_state);
+                    let def_node = self.alloc_child_node(node_id, def_state);
                     self.nodes[node_id.0]
                         .edges
                         .push(ProcessEdge::Step(def_node));
-                    ancestor_stack.push(node_id);
-                    self.drive_node(def_node, ancestor_stack, depth + 1);
-                    ancestor_stack.pop();
+
+                    // Push def_node first, then arm_nodes in reverse order so arm_0 is visited first
+                    work_queue.push_back(DriveTask::ProcessNode {
+                        node_id: def_node,
+                        depth: depth + 1,
+                    });
+                    for arm_node in arm_nodes.into_iter().rev() {
+                        work_queue.push_back(DriveTask::ProcessNode {
+                            node_id: arm_node,
+                            depth: depth + 1,
+                        });
+                    }
                 }
             }
             Terminator::IndirectCall { next, dest, callee, args } => {
@@ -638,16 +773,132 @@ impl<'a> SupercompilerDriver<'a> {
                 };
 
                 next_state.set_value(dest.clone(), result_term);
-                let next_node = self.alloc_node(next_state);
+                let next_node = self.alloc_child_node(node_id, next_state);
                 self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
-                ancestor_stack.push(node_id);
-                self.drive_node(next_node, ancestor_stack, depth + 1);
-                ancestor_stack.pop();
+                work_queue.push_back(DriveTask::ProcessNode {
+                    node_id: next_node,
+                    depth: depth + 1,
+                });
             }
             Terminator::Fork { left, .. } => {
                 let mut next_state = working_state;
                 next_state.block = left.clone();
-                self.handle_transition(node_id, next_state, ancestor_stack, depth);
+                work_queue.push_back(DriveTask::HandleTransition {
+                    from_id: node_id,
+                    next_state: Box::new(next_state),
+                    depth,
+                });
+            }
+            Terminator::Force { thunk, result, cont } => {
+                let thunk_place = Place { local: thunk.clone(), projections: vec![] };
+                let thunk_res = self.resolve_place(&thunk_place, &working_state);
+                let thunk_term = working_state.get_value(&thunk_res);
+
+                let mut next_state = working_state;
+                next_state.block = cont.clone();
+
+                let result_place = Place { local: result.clone(), projections: vec![] };
+                let result_ty = self.get_dest_type(&result_place);
+
+                let forced_term = if let Some(thunk_term_id) = thunk_term {
+                    let root_id = next_state.path_constraints.find_leader(thunk_term_id);
+                    if let SymTerm::Thunk(body_name, env_terms, _) = self.interner.get(root_id).clone() {
+                        let body_func = self
+                            .program_funcs
+                            .get(&body_name)
+                            .copied()
+                            .or_else(|| if self.func.name == body_name { Some(self.func) } else { None })
+                            .or_else(|| self.resolve_closure_function(&body_name, env_terms.len(), 0));
+
+                        if let Some(callee_func) = body_func {
+                            let depth_ok = self.call_stack.len() < self.config.max_inline_depth;
+                            let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
+                            if depth_ok && budget_ok {
+                                self.try_drive_closure_call(
+                                    callee_func,
+                                    &env_terms,
+                                    &[],
+                                    &next_state,
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let final_result = forced_term.unwrap_or_else(|| self.interner.intern_var(result_place.clone(), result_ty));
+                next_state.set_value(result_place, final_result);
+                let next_node = self.alloc_child_node(node_id, next_state);
+                self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
+                work_queue.push_back(DriveTask::ProcessNode {
+                    node_id: next_node,
+                    depth: depth + 1,
+                });
+            }
+            Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
+                let local_res = self.resolve_place(local, &working_state);
+                let local_term = working_state
+                    .get_value(&local_res)
+                    .unwrap_or_else(|| self.interner.intern_var(local_res.clone(), Type::I64));
+                let lead_val = working_state.path_constraints.find_leader(local_term);
+
+                if let SymTerm::ConstInt(tag, _) = self.interner.get(lead_val) {
+                    if *tag == *expected_tag {
+                        self.stats.branches_pruned += 1;
+                        let mut next_state = working_state;
+                        next_state.block = fast_path.clone();
+                        work_queue.push_back(DriveTask::HandleTransition {
+                            from_id: node_id,
+                            next_state: Box::new(next_state),
+                            depth,
+                        });
+                    } else {
+                        self.stats.branches_pruned += 1;
+                        let mut next_state = working_state;
+                        next_state.block = deopt_stub.clone();
+                        work_queue.push_back(DriveTask::HandleTransition {
+                            from_id: node_id,
+                            next_state: Box::new(next_state),
+                            depth,
+                        });
+                    }
+                } else {
+                    let mut fast_state = working_state.clone();
+                    fast_state.block = fast_path.clone();
+                    let tag_term = self.interner.intern_int(*expected_tag);
+                    let cond_eq = self.interner.intern_binary(
+                        BinaryOp::Eq,
+                        local_term,
+                        tag_term,
+                        Type::Bool,
+                    );
+                    fast_state.path_constraints.add_condition(cond_eq, true, &self.interner);
+
+                    let mut deopt_state = working_state;
+                    deopt_state.block = deopt_stub.clone();
+                    deopt_state.path_constraints.add_condition(cond_eq, false, &self.interner);
+
+                    let fast_node = self.alloc_child_node(node_id, fast_state);
+                    let deopt_node = self.alloc_child_node(node_id, deopt_state);
+                    self.nodes[node_id.0].edges.push(ProcessEdge::BranchTrue(fast_node, cond_eq));
+                    self.nodes[node_id.0].edges.push(ProcessEdge::BranchFalse(deopt_node, cond_eq));
+
+                    work_queue.push_back(DriveTask::ProcessNode {
+                        node_id: deopt_node,
+                        depth: depth + 1,
+                    });
+                    work_queue.push_back(DriveTask::ProcessNode {
+                        node_id: fast_node,
+                        depth: depth + 1,
+                    });
+                }
             }
             Terminator::Unreachable => {}
         }
@@ -920,37 +1171,52 @@ impl<'a> SupercompilerDriver<'a> {
                     })
                     .collect();
 
-                let mut inlined_res = None;
-                if self.config.inline_calls {
-                    let in_loop_body = self
-                        .natural_loops
-                        .values()
-                        .any(|loop_blocks| loop_blocks.contains(&state.block));
-
-                    let loop_invariance_ok = if in_loop_body && !self.config.inline_loop_body_calls {
-                        self.all_args_loop_invariant(&arg_terms, &state.block)
-                    } else {
-                        true
-                    };
-
-                    let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
-                    let depth_ok = self.call_stack.len() < self.config.max_inline_depth
-                        && callee_count < self.config.max_inline_depth;
-                    let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
-
-                    if loop_invariance_ok && depth_ok && budget_ok {
-                        if let Some(callee_func) = self.program_funcs.get(callee).copied() {
-                            inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms, state);
-                            if inlined_res.is_some() {
-                                self.stats.calls_inlined += 1;
-                            }
-                        }
+                // Check for mutual recursion / inter-procedural call cycle
+                let mut cycle_res = None;
+                if let Some(cycle_start) = self.call_stack.iter().position(|s| s == callee) {
+                    let cycle = self.call_stack[cycle_start..].to_vec();
+                    if let Some(closed_term) = self.try_solve_call_cycle(&cycle, callee, &arg_terms) {
+                        self.stats.loops_collapsed += 1;
+                        cycle_res = Some(closed_term);
                     }
                 }
 
-                inlined_res.unwrap_or_else(|| {
-                    self.interner.intern_call(callee.clone(), arg_terms, dest_ty.clone())
-                })
+                if let Some(closed) = cycle_res {
+                    closed
+                } else {
+                    let mut inlined_res = None;
+                    if self.config.inline_calls {
+                        let in_loop_body = self
+                            .natural_loops
+                            .values()
+                            .any(|loop_blocks| loop_blocks.contains(&state.block));
+
+                        let loop_invariance_ok = if in_loop_body && !self.config.inline_loop_body_calls {
+                            self.all_args_loop_invariant(&arg_terms, &state.block)
+                        } else {
+                            true
+                        };
+
+                        let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
+                        let depth_ok = self.call_stack.len() < self.config.max_inline_depth
+                            && callee_count < self.config.max_inline_depth;
+                        let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
+                        let not_recursive = !self.call_stack.contains(callee);
+
+                        if loop_invariance_ok && depth_ok && budget_ok && not_recursive {
+                            if let Some(callee_func) = self.program_funcs.get(callee).copied() {
+                                inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms, state);
+                                if inlined_res.is_some() {
+                                    self.stats.calls_inlined += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    inlined_res.unwrap_or_else(|| {
+                        self.interner.intern_call(callee.clone(), arg_terms, dest_ty.clone())
+                    })
+                }
             }
             Rvalue::Phi(incoming) => {
                 let mut phi_ops = Vec::new();
@@ -996,19 +1262,50 @@ impl<'a> SupercompilerDriver<'a> {
             Rvalue::FnPtr(fn_name) => {
                 self.interner.intern_closure_val(fn_name.clone(), vec![], dest_ty)
             }
+            Rvalue::Thunk { body, env } => {
+                let env_terms: Vec<SymTermId> = env
+                    .iter()
+                    .map(|name| {
+                        let p = Place { local: name.clone(), projections: vec![] };
+                        let p_res = self.resolve_place(&p, state);
+                        state
+                            .get_value(&p_res)
+                            .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
+                    })
+                    .collect();
+                self.interner.intern_thunk(body.clone(), env_terms, dest_ty)
+            }
             _ => self.interner.intern_var(dest.clone(), dest_ty),
         };
 
         state.set_value(dest.clone(), term);
     }
 
-    fn handle_transition(
+    pub fn handle_transition(
         &mut self,
         from_id: ProcessNodeId,
         next_state: SymbolicState,
-        ancestor_stack: &mut Vec<ProcessNodeId>,
+        _ancestor_stack: &mut Vec<ProcessNodeId>,
         depth: usize,
     ) {
+        let mut work_queue = VecDeque::new();
+        work_queue.push_back(DriveTask::HandleTransition {
+            from_id,
+            next_state: Box::new(next_state),
+            depth,
+        });
+        self.trampoline_drive(&mut work_queue);
+    }
+
+    fn execute_handle_transition(
+        &mut self,
+        from_id: ProcessNodeId,
+        next_state: SymbolicState,
+        depth: usize,
+        work_queue: &mut VecDeque<DriveTask>,
+    ) {
+        let ancestor_stack = self.reconstruct_ancestors(from_id);
+
         // 1. Knot-tying test: is next_state an exact instance of an ancestor?
         let header_visits = ancestor_stack
             .iter()
@@ -1053,61 +1350,125 @@ impl<'a> SupercompilerDriver<'a> {
                 .filter(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
                 .count();
 
-            if header_visits >= 3 {
+            let has_internal_branch = self.natural_loops.get(&next_state.block).is_some_and(|blocks| {
+                blocks.iter().any(|b_id| {
+                    *b_id != next_state.block
+                        && self.block_map.get(b_id).is_some_and(|b| {
+                            match &b.terminator {
+                                Terminator::BranchIf { then_target, else_target, .. } => {
+                                    blocks.contains(then_target) && blocks.contains(else_target)
+                                }
+                                Terminator::Switch { targets, default, .. } => {
+                                    targets.iter().all(|(_, t)| blocks.contains(t)) && blocks.contains(default)
+                                }
+                                _ => false,
+                            }
+                        })
+                })
+            });
+
+            if header_visits >= 3 || (header_visits >= 1 && has_internal_branch) {
                 if let Some(&first_anc_id) = ancestor_stack
                     .iter()
                     .find(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
                 {
                     let anc_state = self.nodes[first_anc_id.0].state.clone();
-                    if let Some(solved_state) =
-                        self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack)
-                    {
-                        self.stats.loops_collapsed += 1;
-                        let next_node = self.alloc_node(solved_state);
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
-                        ancestor_stack.push(from_id);
-                        self.drive_node(next_node, ancestor_stack, depth + 1);
-                        ancestor_stack.pop();
-                        return;
-                    } else if header_visits >= 12 {
-                        // Repeated visits but recurrence solver failed: tie knot without partial unrolling
-                        for &a_id in ancestor_stack.iter().rev() {
-                            let a_st = &self.nodes[a_id.0].state;
-                            if is_instance_of(a_st, &next_state, &self.active_places) {
+                    match self.try_solve_loop_recurrence(&anc_state, &next_state, &ancestor_stack) {
+                        RecurrenceResult::Solved(solved_state) => {
+                            self.stats.loops_collapsed += 1;
+                            let next_node = self.alloc_child_node(from_id, *solved_state);
+                            self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
+                            work_queue.push_back(DriveTask::ProcessNode {
+                                node_id: next_node,
+                                depth: depth + 1,
+                            });
+                            return;
+                        }
+                        RecurrenceResult::UnsolvableBranchingBody => {
+                            // Loop contains internal branches and cannot be collapsed to a scalar closed form.
+                            // Tie knot immediately with MSG generalization to prevent wasteful partial unrolling.
+                            for &a_id in ancestor_stack.iter().rev() {
+                                let a_st = &self.nodes[a_id.0].state;
+                                if is_instance_of(a_st, &next_state, &self.active_places) {
+                                    self.stats.knots_tied += 1;
+                                    self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                    self.witness.firings.push(WhistleFiring {
+                                        from_id,
+                                        ancestor_id: a_id,
+                                        kind: WhistleKind::HeaderVisitCutoff,
+                                    });
+                                    return;
+                                }
+                            }
+                            let mut gen_state = anc_state.clone();
+                            let mut next_var_id = self.interner.len();
+                            for place in &self.active_places {
+                                if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                    if t_anc != t_curr {
+                                        let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                            t_anc,
+                                            t_curr,
+                                            &mut self.interner,
+                                            &mut next_var_id,
+                                        );
+                                        gen_state.set_value(place.clone(), gen_res.common_term);
+                                    }
+                                }
+                            }
+                            let gen_node_id = self.alloc_child_node(from_id, gen_state);
+                            self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(first_anc_id));
+                            self.stats.knots_tied += 1;
+                            self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                            self.witness.firings.push(WhistleFiring {
+                                from_id,
+                                ancestor_id: gen_node_id,
+                                kind: WhistleKind::HeaderVisitCutoff,
+                            });
+                            return;
+                        }
+                        RecurrenceResult::UnsolvableNoPattern => {
+                            if header_visits >= 12 {
+                                // Repeated visits but recurrence solver failed: tie knot without partial unrolling
+                                for &a_id in ancestor_stack.iter().rev() {
+                                    let a_st = &self.nodes[a_id.0].state;
+                                    if is_instance_of(a_st, &next_state, &self.active_places) {
+                                        self.stats.knots_tied += 1;
+                                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                        self.witness.firings.push(WhistleFiring {
+                                            from_id,
+                                            ancestor_id: a_id,
+                                            kind: WhistleKind::HeaderVisitCutoff,
+                                        });
+                                        return;
+                                    }
+                                }
+                                let mut gen_state = anc_state.clone();
+                                let mut next_var_id = self.interner.len();
+                                for place in &self.active_places {
+                                    if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                        if t_anc != t_curr {
+                                            let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                                t_anc,
+                                                t_curr,
+                                                &mut self.interner,
+                                                &mut next_var_id,
+                                            );
+                                            gen_state.set_value(place.clone(), gen_res.common_term);
+                                        }
+                                    }
+                                }
+                                let gen_node_id = self.alloc_child_node(from_id, gen_state);
+                                self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(first_anc_id));
                                 self.stats.knots_tied += 1;
-                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
                                 self.witness.firings.push(WhistleFiring {
                                     from_id,
-                                    ancestor_id: a_id,
+                                    ancestor_id: gen_node_id,
                                     kind: WhistleKind::HeaderVisitCutoff,
                                 });
                                 return;
                             }
                         }
-                        let mut gen_state = anc_state.clone();
-                        let mut next_var_id = self.interner.len();
-                        for place in &self.active_places {
-                            if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
-                                if t_anc != t_curr {
-                                    let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
-                                        t_anc,
-                                        t_curr,
-                                        &mut self.interner,
-                                        &mut next_var_id,
-                                    );
-                                    gen_state.set_value(place.clone(), gen_res.common_term);
-                                }
-                            }
-                        }
-                        let gen_node_id = self.alloc_node(gen_state);
-                        self.stats.knots_tied += 1;
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
-                        self.witness.firings.push(WhistleFiring {
-                            from_id,
-                            ancestor_id: gen_node_id,
-                            kind: WhistleKind::HeaderVisitCutoff,
-                        });
-                        return;
                     }
                 }
             }
@@ -1117,15 +1478,16 @@ impl<'a> SupercompilerDriver<'a> {
                 if state_embeds(&anc_state, &next_state, &self.active_places, &self.interner) {
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
-                    if let Some(solved_state) =
-                        self.try_solve_loop_recurrence(&anc_state, &next_state, ancestor_stack)
+                    if let RecurrenceResult::Solved(solved_state) =
+                        self.try_solve_loop_recurrence(&anc_state, &next_state, &ancestor_stack)
                     {
                         self.stats.loops_collapsed += 1;
-                        let next_node = self.alloc_node(solved_state);
+                        let next_node = self.alloc_child_node(from_id, *solved_state);
                         self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
-                        ancestor_stack.push(from_id);
-                        self.drive_node(next_node, ancestor_stack, depth + 1);
-                        ancestor_stack.pop();
+                        work_queue.push_back(DriveTask::ProcessNode {
+                            node_id: next_node,
+                            depth: depth + 1,
+                        });
                         return;
                     } else {
                         // Whistle blew but recurrence solver failed (coupled / modular recurrence)
@@ -1157,7 +1519,8 @@ impl<'a> SupercompilerDriver<'a> {
                                 }
                             }
                         }
-                        let gen_node_id = self.alloc_node(gen_state);
+                        let gen_node_id = self.alloc_child_node(from_id, gen_state);
+                        self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(anc_id));
                         self.stats.knots_tied += 1;
                         self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
                         self.witness.firings.push(WhistleFiring {
@@ -1172,12 +1535,12 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         // 3. Normal transition
-        let next_node = self.alloc_node(next_state);
+        let next_node = self.alloc_child_node(from_id, next_state);
         self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
-
-        ancestor_stack.push(from_id);
-        self.drive_node(next_node, ancestor_stack, depth + 1);
-        ancestor_stack.pop();
+        work_queue.push_back(DriveTask::ProcessNode {
+            node_id: next_node,
+            depth: depth + 1,
+        });
     }
 
     fn try_solve_loop_recurrence(
@@ -1185,7 +1548,7 @@ impl<'a> SupercompilerDriver<'a> {
         anc: &SymbolicState,
         curr: &SymbolicState,
         ancestor_stack: &[ProcessNodeId],
-    ) -> Option<SymbolicState> {
+    ) -> RecurrenceResult {
         // If the loop contains array writes, we cannot collapse it to a scalar closed form
         if let Some(blocks) = self.natural_loops.get(&curr.block) {
             let loop_has_array_writes = blocks.iter().any(|b_id| {
@@ -1199,7 +1562,7 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             });
             if loop_has_array_writes {
-                return None;
+                return RecurrenceResult::UnsolvableNoPattern;
             }
         }
 
@@ -1299,33 +1662,47 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
         }
-        let n_term = bound_term.unwrap_or_else(|| {
-            self.interner.intern_var(
-                Place {
-                    local: "n".to_string(),
-                    projections: vec![],
-                },
-                Type::I64,
-            )
-        });
+        let n_term = match bound_term {
+            Some(t) => t,
+            None => return RecurrenceResult::UnsolvableNoPattern,
+        };
 
         let mut solved_places = std::collections::HashSet::new();
-        let mut solved_acc_place = None;
-        if let Some((acc_place, closed_form, iv_place)) = self.try_solve_accumulator_loop(anc, curr, n_term) {
-            solved_state.set_value(acc_place.clone(), closed_form);
-            solved_state.set_value(iv_place.clone(), n_term);
-            solved_places.insert(acc_place.local.clone());
-            solved_places.insert(iv_place.local.clone());
-            solved_acc_place = Some(acc_place);
-            any_solved = true;
+        let mut had_branching_body = false;
+        match self.try_solve_accumulator_loop(anc, curr, n_term) {
+            AccumulatorLoopResult::Solved(solved_accs, iv_place) => {
+                for (acc_place, closed_form) in &solved_accs {
+                    solved_state.set_value(acc_place.clone(), *closed_form);
+                    solved_places.insert(acc_place.local.clone());
+                }
+                let iv_exit = if let Some(init_t) = anc.get_value(&iv_place) {
+                    if let SymTerm::ConstInt(iv_init_val, _) = self.interner.get(init_t) {
+                        if *iv_init_val != 0 {
+                            let init_term = self.interner.intern_int(*iv_init_val);
+                            self.interner.intern_binary(BinaryOp::Add, init_term, n_term, Type::I64)
+                        } else {
+                            n_term
+                        }
+                    } else {
+                        n_term
+                    }
+                } else {
+                    n_term
+                };
+                solved_state.set_value(iv_place.clone(), iv_exit);
+                solved_places.insert(iv_place.local.clone());
+                any_solved = true;
+            }
+            AccumulatorLoopResult::BranchingBody => {
+                had_branching_body = true;
+            }
+            AccumulatorLoopResult::NotApplicable => {}
         }
 
         let mut unsolved_places = Vec::new();
         for place in &self.active_places {
-            if let Some(ref acc_p) = solved_acc_place {
-                if place.local == acc_p.local {
-                    continue;
-                }
+            if solved_places.contains(&place.local) {
+                continue;
             }
 
             // Collect historical values of this place from loop header ancestors
@@ -1462,9 +1839,11 @@ impl<'a> SupercompilerDriver<'a> {
         let all_mutating_solved = mutating_places.iter().all(|local| solved_places.contains(*local));
 
         if any_solved && all_mutating_solved {
-            Some(solved_state)
+            RecurrenceResult::Solved(Box::new(solved_state))
+        } else if had_branching_body {
+            RecurrenceResult::UnsolvableBranchingBody
         } else {
-            None
+            RecurrenceResult::UnsolvableNoPattern
         }
     }
 
@@ -1473,17 +1852,33 @@ impl<'a> SupercompilerDriver<'a> {
         base_state: &SymbolicState,
         curr: &SymbolicState,
         n_term: SymTermId,
-    ) -> Option<(Place, SymTermId, Place)> {
-        let blocks = self.natural_loops.get(&curr.block)?;
-        let header_block = self.block_map.get(&curr.block)?;
+    ) -> AccumulatorLoopResult {
+        let blocks = match self.natural_loops.get(&curr.block) {
+            Some(b) => b,
+            None => return AccumulatorLoopResult::NotApplicable,
+        };
+        let header_block = match self.block_map.get(&curr.block) {
+            Some(b) => b,
+            None => return AccumulatorLoopResult::NotApplicable,
+        };
 
-        // If the loop contains internal branches (e.g. if-statements),
+        // If the loop contains internal branches (e.g. if-statements where all branch targets remain in loop),
         // body execution cannot be simulated as a linear sequence of statements.
         for b_id in blocks {
             if *b_id != curr.block {
                 if let Some(b) = self.block_map.get(b_id) {
-                    if matches!(b.terminator, Terminator::BranchIf { .. } | Terminator::Switch { .. }) {
-                        return None;
+                    match &b.terminator {
+                        Terminator::BranchIf { then_target, else_target, .. }
+                            if blocks.contains(then_target) && blocks.contains(else_target) =>
+                        {
+                            return AccumulatorLoopResult::BranchingBody;
+                        }
+                        Terminator::Switch { targets, default, .. }
+                            if targets.iter().all(|(_, t)| blocks.contains(t)) && blocks.contains(default) =>
+                        {
+                            return AccumulatorLoopResult::BranchingBody;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1510,152 +1905,226 @@ impl<'a> SupercompilerDriver<'a> {
                         }
                     }
                 }
-                iv_found?
+                match iv_found {
+                    Some(iv) => iv,
+                    None => return AccumulatorLoopResult::NotApplicable,
+                }
             }
-            _ => return None,
+            _ => return AccumulatorLoopResult::NotApplicable,
         };
 
-        // Find accumulator candidates in loop body blocks (excluding header)
+        // Identify all mutating places across the loop body blocks (excluding header)
+        let mut mutating_candidates = Vec::new();
         for place in &self.active_places {
             if place.local == iv.local {
                 continue;
             }
-
-            // Check if place is updated as place = place + delta or place = delta + place
-            let mut delta_place_opt = None;
-            let mut update_count = 0;
-
+            match (base_state.get_value(place), curr.get_value(place)) {
+                (Some(t_anc), Some(t_curr)) if t_anc != t_curr => {}
+                _ => continue,
+            }
+            let mut is_mutated = false;
             for b_id in blocks {
                 if *b_id == curr.block {
                     continue;
                 }
                 if let Some(b) = self.block_map.get(b_id) {
-                    for (idx, stmt) in b.statements.iter().enumerate() {
-                        let Statement::Assign(dest, rval) = stmt;
+                    for stmt in &b.statements {
+                        let Statement::Assign(dest, _) = stmt;
                         if dest.local == place.local {
-                            update_count += 1;
-                            if let Rvalue::BinaryOp(BinaryOp::Add, l, r) = rval {
-                                if is_place_or_alias(l, place, &b.statements, idx) {
-                                    delta_place_opt = Some(r.clone());
-                                } else if is_place_or_alias(r, place, &b.statements, idx) {
-                                    delta_place_opt = Some(l.clone());
-                                }
-                            }
+                            is_mutated = true;
+                            break;
                         }
                     }
                 }
-            }
-
-            if update_count != 1 {
-                continue;
-            }
-
-            let delta_place = match delta_place_opt {
-                Some(d) => d,
-                None => continue,
-            };
-
-            // Get initial value of place and iv from base_state
-            let initial_acc = if let Some(t) = base_state.get_value(place) {
-                if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
-                    *val
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            let initial_iv = if let Some(t) = base_state.get_value(&iv) {
-                if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
-                    *val
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            // Evaluate delta for iterations k = 0..7
-            let mut samples = Vec::new();
-            let mut running_sum = initial_acc;
-            samples.push(running_sum);
-            let mut eval_success = true;
-
-            for k in 0..7 {
-                let mut env: HashMap<String, i64> = HashMap::new();
-
-                // Populate constants and known values from base_state
-                for p in &self.active_places {
-                    if let Some(t) = base_state.get_value(p) {
-                        if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
-                            env.insert(p.local.clone(), *v);
-                        }
-                    }
-                }
-                // Bind iv to initial_iv + k
-                env.insert(iv.local.clone(), initial_iv + k);
-
-                // Evaluate statements in loop body
-                for b_id in blocks {
-                    if *b_id == curr.block {
-                        continue;
-                    }
-                    if let Some(b) = self.block_map.get(b_id) {
-                        for stmt in &b.statements {
-                            let Statement::Assign(dest, rval) = stmt;
-                            if dest.local == place.local {
-                                continue;
-                            }
-                            let val_opt = match rval {
-                                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) => Some(*v),
-                                Rvalue::Use(p) => env.get(&p.local).copied(),
-                                Rvalue::BinaryOp(op, l, r) => {
-                                    if let (Some(&lv), Some(&rv)) = (env.get(&l.local), env.get(&r.local)) {
-                                        match op {
-                                            BinaryOp::Add => Some(lv.wrapping_add(rv)),
-                                            BinaryOp::Sub => Some(lv.wrapping_sub(rv)),
-                                            BinaryOp::Mul => Some(lv.wrapping_mul(rv)),
-                                            BinaryOp::Div => if rv != 0 { Some(lv / rv) } else { None },
-                                            BinaryOp::Mod => if rv != 0 { Some(lv % rv) } else { None },
-                                            BinaryOp::BitAnd => Some(lv & rv),
-                                            BinaryOp::BitOr => Some(lv | rv),
-                                            BinaryOp::BitXor => Some(lv ^ rv),
-                                            BinaryOp::Shl => Some(lv << (rv as u32 % 64)),
-                                            BinaryOp::Shr => Some(lv >> (rv as u32 % 64)),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                }
-                                Rvalue::UnaryOp(crate::ast::UnaryOp::Neg, p) => env.get(&p.local).map(|v| -v),
-                                _ => None,
-                            };
-                            if let Some(v) = val_opt {
-                                env.insert(dest.local.clone(), v);
-                            }
-                        }
-                    }
-                }
-
-                if let Some(&delta_val) = env.get(&delta_place.local) {
-                    running_sum = running_sum.wrapping_add(delta_val);
-                    samples.push(running_sum);
-                } else {
-                    eval_success = false;
+                if is_mutated {
                     break;
                 }
             }
+            if is_mutated {
+                mutating_candidates.push(place.clone());
+            }
+        }
 
-            if eval_success && samples.len() >= 4 {
-                if let Some(closed_form) = solve_recurrence(&samples, n_term, &mut self.interner) {
-                    return Some((place.clone(), closed_form, iv));
+        if mutating_candidates.is_empty() {
+            return AccumulatorLoopResult::NotApplicable;
+        }
+
+        // Determine loop body block execution order from header successor to latch
+        let mut body_order = Vec::new();
+        let mut curr_b_opt = None;
+        for succ in header_block.terminator.successors() {
+            if blocks.contains(&succ) && succ != curr.block {
+                curr_b_opt = Some(succ);
+                break;
+            }
+        }
+        let mut visited_body = std::collections::HashSet::new();
+        while let Some(b_id) = curr_b_opt {
+            if !visited_body.insert(b_id.clone()) {
+                break;
+            }
+            let b = match self.block_map.get(&b_id) {
+                Some(b) => b,
+                None => break,
+            };
+            body_order.push(b_id);
+            let mut next_b = None;
+            for succ in b.terminator.successors() {
+                if succ == curr.block {
+                    next_b = None;
+                    break;
+                } else if blocks.contains(&succ) {
+                    next_b = Some(succ);
+                    break;
+                }
+            }
+            curr_b_opt = next_b;
+        }
+        if body_order.is_empty() {
+            body_order = blocks.iter().filter(|b| **b != curr.block).cloned().collect();
+        }
+
+        let initial_iv = if let Some(t) = base_state.get_value(&iv) {
+            if let SymTerm::ConstInt(val, _) = self.interner.get(t) {
+                *val
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let mut env: HashMap<String, i64> = HashMap::new();
+        for p in &self.active_places {
+            if let Some(t) = base_state.get_value(p) {
+                if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
+                    env.insert(p.local.clone(), *v);
+                }
+            }
+        }
+        let iv_step = if let (Some(t_anc), Some(t_curr)) = (base_state.get_value(&iv), curr.get_value(&iv)) {
+            if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
+                (self.interner.get(t_anc), self.interner.get(t_curr))
+            {
+                let s = v1 - v0;
+                if s != 0 { s } else { 1 }
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        let mut histories: HashMap<String, Vec<i64>> = HashMap::new();
+        for cand in &mutating_candidates {
+            histories.insert(cand.local.clone(), Vec::with_capacity(9));
+            if let Some(&init_val) = env.get(&cand.local) {
+                histories.get_mut(&cand.local).unwrap().push(init_val);
+            }
+        }
+
+        let mut sim_success = true;
+        for k in 0..8 {
+            env.insert(iv.local.clone(), initial_iv + (k as i64) * iv_step);
+
+            for b_id in &body_order {
+                if let Some(b) = self.block_map.get(b_id) {
+                    for stmt in &b.statements {
+                        let Statement::Assign(dest, rval) = stmt;
+                        let val_opt = match rval {
+                            Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) => Some(*v),
+                            Rvalue::Use(p) => env.get(&p.local).copied(),
+                            Rvalue::BinaryOp(op, l, r) => {
+                                if let (Some(&lv), Some(&rv)) = (env.get(&l.local), env.get(&r.local)) {
+                                    match op {
+                                        BinaryOp::Add => Some(lv.wrapping_add(rv)),
+                                        BinaryOp::Sub => Some(lv.wrapping_sub(rv)),
+                                        BinaryOp::Mul => Some(lv.wrapping_mul(rv)),
+                                        BinaryOp::Div => if rv != 0 { Some(lv / rv) } else { None },
+                                        BinaryOp::Mod => if rv != 0 { Some(lv % rv) } else { None },
+                                        BinaryOp::BitAnd => Some(lv & rv),
+                                        BinaryOp::BitOr => Some(lv | rv),
+                                        BinaryOp::BitXor => Some(lv ^ rv),
+                                        BinaryOp::Shl => Some(lv << (rv as u32 % 64)),
+                                        BinaryOp::Shr => Some(lv >> (rv as u32 % 64)),
+                                        BinaryOp::Pow => {
+                                            if (0..=62).contains(&rv) {
+                                                let mut res: i64 = 1;
+                                                let mut cur = lv;
+                                                let mut e = rv;
+                                                while e > 0 {
+                                                    if e & 1 == 1 {
+                                                        res = res.wrapping_mul(cur);
+                                                    }
+                                                    if e > 1 {
+                                                        cur = cur.wrapping_mul(cur);
+                                                    }
+                                                    e >>= 1;
+                                                }
+                                                Some(res)
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        _ => None,
+                                    }
+                                } else {
+                                    None
+                                }
+                            }
+                            Rvalue::UnaryOp(crate::ast::UnaryOp::Neg, p) => env.get(&p.local).map(|v| -v),
+                            _ => None,
+                        };
+                        if let Some(v) = val_opt {
+                            env.insert(dest.local.clone(), v);
+                        } else if mutating_candidates.iter().any(|c| c.local == dest.local) {
+                            sim_success = false;
+                            break;
+                        }
+                    }
+                }
+                if !sim_success {
+                    break;
+                }
+            }
+            if !sim_success {
+                break;
+            }
+
+            for cand in &mutating_candidates {
+                if let Some(&val) = env.get(&cand.local) {
+                    histories.get_mut(&cand.local).unwrap().push(val);
+                } else {
+                    sim_success = false;
+                    break;
+                }
+            }
+            if !sim_success {
+                break;
+            }
+        }
+
+        if !sim_success {
+            return AccumulatorLoopResult::NotApplicable;
+        }
+
+        let mut solved_accs = Vec::new();
+        for cand in &mutating_candidates {
+            if let Some(samples) = histories.get(&cand.local) {
+                if samples.len() >= 4 {
+                    if let Some(closed_form) = solve_recurrence(samples, n_term, &mut self.interner) {
+                        solved_accs.push((cand.clone(), closed_form));
+                    }
                 }
             }
         }
 
-        None
+        if !solved_accs.is_empty() {
+            AccumulatorLoopResult::Solved(solved_accs, iv)
+        } else {
+            AccumulatorLoopResult::NotApplicable
+        }
     }
 
     fn all_args_loop_invariant(&self, arg_terms: &[SymTermId], block: &BasicBlockId) -> bool {
@@ -1716,7 +2185,7 @@ impl<'a> SupercompilerDriver<'a> {
             SymTerm::Ref(inner, _) => self.term_references_locals(*inner, locals),
             SymTerm::Deref(ptr, _) => self.term_references_locals(*ptr, locals),
             SymTerm::Discriminant(inner, _) => self.term_references_locals(*inner, locals),
-            SymTerm::ClosureVal(_, captured, _) => {
+            SymTerm::ClosureVal(_, captured, _) | SymTerm::Thunk(_, captured, _) => {
                 captured.iter().any(|&c| self.term_references_locals(c, locals))
             }
             _ => false,
@@ -1730,6 +2199,16 @@ impl<'a> SupercompilerDriver<'a> {
         caller_state: &SymbolicState,
     ) -> Option<SymTermId> {
         if callee.blocks.is_empty() || callee.params.len() != args.len() {
+            return None;
+        }
+
+        // Check if an inter-procedural call cycle exists in the call stack
+        if let Some(pos) = self.call_stack.iter().position(|name| name == &callee.name) {
+            let cycle: Vec<String> = self.call_stack[pos..].to_vec();
+            if let Some(closed_term) = self.try_solve_call_cycle(&cycle, &callee.name, args) {
+                self.stats.loops_collapsed += 1;
+                return Some(closed_term);
+            }
             return None;
         }
 
@@ -1772,7 +2251,9 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
-        if return_terms.len() == 1 {
+        if let Some(composite_ret) = self.extract_tree_return_term(&child_tree, child_tree.root) {
+            Some(composite_ret)
+        } else if return_terms.len() == 1 {
             let child_ret = return_terms[0];
             Some(self.interner.import_from(&child_tree.interner, child_ret))
         } else if !return_terms.is_empty() {
@@ -1788,6 +2269,77 @@ impl<'a> SupercompilerDriver<'a> {
         } else {
             None
         }
+    }
+
+    fn try_solve_call_cycle(
+        &mut self,
+        cycle: &[String],
+        callee: &str,
+        arg_terms: &[SymTermId],
+    ) -> Option<SymTermId> {
+        let callee_func = self.program_funcs.get(callee).copied()?;
+        let param_terms: Vec<SymTermId> = callee_func
+            .params
+            .iter()
+            .map(|(p, ty)| {
+                self.interner.intern_var(
+                    Place {
+                        local: p.clone(),
+                        projections: vec![],
+                    },
+                    ty.clone(),
+                )
+            })
+            .collect();
+
+        crate::mir::supercompiler::recurrence::solve_cross_function_cycle(
+            cycle,
+            callee,
+            arg_terms,
+            &param_terms,
+            &self.program_funcs,
+            &mut self.interner,
+        )
+    }
+
+    fn extract_tree_return_term(
+        &mut self,
+        tree: &ProcessTree,
+        node_id: ProcessNodeId,
+    ) -> Option<SymTermId> {
+        let node = tree.nodes.get(node_id.0)?;
+        if let Some(ret) = node.return_term {
+            return Some(self.interner.import_from(&tree.interner, ret));
+        }
+        let mut true_branch = None;
+        let mut false_branch = None;
+        for edge in &node.edges {
+            match edge {
+                ProcessEdge::Step(next_id) => {
+                    return self.extract_tree_return_term(tree, *next_id);
+                }
+                ProcessEdge::BranchTrue(target, cond) => {
+                    true_branch = Some((*target, *cond));
+                }
+                ProcessEdge::BranchFalse(target, _) => {
+                    false_branch = Some(*target);
+                }
+                _ => {}
+            }
+        }
+        if let (Some((then_target, cond)), Some(else_target)) = (true_branch, false_branch) {
+            let cond_imported = self.interner.import_from(&tree.interner, cond);
+            let t_then = self.extract_tree_return_term(tree, then_target)?;
+            let t_else = self.extract_tree_return_term(tree, else_target)?;
+            if t_then == t_else {
+                return Some(t_then);
+            }
+            let sel = self
+                .interner
+                .intern_select(cond_imported, t_then, t_else, Type::I64);
+            return Some(sel);
+        }
+        None
     }
 
     fn resolve_closure_function(
@@ -2091,20 +2643,6 @@ fn narrow_two_vars(l: SymTermId, r: SymTermId, op: BinaryOp, is_true: bool, stat
         }
         _ => {}
     }
-}
-
-fn is_place_or_alias(p: &Place, target: &Place, stmts: &[Statement], idx: usize) -> bool {
-    if p.local == target.local && p.projections == target.projections {
-        return true;
-    }
-    for s in &stmts[..idx] {
-        if let Statement::Assign(dest, Rvalue::Use(src)) = s {
-            if dest.local == p.local && src.local == target.local && src.projections == target.projections {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn get_combinations(n: usize, k: usize) -> Vec<Vec<usize>> {

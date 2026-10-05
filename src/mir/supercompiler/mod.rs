@@ -12,33 +12,58 @@ pub mod fusion;
 pub mod generalize;
 pub mod independence;
 pub mod mrsc;
+pub mod futamura2;
+pub mod mrsc_oracle;
+pub mod outliner;
 pub mod parallel;
 pub mod polyhedral;
+pub mod polyhedral_ilp;
 pub mod recurrence;
 pub mod residualize;
 pub mod state;
 pub mod term;
+pub mod strength_reduce;
 pub mod validate;
 pub mod whistle;
 
-pub use cache::{sha256_str, CacheKey, CachedSpecialization, SpecializationCache};
+pub use futamura2::*;
+pub use strength_reduce::*;
+
+pub use cache::{
+    compute_composite_hash, extract_callees, sha256_str, CacheKey, CachedSpecialization,
+    DependencyGraph, SpecializationCache,
+};
 pub use compact::{compact_mir_function, compact_process_tree};
 pub use distill::DistillationEngine;
 pub use drive::{
-    ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerDriver, SupercompilerStats,
-    TerminationWitness, WhistleFiring, WhistleKind,
+    ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, RecurrenceResult, SupercompilerDriver,
+    SupercompilerStats, TerminationWitness, WhistleFiring, WhistleKind,
 };
 pub use fusion::{find_fusion_candidates, fuse_loops, fuse_map_filter, FusionCandidate};
 pub use independence::{
     collect_subtree_rw_set, find_parallel_knot_pairs, sets_are_independent, ReadWriteSet,
 };
 pub use mrsc::{
-    MinCodeSizeObjective, MinDynamicBranchObjective, MultiResultEngine, ParetoObjective,
-    ResidualObjective,
+    MinCodeSizeObjective, MinDynamicBranchObjective, MrscCostModel, MrscCostVector, MrscObjective,
+    MultiResultEngine, ParetoObjective, ResidualObjective,
+};
+pub use mrsc_oracle::{
+    IddfsOracleConfig, MrscOracleEngine, OracleCandidate, OracleParetoFrontier,
+};
+pub use outliner::{
+    compute_sequence_similarity, outline_program, BlockHasher, NormalizedBlock, NormalizedOp,
+    NormalizedStatement, OutlinerConfig, OutlinerStats,
 };
 pub use parallel::supercompile_mir_program_parallel;
 pub use polyhedral::fuse_polyhedral_stencils;
-pub use recurrence::{detect_nway_linear_system, solve_nway_recurrence, NWayLinearSystem};
+pub use polyhedral_ilp::{
+    BareissSimplex, ConstraintOp, PlutoSchedule, PlutoScheduler, ScheduleVector, SimplexResult,
+};
+pub use recurrence::{
+    detect_nonlinear_recurrence, detect_nway_linear_system, extract_linear_coeffs,
+    simulate_mir_call, solve_cross_function_cycle, solve_nonlinear_recurrence,
+    solve_nway_recurrence, NWayLinearSystem, NonlinearRecurrence,
+};
 pub use residualize::{residualize_process_tree, residualize_process_tree_parallel};
 pub use state::Interval;
 pub use validate::{
@@ -46,6 +71,7 @@ pub use validate::{
     BvExpr, KInductionCertificate, KInductionValidator, LoopInductionCandidate, SmtLib2Printer,
     SmtResult, TranslationValidator, ValidationCertificate, ValidationError,
 };
+pub use whistle::{is_embedded, is_instance_of, state_embeds};
 
 use crate::mir::lower::{MirFunction, MirProgram};
 
@@ -56,6 +82,7 @@ pub enum SupercompileMode {
     Classic,
     Distill,
     Mrsc,
+    MrscExhaustive,
 }
 
 /// Configuration level for supercompilation.
@@ -123,6 +150,16 @@ pub fn supercompile_mir_program_with_cache(
 
     // Pass 2: Symbolic driving, recurrence solving, and SSA supercompilation
     let funcs_snapshot = program.functions.clone();
+    let funcs_map: std::collections::HashMap<String, &MirFunction> =
+        funcs_snapshot.iter().map(|f| (f.name.clone(), f)).collect();
+
+    if let Some(cache) = opt_cache {
+        for func in &funcs_snapshot {
+            let callees = cache::extract_callees(func);
+            cache.record_dependencies(&func.name, callees);
+        }
+    }
+
     for func in &mut program.functions {
         if func_is_impure(func) {
             total_stats.residual_block_count += func.blocks.len();
@@ -131,7 +168,7 @@ pub fn supercompile_mir_program_with_cache(
         }
 
         // Functions synthesized or transformed by global distillation are already in optimal single-pass form
-        if mode == SupercompileMode::Distill && (func.name.starts_with("__distill_") || func.name == "append3") {
+        if mode == SupercompileMode::Distill && func.is_distilled {
             total_stats.residual_block_count += func.blocks.len();
             total_stats.residual_stmt_count += func.blocks.iter().map(|b| b.statements.len()).sum::<usize>();
             continue;
@@ -139,10 +176,15 @@ pub fn supercompile_mir_program_with_cache(
 
         match mode {
             SupercompileMode::Classic => {
-                // 1. Compute the CacheKey for this function
+                // 1. Compute the CacheKey for this function with composite hashing
+                let source_hash = if opt_cache.is_some() {
+                    cache::compute_composite_hash(&func.name, &funcs_map)
+                } else {
+                    sha256_str(&format!("{:?}", func))
+                };
                 let cache_key = CacheKey {
                     function_name: func.name.clone(),
-                    function_source_hash: sha256_str(&format!("{:?}", func)),
+                    function_source_hash: source_hash,
                     argument_fingerprint: "generic".to_string(), // Phase 37: generic specialization only
                 };
 
@@ -165,9 +207,22 @@ pub fn supercompile_mir_program_with_cache(
                 }
 
                 let (new_func, stats) = supercompile_mir_function_with_program_options(func, &funcs_snapshot, parallel_residualize);
+                let baseline_blocks = func.blocks.len();
+                let residual_blocks = new_func.blocks.len();
                 let has_uncollapsed_array_loops = func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops {
+                let has_uncollapsed_knots = stats.knots_tied > 0 && stats.loops_collapsed == 0;
+                // Revert if residual is more than 3× the baseline size AND no loops were collapsed
+                // (if loops were collapsed the size is expected to shrink, not grow)
+                let code_size_bloat = stats.loops_collapsed == 0
+                    && residual_blocks > 3 * baseline_blocks
+                    && baseline_blocks > 4; // only guard non-trivial functions
+
+                let mut stats = stats;
+                if !has_uncollapsed_array_loops && !code_size_bloat && !has_uncollapsed_knots {
                     *func = new_func;
+                } else {
+                    stats.residual_block_count = func.blocks.len();
+                    stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -208,6 +263,10 @@ pub fn supercompile_mir_program_with_cache(
                     let (_dead, _deduped) = compact_process_tree(&mut tree);
                     let mut new_func = residualize_process_tree_parallel(&tree, func, parallel_residualize);
                     let _stmts_removed = compact_mir_function(&mut new_func);
+                    let _sr = strength_reduce_mir_function(&mut new_func);
+                    if _sr > 0 {
+                        compact_mir_function(&mut new_func);
+                    }
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
@@ -237,6 +296,10 @@ pub fn supercompile_mir_program_with_cache(
                 if !has_uncollapsed_array_loops && is_profitable(&stats, budget, &best_tree) {
                     let mut new_func = best_res;
                     let _stmts_removed = compact_mir_function(&mut new_func);
+                    let _sr = strength_reduce_mir_function(&mut new_func);
+                    if _sr > 0 {
+                        compact_mir_function(&mut new_func);
+                    }
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
@@ -253,8 +316,66 @@ pub fn supercompile_mir_program_with_cache(
                 total_stats.residual_block_count += stats.residual_block_count;
                 total_stats.residual_stmt_count += stats.residual_stmt_count;
             }
+            SupercompileMode::MrscExhaustive => {
+                let mrsc_obj = match objective {
+                    "speed" => MrscObjective::Speed,
+                    "size" => MrscObjective::Size,
+                    _ => MrscObjective::Balanced,
+                };
+                let config = IddfsOracleConfig {
+                    min_depth: 2,
+                    max_depth: 24,
+                    step_depth: 2,
+                    objective: mrsc_obj,
+                    exhaustive: true,
+                };
+                let oracle = MrscOracleEngine::new(func, &funcs_snapshot, config);
+                let (best_res, mut stats) = if let Some(cache) = opt_cache {
+                    if let Ok((res, _cost, from_cache)) = oracle.run_with_cache(cache) {
+                        let stats = SupercompilerStats {
+                            residual_block_count: res.blocks.len(),
+                            residual_stmt_count: res.blocks.iter().map(|b| b.statements.len()).sum(),
+                            loops_collapsed: if from_cache { 0 } else { 1 },
+                            ..Default::default()
+                        };
+                        (res, stats)
+                    } else {
+                        let (_frontier, winner) = oracle.explore_iddfs();
+                        let stats = winner.tree.stats.clone();
+                        (winner.residual, stats)
+                    }
+                } else {
+                    let (_frontier, winner) = oracle.explore_iddfs();
+                    let stats = winner.tree.stats.clone();
+                    (winner.residual, stats)
+                };
+                let mut new_func = best_res;
+                let _stmts_removed = compact_mir_function(&mut new_func);
+                let _sr = strength_reduce_mir_function(&mut new_func);
+                if _sr > 0 {
+                    compact_mir_function(&mut new_func);
+                }
+                stats.residual_block_count = new_func.blocks.len();
+                stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
+                *func = new_func;
+
+                total_stats.nodes_explored += stats.nodes_explored;
+                total_stats.branches_pruned += stats.branches_pruned;
+                total_stats.loops_collapsed += stats.loops_collapsed;
+                total_stats.knots_tied += stats.knots_tied;
+                total_stats.calls_inlined += stats.calls_inlined;
+                total_stats.sc_bce_eliminated += stats.sc_bce_eliminated;
+                total_stats.residual_block_count += stats.residual_block_count;
+                total_stats.residual_stmt_count += stats.residual_stmt_count;
+            }
         }
     }
+
+    if let Some(cache) = opt_cache {
+        let _ = cache.save_dependency_graph();
+    }
+
+    let _prog_sr = strength_reduce_mir_program(program);
 
     total_stats
 }
@@ -263,7 +384,6 @@ fn is_profitable(stats: &SupercompilerStats, budget: usize, tree: &ProcessTree) 
     tree.nodes.len() < budget
         && (stats.branches_pruned > 0
             || stats.loops_collapsed > 0
-            || stats.knots_tied > 0
             || stats.calls_inlined > 0
             || stats.sc_bce_eliminated > 0)
 }
@@ -304,8 +424,9 @@ pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction,
     let budget = driver.config.max_inline_nodes;
     let mut tree = driver.run();
     let mut stats = tree.stats.clone();
+    let has_uncollapsed_knots = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if !is_profitable(&stats, budget, &tree) {
+    if !is_profitable(&stats, budget, &tree) || has_uncollapsed_knots {
         stats.residual_block_count = func.blocks.len();
         stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
@@ -313,6 +434,10 @@ pub fn supercompile_mir_function_with_stats(func: &MirFunction) -> (MirFunction,
     let (_dead, _deduped) = compact_process_tree(&mut tree);
     let mut new_func = residualize_process_tree(&tree, func);
     let _stmts_removed = compact_mir_function(&mut new_func);
+    let _sr = strength_reduce_mir_function(&mut new_func);
+    if _sr > 0 {
+        compact_mir_function(&mut new_func);
+    }
     stats.residual_block_count = new_func.blocks.len();
     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
     (new_func, stats)
@@ -336,8 +461,9 @@ pub fn supercompile_mir_function_with_program_options(
     let budget = driver.config.max_inline_nodes;
     let mut tree = driver.run();
     let mut stats = tree.stats.clone();
+    let has_uncollapsed_knots = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if !is_profitable(&stats, budget, &tree) {
+    if !is_profitable(&stats, budget, &tree) || has_uncollapsed_knots {
         stats.residual_block_count = func.blocks.len();
         stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
@@ -345,6 +471,10 @@ pub fn supercompile_mir_function_with_program_options(
     let (_dead, _deduped) = compact_process_tree(&mut tree);
     let mut new_func = residualize_process_tree_parallel(&tree, func, parallel_residualize);
     let _stmts_removed = compact_mir_function(&mut new_func);
+    let _sr = strength_reduce_mir_function(&mut new_func);
+    if _sr > 0 {
+        compact_mir_function(&mut new_func);
+    }
     stats.residual_block_count = new_func.blocks.len();
     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
     (new_func, stats)

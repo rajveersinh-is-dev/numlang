@@ -105,8 +105,8 @@ pub fn residualize_process_tree_parallel(
             // Safely terminate with Unreachable rather than an empty Return.
             #[cfg(debug_assertions)]
             eprintln!(
-                "[supercompiler] Warning: emitting Unreachable for zero-edge non-return leaf (overflow={}) at node {:?}",
-                node.overflow, node.id
+                "[supercompiler] Warning: emitting Unreachable for zero-edge non-return leaf (overflow={}) at func={}, node {:?}, block {:?}",
+                node.overflow, original_func.name, node.id, node.state.block
             );
             residual_blocks[b_idx].statements = stmts;
             residual_blocks[b_idx].terminator = Terminator::Unreachable;
@@ -378,6 +378,7 @@ pub fn residualize_process_tree_parallel(
         return_ty: original_func.return_ty.clone(),
         locals: new_locals,
         blocks: residual_blocks,
+        is_distilled: original_func.is_distilled,
     }
 }
 
@@ -650,6 +651,29 @@ fn emit_term_eval(
                     fn_name: fn_name.clone(),
                     captured: cap_places,
                 }
+            };
+            stmts.push(Statement::Assign(place.clone(), rval));
+            place
+        }
+        SymTerm::Thunk(body, env, ty) => {
+            let env_places: Vec<Place> = env
+                .iter()
+                .map(|&c| emit_term_eval(c, interner, stmts, locals, next_temp_id, phi_remap))
+                .collect();
+            let temp_name = format!("_sc_{}", *next_temp_id);
+            *next_temp_id += 1;
+            locals.push(MirLocalDecl {
+                name: temp_name.clone(),
+                ty: ty.clone(),
+                mutable: false,
+            });
+            let place = Place {
+                local: temp_name,
+                projections: vec![],
+            };
+            let rval = Rvalue::Thunk {
+                body: body.clone(),
+                env: env_places.into_iter().map(|p| p.local).collect(),
             };
             stmts.push(Statement::Assign(place.clone(), rval));
             place

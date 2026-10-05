@@ -56,7 +56,8 @@ pub fn collect_term_vars(interner: &TermInterner, term_id: SymTermId, vars: &mut
             }
             SymTerm::Constructor(_, _, args, _)
             | SymTerm::Call(_, args, _)
-            | SymTerm::ClosureVal(_, args, _) => {
+            | SymTerm::ClosureVal(_, args, _)
+            | SymTerm::Thunk(_, args, _) => {
                 stack.extend(args.iter().copied());
             }
             SymTerm::Phi(branches, _) => {
