@@ -14,3 +14,5 @@ _panic.nl
 *.pdb
 .numlang_cache/
 graphify-out/
+bench/data/showdown_results.csv
+!bench/data/showdown_results_sample.csv

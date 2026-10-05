@@ -1,0 +1,9 @@
+// HOSC term language: Triple List Append
+// Goal: Deforest append(append(xs, ys), zs) into single 3-way pass
+
+data List = Nil | Cons x xs;
+
+app Nil ys = ys;
+app (Cons x xs) ys = Cons x (app xs ys);
+
+append3 xs ys zs = app (app xs ys) zs;

@@ -1,0 +1,7 @@
+benchmark,description,numlang_base_mean_us,numlang_base_ci95_low,numlang_base_ci95_high,numlang_super_mean_us,numlang_super_ci95_low,numlang_super_ci95_high,c_ref_mean_us,c_ref_ci95_low,c_ref_ci95_high,ratio_sc_vs_c,ratio_sc_vs_c_ci95_low,ratio_sc_vs_c_ci95_high,speedup_vs_base,classification
+binary_trees,Binary Trees (heap alloc/dealloc),13103.16,12965.33,13248.57,13970.51,13566.51,14408.49,13820.88,13621.25,14035.23,1.0108,0.9781,1.0465,0.9379,Regression (0.94x vs base)
+fannkuch_redux,Fannkuch Redux (indexed permutations),13153.56,13007.55,13299.28,13319.03,13178.89,13457.69,13730.01,13507.82,13977.22,0.9701,0.9501,0.9892,0.9876,Neutral (±3%)
+nbody,N-Body (coupled float simulation),13049.70,12915.73,13193.81,14173.64,13853.92,14572.21,13705.90,13457.68,13976.22,1.0341,1.0035,1.0686,0.9207,Regression (0.92x vs base)
+pidigits,Pi Digits (streaming spigot recurrence),12388.62,12260.00,12530.08,12457.50,12295.91,12629.80,13572.32,13238.65,13941.08,0.9179,0.8914,0.9443,0.9945,Neutral (±3%)
+fasta,Fasta (weighted random string generation),12519.53,12362.06,12678.56,12351.11,12247.03,12455.78,12793.85,12636.43,12954.40,0.9654,0.9508,0.9796,1.0136,Neutral (±3%)
+spectral_norm,Spectral Norm (matrix-vector eigenvalue loop),12402.47,12284.96,12527.37,12426.70,12280.25,12579.90,12975.29,12796.42,13158.31,0.9577,0.9398,0.9756,0.9981,Neutral (±3%)

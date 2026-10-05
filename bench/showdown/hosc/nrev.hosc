@@ -1,0 +1,12 @@
+// HOSC term language: Naive Reverse (double nrev)
+// Goal: Deforest nrev(nrev(xs)) into identity traversal
+
+data List = Nil | Cons x xs;
+
+app Nil ys = ys;
+app (Cons x xs) ys = Cons x (app xs ys);
+
+nrev Nil = Nil;
+nrev (Cons x xs) = app (nrev xs) (Cons x Nil);
+
+double_nrev xs = nrev (nrev xs);

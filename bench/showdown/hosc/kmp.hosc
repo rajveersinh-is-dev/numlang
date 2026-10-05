@@ -1,0 +1,23 @@
+// HOSC term language: Knuth-Morris-Pratt matcher
+data List = Nil | Cons x xs;
+data Bit = Zero | One;
+
+match0 Nil = Zero;
+match0 (Cons c rest) = case c of {
+    One -> match1 rest;
+    Zero -> match0 rest;
+};
+
+match1 Nil = Zero;
+match1 (Cons c rest) = case c of {
+    Zero -> match2 rest;
+    One -> match1 rest;
+};
+
+match2 Nil = Zero;
+match2 (Cons c rest) = case c of {
+    One -> One;
+    Zero -> match0 rest;
+};
+
+kmp text = match0 text;

@@ -1,0 +1,214 @@
+# NumLang Supercompiler Showdown: Canonical Benchmark Registry
+# Governed by INTEGRITY_RULES.md - zero precomputed numbers, real dynamic execution
+
+[metadata]
+version = "1.0.0"
+title = "Supercompiler Canonical Literature Benchmark Registry"
+
+# ==============================================================================
+# GROUP 1: Classical Functional Deforestation (Wadler 1990, Hamilton 2007)
+# ==============================================================================
+
+[[benchmark]]
+id = "nrev"
+group = "G1: Deforestation"
+name = "Naive Reverse (Double nrev)"
+algorithm = "nrev(nrev(xs)) on singly linked lists"
+transformation = "Deforest intermediate list into identity traversal"
+expected_gain = "O(N^2) -> O(N)"
+expected_exit = 224
+numlang = "bench/showdown/numlang/nrev.nl"
+haskell = "bench/showdown/haskell/nrev.hs"
+hosc = "bench/showdown/hosc/nrev.hosc"
+c = "bench/showdown/c/nrev.c"
+rust = "bench/showdown/rust/nrev.rs"
+
+[[benchmark]]
+id = "append3"
+group = "G1: Deforestation"
+name = "Triple List Append"
+algorithm = "append(append(xs, ys), zs) on singly linked lists"
+transformation = "Deforest intermediate list construction into single-pass 3-way append"
+expected_gain = "2 allocation passes -> 1 pass"
+expected_exit = 164
+numlang = "bench/showdown/numlang/append3.nl"
+haskell = "bench/showdown/haskell/append3.hs"
+hosc = "bench/showdown/hosc/append3.hosc"
+c = "bench/showdown/c/append3.c"
+rust = "bench/showdown/rust/append3.rs"
+
+[[benchmark]]
+id = "kmp"
+group = "G1: Deforestation"
+name = "Knuth-Morris-Pratt DFA Specialization"
+algorithm = "Naive string pattern matcher specialized to fixed pattern"
+transformation = "Specialize naive matcher into deterministic state transitions"
+expected_gain = "O(N*M) -> O(N)"
+expected_exit = 88
+numlang = "bench/showdown/numlang/kmp.nl"
+haskell = "bench/showdown/haskell/kmp.hs"
+hosc = "bench/showdown/hosc/kmp.hosc"
+c = "bench/showdown/c/kmp.c"
+rust = "bench/showdown/rust/kmp.rs"
+
+[[benchmark]]
+id = "peano_mul"
+group = "G1: Deforestation"
+name = "Peano Multiplication"
+algorithm = "mul(m, n) defined via recursive Peano addition"
+transformation = "Deforest unary Peano constructors into arithmetic product"
+expected_gain = "O(N^2) -> O(N) / O(1)"
+expected_exit = 176
+numlang = "bench/showdown/numlang/peano_mul.nl"
+haskell = "bench/showdown/haskell/peano_mul.hs"
+hosc = "bench/showdown/hosc/peano_mul.hosc"
+c = "bench/showdown/c/peano_mul.c"
+rust = "bench/showdown/rust/peano_mul.rs"
+
+[[benchmark]]
+id = "tree_flip"
+group = "G1: Deforestation"
+name = "Double Tree Inversion"
+algorithm = "flip(flip(t)) on binary trees"
+transformation = "Eliminate double tree mirror inversion into identity"
+expected_gain = "2 tree traversals -> 0 traversals"
+expected_exit = 224
+numlang = "bench/showdown/numlang/tree_flip.nl"
+haskell = "bench/showdown/haskell/tree_flip.hs"
+hosc = "bench/showdown/hosc/tree_flip.hosc"
+c = "bench/showdown/c/tree_flip.c"
+rust = "bench/showdown/rust/tree_flip.rs"
+
+# ==============================================================================
+# GROUP 2: Arithmetic Recurrences (NumLang Core Supercompiler Strength)
+# ==============================================================================
+
+[[benchmark]]
+id = "fib_matrix"
+group = "G2: Recurrences"
+name = "Coupled Fibonacci Recurrence Matrix Power"
+algorithm = "Order-2 coupled Fibonacci matrix power (1000 iters)"
+transformation = "Recognize companion matrix recurrence -> closed-form matrix power"
+expected_gain = "O(N) -> O(log N)"
+expected_exit = 46
+numlang = "bench/showdown/numlang/fib_matrix.nl"
+haskell = "bench/showdown/haskell/fib_matrix.hs"
+hosc = ""
+c = "bench/showdown/c/fib_matrix.c"
+rust = "bench/showdown/rust/fib_matrix.rs"
+
+[[benchmark]]
+id = "tri_sum"
+group = "G2: Recurrences"
+name = "Triangular Summation Loop (50M iters)"
+algorithm = "Linear triangular accumulation 1 + 2 + ... + N"
+transformation = "Symbolic polynomial summation -> Euler closed form N*(N+1)/2"
+expected_gain = "O(N) -> O(1)"
+expected_exit = 64
+numlang = "bench/showdown/numlang/tri_sum.nl"
+haskell = "bench/showdown/haskell/tri_sum.hs"
+hosc = ""
+c = "bench/showdown/c/tri_sum.c"
+rust = "bench/showdown/rust/tri_sum.rs"
+
+[[benchmark]]
+id = "cubic_sum"
+group = "G2: Recurrences"
+name = "Cubic Polynomial Sum (10M iters)"
+algorithm = "Sum of squares 1^2 + 2^2 + ... + N^2"
+transformation = "Nonlinear polynomial recurrence solver -> Faulhaber closed form"
+expected_gain = "O(N) -> O(1)"
+expected_exit = 192
+numlang = "bench/showdown/numlang/cubic_sum.nl"
+haskell = "bench/showdown/haskell/cubic_sum.hs"
+hosc = ""
+c = "bench/showdown/c/cubic_sum.c"
+rust = "bench/showdown/rust/cubic_sum.rs"
+
+[[benchmark]]
+id = "pow2_mod"
+group = "G2: Recurrences"
+name = "Geometric Power Loop (100 iters)"
+algorithm = "acc = acc * 2 loop for N iterations"
+transformation = "Geometric series reduction -> bit shift / closed form"
+expected_gain = "O(N) -> O(1)"
+expected_exit = 0
+numlang = "bench/showdown/numlang/pow2_mod.nl"
+haskell = "bench/showdown/haskell/pow2_mod.hs"
+hosc = ""
+c = "bench/showdown/c/pow2_mod.c"
+rust = "bench/showdown/rust/pow2_mod.rs"
+
+[[benchmark]]
+id = "hofstadter"
+group = "G2: Recurrences"
+name = "Hofstadter Mutual Linear Recurrence"
+algorithm = "Mutual recursive companion sequences Female/Male"
+transformation = "Whole-program cross-function recurrence closing"
+expected_gain = "Cross-call overhead -> O(1) closed loop"
+expected_exit = 62
+numlang = "bench/showdown/numlang/hofstadter.nl"
+haskell = "bench/showdown/haskell/hofstadter.hs"
+hosc = ""
+c = "bench/showdown/c/hofstadter.c"
+rust = "bench/showdown/rust/hofstadter.rs"
+
+# ==============================================================================
+# GROUP 3: Higher-Order & Codata
+# ==============================================================================
+
+[[benchmark]]
+id = "compose5"
+group = "G3: Higher-Order"
+name = "5-Deep Function Composition Chain"
+algorithm = "(f . g . h . i . j)(x) repeated 1000 times"
+transformation = "Pre-defunctionalization AST distillation + beta-reduction"
+expected_gain = "5 closure allocations -> 0 allocations / single arithmetic expr"
+expected_exit = 192
+numlang = "bench/showdown/numlang/compose5.nl"
+haskell = "bench/showdown/haskell/compose5.hs"
+hosc = ""
+c = "bench/showdown/c/compose5.c"
+rust = "bench/showdown/rust/compose5.rs"
+
+[[benchmark]]
+id = "map_map"
+group = "G3: Higher-Order"
+name = "Map-Map Pipeline Deforestation"
+algorithm = "map double (map inc xs) over array buffer"
+transformation = "Reynolds defunctionalization + loop fusion"
+expected_gain = "2 buffer passes -> 1 fused pass"
+expected_exit = 164
+numlang = "bench/showdown/numlang/map_map.nl"
+haskell = "bench/showdown/haskell/map_map.hs"
+hosc = ""
+c = "bench/showdown/c/map_map.c"
+rust = "bench/showdown/rust/map_map.rs"
+
+[[benchmark]]
+id = "sum_map"
+group = "G3: Higher-Order"
+name = "Sum-Map Stream Fusion (1M iters)"
+algorithm = "sum (map (\\x -> x * x) [1..1M])"
+transformation = "Stream fusion eliminating intermediate list"
+expected_gain = "Heap allocation -> scalar register accumulator"
+expected_exit = 96
+numlang = "bench/showdown/numlang/sum_map.nl"
+haskell = "bench/showdown/haskell/sum_map.hs"
+hosc = ""
+c = "bench/showdown/c/sum_map.c"
+rust = "bench/showdown/rust/sum_map.rs"
+
+[[benchmark]]
+id = "stream_take"
+group = "G3: Higher-Order"
+name = "Stream Pipeline Filter-Sum"
+algorithm = "stream_pipeline(50) predicate filter (100k reps)"
+transformation = "Lazy/thunk SSA codata supercompilation -> branchless loop"
+expected_gain = "Lazy stream dispatch -> unrolled SIMD loop"
+expected_exit = 0
+numlang = "bench/showdown/numlang/stream_take.nl"
+haskell = "bench/showdown/haskell/stream_take.hs"
+hosc = ""
+c = "bench/showdown/c/stream_take.c"
+rust = "bench/showdown/rust/stream_take.rs"
