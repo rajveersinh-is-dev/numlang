@@ -8,6 +8,10 @@ inductive Op where
   | sub
   | mul
   | div
+  | mod
+  | bit_and
+  | bit_or
+  | bit_xor
   | eq
   | lt
   | ne
@@ -33,12 +37,42 @@ def lookup (env : MirEnv) (x : Local) : Option Val :=
 def update (env : MirEnv) (x : Local) (v : Val) : MirEnv :=
   (x, v) :: env
 
+def intToUInt64 (v : Int) : UInt64 :=
+  let mod2_64 : Nat := 18446744073709551616
+  if v >= 0 then
+    UInt64.ofNat (v.toNat % mod2_64)
+  else
+    let rem := v.natAbs % mod2_64
+    if rem = 0 then 0
+    else UInt64.ofNat (mod2_64 - rem)
+
+def uInt64ToInt (u : UInt64) : Int :=
+  let n := u.toNat
+  let pow2_63 : Nat := 9223372036854775808
+  let pow2_64 : Nat := 18446744073709551616
+  if n >= pow2_63 then
+    - (Int.ofNat (pow2_64 - n))
+  else
+    Int.ofNat n
+
 def evalOp (op : Op) (v1 v2 : Int) : Option Int :=
   match op with
   | Op.add => some (v1 + v2)
   | Op.sub => some (v1 - v2)
   | Op.mul => some (v1 * v2)
-  | Op.div => if v2 = 0 then none else some (v1 / v2)
+  | Op.div =>
+    if v2 = 0 then none
+    else
+      let d := Int.ofNat (v1.natAbs / v2.natAbs)
+      some (if (v1 < 0) == (v2 < 0) then d else -d)
+  | Op.mod =>
+    if v2 = 0 then none
+    else
+      let rem := Int.ofNat (v1.natAbs % v2.natAbs)
+      some (if v1 < 0 then -rem else rem)
+  | Op.bit_and => some (uInt64ToInt (intToUInt64 v1 &&& intToUInt64 v2))
+  | Op.bit_or  => some (uInt64ToInt (intToUInt64 v1 ||| intToUInt64 v2))
+  | Op.bit_xor => some (uInt64ToInt (intToUInt64 v1 ^^^ intToUInt64 v2))
   | Op.eq  => some (if v1 = v2 then 1 else 0)
   | Op.lt  => some (if v1 < v2 then 1 else 0)
   | Op.ne  => some (if v1 ≠ v2 then 1 else 0)

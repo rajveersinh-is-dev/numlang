@@ -9,3 +9,6 @@ package «supercompiler-proofs» where
 
 @[default_target]
 lean_lib «Supercompiler» where
+
+lean_exe «lean_eval» where
+  root := `LeanEval
