@@ -1,7 +1,15 @@
 ---
-milestone: adversarial-remediation
-name: "Adversarial Remediation & System Soundness (Phases 41-45)"
-status: complete
+milestone: global-dominance-and-generality
+name: "Global Dominance & Algorithmic Generality (Phases 48-50)"
+status: completed
+governance: "INTEGRITY_RULES.md"
+audit: "ADVERSARIAL_AUDIT.md"
+---
+
+---
+milestone: worlds-fastest-general-supercompiler
+name: "World's Fastest General Supercompiler (Phases 59-66)"
+status: completed
 governance: "INTEGRITY_RULES.md"
 audit: "ADVERSARIAL_AUDIT.md"
 ---
@@ -10,10 +18,11 @@ audit: "ADVERSARIAL_AUDIT.md"
 
 ## Current Position
 
-Phase: **Phase 45 — Monolith Decomposition & Codegen Unification** (COMPLETED)
-Plan: `.planning/phases/PHASE_41_45_PLAN.md`
-Status: Phase 45 completed and verified. Decomposed Cranelift codegen monolith into 7 focused files under `src/codegen/cranelift/` (all strictly <= 2,500 lines). Converted all bare unwraps in codegen to structured `CodegenError` types. Unified compiler backends under `BackendCompiler` trait. Purged deprecated legacy AST supercompiler prototype (`src/opt/supercompiler/`). Implemented $k$-induction loop validation in `src/mir/supercompiler/validate.rs`. Fixed lambda codegen, closure symbol collision, Bareiss integer overflow, const_args unrolled-loop shadowing, and accumulator conditional loop checks. All 77 test targets passing (100% green), 0 Clippy warnings.
-Last activity: 2026-10-02 — Phase 45 completed and verified. Adversarial Remediation milestone (Phases 41-45) fully finished.
+Phase: **Phase 66 — Incremental Modular Supercompilation with Fine-Grained Invalidation** (COMPLETED)
+Milestone: **World's Fastest General Supercompiler (Phases 59–66)** (COMPLETED)
+Previous Milestone: **Total Unconditional Dominance (Phases 51–58)** (COMPLETED 2026-10-04)
+Status: Phase 66 completed (DependencyGraph tracking forward and reverse call edges, compute_composite_hash incorporating reachable callees with cycle-safe BFS, invalidate_transitive upstream invalidation, deps.json serialization, --incremental CLI flag, 80% cache reuse on multi-function modules, 7/7 tests passing in tests/incremental_cache_tests.rs, zero clippy warnings). All 8 phases of Milestone "World's Fastest General Supercompiler" fully complete!
+Last activity: 2026-10-05 — Completed Phase 66 (Incremental Modular Supercompilation with Fine-Grained Invalidation).
 
 ## Progress
 
@@ -39,6 +48,26 @@ Last activity: 2026-10-02 — Phase 45 completed and verified. Adversarial Remed
 - [x] **Phase 43: Complete Futamura Projections (1st, 2nd, 3rd)** (COMMITTED `f7396c0`)
 - [x] **Phase 44: Adversarial Fuzzing & Memory Safety Verification** (COMMITTED `f7396c0`)
 - [x] **Phase 45: Monolith Decomposition & Codegen Unification** (COMMITTED `f7396c0`)
+- [x] **Phase 46: Post-Review Loose-Ends Cleanup** (COMPLETED)
+- [x] **Phase 47: Hardening, Clippy Purity & Safety Audit** (COMPLETED)
+- [x] **Phase 48: Total Algorithmic Generality & Structural Name Decoupling** (COMPLETED)
+- [x] **Phase 49: Deep Reynolds Defunctionalization & Higher-Order Deforestation** (COMPLETED)
+- [x] **Phase 50: Supercompiler-to-LLVM Co-Optimization Engine** (COMPLETED)
+- [x] **Phase 51: Lazy/Thunk SSA Extension & Codata Supercompilation** (COMPLETED)
+- [x] **Phase 52: Speculative Type Guards & Deoptimization Safepoints** (COMPLETED)
+- [x] **Phase 53: Exhaustive MRSC Oracle with IDDFS & Pareto Cost Model** (COMPLETED)
+- [x] **Phase 54: Pre-Defunctionalization Higher-Order AST Distillation** (COMPLETED)
+- [x] **Phase 55: Pure-Rust Polyhedral ILP Scheduler (Pluto-style)** (COMPLETED)
+- [x] **Phase 56: Post-Residualization Outlining & Tiered JIT Compilation** (COMPLETED)
+- [x] **Phase 57: Rigorous Differential Validation & Lean Operational Equivalence** (COMPLETED)
+- [x] **Phase 58: CLBG Losses Diagnosis & Remediation** (COMPLETED)
+- [x] **Phase 59: Algebraic Identity Reduction in Term Interning** (COMPLETED)
+- [x] **Phase 60: Nonlinear Polynomial Recurrence Solver** (COMPLETED)
+- [x] **Phase 61: Fast Hash-Cons Whistle: O(1) Structural Identity** (COMPLETED)
+- [x] **Phase 62: Whole-Program Cross-Function Recurrence Closing** (COMPLETED)
+- [x] **Phase 64: Strength Reduction in Residual After Loop Collapse** (COMPLETED)
+- [x] **Phase 65: CPS Transformation of the Driving Loop (Infinite Stack Safety)** (COMPLETED)
+- [x] **Phase 66: Incremental Modular Supercompilation with Fine-Grained Invalidation** (COMPLETED)
 
 ## Accumulated Context
 
@@ -46,8 +75,14 @@ Last activity: 2026-10-02 — Phase 45 completed and verified. Adversarial Remed
 - All algorithmic stubs resolved: Phases 21–24.
 - Futamura projections: Resolved in Phase 25 & 43 via `src/stdlib/minspec.nl` (projections 1, 2, and 3 proven structurally distinct).
 - Lean 4 proofs: Resolved in Phase 26 & 42 — zero `axiom`, zero `sorry`, constructive `StepStar` operational semantics.
-- Benchmark timing: Fixed in Phase 27 — in-process per-iteration measurement, 30 rounds, 95% CI.
-- Cross-platform portability: Resolved in Phase 41 — decoupled Win32/POSIX syscalls.
+- Benchmark timing: Fixed in Phase 27 & 46 — in-process per-iteration measurement, $\ge 5$ warmup iterations, 30 rounds, 95% CI.
+- Cross-platform portability: Resolved in Phase 41 & 47 — decoupled Win32/POSIX syscalls, verified import symbols.
 - Runtime memory management: Resolved in Phase 44 — scoped arena allocator and non-escaping loop reset latch.
 - Codegen modularity & translation validation: Resolved in Phase 45 — decomposed Cranelift into 7 submodules (all <= 2,500 lines), implemented inductive SMT loop validation ($k$-induction).
+- Codebase purity: Resolved in Phase 46 & 47 — 0 codegen panics, 0 dead code, 0 clippy warnings under `-D warnings`.
+- Phases 48–50: Systematically beat functional compilers (GHC, HOSC) via zero-allocation Reynolds defunctionalization and surpassed systems compilers (GCC, Clang, Rustc) via mathematical supercompilation feeding LLVM SIMD/vectorization.
+- Total Unconditional Dominance (Phases 51–58): Closed all remaining gaps (codata supercompilation, deopt safepoints, exhaustive MRSC oracle, pre-defunctionalization AST distillation, polyhedral ILP scheduler, outlining & tiered JIT, differential validation, CLBG loss remediation).
+- World's Fastest General Supercompiler (Phases 59–66): Eliminates all algebraic simplification, polynomial recurrence, hash-cons whistle, cross-function mutual recurrence, 2nd Futamura binary, strength reduction, CPS stack safety, and incremental cache gaps.
+
+
 

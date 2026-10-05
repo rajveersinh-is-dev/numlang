@@ -57,3 +57,17 @@
 
 1. **Head-to-Head Evaluation**: NumLang must be benchmarked directly against canonical open-source supercompilers from the academic literature (e.g., SPSC, HOSC, Refal/SCP4) on canonical supercompilation benchmarks (KMP string matcher, Wadler deforestation, double reverse, Peano multiplication, power specialization).
 2. **Accurate Attribution**: All citations, historical contexts, and algorithmic origins must be accurately cited and distinguished from NumLang's own novel contributions (such as SSA MIR integration and closed-form recurrence solving).
+
+---
+
+## 7. Strict Prohibition of Pre-Loaded Numbers & Computed-As-Is Mandate
+
+1. **Zero Pre-Loaded Numbers / Pre-Calculated Answers**:
+   - No pre-loaded lookup tables, precalculated answers, hardcoded recurrence outputs, or synthetic benchmark values anywhere in the compiler or runtime codebase.
+   - EVERYTHING MUST BE COMPUTED AS IS from first principles, dynamic algorithms, or verified symbolic mathematical derivation.
+2. **Zero Benchmark Name Coupling / Shortcut Inlining**:
+   - Compiler optimization passes must NEVER shortcut computations by matching specific function names (e.g., `ack`, `tak`, `fib`, `nrev`, `append3`) or checking benchmark constants.
+   - All transformations, recurrence solvers, and deforestation passes must be purely structural, general, and inductive across all user-defined code.
+3. **Purity of Code Generation**:
+   - The compiler must never emit pre-baked numerical constants unless derived strictly through constant folding of statically known input expressions.
+
