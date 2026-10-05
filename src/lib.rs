@@ -13,3 +13,4 @@ pub mod doc;
 pub mod mir;
 pub mod runtime;
 pub mod testing;
+pub mod compiler;

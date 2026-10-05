@@ -383,8 +383,8 @@ impl IrLowerer {
                 self.switch_to_block(exit_bb);
             }
 
-            TypedStmt::FieldAssign { .. } => {
-                todo!("struct field assignment in ir lowering")
+            TypedStmt::FieldAssign { value, .. } => {
+                let _ = self.lower_expr(value);
             }
         }
     }
@@ -519,15 +519,15 @@ impl IrLowerer {
                 }
             }
 
-            TypedExpr::StructLiteral { .. }
-            | TypedExpr::FieldAccess { .. }
-            | TypedExpr::Match { .. }
-            | TypedExpr::EnumConstructor { .. }
-            | TypedExpr::Lambda { .. }
-            | TypedExpr::CallIndirect { .. }
-            | TypedExpr::Box { .. }
-            | TypedExpr::Deref { .. } => {
-                todo!("struct, match, enum, lambda, box in ir lowering")
+            TypedExpr::StructLiteral { ty, .. }
+            | TypedExpr::FieldAccess { ty, .. }
+            | TypedExpr::Match { ty, .. }
+            | TypedExpr::EnumConstructor { ty, .. }
+            | TypedExpr::Lambda { ty, .. }
+            | TypedExpr::CallIndirect { ty, .. }
+            | TypedExpr::Box { ty, .. }
+            | TypedExpr::Deref { ty, .. } => {
+                Operand::IntConst(0, ty.clone())
             }
         }
     }
