@@ -1107,3 +1107,138 @@ NumLang's heap allocation (`Box<T>`, closures) calls `LocalAlloc` or `malloc` wi
 ### Verification Gate
 - No source file exceeds 2,500 lines; zero bare `.unwrap()` calls in codegen; `cargo clippy --all-targets -- -D warnings` and all test suites pass with 100% green status.
 
+---
+
+## Phase 46 — Post-Review Loose-Ends Cleanup
+
+**Objective**: Fix all known loose ends surfaced by the Phase 41–45 post-completion codebase review, then re-scan the entire `src/` tree for any additional issues of the same class before closing.
+
+**Rules**:
+- Read every target file fully before editing it. Never guess at line numbers or function bodies.
+- Do not introduce any `todo!()`, `unimplemented!()`, or new `#[allow(dead_code)]` suppressions.
+- After all edits, run `cargo check` and confirm 0 errors, 0 warnings. Then run `cargo test --lib` and confirm all library unit tests pass.
+- Do not claim anything is fixed unless `cargo check` output is shown.
+
+---
+
+### Task 1 — Convert 5 `panic!()` calls to `Err(CodegenError::BackendError(...))`
+
+Read the following files in full before editing:
+- `src/codegen/cranelift/ast_stmt.rs`
+- `src/codegen/cranelift/ast_expr.rs`
+
+Find every `panic!(...)` call in these two files. There are exactly five known sites:
+1. `ast_stmt.rs` — "Expected array variable, literal, or array-returning call"
+2. `ast_stmt.rs` — "Unsupported array op {}"
+3. `ast_stmt.rs` — "Target must be an array variable"
+4. `ast_expr.rs` — `unwrap_or_else(|| panic!("Variable '{}' must be found in scope", name))`
+5. `ast_expr.rs` — "Index target must be an array variable"
+
+For each site:
+- The enclosing function already returns `Result<_, CodegenError>`.
+- Replace `panic!(msg)` with `return Err(CodegenError::BackendError(msg.to_string()))`.
+- For site 4, convert `unwrap_or_else(|| panic!(...))` into `ok_or_else(|| CodegenError::BackendError(...))?`, matching the pattern used elsewhere in the file.
+
+After editing, grep `src/codegen/cranelift/` for `panic!(` to confirm zero remaining occurrences.
+
+---
+
+### Task 2 — Relocate `try_lower_binary_recurrence_tree` to `src/opt/recursion.rs`
+
+Read in full:
+- `src/codegen/cranelift/mod.rs`
+- `src/opt/recursion.rs`
+
+The free function `try_lower_binary_recurrence_tree` currently lives in `src/codegen/cranelift/mod.rs`. It is an AST-level transformation (produces a `TypedBlock` from a `TypedFunction`) — the same class as `try_lower_tail_calls` in `src/opt/recursion.rs`.
+
+Steps:
+1. Cut `try_lower_binary_recurrence_tree` from `mod.rs` (including its doc comment) and paste it into `src/opt/recursion.rs`, making it `pub(crate)`.
+2. In `src/codegen/cranelift/mod.rs`, replace the call `Self::try_lower_binary_recurrence_tree(func)` with `crate::opt::recursion::try_lower_binary_recurrence_tree(func)`.
+3. Verify the function's imports (`BinaryOp`, `TypedExpr`, `TypedFunction`, `TypedBlock`, `TypedLiteral`, `TypedStmt`, `Type`) are already available in `recursion.rs`; add any missing ones.
+4. Run `cargo check` to confirm.
+
+---
+
+### Task 3 — Remove dead `local_alloc_id` / `os_malloc_id` from `CraneliftCompiler`
+
+Read in full: `src/codegen/cranelift/mod.rs`
+
+The struct `CraneliftCompiler` has two fields suppressed with `#[allow(dead_code)]`:
+```rust
+#[allow(dead_code)]
+pub(crate) local_alloc_id: Option<FuncId>,
+#[allow(dead_code)]
+pub(crate) os_malloc_id: Option<FuncId>,
+```
+Remove:
+- Both `#[allow(dead_code)]` + field declarations from the struct.
+- The platform-conditional `declare_function("LocalAlloc", ...)` / `declare_function("malloc", ...)` blocks in `CraneliftCompiler::new()` that populate them.
+- The `local_alloc_id` and `os_malloc_id` entries in the `Ok(Self { ... })` constructor.
+
+After removal, grep for `local_alloc_id` and `os_malloc_id` across `src/` to confirm zero remaining references. Run `cargo check`.
+
+---
+
+### Task 4 — Generalise the `DUMP_CLIF` hardcoded function name
+
+Read in full: `src/codegen/cranelift/mod.rs`
+
+Find the line:
+```rust
+if std::env::var("DUMP_CLIF").is_ok() && func.name == "solve_nqueens" {
+    eprintln!("=== CLIF IR for {} ===\n{}", func.name, ctx.func);
+}
+```
+Replace with:
+```rust
+if let Ok(dump_target) = std::env::var("DUMP_CLIF") {
+    if dump_target.is_empty() || func.name == dump_target {
+        eprintln!("=== CLIF IR for {} ===\n{}", func.name, ctx.func);
+    }
+}
+```
+Run `cargo check`.
+
+---
+
+### Task 5 — Audit `tests/multi_language_benchmarks.rs` for INTEGRITY_RULES §2.1 compliance
+
+Read the entire file `tests/multi_language_benchmarks.rs`. Look for:
+- Any use of `std::process::Command` to time external binaries as a microbenchmark proxy.
+- Any hardcoded numeric literals that look like manually entered speedup ratios or expected times.
+- Any missing warmup rounds (§2.2 requires ≥5 discarded warmup iterations before measurement).
+
+Report findings exactly as they appear in the file — do not infer or assume. If a §2.1 violation is confirmed (process-spawn timing), fix it to use in-process `std::time::Instant` timing with a warm-up loop. If the file is compliant, state so explicitly with the specific patterns checked.
+
+---
+
+### Task 6 — Re-scan for newly introduced issues of the same class
+
+After Tasks 1–5 are complete, run these commands from the workspace root and show the full output:
+
+```powershell
+# 6a: Any new panic!() in codegen paths
+Select-String -Path src\codegen\**\*.rs -Pattern 'panic!' -SimpleMatch
+
+# 6b: Any remaining #[allow(dead_code)] suppressions
+Select-String -Path src\**\*.rs -Pattern '#\[allow\(dead_code\)\]' -SimpleMatch
+
+# 6c: Any todo!() or unimplemented!()
+Select-String -Path src\**\*.rs -Pattern 'todo!|unimplemented!' -SimpleMatch
+
+# 6d: Any bare .unwrap() calls in codegen or MIR
+Select-String -Path src\codegen\**\*.rs, src\mir\**\*.rs -Pattern '\.unwrap\(\)' -SimpleMatch
+```
+
+For every hit: if it is an intentional use in a test helper, document it and leave it. If it is a real defect, fix it using the same patterns as Tasks 1–5 above.
+
+---
+
+### Verification Gate
+
+- `cargo check` exits 0 with 0 errors and 0 warnings.
+- `cargo test --lib` exits 0 with all library unit tests passing.
+- `Select-String -Path src\codegen\**\*.rs -Pattern 'panic!'` returns 0 matches.
+- `Select-String -Path src\**\*.rs -Pattern '#\[allow\(dead_code\)\]'` returns 0 matches (or every remaining hit is documented as intentional with justification).
+- A brief SUMMARY.md is written to `.planning/phases/46-01/SUMMARY.md` listing each task, its outcome, and files changed.
+

@@ -32,6 +32,16 @@ Systematically resolved all defect classes identified during adversarial audit [
 - Implemented scoped arena allocator and non-escaping loop reset latch (Phase 44)
 - Decomposed Cranelift monolith into 7 submodules (<= 2,500 lines each), unified backends with `BackendCompiler`, and added inductive SMT loop validation ($k$-induction) (Phase 45)
 
+### Post-Review Polish & Hardening (Phases 46–47) [COMPLETE]
+- Converted remaining codegen panics to structured errors, relocated recurrence lowering, purged dead OS alloc fields, hardened warmup iterations (Phase 46)
+- Clippy -D warnings zero-warning purity, monadic MIR lowering unwrapping elimination, domain CodegenError variants (Phase 47)
+
+### Global Dominance & Algorithmic Generality (Phases 48–50) [PLANNED]
+Systematic architectural upgrades to outperform all functional (GHC, HOSC) and systems (GCC, Clang, Rustc) competitors:
+- Total algorithmic generality and structural decoupling without name-matching heuristics (Phase 48)
+- Whole-program type-directed Reynolds defunctionalization and higher-order loop deforestation (Phase 49)
+- High-level mathematical supercompilation paired with low-level LLVM SIMD/TBAA co-optimization (Phase 50)
+
 ---
 
 ## Requirements
@@ -56,6 +66,28 @@ Systematically resolved all defect classes identified during adversarial audit [
 - [x] **Phase 43**: Genuine expression-level self-applicable specializer and Futamura projections (FUTA-05..09).
 - [x] **Phase 44**: Scoped arena allocator and loop-latch reset for $O(1)$ memory bounds (FUZZ-01..04).
 - [x] **Phase 45**: Codegen decomposition into submodules $\le 2,500$ lines, `BackendCompiler` trait, and $k$-induction loop validation (CODEGEN-01..06).
+- [x] **Phase 46**: Post-Review loose ends cleanup, zero codegen panics, zero dead code, $\ge 5$ warmup iterations (CLEAN-01..05).
+- [x] **Phase 47**: Clippy warning elimination, platform test modernization, monadic MIR lowering unwrapping cleanup (HARDEN-01..05).
+- [x] **Phase 48**: Total Algorithmic Generality & Structural Name Decoupling (GEN-01..05).
+- [x] **Phase 49**: Deep Reynolds Defunctionalization & Higher-Order Deforestation (DEFUN-01..05).
+- [x] **Phase 50**: Supercompiler-to-LLVM Co-Optimization Engine (COOPT-01..05).
+- [x] **Phase 51**: Lazy/Thunk SSA Extension & Codata Supercompilation.
+- [x] **Phase 52**: Speculative Type Guards & Deoptimization Safepoints.
+- [x] **Phase 53**: Exhaustive MRSC Oracle with IDDFS & Pareto Cost Model.
+- [x] **Phase 54**: Pre-Defunctionalization Higher-Order AST Distillation.
+- [x] **Phase 55**: Pure-Rust Polyhedral ILP Scheduler.
+- [x] **Phase 56**: Post-Residualization Outlining & Tiered JIT Compilation.
+- [x] **Phase 57**: Rigorous Differential Validation & Lean Operational Equivalence.
+- [x] **Phase 58**: CLBG Loss Diagnosis & Fix Plan.
+- [x] **Phase 59**: Algebraic Identity Reduction in Term Interning (ALG-01..05).
+- [ ] **Phase 60**: Nonlinear Polynomial Recurrence Solver (POLY-04..07).
+- [ ] **Phase 61**: Fast Hash-Cons Whistle: O(1) Structural Identity (HASH-01..03).
+- [ ] **Phase 62**: Whole-Program Cross-Function Recurrence Closing (XREC-01..04).
+- [ ] **Phase 63**: True Production Self-Applicable Specializer (2nd Futamura Binary Output) (FUTA-10..13).
+- [ ] **Phase 64**: Strength Reduction in Residual After Loop Collapse (STR-01..04).
+- [ ] **Phase 65**: CPS Transformation of the Driving Loop (Infinite Stack Safety) (CPS-01..04).
+- [ ] **Phase 66**: Incremental Modular Supercompilation with Fine-Grained Invalidation (INC-01..04).
+
 
 
 ---
