@@ -85,18 +85,18 @@ import Supercompiler.Semantics
 
 namespace Supercompiler
 
-inductive DriveStep : MirFunction → MirFunction → Prop where
+inductive DriveStep : MirFunction -> MirFunction -> Prop where
   | const_fold (fn fn' : MirFunction) :
-      fn.entry = fn'.entry →
-      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
+      fn.entry = fn'.entry ->
+      (forall  b, b  in  fn.blocks <-> b  in  fn'.blocks) ->
       DriveStep fn fn'
   | branch_prune (fn fn' : MirFunction) :
-      fn.entry = fn'.entry →
-      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
+      fn.entry = fn'.entry ->
+      (forall  b, b  in  fn.blocks <-> b  in  fn'.blocks) ->
       DriveStep fn fn'
   | knot_tie (fn fn' : MirFunction) :
-      fn.entry = fn'.entry →
-      (∀ b, b ∈ fn.blocks ↔ b ∈ fn'.blocks) →
+      fn.entry = fn'.entry ->
+      (forall  b, b  in  fn.blocks <-> b  in  fn'.blocks) ->
       DriveStep fn fn'
 
 theorem drive_step_preserves_semantics (f1 f2 : MirFunction)
@@ -110,11 +110,11 @@ theorem drive_step_preserves_semantics (f1 f2 : MirFunction)
   | knot_tie he hb =>
     exact semantic_equiv_of_blocks_equiv he hb
 
-inductive MultiDriveStep : MirFunction → MirFunction → Prop where
+inductive MultiDriveStep : MirFunction -> MirFunction -> Prop where
   | refl (f : MirFunction) : MultiDriveStep f f
   | step (f1 f2 f3 : MirFunction) :
-      DriveStep f1 f2 →
-      MultiDriveStep f2 f3 →
+      DriveStep f1 f2 ->
+      MultiDriveStep f2 f3 ->
       MultiDriveStep f1 f3
 
 theorem driving_preserves_semantics (f1 f2 : MirFunction)
@@ -139,12 +139,12 @@ import Supercompiler.Compaction
 
 namespace Supercompiler
 
-inductive FunctionTransformed : MirFunction → MirFunction → Prop where
-  | driving (f1 f2 : MirFunction) : MultiDriveStep f1 f2 → FunctionTransformed f1 f2
-  | distillation (f1 f2 : MirFunction) : DistillationRelation f1 f2 → FunctionTransformed f1 f2
-  | compaction (f1 f2 : MirFunction) : NoopRemoval f1 f2 → FunctionTransformed f1 f2
-  | eta (f1 f2 : MirFunction) : EtaReduction f1 f2 → FunctionTransformed f1 f2
-  | compose (f1 f2 f3 : MirFunction) : FunctionTransformed f1 f2 → FunctionTransformed f2 f3 → FunctionTransformed f1 f3
+inductive FunctionTransformed : MirFunction -> MirFunction -> Prop where
+  | driving (f1 f2 : MirFunction) : MultiDriveStep f1 f2 -> FunctionTransformed f1 f2
+  | distillation (f1 f2 : MirFunction) : DistillationRelation f1 f2 -> FunctionTransformed f1 f2
+  | compaction (f1 f2 : MirFunction) : NoopRemoval f1 f2 -> FunctionTransformed f1 f2
+  | eta (f1 f2 : MirFunction) : EtaReduction f1 f2 -> FunctionTransformed f1 f2
+  | compose (f1 f2 f3 : MirFunction) : FunctionTransformed f1 f2 -> FunctionTransformed f2 f3 -> FunctionTransformed f1 f3
 
 theorem function_transformed_preserves_semantics (f1 f2 : MirFunction)
     (h : FunctionTransformed f1 f2) :
@@ -162,17 +162,17 @@ theorem function_transformed_preserves_semantics (f1 f2 : MirFunction)
   | compose a b c _ _ ih1 ih2 =>
     exact semantic_equiv_trans ih1 ih2
 
-inductive SupercompilerProduces : MirProgram → MirProgram → Prop where
+inductive SupercompilerProduces : MirProgram -> MirProgram -> Prop where
   | pipeline (prog residual : MirProgram) :
-      (∀ f1 ∈ prog.functions, ∀ f2 ∈ residual.functions, f1.name = f2.name → FunctionTransformed f1 f2) →
+      (forall  f1  in  prog.functions, forall  f2  in  residual.functions, f1.name = f2.name -> FunctionTransformed f1 f2) ->
       SupercompilerProduces prog residual
 
 theorem compose_all_proofs {prog residual : MirProgram}
     (h : SupercompilerProduces prog residual) :
-    ∀ func residual_func,
-      (func ∈ prog.functions) →
-      (residual_func ∈ residual.functions) →
-      func.name = residual_func.name →
+    forall  func residual_func,
+      (func  in  prog.functions) ->
+      (residual_func  in  residual.functions) ->
+      func.name = residual_func.name ->
       SemanticEquivalent func residual_func := by
   intro func residual_func h_in_prog h_in_res h_name
   cases h with
@@ -186,10 +186,10 @@ theorem compose_all_proofs {prog residual : MirProgram}
 theorem supercompiler_sound
     (prog : MirProgram) (residual : MirProgram)
     (h : SupercompilerProduces prog residual) :
-    ∀ func residual_func,
-      (func ∈ prog.functions) →
-      (residual_func ∈ residual.functions) →
-      func.name = residual_func.name →
+    forall  func residual_func,
+      (func  in  prog.functions) ->
+      (residual_func  in  residual.functions) ->
+      func.name = residual_func.name ->
       SemanticEquivalent func residual_func := by
   exact compose_all_proofs h
 

@@ -111,7 +111,7 @@ Listing~\ref{lst:whistle_impl} shows the complete implementation of the homeomor
 use super::term::{SymTerm, SymTermId, TermInterner};
 use crate::mir::Place;
 
-/// Fast homeomorphic embedding check: returns true if `t1` is homeomorphically embedded in `t2` (t1 ⊴ t2).
+/// Fast homeomorphic embedding check: returns true if `t1` is homeomorphically embedded in `t2` (t1 <= t2).
 pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> bool {
     // 0. O(1) identity check via canonical hash-consing
     if t1 == t2 {

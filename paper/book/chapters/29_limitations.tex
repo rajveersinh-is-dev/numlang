@@ -120,7 +120,7 @@ To diagnose why MSVC-O2 outperformed NumLang-SC on \texttt{nrev} ($53.60\,\mu\te
 
 \begin{table}[htbp]
 \centering
-\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccc}
 \toprule
 \textbf{Compiler} & \textbf{L1 Data Cache Misses} & \textbf{L2 Cache Misses} & \textbf{LLC Misses} & \textbf{Branch Mispredictions} \\
@@ -130,7 +130,8 @@ To diagnose why MSVC-O2 outperformed NumLang-SC on \texttt{nrev} ($53.60\,\mu\te
 \textbf{NumLang-Base} & $8,140$ & $2,800$ & $610$ & $54$ \\
 \textbf{NumLang-SC} & $6,890$ & $2,100$ & $490$ & $46$ \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Hardware Performance Counter Event Traces on \texttt{nrev} ($N=1000$).}
 \label{tab:hw_counters_nrev}
 \end{table}
