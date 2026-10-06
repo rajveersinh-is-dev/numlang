@@ -1,0 +1,459 @@
+\chapter{Symbolic Driving}
+\label{chap:driving}
+
+\section{The Core Driving Architecture}
+\label{sec:driving:arch}
+
+Symbolic driving is the operational engine that propels metacomputation forward. Implemented in \texttt{src/mir/supercompiler/drive.rs}, driving symbolically evaluates SSA basic blocks statement by statement, updating the symbolic environment, resolving memory dereferences, and expanding terminators into process tree branches.
+
+Algorithm~\ref{alg:driving_loop} presents the high-level pseudocode for the primary driving procedure \texttt{drive\_node}.
+
+\begin{algorithm}[h!]
+\caption{The NumLang Symbolic Driving Loop (\texttt{drive\_node})}
+\label{alg:driving_loop}
+\begin{algorithmic}[1]
+\Require Process Tree Node $N$, Configuration $C = \langle bb, \vec{s}, \env, \heap, \Phi \rangle$, Budget $\mathcal{B}$
+\Ensure Updated Process Tree Subtree rooted at $N$
+\Procedure{DriveNode}{$N, C, \mathcal{B}$}
+    \If{$\mathcal{B}.\text{depth} \le 0 \lor \mathcal{B}.\text{inline} \le 0$}
+        \State \Return \Call{ForceGeneralize}{$N, C$}
+    \EndIf
+    \If{\Call{WhistleBlows}{$C, \text{Ancestors}(N)$}}
+        \State \Return \Call{HandleWhistle}{$N, C$}
+    \EndIf
+    \While{$\vec{s} \ne []$}
+        \State Let $stmt = \text{head}(\vec{s}); \quad \vec{s} = \text{tail}(\vec{s})$
+        \State $C \gets$ \Call{DriveStatement}{$stmt, C$}
+    \EndWhile
+    \State \Return \Call{DriveTerminator}{$N, \text{terminator}(bb), C, \mathcal{B}$}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\section{Driving SSA Instructions and Rvalues}
+\label{sec:driving:instructions}
+
+For each SSA statement $x = \mathtt{Rvalue}$, \texttt{drive\_statement} updates the environment $\env[x]$:
+
+\begin{itemize}
+    \item \textbf{Constant Assignment} ($x = \mathtt{Constant}(c)$): Interns $c$ via \texttt{TermInterner} and binds $\env[x] \gets \text{id}(c)$.
+    \item \textbf{Binary Arithmetic} ($x = \mathtt{BinOp}(\text{op}, y, z)$): Retrieves symbolic term IDs for $y$ and $z$. Invokes \texttt{intern\_binary(op, env[y], env[z])}, automatically triggering the 30 algebraic reductions.
+    \item \textbf{Heap Allocation} ($x = \mathtt{Alloc}(y)$): Allocates a fresh symbolic pointer ID $p_{\text{fresh}}$, binds $\heap[p_{\text{fresh}}] \gets \env[y]$, and maps $\env[x] \gets p_{\text{fresh}}$.
+    \item \textbf{Heap Dereference} ($x = \mathtt{Load}(y)$): If $\env[y]$ resolves to a known pointer $p \in \text{dom}(\heap)$, driving folds the read into $\env[x] \gets \heap[p]$. If $p$ is an unknown symbolic parameter, driving materializes a symbolic term $\mathtt{Deref}(\env[y])$.
+\end{itemize}
+
+\section{Driving Terminators and Control-Flow Bifurcation}
+\label{sec:driving:terminators}
+
+When all linear statements within a basic block have been driven, \texttt{drive\_terminator} handles the control-flow terminator:
+
+\subsection{Conditional Branch (\texttt{Terminator::BranchIf})}
+Given $\mathtt{BranchIf}(c, bb_{\text{then}}, bb_{\text{else}})$:
+\begin{enumerate}
+    \item \textbf{Constant Condition}: If $\env[c]$ is statically proven \texttt{true} (or \texttt{false}), driving proceeds unconditionally to $bb_{\text{then}}$ (or $bb_{\text{else}}$).
+    \item \textbf{Interval Pruning}: If the numerical interval of $c$ excludes zero, the \texttt{else} branch is pruned as dead code.
+    \item \textbf{Symbolic Bifurcation}: If $c$ remains indeterminate, driving branches the process tree into two children, adding $c == \mathtt{true}$ to $\Phi_{\text{then}}$ and $c == \mathtt{false}$ to $\Phi_{\text{else}}$.
+\end{enumerate}
+
+\subsection{Function Inlining and Recursion (\texttt{Terminator::Call})}
+Given a function call $x = \mathtt{Call}(f, \vec{args})$:
+\begin{enumerate}
+    \item If $f$ is non-recursive and within the inline budget ($\le 500$ MIR statements), the callee body is inlined directly into the driving configuration.
+    \item If $f$ is recursive, driving checks whether unrolling $f$ matches an existing recurrence companion pattern (Chapter~\ref{chap:recurrences}) or blows the whistle (Chapter~\ref{chap:termination}).
+\end{enumerate}
+
+\section{Budgets and the CPS Driving Trampoline (Phase 65)}
+\label{sec:driving:cps}
+
+Historically, deeply nested or mutual recurrences would cause the Rust compiler host stack to overflow during recursive \texttt{drive\_node} invocations. In Phase 65, NumLang refactored the driving loop into a \emph{Continuation-Passing Style (CPS) Driving Trampoline}.
+
+Work is encapsulated into an explicit heap-allocated task queue:
+\begin{lstlisting}[language=Rust, caption={The CPS DriveTask queue in NumLang.}]
+pub enum DriveTask {
+    StepNode(ProcessNodeId, SymbolicState, Budget),
+    ResumeBranch(ProcessNodeId, Vec<ProcessNodeId>),
+    FinalizeKnot(ProcessNodeId, SymTermId),
+}
+\end{lstlisting}
+The driver runs as an explicit while-loop over \texttt{VecDeque<DriveTask>}, guaranteeing that supercompilation can safely traverse recursion depths exceeding 100,000 steps without risking native stack overflow.
+
+\section{Parallel Work-Stealing Driving (Phase 36)}
+\label{sec:driving:parallel}
+
+Because branching decisions produce independent child configurations, NumLang implements parallel driving via Rayon (\texttt{src/mir/supercompiler/parallel.rs}). When the task queue contains multiple pending branch nodes and CPU cores are available, the trampoline forks child evaluations across thread pools. Independent subtrees are driven concurrently and joined deterministically at synchronization barriers.
+
+\section{End-to-End Driving Walkthrough: double\_nrev}
+\label{sec:driving:nrev_walkthrough}
+
+To observe the full mechanics of symbolic driving, consider supercompiling the classic double-reverse pipeline:
+\begin{equation}
+\mathtt{double\_nrev}(xs) = \mathtt{nrev}(\mathtt{nrev}(xs))
+\end{equation}
+
+\begin{enumerate}
+    \item \textbf{Initial Configuration}: $C_0 = \langle \mathtt{bb0}, [xs \mapsto \alpha], \emptyset, \emptyset \rangle$, where $\alpha$ is a symbolic list parameter.
+    \item \textbf{First Unfold}: Driving inlines the outer \texttt{nrev}. It encounters a match on $\mathtt{nrev}(\alpha)$. Because the inner expression is not in weak head normal form, driving pivots to evaluate the inner $\mathtt{nrev}(\alpha)$.
+    \item \textbf{Branching on Head Constructor}: The inner list branches on $\alpha = \mathtt{Nil}$ vs $\alpha = \mathtt{Cons}(h, t)$.
+    \begin{itemize}
+        \item \emph{Base Case ($\alpha = \mathtt{Nil}$)}: $\mathtt{nrev}(\mathtt{Nil}) \to \mathtt{Nil}$. Outer call evaluates $\mathtt{nrev}(\mathtt{Nil}) \to \mathtt{Nil}$. Emits leaf node.
+        \item \emph{Recursive Case ($\alpha = \mathtt{Cons}(h, t)$)}: Inner call expands to $\mathtt{append}(\mathtt{nrev}(t), [h])$. Outer call now faces $\mathtt{nrev}(\mathtt{append}(\mathtt{nrev}(t), [h]))$.
+    \end{itemize}
+    \item \textbf{Whistle Firing and Generalization}: As the accumulator grows with nested append calls, the homeomorphic embedding whistle blows. Generalization abstracts the accumulator into a fresh variable $\beta$, synthesizing the generalized knot $\mathtt{rev\_acc}(xs, \beta)$.
+    \item \textbf{Residual MIR}: The final residualized program collapses the intermediate lists, synthesizing a direct tail-recursive accumulator loop.
+\end{enumerate}
+
+\section{Complete Driving Trace: Peano Arithmetic Multiplication}
+\label{sec:driving:peano_trace}
+
+To understand how symbolic driving collapses recursive algebraic structures into primitive arithmetic, consider multiplying two Peano numbers:
+\begin{lstlisting}[language=NumLang]
+enum Peano {
+    Zero,
+    Succ(Box<Peano>),
+}
+
+fn peano_add(a: Peano, b: Peano) -> Peano {
+    match a {
+        Peano::Zero => b,
+        Peano::Succ(pred) => Peano::Succ(box(peano_add(deref(pred), b))),
+    }
+}
+
+fn peano_mul(a: Peano, b: Peano) -> Peano {
+    match a {
+        Peano::Zero => Peano::Zero,
+        Peano::Succ(pred) => peano_add(b, peano_mul(deref(pred), b)),
+    }
+}
+\end{lstlisting}
+
+\subsection{Step-by-Step Driving Trace}
+Let the initial symbolic state be $C_0 = \langle [a \mapsto \alpha, b \mapsto \beta], \emptyset \rangle$, where $\alpha, \beta$ are symbolic terms.
+\begin{enumerate}
+    \item \textbf{Branching on Scrutinee}: Driving evaluates the outer match on $a$. It branches on $\alpha = \mathtt{Zero}$ vs $\alpha = \mathtt{Succ}(\alpha')$.
+    \item \textbf{Base Case ($\alpha = \mathtt{Zero}$)}: The match returns $\mathtt{Zero}$ immediately. A terminal leaf is created.
+    \item \textbf{Recursive Case ($\alpha = \mathtt{Succ}(\alpha')$)}: The body evaluates:
+    \begin{equation}
+    \mathtt{peano\_add}(\beta, \mathtt{peano\_mul}(\alpha', \beta))
+    \end{equation}
+    \item \textbf{Inlining Add}: The driver inlines \texttt{peano\_add}. If $\beta$ is a specialized concrete constant $N = \mathtt{Succ}^N(\mathtt{Zero})$, \texttt{peano\_add} unrolls $N$ successive $\mathtt{Succ}$ constructor wrappings.
+    \item \textbf{Recurrence Recognition}: The driver observes that each reduction step over $\alpha$ wraps exactly $N$ successors around the accumulator:
+    \begin{equation}
+    \text{acc}_{k+1} = \text{acc}_k + N
+    \end{equation}
+    The recurrence engine identifies an arithmetic progression with constant step $N$.
+    \item \textbf{Residual Codegen}: The entire recursive Peano data structure is stripped away. The residual compiler emits a single 64-bit hardware integer multiplication:
+    \begin{equation}
+    \mathtt{imul}\; \mathtt{rax}, \mathtt{rcx}
+    \end{equation}
+    achieving a $38.00\ \mu\text{s}$ execution time (Showdown win over MSVC and Rustc).
+\end{enumerate}
+
+\section{The Core Symbolic Driving Implementation}
+\label{sec:driving:core_impl}
+
+The driving engine in \texttt{src/mir/supercompiler/drive.rs} executes symbolic evaluation of SSA statements, branches, calls, and heap operations. Listing~\ref{lst:drive_core_impl} presents the central driving loop:
+
+\begin{lstlisting}[language=Rust, caption={Core Symbolic Driving Loop in NumLang (\texttt{src/mir/supercompiler/drive.rs}).}, label={lst:drive_core_impl}]
+use std::fmt;
+
+use crate::ast::{BinaryOp, UnaryOp};
+use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
+use super::state::{Interval, SymbolicState};
+use super::term::{SymTerm, SymTermId, TermInterner};
+use super::whistle::{is_instance_of, state_embeds};
+use crate::mir::dominance::detect_loops;
+use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
+use crate::mir::memory_ssa::MemoryVersionId;
+use crate::mir::{compute_cfg, BasicBlockId, Place, Projection, Terminator};
+use crate::typecheck::types::Type;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ProcessNodeId(pub usize);
+
+#[derive(Debug, Clone)]
+pub enum ProcessEdge {
+    Step(ProcessNodeId),
+    BranchTrue(ProcessNodeId, SymTermId),
+    BranchFalse(ProcessNodeId, SymTermId),
+    Knot(ProcessNodeId),
+}
+
+/// CPS Driving task representing explicit steps in the work-queue trampoline.
+#[derive(Debug, Clone)]
+pub enum DriveTask {
+    /// Process the current basic block and evaluate statements & terminator.
+    ProcessNode {
+        node_id: ProcessNodeId,
+        depth: usize,
+    },
+    /// Handle CFG transition to `next_state` (instance checking, whistle & recurrence test, stepping).
+    HandleTransition {
+        from_id: ProcessNodeId,
+        next_state: Box<SymbolicState>,
+        depth: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessNode {
+    pub id: ProcessNodeId,
+    pub state: SymbolicState,
+    pub edges: Vec<ProcessEdge>,
+    pub return_term: Option<SymTermId>,
+    pub overflow: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SupercompilerStats {
+    pub nodes_explored: usize,
+    pub branches_pruned: usize,
+    pub loops_collapsed: usize,
+    pub knots_tied: usize,
+    pub calls_inlined: usize,
+    pub sc_bce_eliminated: usize,
+    // Phase 35: Residual code-size metrics (set by compact.rs after compaction)
+    pub residual_block_count: usize,
+    pub residual_stmt_count: usize,
+}
+
+impl fmt::Display for SupercompilerStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "nodes: {}, branches pruned: {}, loops collapsed: {}, knots tied: {}, calls inlined: {}, sc bce eliminated: {}, residual blocks: {}, residual stmts: {}",
+            self.nodes_explored, self.branches_pruned, self.loops_collapsed, self.knots_tied, self.calls_inlined, self.sc_bce_eliminated, self.residual_block_count, self.residual_stmt_count
+        )
+    }
+}
+
+/// A single whistle-firing event --- records that the HE check detected `ancestor ⊴ descendant`
+/// at node `from_id`, causing a knot to be tied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhistleFiring {
+    /// The node that was being driven when the whistle fired.
+    pub from_id: ProcessNodeId,
+    /// The ancestor node whose state embeds into the current state.
+    pub ancestor_id: ProcessNodeId,
+    /// The kind of stopping: HE whistle or header-visit cutoff.
+    pub kind: WhistleKind,
+}
+
+/// Result of attempting to solve a loop recurrence to closed form.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecurrenceResult {
+    /// Successfully solved to a scalar closed-form state.
+    Solved(Box<SymbolicState>),
+    /// Loop contains internal branches (e.g. if-statements in body) and cannot be collapsed.
+    UnsolvableBranchingBody,
+    /// Loop history did not match any recognizable recurrence pattern.
+    UnsolvableNoPattern,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum AccumulatorLoopResult {
+    Solved(Vec<(Place, SymTermId)>, Place),
+    BranchingBody,
+    NotApplicable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WhistleKind {
+    /// Homeomorphic embedding detected (state_embeds returned true).
+    HomeomorphicEmbedding,
+    /// Header visit count >= 3 (empirical cutoff; no HE check fired first).
+    HeaderVisitCutoff,
+}
+
+/// A complete termination certificate for one function's process tree.
+/// Presence of this struct (with a non-empty `firings` vec) proves that
+/// the driving loop terminated by whistle, not by accident.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminationWitness {
+    pub firings: Vec<WhistleFiring>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessTree {
+    pub nodes: Vec<ProcessNode>,
+    pub root: ProcessNodeId,
+    pub interner: TermInterner,
+    pub stats: SupercompilerStats,
+    pub witness: TerminationWitness,
+}
+
+impl ProcessTree {
+    pub fn display(&self) -> String {
+        let mut out = String::new();
+        out.push_str("Process Tree:\n");
+        for node in &self.nodes {
+            out.push_str(&format!(
+                "  Node #{}: block = BasicBlockId({})\n",
+                node.id.0, node.state.block.0
+            ));
+            if let Some(ret) = node.return_term {
+                out.push_str(&format!("    Return: {}\n", ret));
+            }
+            for edge in &node.edges {
+                match edge {
+                    ProcessEdge::Step(next) => {
+                        out.push_str(&format!("    -> Step to Node #{}\n", next.0));
+                    }
+                    ProcessEdge::BranchTrue(next, cond) => {
+                        out.push_str(&format!(
+                            "    -> BranchTrue to Node #{} [condition: {}]\n",
+                            next.0, cond
+                        ));
+                    }
+                    ProcessEdge::BranchFalse(next, cond) => {
+                        out.push_str(&format!(
+                            "    -> BranchFalse to Node #{} [condition: !{}]\n",
+                            next.0, cond
+                        ));
+                    }
+                    ProcessEdge::Knot(anc) => {
+                        out.push_str(&format!("    -> Knot to Ancestor Node #{}\n", anc.0));
+                    }
+                }
+            }
+        }
+        out.push_str(&format!("  Stats: {}\n", self.stats));
+        out
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DriverConfig {
+    pub max_depth: usize,
+    pub max_unroll_depth: usize,
+    pub solve_recurrences: bool,
+    pub inline_calls: bool,
+    pub max_inline_depth: usize,
+    pub max_inline_nodes: usize,
+    pub inline_loop_body_calls: bool,
+}
+
+impl Default for DriverConfig {
+    fn default() -> Self {
+        DriverConfig {
+            max_depth: 2048,
+            max_unroll_depth: 0,
+            solve_recurrences: true,
+            inline_calls: true,
+            max_inline_depth: 8,
+            max_inline_nodes: 512,
+            inline_loop_body_calls: false,
+        }
+    }
+}
+
+pub struct SupercompilerDriver<'a> {
+    func: &'a MirFunction,
+    nodes: Vec<ProcessNode>,
+    parents: Vec<Option<ProcessNodeId>>,
+    interner: TermInterner,
+    block_map: HashMap<BasicBlockId, &'a MirBasicBlock>,
+    loop_headers: std::collections::HashSet<BasicBlockId>,
+    natural_loops: HashMap<BasicBlockId, std::collections::HashSet<BasicBlockId>>,
+    next_node_id: usize,
+    max_depth: usize,
+    active_places: Vec<Place>,
+    stats: SupercompilerStats,
+    program_funcs: HashMap<String, &'a MirFunction>,
+    call_stack: Vec<String>,
+    pub config: DriverConfig,
+    witness: TerminationWitness,
+    param_refinements: HashMap<String, Interval>,
+}
+
+impl<'a> SupercompilerDriver<'a> {
+    pub fn new(func: &'a MirFunction) -> Self {
+        let block_map: HashMap<BasicBlockId, &'a MirBasicBlock> =
+            func.blocks.iter().map(|b| (b.id.clone(), b)).collect();
+
+        let (preds, succs) = compute_cfg(&func.blocks);
+        let all_block_ids: Vec<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
+        let entry = func.blocks[0].id.clone();
+        let dom = crate::mir::dominance::compute_dominance(entry.clone(), &preds, &succs, &all_block_ids);
+        let loop_info = detect_loops(entry, &preds, &succs, &all_block_ids, &dom);
+
+        let mut active_places = Vec::new();
+        for local in &func.locals {
+            active_places.push(Place {
+                local: local.name.clone(),
+                projections: vec![],
+            });
+        }
+
+        SupercompilerDriver {
+            func,
+            nodes: Vec::new(),
+            parents: Vec::new(),
+            interner: TermInterner::new(),
+            block_map,
+            loop_headers: loop_info.headers,
+            natural_loops: loop_info.natural_loops,
+            next_node_id: 0,
+            max_depth: 2048,
+            active_places,
+            stats: SupercompilerStats::default(),
+            program_funcs: HashMap::new(),
+            call_stack: vec![func.name.clone()],
+            config: DriverConfig::default(),
+            witness: TerminationWitness::default(),
+            param_refinements: HashMap::new(),
+        }
+    }
+
+    pub fn with_config(mut self, config: DriverConfig) -> Self {
+        self.max_depth = config.max_depth;
+        self.config = config;
+        self
+    }
+
+    pub fn with_unroll_depth(mut self, depth: usize) -> Self {
+        self.config.max_unroll_depth = depth;
+        self
+    }
+
+    pub fn with_recurrence_solving(mut self, enable: bool) -> Self {
+        self.config.solve_recurrences = enable;
+        self
+    }
+
+    pub fn with_inlining(mut self, enable: bool) -> Self {
+        self.config.inline_calls = enable;
+        self
+    }
+
+    pub fn with_max_inline_depth(mut self, depth: usize) -> Self {
+        self.config.max_inline_depth = depth;
+        self
+    }
+
+    pub fn with_max_inline_nodes(mut self, nodes: usize) -> Self {
+        self.config.max_inline_nodes = nodes;
+        self
+    }
+
+    pub fn with_inline_loop_body_calls(mut self, enable: bool) -> Self {
+        self.config.inline_loop_body_calls = enable;
+        self
+    }
+
+    pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
+        self.program_funcs = funcs
+            .iter()
+            .map(|f| (f.name.clone(), f))
+            .collect();
+        self
+    }
+
+    pub fn with_program_functions_map(mut self, map: HashMap<String, &'a MirFunction>) -> Self {
+        self.program_funcs = map;
+        self
+    }
+
+    pub fn with_call_stack(mut self, stack: Vec<String>) -> Self {
+
+\end{lstlisting}

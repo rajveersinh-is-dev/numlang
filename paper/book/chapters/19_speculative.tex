@@ -1,0 +1,422 @@
+\chapter{Speculative Optimization and Dynamic Deoptimization}
+\label{chap:speculative}
+
+\section{The Role of Speculation in SSA Supercompilation}
+\label{sec:speculative:intro}
+
+In programs utilizing dynamic types, polymorphism, or unpredictable control flow, static driving must frequently widen configurations to preserve soundness across worst-case scenarios. However, in practice, program execution overwhelmingly follows predictable monomorphic types and single-path branches.
+
+NumLang resolves this tension via \emph{Speculative Optimization and Dynamic Deoptimization} (Phase 52, \texttt{src/mir/speculate.rs}).
+
+\section{Type-Profile Analysis (Phase 52)}
+\label{sec:speculative:profiling}
+
+During Tier 0 JIT execution (Chapter~\ref{chap:architecture}), NumLang injects lightweight profiling hooks at function entries and call sites. If a dynamic interface call or variant pattern match receives the same concrete type tag in $>99.5\%$ of observed executions, the compiler marks the site as a \emph{speculative candidate}.
+
+\section{The TypeGuard Terminator}
+\label{sec:speculative:typeguard}
+
+During Tier 1 supercompilation, the driver does not bifurcate on speculative sites. Instead, it emits a \texttt{Terminator::TypeGuard}:
+
+\begin{lstlisting}[language=Rust, caption={The TypeGuard Terminator in NumLang.}]
+pub enum Terminator {
+    TypeGuard {
+        target_place: Place,
+        expected_tag: u64,
+        fast_path: BasicBlockId,
+        deopt_id: DeoptId,
+    },
+    // ...
+}
+\end{lstlisting}
+
+The fast path assumes the expected tag unconditionally, allowing the supercompiler to inline, deforest, and optimize the body as if it were statically monomorphic.
+
+\section{Deoptimization Stubs and Frame Reconstruction}
+\label{sec:speculative:deopt_stubs}
+
+If runtime execution violates the speculative assumption ($\text{tag} \ne \text{expected\_tag}$):
+\begin{enumerate}
+    \item The fast-path branch traps into a specialized \emph{deoptimization stub} (\texttt{src/codegen/cranelift/deopt.rs}).
+    \item The stub reads the current native machine registers, decodes the \texttt{DeoptId} metadata table, and reconstructs the unoptimized interpreter stack frame.
+    \item Execution resumes seamlessly inside the unoptimized Tier 0 interpreter without observable program interruption.
+\end{enumerate}
+This architecture enables aggressive speculative metacomputation with zero sacrifice of language safety.
+
+\section{Speculative Type Guard Synthesis}
+\label{sec:speculate:impl}
+
+Listing~\ref{lst:speculate_impl} presents the type-profiling and speculative guard injection logic from \texttt{src/mir/speculate.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Speculative Type Guard Generation (\texttt{src/mir/speculate.rs}).}, label={lst:speculate_impl}]
+//!
+//! Provides runtime profiling of observed dynamic type tags at polymorphic sites,
+//! computes statistical confidence scores, and inserts speculative `Terminator::TypeGuard`
+//! fast-path branches in residualized MIR when confidence exceeds configurable thresholds.
+
+use std::collections::HashMap;
+use crate::mir::{BasicBlockId, Terminator};
+use crate::mir::lower::{MirBasicBlock, MirFunction, MirProgram};
+
+/// Concrete observed type profile for a local variable or parameter at a specialization site.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TypeProfile {
+    /// Identifier of the local or parameter.
+    pub local: String,
+    /// Most frequently observed concrete type tag (e.g. 1 for i64, 2 for f64, 3 for ptr).
+    pub observed_tag: i64,
+    /// Confidence fraction in the range [0.0, 1.0] (observed_count / total_count).
+    pub confidence: f64,
+    /// Total number of recorded execution samples.
+    pub sample_count: usize,
+}
+
+/// Dynamic type profiler tracking observations across execution runs.
+#[derive(Debug, Default, Clone)]
+pub struct TypeProfiler {
+    observations: HashMap<String, HashMap<i64, usize>>,
+}
+
+impl TypeProfiler {
+    pub fn new() -> Self {
+        Self {
+            observations: HashMap::new(),
+        }
+    }
+
+    /// Record a single concrete type tag observation for a given local identifier.
+    pub fn record_observation(&mut self, local: &str, tag: i64) {
+        *self
+            .observations
+            .entry(local.to_string())
+            .or_default()
+            .entry(tag)
+            .or_insert(0) += 1;
+    }
+
+    /// Compute concrete type profiles for all observed locals.
+    pub fn compute_profiles(&self) -> HashMap<String, TypeProfile> {
+        let mut profiles = HashMap::new();
+        for (local, tag_counts) in &self.observations {
+            let total: usize = tag_counts.values().sum();
+            if total == 0 {
+                continue;
+            }
+            if let Some((&dominant_tag, &count)) = tag_counts.iter().max_by_key(|(_, &c)| c) {
+                let confidence = count as f64 / total as f64;
+                profiles.insert(
+                    local.clone(),
+                    TypeProfile {
+                        local: local.clone(),
+                        observed_tag: dominant_tag,
+                        confidence,
+                        sample_count: total,
+                    },
+                );
+            }
+        }
+        profiles
+    }
+
+    /// Clear all recorded observations.
+    pub fn clear(&mut self) {
+        self.observations.clear();
+    }
+}
+
+/// Analyze a function and insert speculative type guards at polymorphic/indirect call sites
+/// where the observed profile confidence meets or exceeds `confidence_threshold` (default: 0.95).
+///
+/// Returns the number of speculative type guards successfully inserted into the function.
+pub fn insert_speculative_type_guards(
+    func: &mut MirFunction,
+    profiles: &HashMap<String, TypeProfile>,
+    confidence_threshold: f64,
+) -> usize {
+    if func.blocks.is_empty() {
+        return 0;
+    }
+
+    let mut guards_inserted = 0;
+    let mut new_blocks: Vec<MirBasicBlock> = Vec::new();
+
+    // Iterate through blocks and look for candidates to guard
+    for block in &func.blocks {
+        let mut split_occurred = false;
+
+        if let Terminator::IndirectCall { callee, args, dest, next } = &block.terminator {
+            // Check if any argument or the callee place has a high-confidence type profile
+            let candidate_local = if let Some(prof) = profiles.get(&callee.local) {
+                if prof.confidence >= confidence_threshold {
+                    Some((callee.clone(), prof.observed_tag))
+                } else {
+                    None
+                }
+            } else {
+                args.iter().find_map(|arg| {
+                    profiles.get(&arg.local).and_then(|prof| {
+                        if prof.confidence >= confidence_threshold {
+                            Some((arg.clone(), prof.observed_tag))
+                        } else {
+                            None
+                        }
+                    })
+                })
+            };
+
+            if let Some((guard_place, expected_tag)) = candidate_local {
+                split_occurred = true;
+                guards_inserted += 1;
+
+                let fast_id = BasicBlockId(func.blocks.len() + new_blocks.len() + 1);
+                let deopt_id = BasicBlockId(func.blocks.len() + new_blocks.len() + 2);
+
+                // Original block now ends with TypeGuard
+                let guard_block = MirBasicBlock {
+                    id: block.id.clone(),
+                    statements: block.statements.clone(),
+                    terminator: Terminator::TypeGuard {
+                        local: guard_place,
+                        expected_tag,
+                        fast_path: fast_id.clone(),
+                        deopt_stub: deopt_id.clone(),
+                    },
+                    arguments: vec![],
+                };
+                new_blocks.push(guard_block);
+
+                // Fast-path block: optimized monomorphic execution continuing to `next`
+                let fast_block = MirBasicBlock {
+                    id: fast_id,
+                    statements: vec![],
+                    terminator: Terminator::IndirectCall {
+                        callee: callee.clone(),
+                        args: args.clone(),
+                        dest: dest.clone(),
+                        next: next.clone(),
+                    },
+                    arguments: vec![],
+                };
+                new_blocks.push(fast_block);
+
+                // Deopt stub block: unspecialized fallback path
+                let deopt_block = MirBasicBlock {
+                    id: deopt_id,
+                    statements: vec![],
+                    terminator: Terminator::IndirectCall {
+                        callee: callee.clone(),
+                        args: args.clone(),
+                        dest: dest.clone(),
+                        next: next.clone(),
+                    },
+                    arguments: vec![],
+                };
+                new_blocks.push(deopt_block);
+            }
+        }
+
+        if !split_occurred {
+            new_blocks.push(block.clone());
+        }
+    }
+
+    if guards_inserted > 0 {
+        func.blocks = new_blocks;
+    }
+
+    guards_inserted
+}
+
+/// Optimize an entire MirProgram with speculative type guards using profiler statistics.
+pub fn speculate_program(
+    program: &mut MirProgram,
+    profiler: &TypeProfiler,
+    confidence_threshold: f64,
+) -> usize {
+    let profiles = profiler.compute_profiles();
+    let mut total_guards = 0;
+    for func in &mut program.functions {
+        total_guards += insert_speculative_type_guards(func, &profiles, confidence_threshold);
+    }
+    total_guards
+}
+
+/// Extract type profile statistics for a function's parameters and locals.
+pub fn collect_function_type_profiles(
+    func: &MirFunction,
+    profiler: &TypeProfiler,
+) -> HashMap<String, TypeProfile> {
+    let all_profiles = profiler.compute_profiles();
+    let mut func_profiles = HashMap::new();
+    for (p_name, _) in &func.params {
+
+\end{lstlisting}
+
+\section{Interpreter Frame Reconstruction and Deoptimization}
+\label{sec:speculate:deopt_impl}
+
+Listing~\ref{lst:deopt_impl} shows the deoptimization stub lowering and frame reconstruction from \texttt{src/codegen/cranelift/deopt.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Deoptimization Stubs and Frame Reconstruction (\texttt{src/codegen/cranelift/deopt.rs}).}, label={lst:deopt_impl}]
+//!
+//! Provides metadata tables for reconstructing unspecialized interpreter call frames
+//! when speculative type guards fail, runtime deoptimization stubs, and atomic OSR
+//! transition slots for hot-path upgrade from baseline to specialized native code.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::RwLock;
+use crate::typecheck::Type;
+
+/// Metadata describing a deoptimization safepoint site.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeoptMetadata {
+    /// Unique safepoint identifier.
+    pub deopt_id: u32,
+    /// Function enclosing this safepoint.
+    pub func_name: String,
+    /// Unspecialized basic block ID to resume execution at.
+    pub resume_bb: usize,
+    /// Size of the interpreter frame in bytes.
+    pub frame_size: usize,
+    /// Live variables at the safepoint: (variable_name, type, offset_or_slot).
+    pub live_vars: Vec<(String, Type, i64)>,
+}
+
+/// Registry storing metadata for all compiled deoptimization points.
+#[derive(Debug, Default)]
+pub struct DeoptTable {
+    entries: HashMap<u32, DeoptMetadata>,
+    deopt_event_counts: HashMap<u32, usize>,
+}
+
+impl DeoptTable {
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            deopt_event_counts: HashMap::new(),
+        }
+    }
+
+    /// Register metadata for a safepoint.
+    pub fn register(&mut self, meta: DeoptMetadata) {
+        self.entries.insert(meta.deopt_id, meta);
+    }
+
+    /// Retrieve metadata by deopt ID.
+    pub fn get(&self, deopt_id: u32) -> Option<&DeoptMetadata> {
+        self.entries.get(&deopt_id)
+    }
+
+    /// Record a dynamic deoptimization event.
+    pub fn record_event(&mut self, deopt_id: u32) {
+        *self.deopt_event_counts.entry(deopt_id).or_insert(0) += 1;
+    }
+
+    /// Get the total number of times deoptimization was triggered.
+    pub fn total_deopts(&self) -> usize {
+        self.deopt_event_counts.values().sum()
+    }
+
+    /// Clear all registered safepoints and metrics.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.deopt_event_counts.clear();
+    }
+}
+
+/// Global thread-safe deoptimization registry.
+static GLOBAL_DEOPT_TABLE: RwLock<Option<DeoptTable>> = RwLock::new(None);
+static GLOBAL_DEOPT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Initialize the global deopt table.
+pub fn init_global_deopt_table() {
+    let mut table = GLOBAL_DEOPT_TABLE.write().unwrap();
+    *table = Some(DeoptTable::new());
+}
+
+/// Register a safepoint in the global deopt table.
+pub fn register_global_deopt(meta: DeoptMetadata) {
+    let mut guard = GLOBAL_DEOPT_TABLE.write().unwrap();
+    if guard.is_none() {
+        *guard = Some(DeoptTable::new());
+    }
+    if let Some(ref mut table) = *guard {
+        table.register(meta);
+    }
+}
+
+/// Reconstruct an unspecialized interpreter call frame mapping variable names to raw values.
+pub fn reconstruct_interpreter_frame(
+    meta: &DeoptMetadata,
+    raw_values: &[i64],
+) -> HashMap<String, i64> {
+    let mut frame = HashMap::new();
+    for (i, (var_name, _, _)) in meta.live_vars.iter().enumerate() {
+        let val = if i < raw_values.len() {
+            raw_values[i]
+        } else {
+            0
+        };
+        frame.insert(var_name.clone(), val);
+    }
+    frame
+}
+
+/// Runtime deoptimization handler called when a speculative type guard fails.
+#[no_mangle]
+pub extern "C" fn __nl_deopt(deopt_id: u64, _frame_ptr: *const u8) -> i64 {
+    GLOBAL_DEOPT_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let mut guard = GLOBAL_DEOPT_TABLE.write().unwrap();
+    if let Some(ref mut table) = *guard {
+        table.record_event(deopt_id as u32);
+    }
+    0
+}
+
+/// Retrieve the total count of runtime deoptimization events.
+pub fn get_runtime_deopt_count() -> u64 {
+    GLOBAL_DEOPT_COUNTER.load(Ordering::SeqCst)
+}
+
+/// Reset runtime deoptimization telemetry.
+pub fn reset_runtime_deopt_counter() {
+    GLOBAL_DEOPT_COUNTER.store(0, Ordering::SeqCst);
+}
+
+/// On-Stack Replacement (OSR) transition slot located in function preambles.
+/// Allows dynamic atomic upgrading from unspecialized Tier 0 to specialized Tier 1 native code.
+pub struct OsrTransitionSlot {
+    /// Atomic function pointer to Tier 1 specialized code (null if unspecialized).
+    target_fn_ptr: AtomicPtr<u8>,
+    /// Invocation counter tracking execution frequency.
+    invocation_count: AtomicU64,
+    /// Hotness threshold required to trigger OSR specialization.
+    threshold: u64,
+}
+
+impl OsrTransitionSlot {
+    pub fn new(threshold: u64) -> Self {
+        Self {
+            target_fn_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            invocation_count: AtomicU64::new(0),
+            threshold,
+        }
+    }
+
+    /// Record an entry invocation. Returns true if hot threshold has just been crossed.
+    pub fn record_invocation(&self) -> bool {
+        let count = self.invocation_count.fetch_add(1, Ordering::Relaxed);
+        count + 1 >= self.threshold && self.target_fn_ptr.load(Ordering::Acquire).is_null()
+    }
+
+    /// Upgrade the slot with a compiled Tier 1 function pointer.
+    pub fn upgrade(&self, specialized_fn: *mut u8) {
+        self.target_fn_ptr.store(specialized_fn, Ordering::Release);
+    }
+
+    /// Check if specialized code is available for OSR jump.
+    pub fn should_osr(&self) -> bool {
+        !self.target_fn_ptr.load(Ordering::Acquire).is_null()
+
+\end{lstlisting}

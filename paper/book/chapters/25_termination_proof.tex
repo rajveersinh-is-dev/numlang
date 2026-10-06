@@ -1,0 +1,47 @@
+\chapter{Well-Founded Termination and Kruskal's Theorem}
+\label{chap:termination_proof}
+
+\section{Constructive Well-Quasi-Ordering in Lean 4}
+\label{sec:termination_proof:wqo}
+
+In Chapter~\ref{chap:termination}, we established that supercompiler termination is guaranteed by Kruskal's Tree Theorem \citep{kruskal1960well}. In this chapter, we detail the mechanization of this guarantee.
+
+A binary relation $R \subseteq X \times X$ is \emph{almost full} if every infinite sequence contains a good pair:
+\begin{equation}
+\forall (x_n)_{n \in \mathbb{N}}.\; \exists i < j.\; R(x_i, x_j)
+\end{equation}
+In constructive type theory, almost-fullness is formalized via the inductive Bar predicate \citep{coquand1993constructive}.
+
+\section{Formal Linkage: The Physical Certificate to the Lean Proof}
+\label{sec:termination_proof:certificate}
+
+NumLang establishes a direct cryptographic bridge between runtime compilation and the Lean~4 proof assistant:
+\begin{enumerate}
+    \item When \texttt{--emit-termination-proof} is passed, the compiler records the exact trace of whistle queries into a JSON \texttt{TerminationWitness}.
+    \item A Lean~4 bridge tool (\texttt{src/testing/lean\_bridge.rs}) ingests the certificate JSON and instantiates the proof terms.
+    \item The Lean kernel checks that the sequence of tree depths conforms to the well-founded induction schema, certifying that the compilation job terminated legitimately without artificial depth clipping.
+\end{enumerate}
+
+\section{Formal Schema of Termination Certificates}
+\label{sec:termination:schema}
+
+The supercompiler outputs a JSON-encoded termination certificate schema conforming to:
+\begin{lstlisting}[caption={JSON Schema for Supercompilation Termination Certificates.}]
+{
+  "$schema": "https://numlang.org/schemas/termination-witness-v1.json",
+  "program_hash": "sha256-...",
+  "max_driving_depth": 42,
+  "whistle_firings": [
+    { "node_id": 14, "whistle_type": "SizeFilteredHE", "partner_node": 3 },
+    { "node_id": 27, "whistle_type": "HashConsIdentity", "partner_node": 12 }
+  ],
+  "knots_generated": 2,
+  "well_quasi_ordering_certificate": {
+    "tree_size_bound": 128,
+    "widenings_applied": 2,
+    "proof_status": "QED"
+  }
+}
+\end{lstlisting}
+
+Every certificate is structurally verifiable in polynomial time $O(N \cdot M)$ against the residual MIR control-flow graph.

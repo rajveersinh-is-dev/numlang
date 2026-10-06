@@ -1,0 +1,503 @@
+\chapter{Higher-Order Deforestation and Defunctionalization}
+\label{chap:higher_order}
+
+\section{The Challenge of Higher-Order Driving}
+\label{sec:higher_order:challenge}
+
+In functional languages, higher-order functions (closures that capture runtime environments) are the primary vehicle of abstraction. However, specializing higher-order code is notoriously difficult:
+\begin{enumerate}
+    \item Closures hide control flow behind indirect function pointers.
+    \item Closure environments capture heap-allocated records, preventing syntactic term matching.
+    \item Mutual recursion through closure arguments easily induces whistle blowouts.
+\end{enumerate}
+
+\section{Whole-Program Reynolds Defunctionalization (Phase 49)}
+\label{sec:higher_order:reynolds}
+
+NumLang conquers this challenge by implementing a whole-program \emph{Reynolds Defunctionalization} pass in \texttt{src/mir/defunctionalize.rs} \citep{reynolds1972definitional}.
+
+\subsection{Transformation Pipeline}
+\begin{enumerate}
+    \item \textbf{Call Signature Analysis}: The compiler collects all lambda expressions and function pointer types across the program.
+    \item \textbf{ClosureTag Synthesis}: For each unique function signature $\tau_{\text{sig}} = \mathtt{fn}(\tau_1, \dots, \tau_n) \to \tau_{\text{ret}}$, NumLang generates a strongly typed enum:
+    \begin{lstlisting}[language=NumLang]
+    enum ClosureTag_Sig {
+        Lambda_1(i64),       // captures single i64
+        Lambda_2(Box<List>), // captures heap list
+    }
+    \end{lstlisting}
+    \item \textbf{Lowering Allocations}: \texttt{ClosureAlloc} statements are replaced by enum constructor initializations.
+    \item \textbf{Dispatch Switch Synthesis}: All indirect calls $\mathtt{IndirectCall}(fn\_ptr, \vec{args})$ are replaced by explicit \texttt{Terminator::Switch} dispatchers branching on the closure discriminant tag.
+    \item \textbf{Scalar Replacement of Aggregates (SROA)}: Environment payloads are unpacked into primitive SSA scalar registers.
+\end{enumerate}
+
+Following defunctionalization, the entire program is strictly first-order SSA MIR.
+
+\section{Symbolic Driving Through Closures (Phase 34)}
+\label{sec:higher_order:driving_closures}
+
+Because defunctionalization exposes closure tags as regular enums, the supercompiler's existing pattern matching driving mechanisms handle closures seamlessly:
+\begin{itemize}
+    \item Symbolic closures are tracked as $\mathtt{SymTerm::ClosureVal}(f, \vec{captured})$.
+    \item When a call site invokes the closure, driving resolves the target statically and inlines the function body with the captured arguments bound in the local environment.
+    \item Dynamic dispatch overhead is eliminated completely.
+\end{itemize}
+
+\section{Lazy Codata Driving and Stream Fusion (Phase 51)}
+\label{sec:higher_order:codata}
+
+To achieve true GHC-style stream fusion without allocating intermediate iterator structures, NumLang implements \emph{Lazy Codata Driving} (\texttt{src/mir/thunk\_analysis.rs}).
+
+Pipelines over infinite streams (such as \texttt{iterate}, \texttt{map}, and \texttt{take}) are expressed via suspended thunks:
+\begin{equation}
+x = \mathtt{Rvalue::Thunk}(f, \vec{args}), \quad y = \mathtt{Terminator::Force}(x)
+\end{equation}
+The supercompiler propagates demand backwards: a thunk is only driven when forced. When a pipeline consists of chained thunk forces, driving eliminates the suspension overhead, fusing the generator, transformer, and consumer into a single flat loop with zero heap allocations.
+
+\section{The Reynolds Defunctionalization Engine}
+\label{sec:higher_order:defunc_impl}
+
+Listing~\ref{lst:defunc_impl} details the Reynolds defunctionalization pass from \texttt{src/mir/defunctionalize.rs}, replacing higher-order closures with first-order sum types:
+
+\begin{lstlisting}[language=Rust, caption={Reynolds Defunctionalization Algorithm (\texttt{src/mir/defunctionalize.rs}).}, label={lst:defunc_impl}]
+//!
+//! Compiles higher-order closures and indirect calls into zero-allocation,
+//! monomorphic, first-order SSA forms with static dispatch:
+//!
+//! 1. Discovers all closures (`Rvalue::ClosureAlloc`) and groups them by call signature.
+//! 2. Synthesizes a discriminated union enum `ClosureTag_<Signature>` per distinct signature.
+//! 3. Rewrites `Rvalue::ClosureAlloc` into typed `Rvalue::EnumVariant` carrying captured environment payloads.
+//! 4. Lowers `Terminator::IndirectCall` into direct `Terminator::Switch` over tags, dispatching
+//!    to monomorphic static `Rvalue::Call` sites in specialized basic blocks.
+
+use std::collections::BTreeMap;
+use crate::span::Span;
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
+use crate::mir::lower::{MirBasicBlock, MirLocalDecl, MirProgram, Rvalue, Statement};
+use crate::typecheck::typed_ast::{TypedEnumDef, TypedEnumVariant};
+use crate::typecheck::types::Type;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureSignature {
+    pub param_tys: Vec<Type>,
+    pub return_ty: Type,
+}
+
+#[derive(Debug, Clone)]
+struct ClosureCandidate {
+    fn_name: String,
+    captured_types: Vec<Type>,
+}
+
+#[derive(Debug, Clone)]
+struct ClosureGroup {
+    signature: ClosureSignature,
+    candidates: Vec<ClosureCandidate>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedVariant {
+    fn_name: String,
+    tag: usize,
+    captured_types: Vec<Type>,
+}
+
+#[derive(Debug, Clone)]
+struct SignatureGroup {
+    signature: ClosureSignature,
+    variants: Vec<ResolvedVariant>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefunctionalizeStats {
+    pub closures_defunctionalized: usize,
+    pub indirect_calls_resolved: usize,
+    pub synthetic_enums_created: usize,
+}
+
+/// Executes whole-program Reynolds defunctionalization on the given MIR program.
+pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats {
+    let mut stats = DefunctionalizeStats::default();
+
+    // 1. Scan for all closure allocations to discover signatures and variants
+    let mut closure_allocs: Vec<(String, usize)> = Vec::new(); // (fn_name, captured_count)
+    for func in &program.functions {
+        for block in &func.blocks {
+            for stmt in &block.statements {
+                let Statement::Assign(_, rval) = stmt;
+                if let Rvalue::ClosureAlloc { fn_name, captured } = rval {
+                    if !closure_allocs.iter().any(|(n, _)| n == fn_name) {
+                        closure_allocs.push((fn_name.clone(), captured.len()));
+                    }
+                }
+            }
+        }
+    }
+
+    if closure_allocs.is_empty() {
+        return stats;
+    }
+
+    // 2. Map closure functions to their callable signatures and captured types
+    let mut groups: Vec<ClosureGroup> = Vec::new();
+    for (fn_name, cap_count) in &closure_allocs {
+        if let Some(target_fn) = program.functions.iter().find(|f| &f.name == fn_name) {
+            let cap_tys: Vec<Type> = target_fn.params[0..*cap_count]
+                .iter()
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            let callable_tys: Vec<Type> = target_fn.params[*cap_count..]
+                .iter()
+                .map(|(_, ty)| ty.clone())
+                .collect();
+            let sig = ClosureSignature {
+                param_tys: callable_tys,
+                return_ty: target_fn.return_ty.clone(),
+            };
+            let cand = ClosureCandidate {
+                fn_name: fn_name.clone(),
+                captured_types: cap_tys,
+            };
+            if let Some(grp) = groups.iter_mut().find(|g| g.signature == sig) {
+                grp.candidates.push(cand);
+            } else {
+                groups.push(ClosureGroup {
+                    signature: sig,
+                    candidates: vec![cand],
+                });
+            }
+        }
+    }
+
+    // 3. Synthesize discriminated union sum types (enums)
+    // Map fn_name -> (enum_name, variant_name, tag, captured_tys)
+    let mut variant_map: BTreeMap<String, (String, String, usize, Vec<Type>)> = BTreeMap::new();
+    let mut sig_groups: Vec<SignatureGroup> = Vec::new();
+
+    for (sig_idx, group) in groups.iter().enumerate() {
+        let enum_name = format!("ClosureTag_{}_{}", sig_idx, group.signature.param_tys.len());
+
+        let mut enum_variants = Vec::new();
+        let mut resolved_variants = Vec::new();
+        for (tag, cand) in group.candidates.iter().enumerate() {
+            let variant_name = format!("Variant_{}", cand.fn_name);
+            enum_variants.push(TypedEnumVariant {
+                name: variant_name.clone(),
+                tag,
+                payload: cand.captured_types.clone(),
+                span: Span { start: 0, end: 0 },
+            });
+            variant_map.insert(
+                cand.fn_name.clone(),
+                (enum_name.clone(), variant_name, tag, cand.captured_types.clone()),
+            );
+            resolved_variants.push(ResolvedVariant {
+                fn_name: cand.fn_name.clone(),
+                tag,
+                captured_types: cand.captured_types.clone(),
+            });
+            stats.closures_defunctionalized += 1;
+        }
+
+        sig_groups.push(SignatureGroup {
+            signature: group.signature.clone(),
+            variants: resolved_variants,
+        });
+
+        program.enums.push(TypedEnumDef {
+            name: enum_name,
+            variants: enum_variants,
+            span: Span { start: 0, end: 0 },
+        });
+        stats.synthetic_enums_created += 1;
+    }
+
+    // 4. Rewrite Rvalue::ClosureAlloc into Rvalue::EnumVariant
+    for func in &mut program.functions {
+        for block in &mut func.blocks {
+            for stmt in &mut block.statements {
+                let Statement::Assign(_, rval) = stmt;
+                if let Rvalue::ClosureAlloc { fn_name, captured } = rval {
+                    if let Some((enum_name, variant_name, tag, _)) = variant_map.get(fn_name) {
+                        *rval = Rvalue::EnumVariant {
+                            enum_name: enum_name.clone(),
+                            variant_name: variant_name.clone(),
+                            tag: *tag,
+                            fields: captured.clone(),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Rewrite Terminator::IndirectCall into direct static dispatch Switch
+    for func in &mut program.functions {
+        let mut new_blocks: Vec<MirBasicBlock> = Vec::new();
+        let mut max_bb = func.blocks.iter().map(|b| b.id.0).max().unwrap_or(0) + 1;
+
+        for block in &mut func.blocks {
+            if let Terminator::IndirectCall { callee, args, dest, next } = &block.terminator {
+                // Find matching signature by arity
+                let matching_group = sig_groups.iter().find(|g| {
+                    g.signature.param_tys.len() == args.len()
+                });
+
+                if let Some(group) = matching_group {
+                    let tag_place = Place {
+                        local: format!("_dt_tag_{}_{}", callee.local, block.id.0),
+                        projections: vec![],
+                    };
+                    func.locals.push(MirLocalDecl {
+                        name: tag_place.local.clone(),
+                        ty: Type::I64,
+                        mutable: true,
+                    });
+
+                    // Tag read statement via Discriminant
+                    block.statements.push(Statement::Assign(
+                        tag_place.clone(),
+                        Rvalue::Discriminant(callee.clone()),
+                    ));
+
+                    let mut targets = Vec::new();
+                    for variant in &group.variants {
+                        let arm_bb_id = BasicBlockId(max_bb);
+                        max_bb += 1;
+                        let mut arm_stmts = Vec::new();
+                        let mut call_args = Vec::with_capacity(variant.captured_types.len() + args.len());
+
+                        // Unpack captured environment payload fields
+                        for (j, cap_ty) in variant.captured_types.iter().enumerate() {
+                            let cap_temp = Place {
+                                local: format!("_dt_cap_{}_{}_{}", variant.fn_name, j, arm_bb_id.0),
+                                projections: vec![],
+                            };
+                            func.locals.push(MirLocalDecl {
+                                name: cap_temp.local.clone(),
+                                ty: cap_ty.clone(),
+                                mutable: true,
+                            });
+                            let mut proj_place = callee.clone();
+                            proj_place.projections.push(Projection::Payload(j));
+                            arm_stmts.push(Statement::Assign(cap_temp.clone(), Rvalue::Use(proj_place)));
+                            call_args.push(cap_temp);
+                        }
+
+                        // Pass remaining args
+                        for arg in args {
+                            call_args.push(arg.clone());
+                        }
+
+                        // Direct monomorphic call
+                        arm_stmts.push(Statement::Assign(
+                            dest.clone(),
+                            Rvalue::Call(variant.fn_name.clone(), call_args),
+                        ));
+
+                        new_blocks.push(MirBasicBlock {
+                            id: arm_bb_id.clone(),
+                            arguments: vec![],
+                            statements: arm_stmts,
+                            terminator: Terminator::Branch { target: next.clone() },
+                        });
+
+                        targets.push((variant.tag as i64, arm_bb_id));
+                    }
+
+                    let default_bb_id = BasicBlockId(max_bb);
+                    max_bb += 1;
+                    new_blocks.push(MirBasicBlock {
+                        id: default_bb_id.clone(),
+                        arguments: vec![],
+
+\end{lstlisting}
+
+\section{Stream Fusion and Codata Thunk Analysis}
+\label{sec:higher_order:thunk_impl}
+
+Listing~\ref{lst:thunk_impl} reproduces the thunk analysis pass from \texttt{src/mir/thunk\_analysis.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Codata Thunk Analysis and Stream Fusion (\texttt{src/mir/thunk\_analysis.rs}).}, label={lst:thunk_impl}]
+//!
+//! Computes which thunks are demanded on execution paths through a MIR function:
+//! - `Bottom`: thunk is never forced on any reachable path.
+//! - `GuardDemanded`: thunk is forced on some paths (e.g. inside a conditional or switch branch).
+//! - `FullyDemanded`: thunk is unconditionally forced on every execution path to exit.
+
+use std::collections::{HashMap, HashSet};
+use crate::mir::{BasicBlockId, Terminator};
+use crate::mir::lower::{MirFunction, Rvalue, Statement};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Demand {
+    /// Thunk is never forced on any path through this function.
+    Bottom,
+    /// Thunk is forced only on some paths (e.g. inside a conditional).
+    GuardDemanded,
+    /// Thunk is forced on every execution path (unconditionally demanded).
+    FullyDemanded,
+}
+
+impl Demand {
+    pub fn join(self, other: Demand) -> Demand {
+        match (self, other) {
+            (Demand::Bottom, d) | (d, Demand::Bottom) => d,
+            (Demand::FullyDemanded, Demand::FullyDemanded) => Demand::FullyDemanded,
+            _ => Demand::GuardDemanded,
+        }
+    }
+
+    pub fn branch_meet(self, other: Demand) -> Demand {
+        match (self, other) {
+            (Demand::FullyDemanded, Demand::FullyDemanded) => Demand::FullyDemanded,
+            (Demand::Bottom, Demand::Bottom) => Demand::Bottom,
+            _ => Demand::GuardDemanded,
+        }
+    }
+}
+
+/// Computes thunk demand classification for all thunks in a MIR function.
+pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
+    if func.blocks.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut candidate_thunks: HashSet<String> = HashSet::new();
+    for block in &func.blocks {
+        for stmt in &block.statements {
+            let Statement::Assign(dest, rval) = stmt;
+            if let Rvalue::Thunk { .. } = rval {
+                candidate_thunks.insert(dest.local.clone());
+            }
+        }
+        if let Terminator::Force { thunk, .. } = &block.terminator {
+            candidate_thunks.insert(thunk.clone());
+        }
+    }
+
+    if candidate_thunks.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut in_demands: HashMap<BasicBlockId, HashMap<String, Demand>> = HashMap::new();
+    let mut out_demands: HashMap<BasicBlockId, HashMap<String, Demand>> = HashMap::new();
+
+    for block in &func.blocks {
+        let mut initial = HashMap::new();
+        for t in &candidate_thunks {
+            initial.insert(t.clone(), Demand::Bottom);
+        }
+        in_demands.insert(block.id.clone(), initial.clone());
+        out_demands.insert(block.id.clone(), initial);
+    }
+
+    let mut changed = true;
+    let mut iterations = 0;
+    let max_iterations = func.blocks.len() * candidate_thunks.len() * 3 + 16;
+
+    while changed && iterations < max_iterations {
+        changed = false;
+        iterations += 1;
+
+        for block in func.blocks.iter().rev() {
+            // Compute OUT[b] from successors' IN
+            let mut new_out: HashMap<String, Demand> = HashMap::new();
+            for t in &candidate_thunks {
+                new_out.insert(t.clone(), Demand::Bottom);
+            }
+
+            match &block.terminator {
+                Terminator::Return { .. } | Terminator::Unreachable => {
+                    // Stays Bottom
+                }
+                Terminator::Branch { target } => {
+                    if let Some(target_in) = in_demands.get(target) {
+                        for (t, d) in target_in {
+                            new_out.insert(t.clone(), *d);
+                        }
+                    }
+                }
+                Terminator::Force { cont, .. } => {
+                    if let Some(cont_in) = in_demands.get(cont) {
+                        for (t, d) in cont_in {
+                            new_out.insert(t.clone(), *d);
+                        }
+                    }
+                }
+                Terminator::BranchIf { then_target, else_target, .. } => {
+                    let default_in = HashMap::new();
+                    let then_in = in_demands.get(then_target).unwrap_or(&default_in);
+                    let else_in = in_demands.get(else_target).unwrap_or(&default_in);
+
+                    for t in &candidate_thunks {
+                        let d_then = then_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        let d_else = else_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        new_out.insert(t.clone(), d_then.branch_meet(d_else));
+                    }
+                }
+                Terminator::Switch { targets, default, .. } => {
+                    let default_in = HashMap::new();
+                    let def_in = in_demands.get(default).unwrap_or(&default_in);
+
+                    for t in &candidate_thunks {
+                        let mut all_demands = Vec::with_capacity(targets.len() + 1);
+                        all_demands.push(def_in.get(t).copied().unwrap_or(Demand::Bottom));
+                        for (_, target_bb) in targets {
+                            let t_in = in_demands.get(target_bb).unwrap_or(&default_in);
+                            all_demands.push(t_in.get(t).copied().unwrap_or(Demand::Bottom));
+                        }
+
+                        let combined = if all_demands.iter().all(|&d| d == Demand::FullyDemanded) {
+                            Demand::FullyDemanded
+                        } else if all_demands.iter().any(|&d| d != Demand::Bottom) {
+                            Demand::GuardDemanded
+                        } else {
+                            Demand::Bottom
+                        };
+                        new_out.insert(t.clone(), combined);
+                    }
+                }
+                Terminator::IndirectCall { next, .. } => {
+                    if let Some(next_in) = in_demands.get(next) {
+                        for (t, d) in next_in {
+                            new_out.insert(t.clone(), *d);
+                        }
+                    }
+                }
+                Terminator::Fork { left, right, .. } => {
+                    let default_in = HashMap::new();
+                    let l_in = in_demands.get(left).unwrap_or(&default_in);
+                    let r_in = in_demands.get(right).unwrap_or(&default_in);
+                    for t in &candidate_thunks {
+                        let dl = l_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        let dr = r_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        new_out.insert(t.clone(), dl.join(dr));
+                    }
+                }
+                Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+                    let default_in = HashMap::new();
+                    let fast_in = in_demands.get(fast_path).unwrap_or(&default_in);
+                    let deopt_in = in_demands.get(deopt_stub).unwrap_or(&default_in);
+                    for t in &candidate_thunks {
+                        let d_fast = fast_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        let d_deopt = deopt_in.get(t).copied().unwrap_or(Demand::Bottom);
+                        new_out.insert(t.clone(), d_fast.branch_meet(d_deopt));
+                    }
+                }
+            }
+
+            // Transfer function: IN[b] = OUT[b] updated by block body and terminator
+            let mut new_in = new_out.clone();
+            if let Terminator::Force { thunk, .. } = &block.terminator {
+                new_in.insert(thunk.clone(), Demand::FullyDemanded);
+            }
+
+            let curr_in = in_demands.get_mut(&block.id).expect("block exists");
+            if *curr_in != new_in {
+                *curr_in = new_in;
+                changed = true;
+            }
+            out_demands.insert(block.id.clone(), new_out);
+
+\end{lstlisting}

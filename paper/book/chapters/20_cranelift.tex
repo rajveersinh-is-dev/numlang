@@ -1,0 +1,234 @@
+\chapter{Cranelift Native Code Generation}
+\label{chap:cranelift}
+
+\section{The Cranelift Backend Architecture}
+\label{sec:cranelift:arch}
+
+NumLang employs Cranelift \citep{cranelift2024} as its default native code generation engine (\texttt{src/codegen/cranelift/}). Cranelift is an optimizing, value-based compiler designed specifically for high-throughput code generation, memory safety, and sub-millisecond cold start times.
+
+The Cranelift backend comprises six core subsystems:
+\begin{itemize}
+    \item \texttt{mod.rs}: Backend entry point, target machine configuration, and compilation orchestration.
+    \item \texttt{abi.rs}: System V and Windows x86-64 calling convention mappings, struct layouts, and stack slot management.
+    \item \texttt{mir\_emit.rs}: SSA MIR to Cranelift Intermediate Language (CLIF) lowering.
+    \item \texttt{intrinsics.rs}: Mathematical routines, syscalls, and recurrence companion drivers.
+    \item \texttt{deopt.rs}: Speculative deoptimization trampolines and register mapping tables.
+    \item \texttt{linker.rs}: Native object file emission and platform linker orchestration.
+\end{itemize}
+
+\section{Strict Error Discipline: Zero Panics in Code Generation}
+\label{sec:cranelift:zero_panic}
+
+In accordance with NumLang's foundational computational integrity rules, the entire code generation pipeline enforces a strict invariant: \textbf{zero \texttt{panic!()}, zero \texttt{.unwrap()}, and zero \texttt{.expect()} calls}.
+
+Every compilation failure---ranging from unsupported platform target features to malformed SSA basic block signatures---is returned as a structured, localized \texttt{CodegenError} variant:
+
+\begin{lstlisting}[language=Rust, caption={The CodegenError enumeration in NumLang.}]
+pub enum CodegenError {
+    BackendError(String),
+    TypeMismatch { expected: String, found: String },
+    UnknownVariable(String),
+    UnknownFunction(String),
+    InvalidTerminator(String),
+    UnsupportedFeature(String),
+    LinkingFailed(String),
+}
+\end{lstlisting}
+
+\section{SSA MIR to CLIF Translation (mir\_emit.rs)}
+\label{sec:cranelift:mir_emit}
+
+The lowering engine (\texttt{src/codegen/cranelift/mir\_emit.rs}) translates SSA MIR basic blocks into CLIF functions in two linear passes:
+
+\subsection{Pass 1: Block and Phi Declaration}
+Before translating instructions, the generator scans all MIR basic blocks. For each basic block, it creates a corresponding Cranelift \texttt{Block}. Any SSA $\phi$-nodes are declared as block parameters, guaranteeing that phi-node value cycles are resolved cleanly without introducing temporary stack spills.
+
+\subsection{Pass 2: Instruction Selection and Branch Emission}
+Instructions are emitted sequentially within their respective blocks:
+\begin{itemize}
+    \item \textbf{Binary Operations}: Arithmetic operations (\texttt{add}, \texttt{sub}, \texttt{mul}) map directly to native CLIF 64-bit integer instructions (\texttt{iadd}, \texttt{isub}, \texttt{imul}).
+    \item \textbf{Recurrence Intrinsics}: Residual recurrence companion calls lower to high-speed binary exponentiation loops emitted directly into native machine code.
+    \item \textbf{Terminators}: \texttt{Branch} lowers to \texttt{ins().jump()}; \texttt{BranchIf} lowers to \texttt{ins().brnz()}; \texttt{Return} lowers to \texttt{ins().return\_()}.
+\end{itemize}
+
+\section{The Scoped Arena Allocator Runtime}
+\label{sec:cranelift:arena}
+
+To support lightning-fast heap allocations during recursive loops, NumLang integrates a native scoped arena allocator (\texttt{src/runtime/arena.rs}, \texttt{src/runtime/arena.c}).
+
+When the supercompiler determines that a recursive knot does not allow allocated objects to escape beyond the loop lifetime, it wraps the loop in an arena scope:
+\begin{enumerate}
+    \item Heap allocations invoke \texttt{\_\_numlang\_alloc}, which increments a thread-local bump pointer in $\mathcal{O}(1)$ time with zero mutex contention.
+    \item Upon loop termination, \texttt{\_\_numlang\_arena\_reset} restores the pointer to the base watermark, reclaiming all loop-allocated memory in a single instruction without garbage collection overhead.
+\end{enumerate}
+
+\section{CLIF Instruction Lowering Specifications}
+\label{sec:cranelift:clif_specs}
+
+Table~\ref{tab:clif_lowering} outlines the exact semantic mappings from NumLang SSA MIR instructions to Cranelift CLIF primitives implemented in \texttt{src/codegen/cranelift/mir\_emit.rs}.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{SSA MIR Instruction} & \textbf{Cranelift CLIF Instruction} & \textbf{Semantic Description} \\
+\midrule
+\texttt{Constant(c)} & \texttt{ins().iconst(I64, c)} & 64-bit integer immediate \\
+\texttt{BinOp(Add, x, y)} & \texttt{ins().iadd(vx, vy)} & Wrapping integer addition \\
+\texttt{BinOp(Sub, x, y)} & \texttt{ins().isub(vx, vy)} & Wrapping integer subtraction \\
+\texttt{BinOp(Mul, x, y)} & \texttt{ins().imul(vx, vy)} & Wrapping integer multiplication \\
+\texttt{BinOp(Div, x, y)} & \texttt{ins().sdiv(vx, vy)} & Signed integer division \\
+\texttt{BinOp(BitAnd, x, y)} & \texttt{ins().band(vx, vy)} & Bitwise logical AND \\
+\texttt{BinOp(BitOr, x, y)} & \texttt{ins().bor(vx, vy)} & Bitwise logical OR \\
+\texttt{BinOp(BitXor, x, y)} & \texttt{ins().bxor(vx, vy)} & Bitwise logical XOR \\
+\texttt{Alloc(sz)} & \texttt{ins().call(malloc, [sz])} & Heap allocation \\
+\texttt{Load(ptr)} & \texttt{ins().load(I64, flags, ptr, 0)} & 64-bit memory dereference \\
+\texttt{Store(ptr, val)} & \texttt{ins().store(flags, val, ptr, 0)} & 64-bit memory write \\
+\texttt{Branch(bb)} & \texttt{ins().jump(target\_block, [])} & Direct unconditional jump \\
+\texttt{BranchIf(c, t, f)} & \texttt{ins().brnz(vc, target\_t, [])} & Conditional branch \\
+\texttt{Return(val)} & \texttt{ins().return\_([val])} & Return from function \\
+\bottomrule
+\end{tabular}
+\caption{Exact translation mappings from NumLang SSA MIR to Cranelift CLIF.}
+\label{tab:clif_lowering}
+\end{table}
+
+\section{The Native Scoped Arena Implementation (arena.rs)}
+\label{sec:cranelift:arena_code}
+
+Listing~\ref{lst:arena_code} presents the scoped bump allocator runtime from \texttt{src/runtime/arena.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Scoped Arena Bump Allocator Runtime (\texttt{src/runtime/arena.rs}).}, label={lst:arena_code}]
+pub const DEFAULT_CHUNK_CAPACITY: usize = 64 * 1024; // 64 KiB default chunk size
+
+#[repr(C)]
+pub struct ArenaChunk {
+    pub data: *mut u8,
+    pub capacity: usize,
+    pub offset: usize,
+    pub next: *mut ArenaChunk,
+}
+
+#[repr(C)]
+pub struct Arena {
+    pub head: *mut ArenaChunk,
+    pub current: *mut ArenaChunk,
+    pub default_chunk_size: usize,
+    pub total_allocated: usize,
+    pub peak_usage: usize,
+}
+
+impl Arena {
+    pub fn new(capacity: usize) -> Self {
+        let cap = if capacity == 0 { DEFAULT_CHUNK_CAPACITY } else { capacity };
+        let chunk = Self::alloc_chunk(cap);
+        Arena {
+            head: chunk,
+            current: chunk,
+            default_chunk_size: cap,
+            total_allocated: 0,
+            peak_usage: 0,
+        }
+    }
+
+    fn alloc_chunk(capacity: usize) -> *mut ArenaChunk {
+        unsafe {
+            let data_layout = Layout::from_size_align_unchecked(capacity, 16);
+            let data = alloc(data_layout);
+            assert!(!data.is_null(), "Arena: out of memory allocating chunk data");
+
+            let chunk_layout = Layout::new::<ArenaChunk>();
+            let chunk_ptr = alloc(chunk_layout) as *mut ArenaChunk;
+            assert!(!chunk_ptr.is_null(), "Arena: out of memory allocating chunk header");
+
+            ptr::write(chunk_ptr, ArenaChunk {
+                data,
+                capacity,
+                offset: 0,
+                next: ptr::null_mut(),
+            });
+            chunk_ptr
+        }
+    }
+
+    pub fn alloc(&mut self, size: usize) -> *mut u8 {
+        if size == 0 {
+            return ptr::null_mut();
+        }
+        let aligned_size = (size + 7) & !7; // 8-byte alignment
+
+        unsafe {
+            let curr = self.current;
+            if (*curr).offset + aligned_size <= (*curr).capacity {
+                let res = (*curr).data.add((*curr).offset);
+                (*curr).offset += aligned_size;
+                self.total_allocated += aligned_size;
+                if self.total_allocated > self.peak_usage {
+                    self.peak_usage = self.total_allocated;
+                }
+                return res;
+            }
+
+            // Need next chunk or allocate a new one
+            if !(*curr).next.is_null() && (*(*curr).next).capacity >= aligned_size {
+                self.current = (*curr).next;
+                let c = self.current;
+                (*c).offset = aligned_size;
+                self.total_allocated += aligned_size;
+                if self.total_allocated > self.peak_usage {
+                    self.peak_usage = self.total_allocated;
+                }
+                return (*c).data;
+            }
+
+            let new_cap = self.default_chunk_size.max(aligned_size * 2);
+            let new_chunk = Self::alloc_chunk(new_cap);
+            (*curr).next = new_chunk;
+            self.current = new_chunk;
+            (*new_chunk).offset = aligned_size;
+            self.total_allocated += aligned_size;
+            if self.total_allocated > self.peak_usage {
+                self.peak_usage = self.total_allocated;
+            }
+            (*new_chunk).data
+        }
+    }
+
+    pub fn reset(&mut self) {
+        unsafe {
+            let mut curr = self.head;
+            while !curr.is_null() {
+                (*curr).offset = 0;
+                curr = (*curr).next;
+            }
+            self.current = self.head;
+            self.total_allocated = 0;
+        }
+    }
+
+    pub fn destroy(&mut self) {
+        unsafe {
+            let mut curr = self.head;
+            while !curr.is_null() {
+                let next = (*curr).next;
+                let data_layout = Layout::from_size_align_unchecked((*curr).capacity, 16);
+                dealloc((*curr).data, data_layout);
+                let chunk_layout = Layout::new::<ArenaChunk>();
+                dealloc(curr as *mut u8, chunk_layout);
+                curr = next;
+            }
+            self.head = ptr::null_mut();
+            self.current = ptr::null_mut();
+            self.total_allocated = 0;
+        }
+    }
+}
+
+impl Drop for Arena {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
+\end{lstlisting}

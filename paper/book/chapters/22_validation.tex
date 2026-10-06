@@ -1,0 +1,305 @@
+\chapter{SMT-Based Translation Validation}
+\label{chap:validation}
+
+\section{The Imperative for Translation Validation}
+\label{sec:validation:intro}
+
+Supercompilation performs sweeping, non-local topological restructurings across entire programs. Even when the transformation algorithms are designed with mathematical rigor, implementation bugs (such as subtle off-by-one errors in interval arithmetic or incorrect substitution scoping) can silently introduce miscompilations.
+
+To ensure computational integrity, NumLang implements \emph{SMT-Based Translation Validation} (Phase 24, \texttt{src/mir/supercompiler/validate.rs}) \citep{pnueli1998translation}.
+
+\section{Horn Clause Extraction and Simulation Preorders}
+\label{sec:validation:horn}
+
+Translation validation operates by extracting Constrained Horn Clauses (CHCs) from both the source SSA function $f_{\text{src}}$ and the residualized function $f_{\text{res}}$:
+\begin{enumerate}
+    \item For each basic block $bb_i$, the validator associates an uninterpreted relation $R_i(\vec{x})$ representing the reachable state space.
+    \item SSA instructions are encoded as first-order logical constraints over integer variables.
+    \item The equivalence of $f_{\text{src}}$ and $f_{\text{res}}$ is formulated as a \emph{simulation preorder}:
+    \begin{equation}
+    \forall \vec{x}_{\text{init}}.\; f_{\text{src}}(\vec{x}_{\text{init}}) \evaluates v \implies f_{\text{res}}(\vec{x}_{\text{init}}) \evaluates v
+    \end{equation}
+\end{enumerate}
+
+\section{k-Induction for Loop Equivalence (Phase 45)}
+\label{sec:validation:k_induction}
+
+To verify equivalence between source recursive loops and residualized recurrence companion loops, NumLang implements a $k$-induction engine:
+\begin{itemize}
+    \item \textbf{Base Case}: Verify that the source and residual programs produce identical outputs for the first $k$ iterations ($k = 3$).
+    \item \textbf{Inductive Step}: Assume that the simulation relation holds for $k$ consecutive steps, and prove that it necessarily holds for step $k+1$ using the SMT solver Z3.
+\end{itemize}
+
+\section{Graceful Fallback on Validation Failure}
+\label{sec:validation:fallback}
+
+If the SMT solver fails to prove equivalence (or returns a counterexample within the 5-second validation budget), the compiler strictly refuses to emit the supercompiled code. It transparently falls back to the unsupercompiled, typechecked baseline MIR, logging a warning and guaranteeing that no invalid executable is ever produced.
+
+\section{The SMT-Based Translation Validation Implementation}
+\label{sec:validation:smt_impl}
+
+Listing~\ref{lst:validate_impl} presents the Horn-clause generation and bisimulation checking engine from \texttt{src/mir/supercompiler/validate.rs}:
+
+\begin{lstlisting}[language=Rust, caption={SMT-Based Translation Validation Engine (\texttt{src/mir/supercompiler/validate.rs}).}, label={lst:validate_impl}]
+//!
+//! Formally verifies semantic equivalence and simulation preorder between an original
+//! MIR function and its supercompiled / distilled / MRSC residual CFG using:
+//! 1. Relational verification condition (VC) path extraction.
+//! 2. SMT bit-vector (QF_BV / QF_UFBV) encoding with uninterpreted function congruence.
+//! 3. Certified CDCL / DPLL bit-blasting decision procedure with model extraction.
+//! 4. SMT-LIB2 format generation for external solver interoperability.
+
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+
+use crate::ast::{BinaryOp, UnaryOp};
+use crate::mir::lower::{MirFunction, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
+use crate::typecheck::typed_ast::TypedLiteral;
+
+// ============================================================================
+// 1. QF_BV & QF_UFBV Abstract Syntax
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BvExpr {
+    Var(String, usize),
+    Const(u64, usize),
+    Add(Box<BvExpr>, Box<BvExpr>),
+    Sub(Box<BvExpr>, Box<BvExpr>),
+    Mul(Box<BvExpr>, Box<BvExpr>),
+    UDiv(Box<BvExpr>, Box<BvExpr>),
+    SDiv(Box<BvExpr>, Box<BvExpr>),
+    URem(Box<BvExpr>, Box<BvExpr>),
+    SRem(Box<BvExpr>, Box<BvExpr>),
+    Neg(Box<BvExpr>),
+    And(Box<BvExpr>, Box<BvExpr>),
+    Or(Box<BvExpr>, Box<BvExpr>),
+    Xor(Box<BvExpr>, Box<BvExpr>),
+    Not(Box<BvExpr>),
+    Shl(Box<BvExpr>, Box<BvExpr>),
+    LShr(Box<BvExpr>, Box<BvExpr>),
+    AShr(Box<BvExpr>, Box<BvExpr>),
+    Ite(Box<BoolFormula>, Box<BvExpr>, Box<BvExpr>),
+    Apply(String, Vec<BvExpr>, usize),
+}
+
+impl BvExpr {
+    pub fn var(name: impl Into<String>, width: usize) -> Self {
+        BvExpr::Var(name.into(), width)
+    }
+
+    pub fn constant(val: u64, width: usize) -> Self {
+        let mask = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+        BvExpr::Const(val & mask, width)
+    }
+
+    pub fn bitwidth(&self) -> usize {
+        match self {
+            BvExpr::Var(_, w) | BvExpr::Const(_, w) | BvExpr::Apply(_, _, w) => *w,
+            BvExpr::Add(l, _) | BvExpr::Sub(l, _) | BvExpr::Mul(l, _) |
+            BvExpr::UDiv(l, _) | BvExpr::SDiv(l, _) | BvExpr::URem(l, _) |
+            BvExpr::SRem(l, _) | BvExpr::And(l, _) | BvExpr::Or(l, _) |
+            BvExpr::Xor(l, _) | BvExpr::Shl(l, _) | BvExpr::LShr(l, _) |
+            BvExpr::AShr(l, _) => l.bitwidth(),
+            BvExpr::Neg(e) | BvExpr::Not(e) => e.bitwidth(),
+            BvExpr::Ite(_, t, _) => t.bitwidth(),
+        }
+    }
+
+    pub fn simplify(&self) -> BvExpr {
+        let w = self.bitwidth();
+        let mask = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
+
+        match self {
+            BvExpr::Add(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
+                        BvExpr::Const(a.wrapping_add(*b) & mask, w)
+                    }
+                    (BvExpr::Const(0, _), _) => sr,
+                    (_, BvExpr::Const(0, _)) => sl,
+                    (a, BvExpr::Neg(inner)) if **inner == *a => BvExpr::Const(0, w),
+                    (BvExpr::Neg(inner), a) if **inner == *a => BvExpr::Const(0, w),
+                    _ if sl > sr => BvExpr::Add(Box::new(sr), Box::new(sl)),
+                    _ => BvExpr::Add(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Sub(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
+                        BvExpr::Const(a.wrapping_sub(*b) & mask, w)
+                    }
+                    (BvExpr::Const(0, _), _) => BvExpr::Neg(Box::new(sr)),
+                    (_, BvExpr::Const(0, _)) => sl,
+                    _ if sl == sr => BvExpr::Const(0, w),
+                    _ => BvExpr::Sub(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Mul(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
+                        BvExpr::Const(a.wrapping_mul(*b) & mask, w)
+                    }
+                    (BvExpr::Const(0, _), _) | (_, BvExpr::Const(0, _)) => BvExpr::Const(0, w),
+                    (BvExpr::Const(1, _), _) => sr,
+                    (_, BvExpr::Const(1, _)) => sl,
+                    (BvExpr::Const(k, _), _) if *k > 0 && k.is_power_of_two() => {
+                        let shift = k.trailing_zeros() as u64;
+                        BvExpr::Shl(Box::new(sr), Box::new(BvExpr::constant(shift, w)))
+                    }
+                    (_, BvExpr::Const(k, _)) if *k > 0 && k.is_power_of_two() => {
+                        let shift = k.trailing_zeros() as u64;
+                        BvExpr::Shl(Box::new(sl), Box::new(BvExpr::constant(shift, w)))
+                    }
+                    _ if sl > sr => BvExpr::Mul(Box::new(sr), Box::new(sl)),
+                    _ => BvExpr::Mul(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::And(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => BvExpr::Const((a & b) & mask, w),
+                    (BvExpr::Const(0, _), _) | (_, BvExpr::Const(0, _)) => BvExpr::Const(0, w),
+                    _ if sl == sr => sl,
+                    _ if sl > sr => BvExpr::And(Box::new(sr), Box::new(sl)),
+                    _ => BvExpr::And(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Or(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => BvExpr::Const((a | b) & mask, w),
+                    (BvExpr::Const(0, _), _) => sr,
+                    (_, BvExpr::Const(0, _)) => sl,
+                    _ if sl == sr => sl,
+                    _ if sl > sr => BvExpr::Or(Box::new(sr), Box::new(sl)),
+                    _ => BvExpr::Or(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Xor(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => BvExpr::Const((a ^ b) & mask, w),
+                    (BvExpr::Const(0, _), _) => sr,
+                    (_, BvExpr::Const(0, _)) => sl,
+                    _ if sl == sr => BvExpr::Const(0, w),
+                    _ if sl > sr => BvExpr::Xor(Box::new(sr), Box::new(sl)),
+                    _ => BvExpr::Xor(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Not(e) => {
+                let se = e.simplify();
+                match &se {
+                    BvExpr::Const(a, _) => BvExpr::Const((!a) & mask, w),
+                    BvExpr::Not(inner) => *inner.clone(),
+                    BvExpr::And(l, r) => {
+                        // De Morgan: ~(l & r) -> (~l | ~r)
+                        BvExpr::Or(
+                            Box::new(BvExpr::Not(l.clone()).simplify()),
+                            Box::new(BvExpr::Not(r.clone()).simplify()),
+                        ).simplify()
+                    }
+                    _ => BvExpr::Not(Box::new(se)),
+                }
+            }
+            BvExpr::Neg(e) => {
+                let se = e.simplify();
+                match &se {
+                    BvExpr::Const(a, _) => BvExpr::Const((0u64.wrapping_sub(*a)) & mask, w),
+                    _ => BvExpr::Neg(Box::new(se)),
+                }
+            }
+            BvExpr::Shl(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
+                        let shift = (*b % w as u64) as u32;
+                        BvExpr::Const((a << shift) & mask, w)
+                    }
+                    (_, BvExpr::Const(0, _)) => sl,
+                    _ => BvExpr::Shl(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::LShr(l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                match (&sl, &sr) {
+                    (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
+                        let shift = (*b % w as u64) as u32;
+                        BvExpr::Const((a >> shift) & mask, w)
+                    }
+                    (_, BvExpr::Const(0, _)) => sl,
+                    _ => BvExpr::LShr(Box::new(sl), Box::new(sr)),
+                }
+            }
+            BvExpr::Ite(c, t, e) => {
+                let sc = c.simplify();
+                match sc {
+                    BoolFormula::True => t.simplify(),
+                    BoolFormula::False => e.simplify(),
+                    _ => {
+                        let st = t.simplify();
+                        let se = e.simplify();
+                        if st == se {
+                            st
+                        } else {
+                            BvExpr::Ite(Box::new(sc), Box::new(st), Box::new(se))
+                        }
+                    }
+                }
+            }
+            BvExpr::Apply(name, args, bw) => {
+                let s_args = args.iter().map(|a| a.simplify()).collect();
+                BvExpr::Apply(name.clone(), s_args, *bw)
+            }
+            _ => self.clone(),
+        }
+    }
+
+    pub fn eval_concrete(&self, env: &HashMap<String, u64>) -> Option<u64> {
+        let w = self.bitwidth();
+        let mask = if w >= 64 { u64::MAX } else { (1u64 << w) - 1 };
+
+        match self {
+            BvExpr::Var(name, _) => env.get(name).copied(),
+            BvExpr::Const(val, _) => Some(*val & mask),
+            BvExpr::Add(l, r) => {
+                Some(l.eval_concrete(env)?.wrapping_add(r.eval_concrete(env)?) & mask)
+            }
+            BvExpr::Sub(l, r) => {
+                Some(l.eval_concrete(env)?.wrapping_sub(r.eval_concrete(env)?) & mask)
+            }
+            BvExpr::Mul(l, r) => {
+                Some(l.eval_concrete(env)?.wrapping_mul(r.eval_concrete(env)?) & mask)
+            }
+            BvExpr::UDiv(l, r) => {
+                let lv = l.eval_concrete(env)?;
+                let rv = r.eval_concrete(env)?;
+                lv.checked_div(rv).map(|q| q & mask)
+            }
+            BvExpr::SDiv(l, r) => {
+                let lv = l.eval_concrete(env)? as i64;
+                let rv = r.eval_concrete(env)? as i64;
+                lv.checked_div(rv).map(|q| (q as u64) & mask)
+            }
+            BvExpr::URem(l, r) => {
+                let lv = l.eval_concrete(env)?;
+                let rv = r.eval_concrete(env)?;
+                lv.checked_rem(rv).map(|rem| rem & mask)
+            }
+            BvExpr::SRem(l, r) => {
+                let lv = l.eval_concrete(env)? as i64;
+                let rv = r.eval_concrete(env)? as i64;
+
+\end{lstlisting}

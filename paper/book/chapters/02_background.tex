@@ -1,0 +1,250 @@
+\chapter{Background and Related Work}
+\label{chap:background}
+
+\section{Turchin's Metacomputation and Refal}
+\label{sec:background:turchin}
+
+Supercompilation (a contraction of \emph{supervised compilation}) was introduced in 1986 by Valentin Turchin within the context of the functional language Refal \citep{turchin1986concept}. Turchin observed that conventional compilers perform purely static syntactic rewrites, whereas an interpreter executes a program dynamically on concrete data. Metacomputation bridges this divide by executing the program \emph{symbolically} on parameterized inputs.
+
+\subsection{Configurations and Driving}
+Let a configuration $C = \langle e, \rho \rangle$ consist of an expression $e$ and a symbolic environment $\rho : \mathcal{V} \to \symterm$ mapping program variables to symbolic terms. The basic operation of metacomputation is \emph{driving}: evaluating the head expression of $e$ until a variable or branching condition depends on an unknown symbolic parameter. 
+
+When execution reaches a conditional construct $\mathtt{if}\; c \; \mathtt{then}\; e_1 \;\mathtt{else}\; e_2$ where $c$ evaluates to a non-constant symbolic condition $\psi$, driving cannot proceed deterministically. Instead, driving bifurcates the configuration into two branches:
+\begin{equation}
+C_{\text{then}} = \langle e_1, \rho \cup \{\psi \mapsto \mathtt{true}\} \rangle, \quad
+C_{\text{else}} = \langle e_2, \rho \cup \{\psi \mapsto \mathtt{false}\} \rangle
+\end{equation}
+This branching generates a directed tree of configurations termed the \emph{process tree}.
+
+\subsection{Process Trees and Folding}
+As driving proceeds, recursive function calls expand repeatedly. Without intervention, any non-terminating or infinite loop would generate an infinite process tree. To guarantee finite representation, the supercompiler checks at each newly created configuration $C_{\text{new}}$ whether it is an instance of, or structurally similar to, an ancestor configuration $C_{\text{anc}}$ in the current process path.
+
+If $C_{\text{new}}$ is a syntactic rename of $C_{\text{anc}}$, the supercompiler performs \emph{folding}: it terminates exploration of $C_{\text{new}}$ and replaces the node with a back-edge (a \emph{knot}) pointing to $C_{\text{anc}}$. In the residual program, this knot materializes as a recursive function invocation.
+
+\section{S\o{}rensen--Gl\"uck Positive Supercompilation and Algorithm A}
+\label{sec:background:sorensen}
+
+In 1995, Morten Heine S\o{}rensen and Robert Gl\"uck formalized and streamlined Turchin's ideas into \emph{Positive Supercompilation} and established the canonical \emph{Algorithm A} \citep{sorensen1995algorithm}. The term ``positive'' denotes that information learned along branching paths (e.g., that a variable matches a particular data constructor or that a numeric comparison holds) is affirmatively propagated downward into subsequent evaluation steps.
+
+Algorithm A decomposes supercompilation into two orthogonal components:
+\begin{enumerate}
+    \item A \emph{driving mechanism} that symbolically evaluates configurations and constructs process trees.
+    \item A \emph{generalization mechanism} governed by a \emph{whistle} that detects potential infinite evaluation sequences and forces generalization.
+\end{enumerate}
+
+\section{Homeomorphic Embedding and Kruskal's Tree Theorem}
+\label{sec:background:kruskal}
+
+To decide when to halt driving and force generalization, supercompilers employ well-quasi-orderings based on \emph{homeomorphic embedding} ($\trianglelefteq$).
+
+\begin{definition}[Homeomorphic Embedding]
+Let $\Sigma$ be a finite ranked alphabet of function symbols and $\mathcal{V}$ be a set of variables. The homeomorphic embedding relation $\trianglelefteq$ on terms $\mathcal{T}(\Sigma, \mathcal{V})$ is defined inductively by two rules:
+\begin{align}
+\text{\bf (Diving)} \quad & \frac{s \trianglelefteq t_i \quad \text{for some } i \in \{1, \dots, n\}}{s \trianglelefteq f(t_1, \dots, t_n)} \\[0.8em]
+\text{\bf (Coupling)} \quad & \frac{s_1 \trianglelefteq t_1 \quad s_2 \trianglelefteq t_2 \quad \dots \quad s_n \trianglelefteq t_n}{f(s_1, \dots, s_n) \trianglelefteq f(t_1, \dots, t_n)}
+\end{align}
+Additionally, variables embed other variables: $x \trianglelefteq y$ for all $x, y \in \mathcal{V}$.
+\end{definition}
+
+The theoretical foundation guaranteeing termination of any driving loop governed by homeomorphic embedding is Kruskal's Tree Theorem:
+
+\begin{theorem}[Kruskal's Tree Theorem \citep{kruskal1960well}]
+Let $\Sigma$ be a finite alphabet and let $\mathcal{T}(\Sigma)$ be the set of finite trees over $\Sigma$. The homeomorphic embedding relation $\trianglelefteq$ is a well-quasi-ordering (WQO) on $\mathcal{T}(\Sigma)$. Consequently, in any infinite sequence of terms $t_0, t_1, t_2, \dots \in \mathcal{T}(\Sigma)$, there exist indices $i < j$ such that $t_i \trianglelefteq t_j$.
+\end{theorem}
+
+When a new configuration $t_j$ embeds an ancestor $t_i$, the whistle blows, signaling that the term is structurally growing and risks non-termination. Driving halts, and generalization is invoked.
+
+\section{Most Specific Generalization (MSG) Anti-Unification}
+\label{sec:background:msg}
+
+When the whistle detects that $t_i \trianglelefteq t_j$, the supercompiler cannot fold directly because $t_j$ is not an exact rename of $t_i$. It must compute their \emph{Most Specific Generalization} (MSG), also known as syntactic \emph{anti-unification}.
+
+\begin{definition}[Most Specific Generalization]
+Given two terms $t_1, t_2 \in \mathcal{T}(\Sigma, \mathcal{V})$, an anti-unifier is a triple $\langle g, \theta_1, \theta_2 \rangle$ where $g$ is a term and $\theta_1, \theta_2$ are substitutions such that:
+\begin{equation}
+\theta_1(g) = t_1 \quad \text{and} \quad \theta_2(g) = t_2
+\end{equation}
+The term $g$ is the \emph{Most Specific Generalization} if for any other anti-unifier $g'$ of $t_1$ and $t_2$, $g$ is an instance of $g'$ (i.e., there exists $\sigma$ such that $\sigma(g') = g$).
+\end{definition}
+
+\subsection{Worked Anti-Unification Examples}
+
+\paragraph{Example 1: List Construction Widening.}
+Consider anti-unifying two accumulator states during list processing:
+\begin{align}
+t_1 &= \mathtt{Cons}(1, \mathtt{Cons}(2, \mathtt{Nil})) \\
+t_2 &= \mathtt{Cons}(1, \mathtt{Cons}(3, \mathtt{Nil}))
+\end{align}
+Applying anti-unification recursively:
+\begin{enumerate}
+    \item Top symbol matches: $\mathtt{Cons}$.
+    \item First arguments match: $1 = 1 \implies 1$.
+    \item Second arguments have top symbol $\mathtt{Cons}$.
+    \item Their heads disagree: $2 \ne 3 \implies \text{abstract to fresh variable } \alpha$.
+    \item Their tails match: $\mathtt{Nil} = \mathtt{Nil} \implies \mathtt{Nil}$.
+\end{enumerate}
+Result: $g = \mathtt{Cons}(1, \mathtt{Cons}(\alpha, \mathtt{Nil}))$, with $\theta_1 = \{\alpha \mapsto 2\}$ and $\theta_2 = \{\alpha \mapsto 3\}$.
+
+\paragraph{Example 2: Arithmetic Accumulator Widening.}
+Consider anti-unifying loop states:
+\begin{align}
+t_1 &= \mathtt{add}(x, 0) \\
+t_2 &= \mathtt{add}(x, \mathtt{add}(y, 1))
+\end{align}
+The first argument $x$ matches. The second arguments $0$ and $\mathtt{add}(y, 1)$ have mismatched symbols, forcing introduction of a variable $\beta$.
+Result: $g = \mathtt{add}(x, \beta)$, with $\theta_1 = \{\beta \mapsto 0\}$ and $\theta_2 = \{\beta \mapsto \mathtt{add}(y, 1)\}$.
+
+\paragraph{Example 3: Function Application Generalization.}
+Consider anti-unifying higher-order applications:
+\begin{align}
+t_1 &= \mathtt{map}(f, \mathtt{Cons}(a, \mathtt{Nil})) \\
+t_2 &= \mathtt{map}(g, \mathtt{Cons}(b, \mathtt{Cons}(c, \mathtt{Nil})))
+\end{align}
+Top symbol $\mathtt{map}$ matches. First arguments $f \ne g$ abstract to $\phi$. Second arguments are both $\mathtt{Cons}$; heads $a \ne b$ abstract to $\psi$; tails $\mathtt{Nil} \ne \mathtt{Cons}(c, \mathtt{Nil})$ abstract to $\omega$.
+Result: $g = \mathtt{map}(\phi, \mathtt{Cons}(\psi, \omega))$, with appropriate substitutions $\theta_1, \theta_2$.
+
+\section{Hamilton's Global Distillation}
+\label{sec:background:distillation}
+
+In 2007, Geoff Hamilton introduced \emph{Distillation} \citep{hamilton2007distillation}. While classical positive supercompilation folds configurations only within a single branch against direct ancestors, Distillation performs \emph{global folding}. It maintains a global repository of all configurations generated across the entire program. 
+
+Distillation operates via three core rules:
+\begin{itemize}
+    \item $\mathtt{unfold}$: Expand terms symbolically via driving.
+    \item $\mathtt{fold}$: Recognize when a sub-configuration matches a configuration encountered anywhere else in the global tree, eliminating redundant computation across function boundaries.
+    \item $\mathtt{abstract}$: Generalize configurations when homeomorphic embedding indicates growth.
+\end{itemize}
+Crucially, Hamilton showed that Distillation eliminates intermediate data structures that classical supercompilers cannot eliminate (such as the intermediate tree produced in double-tree inversion or nested pipelines of non-linear recursive functions).
+
+\section{Mitchell--Klyuchnikov MRSC and HOSC}
+\label{sec:background:mrsc}
+
+Mitchell and Klyuchnikov revolutionized practical supercompilation through two major contributions:
+\begin{enumerate}
+    \item \textbf{HOSC (Higher-Order Supercompiler)} \citep{mitchell2010hosc}: Formalized positive supercompilation over the pure higher-order $\lambda$-calculus, proving that higher-order programs could be supercompiled without defunctionalization by driving $\beta$-redexes directly.
+    \item \textbf{MRSC (Multi-Result Supercompilation)} \citep{klyuchnikov2012practical}: Recognized that deterministic driving algorithms often make sub-optimal heuristic choices (e.g., whether to decompose an expression or drive it as a unit). MRSC models the space of all possible supercompilation decisions as a \emph{configuration hypergraph}. Once the hypergraph is constructed, graph search algorithms extract the globally optimal residual program according to an explicit cost function.
+\end{enumerate}
+
+\section{Wadler's Deforestation and Shortcut Fusion}
+\label{sec:background:deforestation}
+
+Philip Wadler's seminal 1990 paper introduced \emph{Deforestation} \citep{wadler1990deforestation}, an algorithm designed to eliminate intermediate tree structures from functional programs without full supercompilation. Wadler defined a restricted syntactic class of \emph{treeless forms} for which transformation is guaranteed to terminate without requiring generalization or whistles. Subsequent work by Gill et al. developed \emph{shortcut fusion} (e.g., the \texttt{build}/\texttt{foldr} rule in GHC), which applies algebraic rewrite rules to fuse producer-consumer pairs. While fast, shortcut fusion is strictly syntactic and fails whenever recursion patterns deviate from canonical combinator templates.
+
+\section{Reynolds Defunctionalization}
+\label{sec:background:reynolds}
+
+In 1972, John Reynolds formulated \emph{defunctionalization} as a technique to eliminate higher-order functions from definitional interpreters \citep{reynolds1972definitional}. Defunctionalization collects all lambda abstractions occurring in a program into a global first-order algebraic data type (an enum), where each constructor stores the free variables captured by that closure's environment. Higher-order applications $f(x)$ are replaced by calls to an \texttt{apply} function that pattern matches on the constructor tag. NumLang adopts Reynolds defunctionalization as a mandatory whole-program pass prior to driving, enabling pure first-order SSA supercompilation.
+
+\section{Polyhedral Compilation and the Pluto Model}
+\label{sec:background:polyhedral}
+
+Polyhedral compilation models loop nests as integer points inside convex polyhedra defined by affine inequalities \citep{bondhugula2008pluto}. By computing dependence distance vectors between array read and write operations, polyhedral frameworks (such as ISL and LLVM Polly) formulate loop transformations (tiling, skewing, interchange, and fusion) as Integer Linear Programming (ILP) problems under the Pluto permutability constraints:
+\begin{equation}
+\vec{\theta} \cdot \vec{d} \ge 0 \quad \text{for all dependence vectors } \vec{d}
+\end{equation}
+NumLang incorporates polyhedral iteration space analysis directly into SSA process tree evaluation.
+
+\section{The Three Futamura Projections}
+\label{sec:background:futamura}
+
+In 1971, Yoshihiko Futamura published the foundational observation linking partial evaluation to compiler theory \citep{futamura1971partial}. Let $\mathtt{spec}(p, s)$ denote a program specializer that specializes program $p$ with respect to static input $s$. Let $\mathtt{int}(src, inp)$ be an interpreter that executes source program $src$ on input $inp$.
+
+\begin{align}
+\text{\bf 1st Futamura Projection (Compilation):} \quad & \mathtt{target} = \mathtt{spec}(\mathtt{int}, src) \\[0.8em]
+\text{\bf 2nd Futamura Projection (Compiler Generation):} \quad & \mathtt{compiler} = \mathtt{spec}(\mathtt{spec}, \mathtt{int}) \\[0.8em]
+\text{\bf 3rd Futamura Projection (Compiler-Compiler):} \quad & \mathtt{cogen} = \mathtt{spec}(\mathtt{spec}, \mathtt{spec})
+\end{align}
+
+NumLang achieves all three projections natively via its self-applicable specializer \texttt{minspec.nl}.
+
+\section{SSA Form and Mid-Level IR}
+\label{sec:background:ssa}
+
+Static Single Assignment (SSA) form, pioneered by Cytron et al. in 1991 \citep{cytron1991efficiently}, requires that every variable is assigned exactly once, and that $\phi$-functions reconcile values at control-flow join points. SSA form is the undisputed standard for modern optimizing backends (LLVM, Cranelift, GCC, V8) because it makes def-use chains explicit and enables linear-time dominance analyses. NumLang is the first supercompiler to establish SSA MIR as its native configuration representation.
+
+\section{Competitor Comparison Matrix}
+\label{sec:background:comparison}
+
+Table~\ref{tab:competitor_comparison} positions NumLang against all prominent supercompilers and optimizing functional compilers in the literature across key architectural capabilities.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Capability} & \textbf{NumLang} & \textbf{GHC-SC} & \textbf{HOSC} & \textbf{SPSC} & \textbf{Polly} & \textbf{MRSC-proto} \\
+\midrule
+Language Model & Imperative + ADT & Pure Lazy & Pure $\lambda$ & 1st-Order & C / Affine & Pure 1st-Order \\
+Native Backend & Cranelift + LLVM & GHC STG & None (Core) & None & LLVM & None \\
+Representation & SSA MIR & STG / Core & $\lambda$-calculus & S-expr & Polyhedral AST & Graphs \\
+Distillation & Global (Hamilton) & Local only & Local only & Local only & N/A & Local only \\
+Configuration Search & MRSC + IDDFS & Single path & Single path & Single path & ILP & MRSC \\
+Recurrence Engine & Structural O(1) & None & None & None & Loop vectorize & None \\
+Reynolds Defunctionalization & Whole-Program & None & None & None & N/A & None \\
+Proof Mechanization & Lean 4 (0 axiom) & Pen-and-paper & None & Coq (partial) & None & None \\
+Futamura Projections & Full (1, 2, 3) & None & None & Partial & N/A & None \\
+\bottomrule
+\end{tabular}
+\caption{Comprehensive architectural comparison of NumLang against competing systems.}
+\label{tab:competitor_comparison}
+\end{table}
+
+\section{Formal Substitution Algebra in Anti-Unification}
+\label{sec:background:anti_unif_theory}
+
+To establish the algebraic foundation of Most Specific Generalization (MSG), we formalize the substitution preorder over terms $\symterm(\Sigma, \mathcal{V})$. A substitution $\theta : \mathcal{V} \to \symterm$ is a finite mapping from term variables to terms. We write $t\theta$ for the application of $\theta$ to term $t$.
+
+\begin{definition}[Subsumption Preorder]
+A term $s$ is \emph{more general} than term $t$, denoted $s \le t$, if there exists a substitution $\theta$ such that $s\theta = t$. The relation $\le$ forms a preorder on $\symterm(\Sigma, \mathcal{V})$.
+\end{definition}
+
+Two terms $s$ and $t$ are \emph{syntactically equivalent up to renaming}, denoted $s \approx t$, if $s \le t$ and $t \le s$. The quotient set $(\symterm(\Sigma, \mathcal{V}) / {\approx}, \le)$ forms a complete lattice when augmented with a greatest element $\top$ and least element $\bot$. In this lattice:
+\begin{itemize}
+    \item Syntactic Unification computes the \emph{greatest lower bound} (meet): $\text{mgu}(t_1, t_2) = t_1 \sqcap t_2$.
+    \item Anti-Unification computes the \emph{least upper bound} (join): $\text{msg}(t_1, t_2) = t_1 \sqcup t_2$.
+\end{itemize}
+
+\subsection{Detailed Anti-Unification Derivation Trees}
+
+\paragraph{Derivation 1: Binary Tree Mirror Generalization.}
+Consider anti-unifying two accumulator states generated during binary tree inversion:
+\begin{align}
+t_1 &= \mathtt{Node}(\mathtt{Leaf}(1), \mathtt{Leaf}(2)) \\
+t_2 &= \mathtt{Node}(\mathtt{Leaf}(3), \mathtt{Leaf}(4))
+\end{align}
+The anti-unification algorithm traverses the terms structurally:
+\begin{equation}
+\begin{array}{rcl}
+\text{msg}(t_1, t_2) &=& \mathtt{Node}(\text{msg}(\mathtt{Leaf}(1), \mathtt{Leaf}(3)), \text{msg}(\mathtt{Leaf}(2), \mathtt{Leaf}(4))) \\
+&=& \mathtt{Node}(\mathtt{Leaf}(\text{msg}(1, 3)), \mathtt{Leaf}(\text{msg}(2, 4))) \\
+&=& \mathtt{Node}(\mathtt{Leaf}(\alpha), \mathtt{Leaf}(\beta))
+\end{array}
+\end{equation}
+where $\theta_1 = [\alpha \mapsto 1, \beta \mapsto 2]$ and $\theta_2 = [\alpha \mapsto 3, \beta \mapsto 4]$.
+
+\paragraph{Derivation 2: Mutual Recurrence Matrix Invariant.}
+Consider two configurations from a mutual recurrence cycle:
+\begin{align}
+t_1 &= \mathtt{Add}(\mathtt{Mul}(2, x), \mathtt{Mul}(3, y)) \\
+t_2 &= \mathtt{Add}(\mathtt{Mul}(2, \mathtt{Add}(x, 1)), \mathtt{Mul}(3, \mathtt{Sub}(y, 2)))
+\end{align}
+The outermost operator $\mathtt{Add}$ matches. The left branches share scalar multiplier $2$; their variable arguments $x$ and $\mathtt{Add}(x, 1)$ generalize to $\xi$. The right branches share scalar multiplier $3$; their arguments $y$ and $\mathtt{Sub}(y, 2)$ generalize to $\eta$.
+The resulting MSG is:
+\begin{equation}
+g = \mathtt{Add}(\mathtt{Mul}(2, \xi), \mathtt{Mul}(3, \eta))
+\end{equation}
+This preserved linear form enables the recurrence engine to extract a constant coefficient companion matrix.
+
+\section{Cytron's Dominance Frontiers in SSA Construction}
+\label{sec:background:cytron_ssa}
+
+Cytron et al. \citep{cytron1991efficiently} proved that minimal $\phi$-node placement requires computing the \emph{Dominance Frontier} ($\mathcal{DF}$) of basic blocks.
+
+\begin{definition}[Dominance Frontier]
+Let $X$ and $Y$ be basic blocks in a control-flow graph $\mathcal{G}$. $X$ \emph{strictly dominates} $Y$ ($X \operatorname{sdom} Y$) if $X$ dominates $Y$ and $X \ne Y$. The dominance frontier of $X$ is the set of all blocks $Y$ such that $X$ dominates a predecessor of $Y$, but $X$ does not strictly dominate $Y$:
+\begin{equation}
+\mathcal{DF}(X) = \{ Y \in \mathcal{G} \mid \exists P \in \operatorname{Pred}(Y).\; X \operatorname{dom} P \land \neg(X \operatorname{sdom} Y) \}
+\end{equation}
+\end{definition}
+
+NumLang's \texttt{Mem2Reg} pass (\texttt{src/mir/mem2reg.rs}) computes the iterated dominance frontier $\mathcal{DF}^+(S)$ for all stack-allocated variables $S$. For any variable assigned in block set $V$, $\phi$-nodes are placed exactly at blocks in $\mathcal{DF}^+(V)$, guaranteeing minimal SSA representation with linear-time complexity.

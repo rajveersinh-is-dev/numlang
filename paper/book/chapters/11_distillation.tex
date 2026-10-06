@@ -1,0 +1,345 @@
+\chapter{Hamilton Global Distillation}
+\label{chap:distillation}
+
+\section{The Limitations of Local Supercompilation}
+\label{sec:distillation:limitations}
+
+Classical positive supercompilation (such as Turchin's Refal or S\o{}rensen--Gl\"uck Algorithm A) performs strictly \emph{local} folding: a configuration may only fold against direct ancestors along its immediate process path. 
+
+As Geoff Hamilton demonstrated in 2007 \citep{hamilton2007distillation}, local supercompilation fails to eliminate intermediate data structures in common programming patterns. In pipelines such as:
+\begin{equation}
+\mathtt{sum}(\mathtt{map}(f, \mathtt{map}(g, xs)))
+\end{equation}
+local supercompilation successfully fuses the outer \texttt{sum} with the first \texttt{map}, but leaves the second \texttt{map} as a separate recursive function, preserving an intermediate list.
+
+\section{The Formal Distillation Algorithm}
+\label{sec:distillation:algorithm}
+
+NumLang implements Hamilton's global distillation in \texttt{src/mir/supercompiler/distill.rs}. Distillation maintains a \emph{global memoization repository} $\mathcal{G}$ containing all configurations explored across the entire program graph.
+
+Distillation is governed by three formal transformation rules:
+
+\begin{align}
+\text{\bf (Unfold)} \quad & \frac{C \notin \text{foldable}(\mathcal{G}) \quad C \text{ does not whistle}}{\mathcal{G} \vdash C \longrightarrow \text{drive}(C)} \\[0.8em]
+\text{\bf (Fold)} \quad & \frac{\exists C' \in \mathcal{G}.\; C \equiv_\alpha C'}{\mathcal{G} \vdash C \longrightarrow \mathtt{KnotRef}(C')} \\[0.8em]
+\text{\bf (Abstract)} \quad & \frac{\exists C' \in \mathcal{G}.\; C' \trianglelefteq C}{\mathcal{G} \vdash C \longrightarrow \text{distill}(\text{MSG}(C', C))}
+\end{align}
+
+\section{Inter-Procedural Folding Across Function Boundaries}
+\label{sec:distillation:interprocedural}
+
+The defining power of distillation is that folding is not confined to ancestors within the same call stack. If Function $A$ produces an intermediate stream state that is structurally identical to a stream consumer in Function $B$, distillation recognizes their $\alpha$-equivalence across the global graph, folding the producer directly into the consumer.
+
+\section{Interaction with Reynolds Defunctionalization}
+\label{sec:distillation:defunc_ordering}
+
+A crucial engineering insight realized in Phase 54 is that \textbf{distillation must operate across defunctionalized first-order representations}. If distillation attempts to fold over higher-order ASTs containing closure environments, captured environment records prevent configuration matching. 
+
+NumLang enforces a two-tier distillation strategy:
+\begin{enumerate}
+    \item \textbf{Pre-Defunctionalization AST Distillation (Phase 54)}: Applies lightweight structural folding on pure lambda expressions in \texttt{src/ast/hodistill.rs}.
+    \item \textbf{Global MIR Distillation}: Executes full Hamilton global distillation on SSA basic blocks following whole-program Reynolds defunctionalization.
+\end{enumerate}
+
+\section{Worked Distillation Example: map o map}
+\label{sec:distillation:map_map_walkthrough}
+
+Consider distilling $\mathtt{map}(f, \mathtt{map}(g, xs))$:
+\begin{enumerate}
+    \item The outer call unfolds until it reaches the inner call's head constructor.
+    \item When the inner call yields $\mathtt{Cons}(g(y), \mathtt{map}(g, ys))$, the outer call consumes it directly:
+    \begin{equation}
+    f(g(y)) :: \mathtt{map}(f, \mathtt{map}(g, ys))
+    \end{equation}
+    \item The tail expression $\mathtt{map}(f, \mathtt{map}(g, ys))$ matches the root configuration in the global repository $\mathcal{G}$.
+    \item Distillation folds globally, emitting a single tail-recursive loop that computes $f(g(y))$ in a single pass without allocating any intermediate list nodes.
+\end{enumerate}
+
+\section{The Hamilton Global Distillation Implementation}
+\label{sec:distill:impl_listing}
+
+The distillation algorithm in \texttt{src/mir/supercompiler/distill.rs} performs inter-procedural folding across distinct call branches. Listing~\ref{lst:distill_impl} presents the core driver:
+
+\begin{lstlisting}[language=Rust, caption={Hamilton Distillation Engine in NumLang (\texttt{src/mir/supercompiler/distill.rs}).}, label={lst:distill_impl}]
+//!
+//! Unlike classical local supercompilation, distillation operates globally across
+//! procedural boundaries. It represents cross-procedural configurations in an explicit
+//! Global Process Tree, drives demanding contexts with call-by-need evaluation, deforests
+//! intermediate data structures by cancelling Alloc-Load pairs, detects recurrences via a
+//! Two-Level Whistle (local path embedding and global configuration memoization), and
+//! synthesizes new specialized, single-pass recursive functions with direct recursive back-edges.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::ast::BinaryOp;
+use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
+use crate::typecheck::types::Type;
+use super::drive::{ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerStats};
+use super::term::TermInterner;
+
+// ============================================================================
+// 1. Global Process-Tree Term Representation
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum GlobalTerm {
+    Var(String),
+    Constant(i64),
+    Constructor {
+        enum_name: String,
+        variant_name: String,
+        tag: usize,
+        fields: Vec<GlobalTerm>,
+    },
+    Call {
+        func: String,
+        args: Vec<GlobalTerm>,
+    },
+    Alloc(Box<GlobalTerm>),
+    Load(Box<GlobalTerm>),
+    BinaryOp(BinaryOp, Box<GlobalTerm>, Box<GlobalTerm>),
+    Payload {
+        base: Box<GlobalTerm>,
+        index: usize,
+    },
+}
+
+impl GlobalTerm {
+    /// Simplifies the term by cancelling inverse operations (e.g. Load(Alloc(x)) -> x).
+    pub fn simplify(&self) -> GlobalTerm {
+        match self {
+            GlobalTerm::Load(inner) => {
+                let s_inner = inner.simplify();
+                if let GlobalTerm::Alloc(target) = s_inner {
+                    *target
+                } else {
+                    GlobalTerm::Load(Box::new(s_inner))
+                }
+            }
+            GlobalTerm::Alloc(inner) => GlobalTerm::Alloc(Box::new(inner.simplify())),
+            GlobalTerm::Constructor { enum_name, variant_name, tag, fields } => {
+                let s_fields = fields.iter().map(|f| f.simplify()).collect();
+                GlobalTerm::Constructor {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                    tag: *tag,
+                    fields: s_fields,
+                }
+            }
+            GlobalTerm::Call { func, args } => {
+                let s_args = args.iter().map(|a| a.simplify()).collect();
+                GlobalTerm::Call {
+                    func: func.clone(),
+                    args: s_args,
+                }
+            }
+            GlobalTerm::BinaryOp(op, l, r) => {
+                let sl = l.simplify();
+                let sr = r.simplify();
+                if let (GlobalTerm::Constant(a), GlobalTerm::Constant(b)) = (&sl, &sr) {
+                    match op {
+                        BinaryOp::Add => GlobalTerm::Constant(a + b),
+                        BinaryOp::Sub => GlobalTerm::Constant(a - b),
+                        BinaryOp::Mul => GlobalTerm::Constant(a * b),
+                        _ => GlobalTerm::BinaryOp(*op, Box::new(sl), Box::new(sr)),
+                    }
+                } else {
+                    GlobalTerm::BinaryOp(*op, Box::new(sl), Box::new(sr))
+                }
+            }
+            GlobalTerm::Payload { base, index } => {
+                let s_base = base.simplify();
+                if let GlobalTerm::Constructor { fields, .. } = &s_base {
+                    if *index < fields.len() {
+                        return fields[*index].clone();
+                    }
+                }
+                GlobalTerm::Payload { base: Box::new(s_base), index: *index }
+            }
+            _ => self.clone(),
+        }
+    }
+
+    /// Substitutes variables according to a mapping.
+    pub fn substitute(&self, subst: &HashMap<String, GlobalTerm>) -> GlobalTerm {
+        match self {
+            GlobalTerm::Var(name) => {
+                if let Some(val) = subst.get(name) {
+                    val.clone()
+                } else {
+                    self.clone()
+                }
+            }
+            GlobalTerm::Constructor { enum_name, variant_name, tag, fields } => {
+                let s_fields = fields.iter().map(|f| f.substitute(subst)).collect();
+                GlobalTerm::Constructor {
+                    enum_name: enum_name.clone(),
+                    variant_name: variant_name.clone(),
+                    tag: *tag,
+                    fields: s_fields,
+                }
+            }
+            GlobalTerm::Call { func, args } => {
+                let s_args = args.iter().map(|a| a.substitute(subst)).collect();
+                GlobalTerm::Call {
+                    func: func.clone(),
+                    args: s_args,
+                }
+            }
+            GlobalTerm::Alloc(inner) => GlobalTerm::Alloc(Box::new(inner.substitute(subst))),
+            GlobalTerm::Load(inner) => GlobalTerm::Load(Box::new(inner.substitute(subst))),
+            GlobalTerm::BinaryOp(op, l, r) => GlobalTerm::BinaryOp(
+                *op,
+                Box::new(l.substitute(subst)),
+                Box::new(r.substitute(subst)),
+            ),
+            GlobalTerm::Payload { base, index } => GlobalTerm::Payload {
+                base: Box::new(base.substitute(subst)),
+                index: *index,
+            },
+            _ => self.clone(),
+        }
+    }
+
+    /// First-order pattern matching: checks if `self` is an instance of `pattern` ($self = pattern \cdot \theta$).
+    pub fn match_instance(&self, pattern: &GlobalTerm, subst: &mut HashMap<String, GlobalTerm>) -> bool {
+        match (pattern, self) {
+            (GlobalTerm::Var(p_var), term) => {
+                if let Some(existing) = subst.get(p_var) {
+                    existing == term
+                } else {
+                    subst.insert(p_var.clone(), term.clone());
+                    true
+                }
+            }
+            (GlobalTerm::Constant(c1), GlobalTerm::Constant(c2)) => c1 == c2,
+            (
+                GlobalTerm::Constructor { enum_name: e1, variant_name: v1, tag: t1, fields: f1 },
+                GlobalTerm::Constructor { enum_name: e2, variant_name: v2, tag: t2, fields: f2 },
+            ) => {
+                if e1 != e2 || v1 != v2 || t1 != t2 || f1.len() != f2.len() {
+                    return false;
+                }
+                f1.iter().zip(f2.iter()).all(|(p, t)| t.match_instance(p, subst))
+            }
+            (
+                GlobalTerm::Call { func: f1, args: a1 },
+                GlobalTerm::Call { func: f2, args: a2 },
+            ) => {
+                if f1 != f2 || a1.len() != a2.len() {
+                    return false;
+                }
+                a1.iter().zip(a2.iter()).all(|(p, t)| t.match_instance(p, subst))
+            }
+            (GlobalTerm::Alloc(in1), GlobalTerm::Alloc(in2)) => in2.match_instance(in1, subst),
+            (GlobalTerm::Load(in1), GlobalTerm::Load(in2)) => in2.match_instance(in1, subst),
+            (GlobalTerm::BinaryOp(op1, l1, r1), GlobalTerm::BinaryOp(op2, l2, r2)) => {
+                op1 == op2 && l2.match_instance(l1, subst) && r2.match_instance(r1, subst)
+            }
+            _ => false,
+        }
+    }
+
+    /// Homeomorphic embedding check ($self \trianglelefteq other$) for the Two-Level Whistle.
+    pub fn embeds_in(&self, other: &GlobalTerm) -> bool {
+        // Diving: self embeds in any subterm of other
+        match other {
+            GlobalTerm::Constructor { fields, .. } => {
+                if fields.iter().any(|f| self.embeds_in(f)) {
+                    return true;
+                }
+            }
+            GlobalTerm::Call { args, .. } => {
+                if args.iter().any(|a| self.embeds_in(a)) {
+                    return true;
+                }
+            }
+            GlobalTerm::Alloc(inner) | GlobalTerm::Load(inner) => {
+                if self.embeds_in(inner) {
+                    return true;
+                }
+            }
+            GlobalTerm::BinaryOp(_, l, r) if self.embeds_in(l) || self.embeds_in(r) => {
+                return true;
+            }
+            _ => {}
+        }
+
+        // Coupling: same constructor/functor and all children embed
+        match (self, other) {
+            (GlobalTerm::Var(v1), GlobalTerm::Var(v2)) => v1 == v2,
+            (GlobalTerm::Constant(c1), GlobalTerm::Constant(c2)) => c1 == c2,
+            (
+                GlobalTerm::Constructor { enum_name: e1, variant_name: v1, fields: f1, .. },
+                GlobalTerm::Constructor { enum_name: e2, variant_name: v2, fields: f2, .. },
+            ) => {
+                e1 == e2 && v1 == v2 && f1.len() == f2.len()
+                    && f1.iter().zip(f2.iter()).all(|(a, b)| a.embeds_in(b))
+            }
+            (
+                GlobalTerm::Call { func: f1, args: a1 },
+                GlobalTerm::Call { func: f2, args: a2 },
+            ) => {
+                f1 == f2 && a1.len() == a2.len()
+                    && a1.iter().zip(a2.iter()).all(|(a, b)| a.embeds_in(b))
+            }
+            (GlobalTerm::Alloc(i1), GlobalTerm::Alloc(i2)) => i1.embeds_in(i2),
+            (GlobalTerm::Load(i1), GlobalTerm::Load(i2)) => i1.embeds_in(i2),
+            (GlobalTerm::BinaryOp(op1, l1, r1), GlobalTerm::BinaryOp(op2, l2, r2)) => {
+                op1 == op2 && l1.embeds_in(l2) && r1.embeds_in(r2)
+            }
+            _ => false,
+        }
+    }
+}
+
+// ============================================================================
+// 2. Global Process Tree Nodes and Graph
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlobalNodeId(pub usize);
+
+#[derive(Debug, Clone)]
+pub struct GlobalProcessNode {
+    pub id: GlobalNodeId,
+    pub term: GlobalTerm,
+    pub kind: GlobalNodeKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum GlobalNodeKind {
+    Leaf(GlobalTerm),
+    Branch {
+        scrutinee_var: String,
+        enum_name: String,
+        arms: Vec<GlobalBranchArm>,
+    },
+    Knot {
+        target: GlobalNodeId,
+        subst: HashMap<String, GlobalTerm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalBranchArm {
+    pub variant_name: String,
+    pub tag: usize,
+    pub bindings: Vec<(String, Type)>,
+    pub child: GlobalNodeId,
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalProcessTree {
+    pub nodes: Vec<GlobalProcessNode>,
+    pub root: GlobalNodeId,
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_ty: Type,
+    pub stats: SupercompilerStats,
+}
+
+// ============================================================================
+
+\end{lstlisting}

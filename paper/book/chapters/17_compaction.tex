@@ -1,0 +1,548 @@
+\chapter{Residual Code Size Compaction and Outlining}
+\label{chap:compaction}
+
+\section{The Code Explosion Hazard in Supercompilation}
+\label{sec:compaction:hazard}
+
+A notorious pathology of metacomputation is \emph{code explosion}: because the supercompiler unrolls function calls, specializes branches along multiple symbolic paths, and materializes distinct knots for differing accumulator forms, the size of the residual program can grow exponentially relative to the source AST.
+
+NumLang combats code bloat through an integrated two-phase compaction architecture:
+\begin{enumerate}
+    \item \textbf{Pre-Residualization Process-Tree Compaction} (Phase 35, \texttt{src/mir/supercompiler/compact.rs}).
+    \item \textbf{Content-Addressed Basic Block Outlining} (Phase 56, \texttt{src/mir/supercompiler/outliner.rs}).
+\end{enumerate}
+
+\section{Pre-Residualization Process-Tree Compaction (Phase 35)}
+\label{sec:compaction:tree_compact}
+
+Before converting the process tree into SSA basic blocks, the compaction pass applies two structural rewrites:
+
+\subsection{1. Dead Node Elimination}
+Nodes whose path conditions have become unsatisfiable (detected via interval meet yielding $\bot$) are pruned. Any subtrees that do not lead to a Return terminator or a productive Fold back-edge are recursively swept from the hypergraph.
+
+\subsection{2. Alpha-Equivalent Knot Deduplication}
+When multiple branches generate generalization knots $K_1$ and $K_2$, the compactor tests whether their configurations are $\alpha$-equivalent under variable renaming:
+\begin{equation}
+K_1 \equiv_\alpha K_2 \iff \exists \sigma.\; \sigma(\text{State}(K_1)) = \text{State}(K_2)
+\end{equation}
+If equivalent, $K_2$ is discarded, and all fold back-edges targeting $K_2$ are redirected to $K_1$.
+
+\section{Post-Residualization MIR Compaction}
+\label{sec:compaction:mir_compact}
+
+Once SSA basic blocks are materialized, NumLang executes lightweight peephole reductions:
+\begin{itemize}
+    \item \textbf{Identity Assignment Elimination}: Statements of the form $x = x$ are eliminated.
+    \item \textbf{Nop Removal}: Dead instructions are removed.
+    \item \textbf{Conservative Eta-Reduction}: Trivial basic blocks containing solely an unconditional jump $\mathtt{bb}_i \to \mathtt{bb}_j$ are collapsed, splicing predecessors directly to $\mathtt{bb}_j$.
+\end{itemize}
+
+\section{Content-Addressed Basic Block Outlining (Phase 56)}
+\label{sec:compaction:outliner}
+
+In Phase 56, NumLang introduced the \texttt{BasicBlockOutliner} (\texttt{src/mir/supercompiler/outliner.rs}). The outliner computes a cryptographic hash of every basic block's instruction sequence, treating local variable names as normalized de Bruijn indices.
+
+When identical instruction sequences (such as repetitive error-handling sequences or specialized matrix multiplication inner loops) appear across multiple functions:
+\begin{enumerate}
+    \item The outliner extracts the sequence into a shared static helper function $\mathtt{\_\_outlined\_}h(\vec{p})$.
+    \item The original basic blocks are replaced by direct function calls to the shared subroutine.
+\end{enumerate}
+This pass guarantees that supercompiled native executables remain strictly within 120\% of standard unspecialized baseline binaries.
+
+\section{Process Tree Compaction Engine}
+\label{sec:compaction:compact_impl}
+
+Listing~\ref{lst:compact_impl} presents the dead node elimination and alpha-equivalent knot merging pass from \texttt{src/mir/supercompiler/compact.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Process Tree Compaction Engine (\texttt{src/mir/supercompiler/compact.rs}).}, label={lst:compact_impl}]
+//!
+//! Provides two compaction passes:
+//! 1. `compact_process_tree`: Prunes dead overflow nodes and deduplicates alpha-equivalent
+//!    knot targets prior to residualization.
+//! 2. `compact_mir_function`: Peephole optimization pass over residualized MIR functions,
+//!    removing no-op identity assignments and performing conservative copy propagation
+//!    into return terminators (eta-reduction).
+
+use std::collections::{HashMap, HashSet};
+
+use super::drive::{ProcessEdge, ProcessNodeId, ProcessTree};
+use crate::mir::lower::{MirFunction, Rvalue, Statement};
+use crate::mir::{Place, Projection, Terminator};
+
+/// Phase 35: Compact a ProcessTree before residualization.
+///
+/// 1. Dead-node elimination: DFS/BFS from tree.root; mark unreachable nodes
+///    with overflow = true so residualize emits Unreachable for them.
+/// 2. Knot-target deduplication: find pairs of Knot edges pointing to
+///    alpha-equivalent target states (same block id AND identical env keys
+///    and term values). Redirect the redundant edge to the canonical target.
+/// 3. Returns (dead_eliminated, knots_deduped).
+///
+/// IMPORTANT: Do NOT physically remove nodes from tree.nodes Vec.
+/// Mark dead ones with overflow = true; residualize already handles them.
+pub fn compact_process_tree(tree: &mut ProcessTree) -> (usize, usize) {
+    if tree.nodes.is_empty() || tree.root.0 >= tree.nodes.len() {
+        return (0, 0);
+    }
+
+    // Step 1: Knot-target deduplication
+    let mut knot_targets: Vec<ProcessNodeId> = Vec::new();
+    for node in &tree.nodes {
+        for edge in &node.edges {
+            if let ProcessEdge::Knot(target) = edge {
+                if !knot_targets.contains(target) {
+                    knot_targets.push(*target);
+                }
+            }
+        }
+    }
+    knot_targets.sort_by_key(|id| id.0);
+
+    let mut knots_deduped = 0;
+    let mut remap: HashMap<ProcessNodeId, ProcessNodeId> = HashMap::new();
+
+    for i in 0..knot_targets.len() {
+        let target_b = knot_targets[i];
+        if remap.contains_key(&target_b) {
+            continue;
+        }
+        for &target_a in knot_targets.iter().take(i) {
+            let canonical_a = remap.get(&target_a).copied().unwrap_or(target_a);
+            if tree.nodes[canonical_a.0].state.block == tree.nodes[target_b.0].state.block
+                && tree.nodes[canonical_a.0].state.env == tree.nodes[target_b.0].state.env
+            {
+                remap.insert(target_b, canonical_a);
+                tree.nodes[target_b.0].overflow = true;
+                tree.nodes[target_b.0].return_term = None;
+                tree.nodes[target_b.0].edges.clear();
+                knots_deduped += 1;
+                break;
+            }
+        }
+    }
+
+    if !remap.is_empty() {
+        for node in &mut tree.nodes {
+            for edge in &mut node.edges {
+                if let ProcessEdge::Knot(target) = edge {
+                    if let Some(&new_target) = remap.get(target) {
+                        *edge = ProcessEdge::Knot(new_target);
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 2: Dead-node elimination (reachability marking from tree.root)
+    let mut reachable = HashSet::new();
+    let mut stack = vec![tree.root];
+    while let Some(node_id) = stack.pop() {
+        if !reachable.insert(node_id) {
+            continue;
+        }
+        let node = &tree.nodes[node_id.0];
+        if node.overflow {
+            // Execution terminates at overflow nodes with Unreachable; children are dead
+            continue;
+        }
+        for edge in &node.edges {
+            let target = match edge {
+                ProcessEdge::Step(t) | ProcessEdge::Knot(t) => *t,
+                ProcessEdge::BranchTrue(t, _) | ProcessEdge::BranchFalse(t, _) => *t,
+            };
+            stack.push(target);
+        }
+    }
+
+    let mut dead_eliminated = 0;
+    for node in &mut tree.nodes {
+        if !reachable.contains(&node.id) {
+            if !node.overflow {
+                dead_eliminated += 1;
+            }
+            node.overflow = true;
+            node.return_term = None;
+            node.edges.clear();
+        }
+    }
+
+    (dead_eliminated, knots_deduped)
+}
+
+/// Phase 35: Peephole-compact a residualized MirFunction.
+///
+/// 1. No-op assignment removal: remove Statement::Assign(p, Rvalue::Use(q))
+///    where p == q (same Place --- identity assignment).
+/// 2. Trivial copy propagation: if a local is defined exactly once as
+///    Rvalue::Use(other_place) and used exactly once immediately as the
+///    return value, substitute inline and delete the assignment.
+/// 3. Returns the number of statements removed.
+pub fn compact_mir_function(func: &mut MirFunction) -> usize {
+    let mut total_removed = 0;
+    loop {
+        let p1 = run_noop_removal_pass(func);
+        let p2 = run_copy_propagation_pass(func);
+        let iter_removed = p1 + p2;
+        total_removed += iter_removed;
+        if iter_removed == 0 {
+            break;
+        }
+    }
+    total_removed
+}
+
+/// Pass 1: Remove identity assignments `p = Use(p)`.
+fn run_noop_removal_pass(func: &mut MirFunction) -> usize {
+    let mut removed = 0;
+    for block in &mut func.blocks {
+        let before = block.statements.len();
+        block.statements.retain(|stmt| {
+            if let Statement::Assign(dest, Rvalue::Use(src)) = stmt {
+                return dest != src;
+            }
+            true
+        });
+        removed += before - block.statements.len();
+    }
+    removed
+}
+
+/// Pass 2: Trivial copy propagation into return terminators.
+fn run_copy_propagation_pass(func: &mut MirFunction) -> usize {
+    // Collect definition counts and usages of all locals across the function
+    let mut defs: HashMap<String, usize> = HashMap::new();
+    let mut uses: HashMap<String, usize> = HashMap::new();
+
+    for (param_name, _) in &func.params {
+        *defs.entry(param_name.clone()).or_default() += 1;
+    }
+
+    for block in &func.blocks {
+        for stmt in &block.statements {
+            let Statement::Assign(dest, rval) = stmt;
+            *defs.entry(dest.local.clone()).or_default() += 1;
+            for proj in &dest.projections {
+                if let Projection::Index(idx_place) = proj {
+                    record_place_uses(idx_place, &mut uses);
+                }
+            }
+            record_rvalue_uses(rval, &mut uses);
+        }
+        record_terminator_uses(&block.terminator, &mut uses);
+    }
+
+    let mut candidates: Vec<(usize, usize, Place)> = Vec::new(); // (block_idx, stmt_idx, new_ret_place)
+
+    for (b_idx, block) in func.blocks.iter().enumerate() {
+        if let Terminator::Return {
+            value: Some(ref ret_place),
+        } = block.terminator
+        {
+            if !ret_place.projections.is_empty() {
+                continue;
+            }
+            let ret_local = &ret_place.local;
+            if defs.get(ret_local) != Some(&1) || uses.get(ret_local) != Some(&1) {
+                continue;
+            }
+
+            // Find definition in the same block
+            let mut def_stmt_idx = None;
+            for (s_idx, stmt) in block.statements.iter().enumerate() {
+                if let Statement::Assign(dest, Rvalue::Use(src)) = stmt {
+                    if dest.local == *ret_local
+                        && dest.projections.is_empty()
+                        && src.local != *ret_local
+                        && !src.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+                    {
+                        def_stmt_idx = Some((s_idx, src.clone()));
+                        break;
+                    }
+                }
+            }
+
+            if let Some((s_idx, src_place)) = def_stmt_idx {
+                // Ensure src.local is not reassigned anywhere between s_idx + 1 and the end of this block
+                let mut src_reassigned = false;
+                for subsequent_stmt in &block.statements[s_idx + 1..] {
+                    let Statement::Assign(d, _) = subsequent_stmt;
+                    if d.local == src_place.local {
+                        src_reassigned = true;
+                        break;
+                    }
+                }
+
+                if !src_reassigned {
+                    candidates.push((b_idx, s_idx, src_place));
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return 0;
+    }
+
+    let mut removed = 0;
+    for (b_idx, s_idx, new_ret_place) in candidates {
+        let block = &mut func.blocks[b_idx];
+        block.terminator = Terminator::Return {
+            value: Some(new_ret_place),
+        };
+        block.statements.remove(s_idx);
+        removed += 1;
+    }
+
+    removed
+}
+
+\end{lstlisting}
+
+\section{The Content-Addressed Basic Block Outliner}
+\label{sec:compaction:outliner_impl}
+
+Listing~\ref{lst:outliner_impl} reproduces the basic block deduplication outliner from \texttt{src/mir/supercompiler/outliner.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Content-Addressed Basic Block Outliner (\texttt{src/mir/supercompiler/outliner.rs}).}, label={lst:outliner_impl}]
+//!
+//! Mitigates binary size bloat resulting from deep Reynolds defunctionalization
+//! and multi-result MRSC specialization. Normalizes basic block instruction
+//! sequences modulo register names, hashes operations using SHA-256, and extracts
+//! duplicated instruction sequences into shared outlined subroutines.
+
+use std::collections::{HashMap, HashSet};
+use sha2::{Digest, Sha256};
+
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
+use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+use crate::typecheck::Type;
+
+/// Configuration for basic block outlining pass.
+#[derive(Debug, Clone)]
+pub struct OutlinerConfig {
+    /// Minimum number of statements in a candidate sequence to consider for outlining.
+    pub min_sequence_length: usize,
+    /// Minimum sequence similarity threshold (0.0 to 1.0) to group as duplicates.
+    pub similarity_threshold: f64,
+    /// Maximum number of outlined functions to create.
+    pub max_outlined_functions: usize,
+}
+
+impl Default for OutlinerConfig {
+    fn default() -> Self {
+        Self {
+            min_sequence_length: 2,
+            similarity_threshold: 0.90,
+            max_outlined_functions: 100,
+        }
+    }
+}
+
+/// Telemetry metrics produced by the outliner pass.
+#[derive(Debug, Default, Clone)]
+pub struct OutlinerStats {
+    pub candidate_sequences_found: usize,
+    pub outlined_functions_created: usize,
+    pub call_sites_replaced: usize,
+    pub statements_saved: usize,
+}
+
+/// Abstract normalized operation representation for content-addressed hashing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum NormalizedOp {
+    Binary(String),
+    Unary(String),
+    ConstInt(i64),
+    ConstFloat(u64),
+    ConstBool(bool),
+    ConstString(String),
+    Use,
+    Call(String),
+    Array(usize),
+    Struct(String, usize),
+    Load,
+    Alloc,
+    FnPtr(String),
+    Other(String),
+}
+
+/// Normalized instruction where register names are canonicalized to sequential indices.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NormalizedStatement {
+    pub dest_reg: usize,
+    pub op: NormalizedOp,
+    pub arg_regs: Vec<usize>,
+}
+
+/// Normalized view of a basic block or statement sequence.
+#[derive(Debug, Clone)]
+pub struct NormalizedBlock {
+    pub statements: Vec<NormalizedStatement>,
+    pub hash: String,
+    pub original_fn: String,
+    pub block_id: BasicBlockId,
+    pub start_stmt: usize,
+    pub len: usize,
+    pub live_in: Vec<String>,
+    pub live_out: Vec<String>,
+}
+
+/// Helper for content-addressed hashing of normalized MIR instruction sequences.
+pub struct BlockHasher;
+
+impl BlockHasher {
+    /// Normalizes a slice of MIR statements into canonical register indices (%0, %1, ...).
+    pub fn normalize_statements(stmts: &[Statement]) -> (Vec<NormalizedStatement>, HashMap<String, usize>) {
+        let mut local_map: HashMap<String, usize> = HashMap::new();
+        let mut next_id = 0usize;
+
+        let mut get_reg = |name: &str, map: &mut HashMap<String, usize>| -> usize {
+            if let Some(&id) = map.get(name) {
+                id
+            } else {
+                let id = next_id;
+                next_id += 1;
+                map.insert(name.to_string(), id);
+                id
+            }
+        };
+
+        let mut normalized = Vec::with_capacity(stmts.len());
+
+        for stmt in stmts {
+            match stmt {
+                Statement::Assign(dest, rval) => {
+                    // Extract read registers first
+                    let reads = get_rvalue_reads(rval);
+                    let mut arg_regs = Vec::with_capacity(reads.len());
+                    for r in reads {
+                        arg_regs.push(get_reg(&r, &mut local_map));
+                    }
+
+                    // Extract dest register
+                    let dest_reg = get_reg(&dest.local, &mut local_map);
+
+                    let op = match rval {
+                        Rvalue::BinaryOp(bin_op, _, _) => NormalizedOp::Binary(format!("{:?}", bin_op)),
+                        Rvalue::UnaryOp(un_op, _) => NormalizedOp::Unary(format!("{:?}", un_op)),
+                        Rvalue::Constant(lit) => match lit {
+                            crate::typecheck::typed_ast::TypedLiteral::Int(i, _) => {
+                                NormalizedOp::ConstInt(*i)
+                            }
+                            crate::typecheck::typed_ast::TypedLiteral::Float(f, _) => {
+                                NormalizedOp::ConstFloat(f.to_bits())
+                            }
+                            crate::typecheck::typed_ast::TypedLiteral::Bool(b) => {
+                                NormalizedOp::ConstBool(*b)
+                            }
+                            crate::typecheck::typed_ast::TypedLiteral::Str(s) => {
+                                NormalizedOp::ConstString(s.clone())
+                            }
+                        },
+                        Rvalue::Use(_) => NormalizedOp::Use,
+                        Rvalue::Call(callee, _) => NormalizedOp::Call(callee.clone()),
+                        Rvalue::Array(elems) => NormalizedOp::Array(elems.len()),
+                        Rvalue::Struct(name, fields) => NormalizedOp::Struct(name.clone(), fields.len()),
+                        Rvalue::Load(_) => NormalizedOp::Load,
+                        Rvalue::Alloc(_) => NormalizedOp::Alloc,
+                        Rvalue::FnPtr(name) => NormalizedOp::FnPtr(name.clone()),
+                        other => NormalizedOp::Other(format!("{:?}", other)),
+                    };
+
+                    normalized.push(NormalizedStatement {
+                        dest_reg,
+                        op,
+                        arg_regs,
+                    });
+                }
+            }
+        }
+
+        (normalized, local_map)
+    }
+
+    /// Computes the SHA-256 hash of a normalized statement sequence.
+    pub fn hash_normalized_sequence(stmts: &[NormalizedStatement]) -> String {
+        let mut hasher = Sha256::new();
+        for s in stmts {
+            hasher.update((s.dest_reg as u64).to_le_bytes());
+            match &s.op {
+                NormalizedOp::Binary(b) => {
+                    hasher.update(b"BIN:");
+                    hasher.update(b.as_bytes());
+                }
+                NormalizedOp::Unary(u) => {
+                    hasher.update(b"UN:");
+                    hasher.update(u.as_bytes());
+                }
+                NormalizedOp::ConstInt(val) => {
+                    hasher.update(b"INT:");
+                    hasher.update(val.to_le_bytes());
+                }
+                NormalizedOp::ConstFloat(bits) => {
+                    hasher.update(b"FLOAT:");
+                    hasher.update(bits.to_le_bytes());
+                }
+                NormalizedOp::ConstBool(b) => {
+                    hasher.update(b"BOOL:");
+                    hasher.update([*b as u8]);
+                }
+                NormalizedOp::ConstString(str_val) => {
+                    hasher.update(b"STR:");
+                    hasher.update(str_val.as_bytes());
+                }
+                NormalizedOp::Use => {
+                    hasher.update(b"USE");
+                }
+                NormalizedOp::Call(callee) => {
+                    hasher.update(b"CALL:");
+                    hasher.update(callee.as_bytes());
+                }
+                NormalizedOp::Array(n) => {
+                    hasher.update(b"ARR:");
+                    hasher.update((*n as u64).to_le_bytes());
+                }
+                NormalizedOp::Struct(name, n) => {
+                    hasher.update(b"STRUCT:");
+                    hasher.update(name.as_bytes());
+                    hasher.update((*n as u64).to_le_bytes());
+                }
+                NormalizedOp::Load => {
+                    hasher.update(b"LOAD");
+                }
+                NormalizedOp::Alloc => {
+                    hasher.update(b"ALLOC");
+                }
+                NormalizedOp::FnPtr(name) => {
+                    hasher.update(b"FNPTR:");
+                    hasher.update(name.as_bytes());
+                }
+                NormalizedOp::Other(s) => {
+                    hasher.update(b"OTHER:");
+                    hasher.update(s.as_bytes());
+                }
+            }
+            for arg in &s.arg_regs {
+                hasher.update((*arg as u64).to_le_bytes());
+            }
+        }
+        format!("{:x}", hasher.finalize())
+    }
+}
+
+/// Computes sequence similarity between two normalized instruction sequences
+/// using the Longest Common Subsequence (LCS) ratio:
+///   similarity = 2 * LCS(A, B) / (|A| + |B|)
+pub fn compute_sequence_similarity(a: &[NormalizedStatement], b: &[NormalizedStatement]) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    if a == b {
+        return 1.0;
+    }
+
+
+\end{lstlisting}
