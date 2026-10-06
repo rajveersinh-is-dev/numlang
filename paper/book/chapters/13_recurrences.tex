@@ -1,0 +1,266 @@
+\chapter{Asymptotic Recurrence Solving and Symbolic Derivation}
+\label{chap:recurrences}
+
+\section{The Recurrence Solving Paradigm in SSA Supercompilation}
+\label{sec:rec:paradigm}
+
+A defining innovation of NumLang is the unification of metacomputation with automated symbolic mathematics. Traditional compilers (including GCC, Clang, and Rustc) optimize loops by unrolling, vectorizing with SIMD instructions, or tiling iterations. However, their optimizations remain strictly asymptotic-preserving: an $O(N)$ loop over $N$ iterations executes in $O(N)$ CPU cycles, albeit with a smaller constant factor.
+
+NumLang's supercompiler recognizes when a process tree knot corresponds to a discrete recurrence relation, synthesizing an exact closed-form solution. This collapses $O(N)$ execution loops into $O(1)$ native instructions or $O(\log N)$ binary matrix exponentiations, delivering speedups exceeding $100,000\times$ on large problem sizes.
+
+\section{First-Order Forward Differences and Polynomial Sums}
+\label{sec:rec:forward_diff}
+
+The foundation of NumLang's polynomial recurrence solver (\texttt{src/mir/supercompiler/recurrence.rs}) is the **Forward Difference Operator** $\Delta$:
+\begin{equation}
+\Delta f(n) = f(n+1) - f(n)
+\end{equation}
+The higher-order difference operators are defined inductively:
+\begin{equation}
+\Delta^0 f(n) = f(n), \qquad \Delta^{k+1} f(n) = \Delta (\Delta^k f(n))
+\end{equation}
+
+By the fundamental theorem of discrete calculus:
+\begin{theorem}[Polynomial Degree Characterization]
+A function $f(n) : \mathbb{Z} \to \mathbb{Z}$ is a polynomial of degree $d$ if and only if $\Delta^d f(n)$ is a non-zero constant and $\Delta^{d+1} f(n) = 0$ for all $n$.
+\end{theorem}
+
+\subsection{The Difference Table Algorithm}
+When driving an accumulator loop $s_{n+1} = s_n + g(n)$, \texttt{detect\_polynomial\_recurrence} computes the forward difference table over the first six symbolic sample points $n \in \{0, 1, 2, 3, 4, 5\}$:
+
+\begin{algorithm}[htbp]
+\caption{Forward Difference Table Construction}
+\label{alg:forward_diff_table}
+\begin{algorithmic}[1]
+\Require Sample Values $\vec{y} = [y_0, y_1, y_2, y_3, y_4, y_5]$
+\Ensure Polynomial Degree $d$, Binomial Coefficients $\vec{c}$
+\Procedure{ForwardDifferenceTable}{$\vec{y}$}
+    \State $T_{0, i} \gets y_i \quad \forall i \in \{0, \dots, 5\}$
+    \For{$k = 1 \textbf{ to } 5$}
+        \For{$i = 0 \textbf{ to } 5 - k$}
+            \State $T_{k, i} \gets T_{k-1, i+1} - T_{k-1, i}$
+        \EndFor
+        \If{$T_{k, 0} = T_{k, 1} = \dots = T_{k, 5-k} \ne 0$}
+            \State \Return $(k, [T_{0,0}, T_{1,0}, \dots, T_{k,0}])$
+        \EndIf
+    \EndFor
+    \State \Return $(\infty, [])$ \Comment{Not a polynomial of degree $\le 5$}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Closed-Form Formula Synthesis via Newton Series}
+Once the degree $d$ and initial differences $\Delta^k y_0$ are determined, the exact closed-form expression for $y(n)$ is synthesized via the Newton series:
+\begin{equation}
+y(n) = \sum_{k=0}^d \binom{n}{k} \Delta^k y_0
+\end{equation}
+
+\paragraph{Case 1: Triangular Summation ($\mathtt{tri\_sum}$)}
+For the arithmetic progression $s_n = \sum_{i=1}^n i$:
+\begin{itemize}
+    \item Samples: $y_0 = 0, y_1 = 1, y_2 = 3, y_3 = 6, y_4 = 10$.
+    \item Differences: $\Delta^1 = [1, 2, 3, 4]$, $\Delta^2 = [1, 1, 1]$. Constant at $k=2$.
+    \item Newton Expansion:
+    \begin{equation}
+    y(n) = 0 \cdot \binom{n}{0} + 1 \cdot \binom{n}{1} + 1 \cdot \binom{n}{2} = n + \frac{n(n-1)}{2} = \frac{n(n+1)}{2}
+    \end{equation}
+\end{itemize}
+The supercompiler replaces the 50,000,000-iteration loop with:
+\begin{equation}
+\mathtt{result} = (n \cdot (n + 1)) \gg 1
+\end{equation}
+
+\paragraph{Case 2: Cubic Polynomial Summation ($\mathtt{cubic\_sum}$)}
+For the sum of squares $s_n = \sum_{i=1}^n i^2$:
+\begin{itemize}
+    \item Differences stabilize at degree $d=3$ with constant $\Delta^3 = 2$.
+    \item Newton expansion derives the Faulhaber formula:
+    \begin{equation}
+    y(n) = \frac{n(n+1)(2n+1)}{6}
+    \end{equation}
+\end{itemize}
+The entire $10,000,000$-step loop is replaced by three integer multiplications and one division.
+
+\section{Linear Recurrence Systems and Companion Matrices}
+\label{sec:rec:companion_matrix}
+
+When loop variables exhibit coupled linear dependencies (such as Fibonacci or linear dynamical systems), the recurrence does not collapse into a polynomial. Instead, it forms an order-$k$ linear recurrence:
+\begin{equation}
+a_{n+k} = c_1 a_{n+k-1} + c_2 a_{n+k-2} + \dots + c_k a_n
+\end{equation}
+
+\subsection{Companion Matrix Construction}
+NumLang converts order-$k$ linear recurrences into state-space matrix form:
+\begin{equation}
+\vec{v}_{n+1} = \mathbf{M} \cdot \vec{v}_n
+\end{equation}
+where $\vec{v}_n = [a_{n+k-1}, a_{n+k-2}, \dots, a_n]^T$, and the companion matrix $\mathbf{M}$ is defined as:
+\begin{equation}
+\mathbf{M} = \begin{pmatrix}
+c_1 & c_2 & \dots & c_{k-1} & c_k \\
+1 & 0 & \dots & 0 & 0 \\
+0 & 1 & \dots & 0 & 0 \\
+\vdots & \vdots & \ddots & \vdots & \vdots \\
+0 & 0 & \dots & 1 & 0
+\end{pmatrix}
+\end{equation}
+
+\subsection{Binary Matrix Exponentiation in $O(k^3 \log N)$}
+To compute $\vec{v}_N = \mathbf{M}^N \cdot \vec{v}_0$, NumLang implements binary matrix exponentiation in native SSA MIR:
+\begin{algorithm}[htbp]
+\caption{Binary Exponentiation over Matrix Monoid}
+\label{alg:mat_pow}
+\begin{algorithmic}[1]
+\Require Matrix $\mathbf{M} \in \mathbb{Z}^{k \times k}$, Exponent $N \in \mathbb{N}$
+\Ensure Result Matrix $\mathbf{R} = \mathbf{M}^N$
+\Procedure{MatPow}{$\mathbf{M}, N$}
+    \State $\mathbf{R} \gets \mathbf{I}_k$ \Comment{Identity Matrix}
+    \State $\mathbf{B} \gets \mathbf{M}$
+    \While{$N > 0$}
+        \If{$N \bmod 2 = 1$}
+            \State $\mathbf{R} \gets \mathbf{R} \times \mathbf{B}$
+        \EndIf
+        \State $\mathbf{B} \gets \mathbf{B} \times \mathbf{B}$
+        \State $N \gets N \gg 1$
+    \EndWhile
+    \State \Return $\mathbf{R}$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+For $N = 10^9$ and $k = 2$, this reduces a billion sequential iterations to just 30 matrix multiplications ($< 1\,\mu\text{s}$).
+
+\section{$N$-Way Mutual Linear Systems}
+\label{sec:rec:nway}
+
+In Phase 32, the recurrence solver was extended to arbitrary $N$-variable mutually recursive systems:
+\begin{equation}
+\begin{cases}
+x_1(n+1) = a_{1,1} x_1(n) + \dots + a_{1,N} x_N(n) + b_1 \\
+\quad \vdots \\
+x_N(n+1) = a_{N,1} x_1(n) + \dots + a_{N,N} x_N(n) + b_N
+\end{cases}
+\end{equation}
+
+\subsection{Fraction-Free Gaussian Elimination (Bareiss Algorithm)}
+To solve the steady-state equilibrium without floating-point rounding errors or expensive rational fraction tracking, NumLang implements the **Bareiss Algorithm**~\cite{bareiss1968sylvester} for $N \le 8$:
+\begin{equation}
+a_{i,j}^{(k)} = \frac{a_{k,k}^{(k-1)} a_{i,j}^{(k-1)} - a_{i,k}^{(k-1)} a_{k,j}^{(k-1)}}{a_{k-1,k-1}^{(k-2)}}
+\end{equation}
+Every division in Bareiss's algorithm is mathematically guaranteed to be exact over the integers, preserving pure 64-bit integer arithmetic throughout the entire elimination.
+
+\section{Polynomial and Geometric Recurrences (Phase 60)}
+\label{sec:rec:phase60}
+
+Phase 60 expanded the solver to support non-linear and geometric recurrences:
+\begin{itemize}
+    \item \textbf{Quadratic Accumulation}: $a_n = a_{n-1} + n^2$ collapses to the cubic Faulhaber sum.
+    \item \textbf{Fixed-Base Geometric Exponentiation}: $a_n = r \cdot a_{n-1}$ collapses to $a_0 \cdot r^n$ using fast scalar modular exponentiation.
+    \item \textbf{Geometric Series Summation}:
+    \begin{equation}
+    \sum_{i=0}^{n-1} r^i = \frac{r^n - 1}{r - 1} \pmod M
+    \end{equation}
+    evaluated using modular inverse arithmetic.
+\end{itemize}
+
+\section{Whole-Program Cross-Function Recurrence Closing (Phase 62)}
+\label{sec:rec:cross_func}
+
+Mutually recursive functions are frequently defined across separate function declarations:
+\begin{lstlisting}[language=NumLang, caption={Cross-Function Mutual Recursion.}]
+fn is_even(n: i64) -> bool {
+    if n == 0 { return true; }
+    return is_odd(n - 1);
+}
+
+fn is_odd(n: i64) -> bool {
+    if n == 0 { return false; }
+    return is_even(n - 1);
+}
+\end{lstlisting}
+
+Phase 62 added the **Cross-Function Recurrence Closing Pass** (\texttt{detect\_cross\_function\_recurrence}). The compiler constructs the whole-program call graph, computes Strongly Connected Components (SCCs), and unifies all functions within an SCC into a single joint companion matrix. For \texttt{is\_even}/\texttt{is\_odd}, the compiler determines that $n \pmod 2 = 0$, compiling both functions into a single bitwise instruction (\texttt{n \& 1 == 0}).
+
+\section{Strength Reduction in Residuals (Phase 64)}
+\label{sec:rec:strength_reduce}
+
+Following recurrence collapse, the emitted arithmetic expressions undergo strength reduction in \texttt{src/mir/supercompiler/strength\_reduce.rs}:
+\begin{itemize}
+    \item \textbf{Power-of-2 Multiply/Divide}: Rewritten to logical left and arithmetic right shifts ($x \cdot 8 \to x \ll 3$).
+    \item \textbf{Strassen $2 \times 2$ Matrix Multiplication}: Evaluated via 7 multiplications instead of 8~\cite{strassen1969gaussian}, reducing latency on matrix exponentiation loops.
+\end{itemize}
+
+\section{Worked End-to-End Trace: 125,682$\times$ Speedup on \texttt{tri\_sum}}
+\label{sec:rec:worked_tri_sum}
+
+We trace the complete lifecycle of \texttt{tri\_sum} (50,000,000 iterations):
+\begin{enumerate}
+    \item \textbf{Source}: User writes \texttt{for i in 1..(50000000 + 1) \{ sum = sum + i; \}}.
+    \item \textbf{MIR Lowering}: Lowers to basic blocks \texttt{bb1} (loop header) and \texttt{bb2} (body).
+    \item \textbf{Symbolic Driving}: The driver detects an induction accumulator with difference table $\Delta^2 = 1$.
+    \item \textbf{Closed-Form Synthesis}: Synthesizes $(50000000 \cdot 50000001) / 2 = 1,250,000,025,000,000$.
+    \item \textbf{Residual MIR}:
+    \begin{lstlisting}[caption={Residual MIR Emitted for \texttt{tri\_sum}.}]
+    fn tri_sum() -> i64 {
+      bb0:
+        return 1250000025000000;
+    }
+    \end{lstlisting}
+    \item \textbf{Native Codegen}: Cranelift emits a single instruction: \texttt{mov rax, 1250000025000000; ret}.
+    \item \textbf{Empirical Execution}: Runtime drops from $12.57\,\text{ms}$ (unoptimized baseline) to $100\,\text{ns}$ (hardware timer quantization floor)---delivering a **$125,682.00\times$ speedup** verified by the automated benchmark harness.
+\end{enumerate}
+
+
+\section{Mathematical Foundations of Faulhaber Sums and Discrete Calculus}
+\label{sec:rec:faulhaber_proofs}
+
+To formalize the correctness of higher-degree polynomial recurrence collapses, we recall Faulhaber's formula expressing power sums in terms of Bernoulli numbers $B_j$:
+\begin{equation}
+\sum_{i=1}^n i^p = \frac{1}{p+1} \sum_{j=0}^p (-1)^j \binom{p+1}{j} B_j n^{p+1-j}
+\end{equation}
+
+For degrees $p \in \{1, 2, 3, 4\}$, the exact closed-form polynomials synthesized by the supercompiler are:
+\begin{align}
+p=1: \quad & S_1(n) = \frac{n(n+1)}{2} = \frac{1}{2} n^2 + \frac{1}{2} n \\[0.8em]
+p=2: \quad & S_2(n) = \frac{n(n+1)(2n+1)}{6} = \frac{1}{3} n^3 + \frac{1}{2} n^2 + \frac{1}{6} n \\[0.8em]
+p=3: \quad & S_3(n) = \left[ \frac{n(n+1)}{2} \right]^2 = \frac{1}{4} n^4 + \frac{1}{2} n^3 + \frac{1}{4} n^2 \\[0.8em]
+p=4: \quad & S_4(n) = \frac{n(n+1)(2n+1)(3n^2+3n-1)}{30} = \frac{1}{5} n^5 + \frac{1}{2} n^4 + \frac{1}{3} n^3 - \frac{1}{30} n
+\end{align}
+
+\begin{theorem}[Correctness of Newton Series Recurrence Synthesis]
+Let $f(n)$ be a polynomial of degree $d \le 5$. The Newton series:
+\begin{equation}
+f(n) = \sum_{k=0}^d \binom{n}{k} \Delta^k f(0)
+\end{equation}
+evaluated over the forward difference table $\Delta^k f(0)$ is exact for all $n \in \mathbb{Z}$.
+\end{theorem}
+\begin{proof}
+By induction on the polynomial degree $d$. For $d=0$, $f(n) = c$, $\Delta^0 f(0) = c$, and $\binom{n}{0} = 1$. Assuming the hypothesis holds for degree $d-1$, the difference operator $\Delta f(n) = g(n)$ is a polynomial of degree $d-1$. By the inductive hypothesis, $g(n) = \sum_{k=0}^{d-1} \binom{n}{k} \Delta^{k+1} f(0)$. Summing both sides:
+\begin{equation}
+f(n) - f(0) = \sum_{i=0}^{n-1} g(i) = \sum_{i=0}^{n-1} \sum_{k=0}^{d-1} \binom{i}{k} \Delta^{k+1} f(0) = \sum_{k=0}^{d-1} \Delta^{k+1} f(0) \sum_{i=0}^{n-1} \binom{i}{k}
+\end{equation}
+Applying the hockey-stick identity $\sum_{i=0}^{n-1} \binom{i}{k} = \binom{n}{k+1}$, we obtain:
+\begin{equation}
+f(n) = f(0) + \sum_{k=0}^{d-1} \binom{n}{k+1} \Delta^{k+1} f(0) = \sum_{j=0}^d \binom{n}{j} \Delta^j f(0)
+\end{equation}
+which concludes the proof.
+\end{proof}
+
+\section{Bareiss Multi-Step Elimination Proof for $N \le 8$}
+\label{sec:rec:bareiss_proof}
+
+To prove that the integer Gaussian elimination in \texttt{polyhedral\_ilp.rs} and \texttt{recurrence.rs} never incurs fractional rounding errors, we formulate the determinantal identity underlying Bareiss elimination:
+
+\begin{theorem}[Sylvester-Bareiss Determinant Identity~\cite{bareiss1968sylvester}]
+Let $\mathbf{A}$ be an $n \times n$ matrix over an integral domain $\mathcal{D}$. For any $k < i, j \le n$:
+\begin{equation}
+a_{i,j}^{(k)} = \det \begin{pmatrix}
+a_{1,1} & \dots & a_{1,k-1} & a_{1,j} \\
+\vdots & \ddots & \vdots & \vdots \\
+a_{k-1,1} & \dots & a_{k-1,k-1} & a_{k-1,j} \\
+a_{i,1} & \dots & a_{i,k-1} & a_{i,j}
+\end{pmatrix}
+\end{equation}
+The division $a_{i,j}^{(k)} = \frac{a_{k,k}^{(k-1)} a_{i,j}^{(k-1)} - a_{i,k}^{(k-1)} a_{k,j}^{(k-1)}}{a_{k-1,k-1}^{(k-2)}}$ is strictly exact in $\mathcal{D}$, yielding integer coefficients without remainder.
+\end{theorem}
+This guarantees that NumLang's linear recurrence solver operates with zero floating-point approximation error across all integer matrices.

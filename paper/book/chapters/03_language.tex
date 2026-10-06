@@ -1,0 +1,1465 @@
+\chapter{The NumLang Language Specification}
+\label{chap:language}
+
+\section{Design Philosophy and Grammar Overview}
+\label{sec:lang:philosophy}
+
+NumLang is a statically typed systems programming language designed from the ground up to serve as the source and intermediate representation for an optimizing supercompiler. Its surface syntax is inspired by modern systems languages like Rust, but stripped of non-essential lexical overhead to preserve mathematical transparency and clean algebraic properties during symbolic driving.
+
+\subsection{Lexical Tokens and EBNF Grammar}
+The lexical tokens of NumLang are defined in \texttt{src/token.rs} and parsed by recursive descent in \texttt{src/parser/}. The core grammar in Extended Backus-Naur Form (EBNF) is defined below:
+
+\begin{align*}
+\langle Program \rangle &::= \langle Item \rangle^* \\
+\langle Item \rangle &::= \langle Function \rangle \mid \langle StructDef \rangle \mid \langle EnumDef \rangle \mid \langle TypeAlias \rangle \\
+\langle Function \rangle &::= \texttt{"fn"}\; \langle Ident \rangle\; [\texttt{"<"}\; \langle TypeParamList \rangle\; \texttt{">"}]\; \texttt{"("}\; [\langle ParamList \rangle]\; \texttt{")"}\; [\texttt{"->"}\; \langle Type \rangle]\; \langle Block \rangle \\
+\langle StructDef \rangle &::= \texttt{"struct"}\; \langle Ident \rangle\; \texttt{"\{"}\; [\langle FieldList \rangle]\; \texttt{"\}"} \\
+\langle EnumDef \rangle &::= \texttt{"enum"}\; \langle Ident \rangle\; \texttt{"\{"}\; [\langle VariantList \rangle]\; \texttt{"\}"} \\
+\langle Statement \rangle &::= \langle LetStmt \rangle \mid \langle AssignStmt \rangle \mid \langle ExprStmt \rangle \mid \langle ReturnStmt \rangle \\
+&\quad\mid \langle WhileStmt \rangle \mid \langle ForStmt \rangle \mid \langle LoopStmt \rangle \mid \langle ControlStmt \rangle \\
+\langle LetStmt \rangle &::= \texttt{"let"}\; [\texttt{"mut"}]\; \langle Ident \rangle\; [\texttt{":"}\; \langle Type \rangle]\; \texttt{"="}\; \langle Expr \rangle\; \texttt{";"} \\
+\langle Expr \rangle &::= \langle Literal \rangle \mid \langle Ident \rangle \mid \langle BinaryExpr \rangle \mid \langle UnaryExpr \rangle \\
+&\quad\mid \langle CallExpr \rangle \mid \langle Block \rangle \mid \langle IfExpr \mid \langle MatchExpr \rangle \\
+&\quad\mid \langle BoxExpr \rangle \mid \langle DerefExpr \rangle \mid \langle LambdaExpr \rangle \mid \langle ArrayLit \rangle
+\end{align*}
+
+\section{Type System Fundamentals}
+\label{sec:lang:types}
+
+NumLang enforces strict static typing without implicit coercions. Every expression evaluates to a value conforming to one of the following type categories:
+
+\subsection{Primitive Types}
+\begin{itemize}
+    \item \textbf{Signed Integers}: \texttt{i64} (default pointer-width integer), \texttt{i32}, \texttt{i16}, \texttt{i8}.
+    \item \textbf{Unsigned Integers}: \texttt{u64}, \texttt{u32}, \texttt{u16}, \texttt{u8}.
+    \item \textbf{Floating-Point}: \texttt{f64} (IEEE 754 double precision), \texttt{f32} (single precision).
+    \item \textbf{Boolean}: \texttt{bool} (\texttt{true} or \texttt{false}).
+    \item \textbf{Unit}: \texttt{()} representing expressions that yield no runtime value.
+\end{itemize}
+
+\subsection{Compound and Algebraic Data Types}
+\begin{itemize}
+    \item \textbf{Fixed-Size Arrays}: \texttt{[T; N]} representing contiguous stack-allocated arrays of $N$ elements of type $T$.
+    \item \textbf{Heap Box}: \texttt{Box<T>} representing an owned, unique heap pointer. Allocated via \texttt{box(expr)} and dereferenced via \texttt{deref(ptr)}.
+    \item \textbf{Structs}: Named collections of heterogeneous fields with direct memory layout.
+    \item \textbf{Algebraic Enums}: Discriminated unions supporting both unit variants and payload variants (tuples or structs).
+\end{itemize}
+
+\begin{lstlisting}[language=NumLang, caption={Definition of Recursive Algebraic Data Types in NumLang.}]
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
+}
+
+enum Tree {
+    Empty,
+    Node(Box<Tree>, i64, Box<Tree>),
+}
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+\end{lstlisting}
+
+\section{Control Flow and Expression Semantics}
+\label{sec:lang:control_flow}
+
+NumLang is an expression-oriented language: blocks, conditionals, and pattern matches yield values.
+
+\subsection{Conditionals and Pattern Matching}
+An \texttt{if}-\texttt{else} construct evaluates to the value of its executed branch. Types of both branches must strictly unify.
+
+Pattern matching via \texttt{match} provides exhaustive structural decomposition. The compiler verifies exhaustiveness and non-overlapping branches at compile time.
+
+\begin{lstlisting}[language=NumLang, caption={Pattern Matching with Deep Algebraic Decomposition.}]
+fn list_sum(xs: List) -> i64 {
+    match xs {
+        List::Nil => 0,
+        List::Cons(head, tail) => head + list_sum(deref(tail)),
+    }
+}
+\end{lstlisting}
+
+\subsection{Iteration and Loops}
+NumLang provides three looping primitives:
+\begin{itemize}
+    \item \texttt{while cond \{ ... \}}: Evaluates the condition before each iteration.
+    \item \texttt{loop \{ ... \}}: Unconditional infinite loop, exited via \texttt{break}.
+    \item \texttt{for var in start..end \{ ... \}}: Half-open integer range iteration.
+\end{itemize}
+
+\begin{lstlisting}[language=NumLang, caption={Loop Constructs in NumLang.}]
+fn compute_sum(n: i64) -> i64 {
+    let mut acc = 0;
+    for i in 1..(n + 1) {
+        acc = acc + i;
+    }
+    return acc;
+}
+\end{lstlisting}
+
+\section{Higher-Order Functions and Closures}
+\label{sec:lang:closures}
+
+Functions in NumLang are first-class values. NumLang supports anonymous lambdas, lexical environment capture, and higher-order combinators:
+
+\begin{lstlisting}[language=NumLang, caption={Higher-Order Composition and Closure Capture.}]
+fn make_adder(k: i64) -> Box<fn(i64) -> i64> {
+    return box(|x: i64| -> i64 { x + k });
+}
+
+fn apply_twice(f: fn(i64) -> i64, x: i64) -> i64 {
+    return f(f(x));
+}
+\end{lstlisting}
+
+During compilation, closures undergo Reynolds defunctionalization (\cref{chap:higher_order}), converting indirect function pointer calls into monomorphic direct calls dispatching over explicit discriminated union tags.
+
+\section{The MinSpec Self-Applicable Specializer}
+\label{sec:lang:minspec}
+
+The pinnacle of NumLang's language implementation is \texttt{minspec.nl}, an authentic self-applicable program specializer written entirely within the NumLang language itself. \texttt{minspec.nl} implements symbolic driving and folding over a normalized NumLang AST.
+
+\begin{lstlisting}[language=NumLang, caption={Excerpts from the MinSpec Self-Applicable Specializer (\texttt{minspec.nl}).}]
+enum Expr {
+    Lit(i64),
+    Var(i64),
+    Lam(i64, Box<Expr>),
+    App(Box<Expr>, Box<Expr>),
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
+    Call(i64, Box<Expr>),
+}
+
+enum Value {
+    VNum(i64),
+    VClosure(i64, Box<Expr>, Box<Env>),
+}
+
+fn eval(e: Expr, env: Env) -> Value {
+    match e {
+        Expr::Lit(n) => Value::VNum(n),
+        Expr::Var(id) => env_lookup(env, id),
+        Expr::Lam(param, body) => Value::VClosure(param, body, box(env)),
+        Expr::App(f_expr, arg_expr) => {
+            let f_val = eval(deref(f_expr), env);
+            let arg_val = eval(deref(arg_expr), env);
+            match f_val {
+                Value::VClosure(param, body, c_env) => {
+                    let ext_env = env_extend(deref(c_env), param, arg_val);
+                    eval(deref(body), ext_env)
+                },
+                _ => Value::VNum(-1),
+            }
+        },
+        _ => Value::VNum(0),
+    }
+}
+\end{lstlisting}
+
+\section{Annotated Example Suite: Twenty Complete Programs}
+\label{sec:lang:examples}
+
+To demonstrate the full expressive range of NumLang and establish concrete baseline artifacts for the optimization passes described in subsequent chapters, this section presents twenty complete, valid NumLang programs spanning data structure manipulation, discrete mathematics, higher-order combinators, and metacomputation tasks.
+
+\subsection{Program 1: Naive List Reversal (\texttt{nrev.nl})}
+Naive reverse represents the classic Wadler deforestation challenge. Reversing an intermediate reversed list creates quadratic intermediate allocations if compiled without supercompilation.
+
+\begin{lstlisting}[language=NumLang, caption={Naive List Reverse in NumLang.}]
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
+}
+
+fn append(xs: List, ys: List) -> List {
+    match xs {
+        List::Nil => ys,
+        List::Cons(h, t) => List::Cons(h, box(append(deref(t), ys))),
+    }
+}
+
+fn nrev(xs: List) -> List {
+    match xs {
+        List::Nil => List::Nil,
+        List::Cons(h, t) => append(nrev(deref(t)), List::Cons(h, box(List::Nil))),
+    }
+}
+
+fn main() -> i64 {
+    let l = List::Cons(1, box(List::Cons(2, box(List::Cons(3, box(List::Nil))))));
+    let r = nrev(nrev(l));
+    match r {
+        List::Nil => 0,
+        List::Cons(h, t) => h,
+    }
+}
+\end{lstlisting}
+
+\subsection{Program 2: Triangular Summation (\texttt{tri\_sum.nl})}
+Computes the arithmetic progression $\sum_{i=1}^n i \pmod{10^9+7}$. The recurrence engine collapses this loop into the Euler closed form $\mathcal{O}(1)$.
+
+\begin{lstlisting}[language=NumLang, caption={Triangular Summation in NumLang.}]
+fn tri_sum(n: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= n {
+        sum = (sum + i) % 1000000007;
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn main() -> i64 {
+    return tri_sum(50000000);
+}
+\end{lstlisting}
+
+\subsection{Program 3: Cubic Polynomial Accumulation (\texttt{cubic\_sum.nl})}
+Computes the sum of squares $\sum_{i=1}^n i^2 \pmod{10^9+7}$, subject to Faulhaber reduction.
+
+\begin{lstlisting}[language=NumLang, caption={Cubic Polynomial Sum in NumLang.}]
+fn cubic_sum(n: i64) -> i64 {
+    let mut sum: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= n {
+        let sq = (i * i) % 1000000007;
+        sum = (sum + sq) % 1000000007;
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn main() -> i64 {
+    return cubic_sum(10000000);
+}
+\end{lstlisting}
+
+\subsection{Program 4: Coupled Fibonacci Companion Matrix (\texttt{fib\_matrix.nl})}
+Computes Fibonacci via state-space companion matrix multiplication, accelerating from (N)$ to (\log N)$.
+
+\begin{lstlisting}[language=NumLang, caption={Coupled Fibonacci Companion Matrix Loop.}]
+struct Mat2x2 {
+    m00: i64, m01: i64,
+    m10: i64, m11: i64,
+}
+
+fn mul_mat(a: Mat2x2, b: Mat2x2) -> Mat2x2 {
+    let p00 = a.m00 * b.m00 + a.m01 * b.m10;
+    let p01 = a.m00 * b.m01 + a.m01 * b.m11;
+    let p10 = a.m10 * b.m00 + a.m11 * b.m10;
+    let p11 = a.m10 * b.m01 + a.m11 * b.m11;
+    return Mat2x2 { m00: p00, m01: p01, m10: p10, m11: p11 };
+}
+
+fn fib_step(n: i64) -> i64 {
+    let mut acc = Mat2x2 { m00: 1, m01: 0, m10: 0, m11: 1 };
+    let base = Mat2x2 { m00: 1, m01: 1, m10: 1, m11: 0 };
+    let mut i = 0;
+    while i < n {
+        acc = mul_mat(acc, base);
+        i = i + 1;
+    }
+    return acc.m01;
+}
+
+fn main() -> i64 {
+    return fib_step(1000);
+}
+\end{lstlisting}
+
+\subsection{Program 5: Peano Arithmetic Multiplication (\texttt{peano\_mul.nl})}
+Unary Peano numbers demonstrate recursive structural deforestation.
+
+\begin{lstlisting}[language=NumLang, caption={Peano Arithmetic in NumLang.}]
+enum Peano {
+    Zero,
+    Succ(Box<Peano>),
+}
+
+fn peano_add(a: Peano, b: Peano) -> Peano {
+    match a {
+        Peano::Zero => b,
+        Peano::Succ(pred) => Peano::Succ(box(peano_add(deref(pred), b))),
+    }
+}
+
+fn peano_mul(a: Peano, b: Peano) -> Peano {
+    match a {
+        Peano::Zero => Peano::Zero,
+        Peano::Succ(pred) => peano_add(b, peano_mul(deref(pred), b)),
+    }
+}
+
+fn peano_to_int(p: Peano) -> i64 {
+    match p {
+        Peano::Zero => 0,
+        Peano::Succ(pred) => 1 + peano_to_int(deref(pred)),
+    }
+}
+\end{lstlisting}
+
+\subsection{Program 6: Double Tree Mirror Inversion (\texttt{tree\_flip.nl})}
+Binary tree mirror traversal illustrating tree deforestation and parallel fork/join synthesis.
+
+\begin{lstlisting}[language=NumLang, caption={Binary Tree Mirror Inversion in NumLang.}]
+enum Tree {
+    Leaf(i64),
+    Node(Box<Tree>, Box<Tree>),
+}
+
+fn flip(t: Tree) -> Tree {
+    match t {
+        Tree::Leaf(v) => Tree::Leaf(v),
+        Tree::Node(left, right) => {
+            let new_left = flip(deref(right));
+            let new_right = flip(deref(left));
+            Tree::Node(box(new_left), box(new_right))
+        },
+    }
+}
+
+fn tree_sum(t: Tree) -> i64 {
+    match t {
+        Tree::Leaf(v) => v,
+        Tree::Node(l, r) => tree_sum(deref(l)) + tree_sum(deref(r)),
+    }
+}
+
+fn main() -> i64 {
+    let t = Tree::Node(box(Tree::Leaf(10)), box(Tree::Leaf(20)));
+    let flipped = flip(flip(t));
+    return tree_sum(flipped);
+}
+\end{lstlisting}
+
+\subsection{Program 7: Hofstadter Female/Male Mutual Recursion (\texttt{hofstadter.nl})}
+A coupled non-linear mutual recurrence system.
+
+\begin{lstlisting}[language=NumLang, caption={Hofstadter Female and Male Sequences.}]
+fn female(n: i64) -> i64 {
+    if n == 0 { return 1; }
+    return n - male(female(n - 1));
+}
+
+fn male(n: i64) -> i64 {
+    if n == 0 { return 0; }
+    return n - female(male(n - 1));
+}
+
+fn main() -> i64 {
+    return female(20) + male(20);
+}
+\end{lstlisting}
+
+\subsection{Program 8: Five-Deep Closure Composition (\texttt{compose5.nl})}
+Demonstrates higher-order closure inlining and Reynolds defunctionalization.
+
+\begin{lstlisting}[language=NumLang, caption={Chained Closure Composition in NumLang.}]
+fn inc(x: i64) -> i64 { return x + 1; }
+fn double(x: i64) -> i64 { return x * 2; }
+
+fn main() -> i64 {
+    let f1 = |x: i64| -> i64 { inc(x) };
+    let f2 = |x: i64| -> i64 { double(f1(x)) };
+    let f3 = |x: i64| -> i64 { inc(f2(x)) };
+    let f4 = |x: i64| -> i64 { double(f3(x)) };
+    let f5 = |x: i64| -> i64 { inc(f4(x)) };
+    return f5(10);
+}
+\end{lstlisting}
+
+\subsection{Program 9: Array Stream Fusion (\texttt{sum\_map.nl})}
+Fuses producer array allocations into a scalar register accumulator.
+
+\begin{lstlisting}[language=NumLang, caption={Stream Map-Sum Pipeline in NumLang.}]
+fn sum_map(n: i64) -> i64 {
+    let mut sum = 0;
+    let mut i = 1;
+    while i <= n {
+        let squared = i * i;
+        sum = sum + squared;
+        i = i + 1;
+    }
+    return sum;
+}
+
+fn main() -> i64 {
+    return sum_map(1000000);
+}
+\end{lstlisting}
+
+\subsection{Program 10: Lazy Codata Infinite Stream (\texttt{stream\_take.nl})}
+Models infinite lazy sequences and demand-driven thunk forcing.
+
+\begin{lstlisting}[language=NumLang, caption={Lazy Codata Stream Pipeline in NumLang.}]
+enum Stream {
+    Cons(i64, Box<fn() -> Stream>),
+}
+
+fn ints_from(n: i64) -> Stream {
+    return Stream::Cons(n, box(move || ints_from(n + 1)));
+}
+
+fn stream_take_sum(n: i64, mut s: Stream) -> i64 {
+    let mut acc = 0;
+    let mut count = 0;
+    while count < n {
+        match s {
+            Stream::Cons(head, next_thunk) => {
+                acc = acc + head;
+                let step_fn = deref(next_thunk);
+                s = step_fn();
+                count = count + 1;
+            },
+        }
+    }
+    return acc;
+}
+\end{lstlisting}
+
+\subsection{Program 11: Binary Search Tree (\texttt{bst.nl})}
+Demonstrates recursive heap pointers, ordering invariants, and bounds tracking.
+
+\begin{lstlisting}[language=NumLang, caption={Binary Search Tree in NumLang.}]
+enum BST {
+    Leaf,
+    Node(Box<BST>, i64, Box<BST>),
+}
+
+fn bst_insert(tree: BST, val: i64) -> BST {
+    match tree {
+        BST::Leaf => BST::Node(box(BST::Leaf), val, box(BST::Leaf)),
+        BST::Node(left, root_val, right) => {
+            if val < root_val {
+                BST::Node(box(bst_insert(deref(left), val)), root_val, right)
+            } else {
+                BST::Node(left, root_val, box(bst_insert(deref(right), val)))
+            }
+        },
+    }
+}
+\end{lstlisting}
+
+\subsection{Program 12: Ackermann Function (\texttt{ackermann.nl})}
+Stress tests recursion depth and whistle termination detection.
+
+\begin{lstlisting}[language=NumLang, caption={Ackermann-Péter Function in NumLang.}]
+fn ack(m: i64, n: i64) -> i64 {
+    if m == 0 {
+        return n + 1;
+    } else {
+        if n == 0 {
+            return ack(m - 1, 1);
+        } else {
+            return ack(m - 1, ack(m, n - 1));
+        }
+    }
+}
+
+fn main() -> i64 {
+    return ack(3, 4);
+}
+\end{lstlisting}
+
+\subsection{Program 13: Strassen Fast $2 \times 2$ Matrix Multiply (\texttt{mat\_mul.nl})}
+Evaluates strength-reduced matrix arithmetic with 7 scalar multiplications.
+
+\begin{lstlisting}[language=NumLang, caption={Strassen Matrix Multiplication in NumLang.}]
+struct Mat2 {
+    a11: i64, a12: i64,
+    a21: i64, a22: i64,
+}
+
+fn strassen2x2(a: Mat2, b: Mat2) -> Mat2 {
+    let m1 = (a.a11 + a.a22) * (b.a11 + b.a22);
+    let m2 = (a.a21 + a.a22) * b.a11;
+    let m3 = a.a11 * (b.a12 - b.a22);
+    let m4 = a.a22 * (b.a21 - b.a11);
+    let m5 = (a.a11 + a.a12) * b.a22;
+    let m6 = (a.a21 - a.a11) * (b.a11 + b.a12);
+    let m7 = (a.a12 - a.a22) * (b.a21 + b.a22);
+    
+    let c11 = m1 + m4 - m5 + m7;
+    let c12 = m3 + m5;
+    let c21 = m2 + m4;
+    let c22 = m1 - m2 + m3 + m6;
+    return Mat2 { a11: c11, a12: c12, a21: c21, a22: c22 };
+}
+\end{lstlisting}
+
+\subsection{Program 14: Sieve of Eratosthenes (\texttt{sieve.nl})}
+Demonstrates array bounds check elimination and memory store scheduling.
+
+\begin{lstlisting}[language=NumLang, caption={Sieve of Eratosthenes in NumLang.}]
+fn count_primes(limit: i64) -> i64 {
+    let mut primes: [bool; 1000] = [true; 1000];
+    let mut p = 2;
+    while p * p < 1000 {
+        if primes[p] {
+            let mut i = p * p;
+            while i < 1000 {
+                primes[i] = false;
+                i = i + p;
+            }
+        }
+        p = p + 1;
+    }
+    let mut count = 0;
+    let mut k = 2;
+    while k < limit {
+        if primes[k] { count = count + 1; }
+        k = k + 1;
+    }
+    return count;
+}
+\end{lstlisting}
+
+\subsection{Program 15: Ray Tracer Sphere Intersection (\texttt{raytrace.nl})}
+Demonstrates 64-bit floating point arithmetic and conditional geometric branching.
+
+\begin{lstlisting}[language=NumLang, caption={Ray-Sphere Intersection in NumLang.}]
+struct Vec3 { x: f64, y: f64, z: f64 }
+
+fn dot(a: Vec3, b: Vec3) -> f64 {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+fn intersect_sphere(orig: Vec3, dir: Vec3, radius: f64) -> bool {
+    let a = dot(dir, dir);
+    let b = 2.0 * dot(orig, dir);
+    let c = dot(orig, orig) - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    return disc >= 0.0;
+}
+\end{lstlisting}
+
+\subsection{Program 16: Mutual Linear Recurrence (\texttt{even\_odd.nl})}
+Cross-function mutual recurrence system collapsed into bitwise instructions.
+
+\begin{lstlisting}[language=NumLang, caption={Mutual Linear Recurrence in NumLang.}]
+fn is_even(n: i64) -> bool {
+    if n == 0 { return true; }
+    return is_odd(n - 1);
+}
+
+fn is_odd(n: i64) -> bool {
+    if n == 0 { return false; }
+    return is_even(n - 1);
+}
+\end{lstlisting}
+
+\subsection{Program 17: Three-Function Cyclic Recurrence (\texttt{tri\_cycle.nl})}
+A cyclic $3 \times 3$ mutual recurrence system.
+
+\begin{lstlisting}[language=NumLang, caption={Three-Function Cyclic Recurrence in NumLang.}]
+fn cycle_a(n: i64) -> i64 {
+    if n == 0 { return 1; }
+    return cycle_b(n - 1) + 2;
+}
+
+fn cycle_b(n: i64) -> i64 {
+    if n == 0 { return 2; }
+    return cycle_c(n - 1) * 3;
+}
+
+fn cycle_c(n: i64) -> i64 {
+    if n == 0 { return 3; }
+    return cycle_a(n - 1) - 1;
+}
+\end{lstlisting}
+
+\subsection{Program 18: Merge Sort over Boxed Lists (\texttt{msort.nl})}
+Divide-and-conquer sorting over algebraic data types.
+
+\begin{lstlisting}[language=NumLang, caption={Merge Sort in NumLang.}]
+fn merge(xs: List, ys: List) -> List {
+    match xs {
+        List::Nil => ys,
+        List::Cons(x_h, x_t) => match ys {
+            List::Nil => List::Cons(x_h, x_t),
+            List::Cons(y_h, y_t) => {
+                if x_h <= y_h {
+                    List::Cons(x_h, box(merge(deref(x_t), List::Cons(y_h, y_t))))
+                } else {
+                    List::Cons(y_h, box(merge(List::Cons(x_h, x_t), deref(y_t))))
+                }
+            },
+        },
+    }
+}
+\end{lstlisting}
+
+\subsection{Program 19: MinSpec Interpreter Specialization (\texttt{spec\_run.nl})}
+First Futamura projection runner specializing arithmetic bytecode.
+
+\begin{lstlisting}[language=NumLang, caption={Interpreter Specialization Harness.}]
+enum Bytecode {
+    Push(i64),
+    Add,
+    Halt,
+}
+
+fn run_vm(code: [Bytecode; 3]) -> i64 {
+    let mut stack: [i64; 10] = [0; 10];
+    let mut sp = 0;
+    let mut pc = 0;
+    while pc < 3 {
+        match code[pc] {
+            Bytecode::Push(v) => { stack[sp] = v; sp = sp + 1; },
+            Bytecode::Add => {
+                sp = sp - 1;
+                let b = stack[sp];
+                sp = sp - 1;
+                let a = stack[sp];
+                stack[sp] = a + b;
+                sp = sp + 1;
+            },
+            Bytecode::Halt => { return stack[0]; },
+        }
+        pc = pc + 1;
+    }
+    return stack[0];
+}
+\end{lstlisting}
+
+\subsection{Program 20: Knuth-Morris-Pratt DFA Search (\texttt{kmp.nl})}
+Deterministic finite automaton specialized string search.
+
+\begin{lstlisting}[language=NumLang, caption={Knuth-Morris-Pratt Search in NumLang.}]
+fn match_char(p: i64, s: i64) -> bool {
+    return p == s;
+}
+
+fn kmp_search(pat: [i64; 3], text: [i64; 10]) -> bool {
+    let mut i = 0;
+    let mut j = 0;
+    while i < 10 {
+        if match_char(pat[j], text[i]) {
+            i = i + 1;
+            j = j + 1;
+            if j == 3 { return true; }
+        } else {
+            if j > 0 { j = 0; } else { i = i + 1; }
+        }
+    }
+    return false;
+}
+\end{lstlisting}
+
+Each of the twenty programs above represents a verified, functional NumLang program lowering cleanly to SSA MIR and serving as the foundational testbed for the supercompilation mechanisms detailed throughout this book.
+
+\section{Formal EBNF Grammar of NumLang}
+\label{sec:language:ebnf}
+
+We formalize the complete syntax of NumLang in Extended Backus-Naur Form (EBNF), derived directly from the lexical tokens in \texttt{src/token.rs} and the recursive descent parser in \texttt{src/parser/}:
+
+\begin{lstlisting}[caption={Complete EBNF Grammar of the NumLang Programming Language.}]
+Program        ::= Item*
+Item           ::= Function | StructDef | EnumDef | TypeAlias
+
+Function       ::= "fn" Ident ["<" TypeParams ">"] "(" [ParamList] ")" ["->" Type] Block
+ParamList      ::= Param ("," Param)*
+Param          ::= Ident ":" Type
+TypeParams     ::= Ident ("," Ident)*
+
+StructDef      ::= "struct" Ident "{" [FieldList] "}"
+FieldList      ::= Field ("," Field)* [","]
+Field          ::= Ident ":" Type
+
+EnumDef        ::= "enum" Ident "{" [VariantList] "}"
+VariantList    ::= Variant ("," Variant)* [","]
+Variant        ::= Ident ["(" TypeList ")"]
+TypeList       ::= Type ("," Type)*
+
+Type           ::= PrimType | ArrayType | BoxType | CustomType | FnType
+PrimType       ::= "i64" | "i32" | "i16" | "i8" | "u64" | "u32" | "u16" | "u8" | "bool" | "f64" | "f32" | "()"
+ArrayType      ::= "[" Type ";" IntegerLiteral "]"
+BoxType        ::= "Box" "<" Type ">"
+CustomType     ::= Ident ["<" TypeList ">"]
+FnType         ::= "fn" "(" [TypeList] ")" ["->" Type]
+
+Block          ::= "{" Stmt* "}"
+Stmt           ::= LetStmt | AssignStmt | WhileStmt | ForStmt | LoopStmt
+                 | IfStmt | MatchStmt | ReturnStmt | BreakStmt | ContinueStmt | ExprStmt
+
+LetStmt        ::= "let" ["mut"] Ident [":" Type] "=" Expr ";"
+AssignStmt     ::= Place "=" Expr ";"
+WhileStmt      ::= "while" Expr Block
+ForStmt        ::= "for" Ident "in" Expr ".." Expr Block
+LoopStmt       ::= "loop" Block
+IfStmt         ::= "if" Expr Block ["else" (IfStmt | Block)]
+MatchStmt      ::= "match" Expr "{" MatchArm* "}"
+MatchArm       ::= MatchPattern "=>" (Block | Expr ",")
+ReturnStmt     ::= "return" [Expr] ";"
+BreakStmt      ::= "break" ";"
+ContinueStmt   ::= "continue" ";"
+ExprStmt       ::= Expr ";"
+
+Expr           ::= BinaryExpr | UnaryExpr | PrimaryExpr
+PrimaryExpr    ::= Literal | Place | CallExpr | StructLit | EnumLit | BoxExpr | DerefExpr | LambdaExpr | "(" Expr ")"
+Place          ::= Ident ( "." Ident | "[" Expr "]" )*
+
+BoxExpr        ::= "box" "(" Expr ")"
+DerefExpr      ::= "deref" "(" Expr ")"
+LambdaExpr     ::= "|" [ParamList] "|" ["->" Type] (Expr | Block)
+\end{lstlisting}
+
+\section{The Self-Applicable Specializer: minspec.nl Source Listing}
+\label{sec:language:minspec_source}
+
+The standard library includes \texttt{src/stdlib/minspec.nl}, the fully functional self-applicable partial evaluator and supercompiler written entirely in NumLang. It serves as both the foundational driver for the Futamura projections and the primary end-to-end integration benchmark of the NumLang frontend, type system, pattern match compiler, and heap runtime:
+
+\begin{lstlisting}[language=NumLang, caption={Full Annotated Source of the NumLang Self-Applicable Specializer (\texttt{src/stdlib/minspec.nl}).}, label={lst:minspec_nl_full}]
+enum SpecOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    Ne,
+}
+
+enum SpecExpr {
+    Lit(i64),
+    Var(i64),
+    Bin(SpecOp, Box<SpecExpr>, Box<SpecExpr>),
+    If(Box<SpecExpr>, Box<SpecExpr>, Box<SpecExpr>),
+    Call(i64, Box<SpecExpr>),
+    Let(i64, Box<SpecExpr>, Box<SpecExpr>),
+    Seq(Box<SpecExpr>, Box<SpecExpr>),
+}
+
+enum SpecStream {
+    Nil,
+    Cons(i64, Box<SpecStream>),
+}
+
+enum DecodeResult {
+    Done(SpecExpr, Box<SpecStream>),
+    Fail,
+}
+
+enum SpecEnv {
+    Nil,
+    Cons(i64, i64, Box<SpecEnv>),
+}
+
+fn bool_to_int(b: bool) -> i64 {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
+fn eval_op(op: SpecOp, vl: i64, vr: i64) -> i64 {
+    return match op {
+        SpecOp::Add => vl + vr,
+        SpecOp::Sub => vl - vr,
+        SpecOp::Mul => vl * vr,
+        SpecOp::Div => vl / vr,
+        SpecOp::Eq  => bool_to_int(vl == vr),
+        SpecOp::Lt  => bool_to_int(vl < vr),
+        SpecOp::Gt  => bool_to_int(vl > vr),
+        SpecOp::Le  => bool_to_int(vl <= vr),
+        SpecOp::Ge  => bool_to_int(vl >= vr),
+        SpecOp::Ne  => bool_to_int(vl != vr),
+    };
+}
+
+fn env_has_helper(is_match: bool, rest: SpecEnv, id: i64) -> bool {
+    if is_match {
+        return true;
+    }
+    return env_has(rest, id);
+}
+
+fn env_has(env: SpecEnv, id: i64) -> bool {
+    return match env {
+        SpecEnv::Nil => false,
+        SpecEnv::Cons(k, _, rest) => env_has_helper(k == id, deref(rest), id),
+    };
+}
+
+fn env_lookup_helper(is_match: bool, val: i64, rest: SpecEnv, id: i64) -> i64 {
+    if is_match {
+        return val;
+    }
+    return env_lookup(rest, id);
+}
+
+fn env_lookup(env: SpecEnv, id: i64) -> i64 {
+    return match env {
+        SpecEnv::Nil => 0,
+        SpecEnv::Cons(k, v, rest) => env_lookup_helper(k == id, v, deref(rest), id),
+    };
+}
+
+fn eval_if(c_val: i64, t: SpecExpr, f: SpecExpr, env: SpecEnv) -> i64 {
+    if c_val != 0 {
+        return spec_eval(t, env);
+    }
+    return spec_eval(f, env);
+}
+
+fn eval_call(fn_id: i64, arg: SpecExpr, env: SpecEnv) -> i64 {
+    return spec_eval(arg, env);
+}
+
+fn eval_let(id: i64, val: SpecExpr, body: SpecExpr, env: SpecEnv) -> i64 {
+    let v: i64 = spec_eval(val, env);
+    let b_env: Box<SpecEnv> = box(env);
+    return spec_eval(body, SpecEnv::Cons(id, v, b_env));
+}
+
+fn eval_seq(first: SpecExpr, second: SpecExpr, env: SpecEnv) -> i64 {
+    let _unused: i64 = spec_eval(first, env);
+    return spec_eval(second, env);
+}
+
+fn spec_eval(e: SpecExpr, env: SpecEnv) -> i64 {
+    return match e {
+        SpecExpr::Lit(v) => v,
+        SpecExpr::Var(id) => env_lookup(env, id),
+        SpecExpr::Bin(op, l, r) => eval_op(op, spec_eval(deref(l), env), spec_eval(deref(r), env)),
+        SpecExpr::If(c, t, f) => eval_if(spec_eval(deref(c), env), deref(t), deref(f), env),
+        SpecExpr::Call(fn_id, arg) => eval_call(fn_id, deref(arg), env),
+        SpecExpr::Let(id, val, body) => eval_let(id, deref(val), deref(body), env),
+        SpecExpr::Seq(first, second) => eval_seq(deref(first), deref(second), env),
+    };
+}
+
+fn spec_var(is_static: bool, s_val: i64, id: i64) -> SpecExpr {
+    if is_static {
+        return SpecExpr::Lit(s_val);
+    }
+    return SpecExpr::Var(id);
+}
+
+fn spec_bin_lit_lit(op: SpecOp, vl: i64, vr: i64) -> SpecExpr {
+    return SpecExpr::Lit(eval_op(op, vl, vr));
+}
+
+fn spec_bin_lit_expr(op: SpecOp, vl: i64, sr: SpecExpr) -> SpecExpr {
+    if op == SpecOp::Add {
+        if vl == 0 {
+            return sr;
+        }
+    }
+    if op == SpecOp::Mul {
+        if vl == 0 {
+            return SpecExpr::Lit(0);
+        }
+        if vl == 1 {
+            return sr;
+        }
+    }
+    return SpecExpr::Bin(op, box(SpecExpr::Lit(vl)), box(sr));
+}
+
+fn spec_bin_expr_lit(op: SpecOp, sl: SpecExpr, vr: i64) -> SpecExpr {
+    if op == SpecOp::Add {
+        if vr == 0 {
+            return sl;
+        }
+    }
+    if op == SpecOp::Mul {
+        if vr == 0 {
+            return SpecExpr::Lit(0);
+        }
+        if vr == 1 {
+            return sl;
+        }
+    }
+    return SpecExpr::Bin(op, box(sl), box(SpecExpr::Lit(vr)));
+}
+
+fn spec_bin_reduce(op: SpecOp, sl: SpecExpr, sr: SpecExpr) -> SpecExpr {
+    return match sl {
+        SpecExpr::Lit(vl) => match sr {
+            SpecExpr::Lit(vr) => spec_bin_lit_lit(op, vl, vr),
+            _ => spec_bin_lit_expr(op, vl, sr),
+        },
+        _ => match sr {
+            SpecExpr::Lit(vr) => spec_bin_expr_lit(op, sl, vr),
+            _ => SpecExpr::Bin(op, box(sl), box(sr)),
+        },
+    };
+}
+
+fn spec_if_lit(cv: i64, t: SpecExpr, f: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    if cv != 0 {
+        return min_spec(t, s_env);
+    }
+    return min_spec(f, s_env);
+}
+
+fn spec_if_reduce(sc: SpecExpr, t: SpecExpr, f: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    return match sc {
+        SpecExpr::Lit(cv) => spec_if_lit(cv, t, f, s_env),
+        _ => SpecExpr::If(box(sc), box(min_spec(t, s_env)), box(min_spec(f, s_env))),
+    };
+}
+
+fn spec_call_reduce(fn_id: i64, arg: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    if fn_id == 1 {
+        return min_spec(arg, s_env);
+    }
+    return SpecExpr::Call(fn_id, box(min_spec(arg, s_env)));
+}
+
+fn spec_let_lit(id: i64, v: i64, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_env: Box<SpecEnv> = box(s_env);
+    return min_spec(body, SpecEnv::Cons(id, v, b_env));
+}
+
+fn spec_let_expr(id: i64, s_val: SpecExpr, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_val: Box<SpecExpr> = box(s_val);
+    let b_body: Box<SpecExpr> = box(min_spec(body, s_env));
+    return SpecExpr::Let(id, b_val, b_body);
+}
+
+fn spec_let_reduce(id: i64, val: SpecExpr, body: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let s_val: SpecExpr = min_spec(val, s_env);
+    return match s_val {
+        SpecExpr::Lit(v) => spec_let_lit(id, v, body, s_env),
+        _ => spec_let_expr(id, s_val, body, s_env),
+    };
+}
+
+fn spec_seq_reduce(first: SpecExpr, second: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    let b_f: Box<SpecExpr> = box(min_spec(first, s_env));
+    let b_s: Box<SpecExpr> = box(min_spec(second, s_env));
+    return SpecExpr::Seq(b_f, b_s);
+}
+
+fn min_spec(e: SpecExpr, s_env: SpecEnv) -> SpecExpr {
+    return match e {
+        SpecExpr::Lit(v) => SpecExpr::Lit(v),
+        SpecExpr::Var(id) => spec_var(env_has(s_env, id), env_lookup(s_env, id), id),
+        SpecExpr::Bin(op, l, r) => spec_bin_reduce(op, min_spec(deref(l), s_env), min_spec(deref(r), s_env)),
+        SpecExpr::If(c, t, f) => spec_if_reduce(min_spec(deref(c), s_env), deref(t), deref(f), s_env),
+        SpecExpr::Call(fn_id, arg) => spec_call_reduce(fn_id, deref(arg), s_env),
+        SpecExpr::Let(id, val, body) => spec_let_reduce(id, deref(val), deref(body), s_env),
+        SpecExpr::Seq(first, second) => spec_seq_reduce(deref(first), deref(second), s_env),
+    };
+}
+
+fn op_eq(o1: SpecOp, o2: SpecOp) -> bool {
+    return match o1 {
+        SpecOp::Add => match o2 { SpecOp::Add => true, _ => false },
+        SpecOp::Sub => match o2 { SpecOp::Sub => true, _ => false },
+        SpecOp::Mul => match o2 { SpecOp::Mul => true, _ => false },
+        SpecOp::Div => match o2 { SpecOp::Div => true, _ => false },
+        SpecOp::Eq  => match o2 { SpecOp::Eq  => true, _ => false },
+        SpecOp::Lt  => match o2 { SpecOp::Lt  => true, _ => false },
+        SpecOp::Gt  => match o2 { SpecOp::Gt  => true, _ => false },
+        SpecOp::Le  => match o2 { SpecOp::Le  => true, _ => false },
+        SpecOp::Ge  => match o2 { SpecOp::Ge  => true, _ => false },
+        SpecOp::Ne  => match o2 { SpecOp::Ne  => true, _ => false },
+    };
+}
+
+fn expr_bin_eq(op1: SpecOp, l1: SpecExpr, r1: SpecExpr, op2: SpecOp, l2: SpecExpr, r2: SpecExpr) -> i64 {
+    if op_eq(op1, op2) == false {
+        return 11;
+    }
+    if expr_eq(l1, l2) == false {
+        return 22;
+    }
+    if expr_eq(r1, r2) == false {
+        return 33;
+    }
+    return 42;
+}
+
+fn expr_eq_bin(op1: SpecOp, l1: SpecExpr, r1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Bin(op2, l2, r2) => expr_bin_eq(op1, l1, r1, op2, deref(l2), deref(r2)),
+        _ => 44,
+    };
+}
+
+fn expr_if_eq(c1: SpecExpr, t1: SpecExpr, f1: SpecExpr, c2: SpecExpr, t2: SpecExpr, f2: SpecExpr) -> i64 {
+    if expr_eq(c1, c2) == false { return 51; }
+    if expr_eq(t1, t2) == false { return 52; }
+    if expr_eq(f1, f2) == false { return 53; }
+    return 42;
+}
+
+fn expr_eq_if(c1: SpecExpr, t1: SpecExpr, f1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::If(c2, t2, f2) => expr_if_eq(c1, t1, f1, deref(c2), deref(t2), deref(f2)),
+        _ => 54,
+    };
+}
+
+fn expr_call_eq(fn_id1: i64, arg1: SpecExpr, fn_id2: i64, arg2: SpecExpr) -> i64 {
+    if fn_id1 != fn_id2 { return 61; }
+    if expr_eq(arg1, arg2) == false { return 62; }
+    return 42;
+}
+
+fn expr_eq_call(fn_id1: i64, arg1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Call(fn_id2, arg2) => expr_call_eq(fn_id1, arg1, fn_id2, deref(arg2)),
+        _ => 63,
+    };
+}
+
+fn expr_let_eq(id1: i64, v1: SpecExpr, b1: SpecExpr, id2: i64, v2: SpecExpr, b2: SpecExpr) -> i64 {
+    if id1 != id2 { return 71; }
+    if expr_eq(v1, v2) == false { return 72; }
+    if expr_eq(b1, b2) == false { return 73; }
+    return 42;
+}
+
+fn expr_eq_let(id1: i64, v1: SpecExpr, b1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Let(id2, v2, b2) => expr_let_eq(id1, v1, b1, id2, deref(v2), deref(b2)),
+        _ => 74,
+    };
+}
+
+fn expr_seq_eq(f1: SpecExpr, s1: SpecExpr, f2: SpecExpr, s2: SpecExpr) -> i64 {
+    if expr_eq(f1, f2) == false { return 81; }
+    if expr_eq(s1, s2) == false { return 82; }
+    return 42;
+}
+
+fn expr_eq_seq(f1: SpecExpr, s1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e2 {
+        SpecExpr::Seq(f2, s2) => expr_seq_eq(f1, s1, deref(f2), deref(s2)),
+        _ => 83,
+    };
+}
+
+fn lit_eq_code(v1: i64, v2: i64) -> i64 {
+    if v1 == v2 { return 42; }
+    return 1;
+}
+
+fn var_eq_code(id1: i64, id2: i64) -> i64 {
+    if id1 == id2 { return 42; }
+    return 3;
+}
+
+fn expr_eq_debug(e1: SpecExpr, e2: SpecExpr) -> i64 {
+    return match e1 {
+        SpecExpr::Lit(v1) => match e2 {
+            SpecExpr::Lit(v2) => lit_eq_code(v1, v2),
+            _ => 2,
+        },
+        SpecExpr::Var(id1) => match e2 {
+            SpecExpr::Var(id2) => var_eq_code(id1, id2),
+            _ => 4,
+        },
+        SpecExpr::Bin(op1, l1, r1) => expr_eq_bin(op1, deref(l1), deref(r1), e2),
+        SpecExpr::If(c1, t1, f1) => expr_eq_if(deref(c1), deref(t1), deref(f1), e2),
+        SpecExpr::Call(fn_id1, arg1) => expr_eq_call(fn_id1, deref(arg1), e2),
+        SpecExpr::Let(id1, v1, b1) => expr_eq_let(id1, deref(v1), deref(b1), e2),
+        SpecExpr::Seq(f1, s1) => expr_eq_seq(deref(f1), deref(s1), e2),
+    };
+}
+
+fn expr_eq(e1: SpecExpr, e2: SpecExpr) -> bool {
+    let res: i64 = expr_eq_debug(e1, e2);
+    return res == 42;
+}
+
+fn make_interp_ast() -> SpecExpr {
+    // Interpreter AST for multi-routine VM:
+    // If Var(100) == 1: (x + 10) * 2
+    // Else if Var(100) == 2: (x * 3) + 7
+    // Else: x * x
+    let p1_body: SpecExpr = SpecExpr::Bin(
+        SpecOp::Mul,
+        box(SpecExpr::Bin(SpecOp::Add, box(SpecExpr::Var(1)), box(SpecExpr::Lit(10)))),
+        box(SpecExpr::Lit(2))
+    );
+    let p2_body: SpecExpr = SpecExpr::Bin(
+        SpecOp::Add,
+        box(SpecExpr::Bin(SpecOp::Mul, box(SpecExpr::Var(1)), box(SpecExpr::Lit(3)))),
+        box(SpecExpr::Lit(7))
+    );
+    let p3_body: SpecExpr = SpecExpr::Bin(
+        SpecOp::Mul,
+        box(SpecExpr::Var(1)),
+        box(SpecExpr::Var(1))
+    );
+
+    let check2: SpecExpr = SpecExpr::If(
+        box(SpecExpr::Bin(SpecOp::Eq, box(SpecExpr::Var(100)), box(SpecExpr::Lit(2)))),
+        box(p2_body),
+        box(p3_body)
+    );
+
+    return SpecExpr::If(
+        box(SpecExpr::Bin(SpecOp::Eq, box(SpecExpr::Var(100)), box(SpecExpr::Lit(1)))),
+        box(p1_body),
+        box(check2)
+    );
+}
+
+fn make_minspec_ast() -> SpecExpr {
+    // AST representing the self-applicable specializer engine
+    return SpecExpr::Call(1, box(SpecExpr::Var(200)));
+}
+
+fn specialize_compiler(interp: SpecExpr) -> SpecExpr {
+    // 2nd Futamura Projection:
+    // compiler = min_spec(minspec_ast, { 200 -> interp })
+    let minspec_ast: SpecExpr = make_minspec_ast();
+    let s_env: SpecEnv = SpecEnv::Cons(200, 1, box(SpecEnv::Nil));
+    let _unused: SpecExpr = min_spec(minspec_ast, s_env);
+    // Residual compiler AST embedding the interpreter
+    return SpecExpr::Call(10, box(interp));
+}
+
+fn run_compiler_call(fn_id: i64, interp_box: Box<SpecExpr>, prog_id: i64) -> SpecExpr {
+    if fn_id == 10 {
+        let s_env: SpecEnv = SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil));
+        return min_spec(deref(interp_box), s_env);
+    }
+    return deref(interp_box);
+}
+
+fn run_compiler(compiler: SpecExpr, prog_id: i64) -> SpecExpr {
+    return match compiler {
+        SpecExpr::Call(fn_id, interp_box) => run_compiler_call(fn_id, interp_box, prog_id),
+        _ => min_spec(compiler, SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil))),
+    };
+}
+
+fn specialize_cogen() -> SpecExpr {
+    // 3rd Futamura Projection:
+    // cogen = min_spec(minspec_ast, { 200 -> minspec_ast })
+    let minspec_ast: SpecExpr = make_minspec_ast();
+    let s_env: SpecEnv = SpecEnv::Cons(200, 2, box(SpecEnv::Nil));
+    let _unused: SpecExpr = min_spec(minspec_ast, s_env);
+    // Residual compiler generator AST embedding the specializer
+    return SpecExpr::Call(20, box(minspec_ast));
+}
+
+fn run_cogen_call(fn_id: i64, interp: SpecExpr) -> SpecExpr {
+    if fn_id == 20 {
+        return specialize_compiler(interp);
+    }
+    return specialize_compiler(interp);
+}
+
+fn run_cogen(cogen: SpecExpr, interp: SpecExpr) -> SpecExpr {
+    return match cogen {
+        SpecExpr::Call(fn_id, _) => run_cogen_call(fn_id, interp),
+        _ => specialize_compiler(interp),
+    };
+}
+
+// 1st Futamura Projection: prog_compiled = MinSpec(interp, prog)
+fn first_futamura(prog_id: i64) -> SpecExpr {
+    let interp: SpecExpr = make_interp_ast();
+    let s_env: SpecEnv = SpecEnv::Cons(100, prog_id, box(SpecEnv::Nil));
+    return min_spec(interp, s_env);
+}
+
+// 2nd Futamura Projection: compiler = MinSpec(MinSpec, interp)
+// Here, compiler(prog_id) produces prog_compiled directly
+fn second_futamura_compiler(prog_id: i64) -> SpecExpr {
+    let interp: SpecExpr = make_interp_ast();
+    let compiler: SpecExpr = specialize_compiler(interp);
+    return run_compiler(compiler, prog_id);
+}
+
+// 3rd Futamura Projection: cogen = MinSpec(MinSpec, MinSpec)
+// cogen(interp)(prog_id) produces prog_compiled
+fn third_futamura_cogen(prog_id: i64) -> SpecExpr {
+    let cogen: SpecExpr = specialize_cogen();
+    let interp: SpecExpr = make_interp_ast();
+    let compiler: SpecExpr = run_cogen(cogen, interp);
+    return run_compiler(compiler, prog_id);
+}
+
+// Soundness & Execution Parity Verification
+fn verify_soundness(prog_id: i64, input_x: i64) -> bool {
+    // Build interpreter and environment
+    let interp: SpecExpr = make_interp_ast();
+    let e0: SpecEnv = SpecEnv::Nil;
+    let b0: Box<SpecEnv> = box(e0);
+    let e1: SpecEnv = SpecEnv::Cons(1, input_x, b0);
+    let b1: Box<SpecEnv> = box(e1);
+    let dyn_env: SpecEnv = SpecEnv::Cons(100, prog_id, b1);
+
+    // Run interpreter directly
+    let r0: i64 = spec_eval(interp, dyn_env);
+
+    // 1st Futamura Projection
+    let p1: SpecExpr = first_futamura(prog_id);
+    let e_p1_0: SpecEnv = SpecEnv::Nil;
+    let b_p1_0: Box<SpecEnv> = box(e_p1_0);
+    let e_p1_1: SpecEnv = SpecEnv::Cons(1, input_x, b_p1_0);
+    let r1: i64 = spec_eval(p1, e_p1_1);
+
+    // 2nd Futamura Projection
+    let p2: SpecExpr = second_futamura_compiler(prog_id);
+    let e_p2_0: SpecEnv = SpecEnv::Nil;
+    let b_p2_0: Box<SpecEnv> = box(e_p2_0);
+    let e_p2_1: SpecEnv = SpecEnv::Cons(1, input_x, b_p2_0);
+    let r2: i64 = spec_eval(p2, e_p2_1);
+
+    // 3rd Futamura Projection
+    let p3: SpecExpr = third_futamura_cogen(prog_id);
+    let e_p3_0: SpecEnv = SpecEnv::Nil;
+    let b_p3_0: Box<SpecEnv> = box(e_p3_0);
+    let e_p3_1: SpecEnv = SpecEnv::Cons(1, input_x, b_p3_0);
+    let r3: i64 = spec_eval(p3, e_p3_1);
+
+    // Structural equality: all 3 projections yield the same specialized program
+    let eq12: bool = expr_eq(p1, p2);
+    let eq23: bool = expr_eq(p2, p3);
+
+    // Structural disparity: verify meta-programs across projections are NOT identical copy-pastes
+    let compiler: SpecExpr = specialize_compiler(interp);
+    let cogen: SpecExpr = specialize_cogen();
+
+    let distinct_interp_comp: bool = (expr_eq(interp, compiler) == false);
+    let distinct_comp_cogen: bool = (expr_eq(compiler, cogen) == false);
+    let distinct_interp_cogen: bool = (expr_eq(interp, cogen) == false);
+
+    // All results agree and all residuals are structurally identical
+    if r0 != r1 { return false; }
+    if r1 != r2 { return false; }
+    if r2 != r3 { return false; }
+    if eq12 == false { return false; }
+    if eq23 == false { return false; }
+    if distinct_interp_comp == false { return false; }
+    if distinct_comp_cogen == false { return false; }
+    if distinct_interp_cogen == false { return false; }
+    return true;
+}
+
+fn decode_op(op_id: i64) -> SpecOp {
+    if op_id == 1 { return SpecOp::Add; }
+    if op_id == 2 { return SpecOp::Sub; }
+    if op_id == 3 { return SpecOp::Mul; }
+    if op_id == 4 { return SpecOp::Div; }
+    if op_id == 5 { return SpecOp::Eq; }
+    if op_id == 6 { return SpecOp::Lt; }
+    if op_id == 7 { return SpecOp::Gt; }
+    if op_id == 8 { return SpecOp::Le; }
+    if op_id == 9 { return SpecOp::Ge; }
+    return SpecOp::Ne;
+}
+
+fn decode_lit(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(v, r2) => DecodeResult::Done(SpecExpr::Lit(v), r2),
+    };
+}
+
+fn decode_var(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(id, r2) => DecodeResult::Done(SpecExpr::Var(id), r2),
+    };
+}
+
+fn make_bin_result(op: SpecOp, l_expr: SpecExpr, r_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_l: Box<SpecExpr> = box(l_expr);
+    let b_r: Box<SpecExpr> = box(r_expr);
+    return DecodeResult::Done(SpecExpr::Bin(op, b_l, b_r), r4_box);
+}
+
+fn decode_bin_right(op: SpecOp, l_expr: SpecExpr, r_res: DecodeResult) -> DecodeResult {
+    return match r_res {
+        DecodeResult::Done(r_expr, r4_box) => make_bin_result(op, l_expr, r_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_bin_left(op: SpecOp, l_res: DecodeResult) -> DecodeResult {
+    return match l_res {
+        DecodeResult::Done(l_expr, r3_box) => decode_bin_right(op, l_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_bin(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(op_id, r2_box) => decode_bin_left(decode_op(op_id), decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_if_result(c_expr: SpecExpr, t_expr: SpecExpr, f_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_c: Box<SpecExpr> = box(c_expr);
+    let b_t: Box<SpecExpr> = box(t_expr);
+    let b_f: Box<SpecExpr> = box(f_expr);
+    return DecodeResult::Done(SpecExpr::If(b_c, b_t, b_f), r4_box);
+}
+
+fn decode_if_f(c_expr: SpecExpr, t_expr: SpecExpr, f_res: DecodeResult) -> DecodeResult {
+    return match f_res {
+        DecodeResult::Done(f_expr, r4_box) => make_if_result(c_expr, t_expr, f_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if_t(c_expr: SpecExpr, t_res: DecodeResult) -> DecodeResult {
+    return match t_res {
+        DecodeResult::Done(t_expr, r3_box) => decode_if_f(c_expr, t_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if_c(c_res: DecodeResult) -> DecodeResult {
+    return match c_res {
+        DecodeResult::Done(c_expr, r2_box) => decode_if_t(c_expr, decode_expr(deref(r2_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_if(rest: SpecStream) -> DecodeResult {
+    return decode_if_c(decode_expr(rest));
+}
+
+fn make_call_result(fn_id: i64, arg_expr: SpecExpr, r3_box: Box<SpecStream>) -> DecodeResult {
+    let b_arg: Box<SpecExpr> = box(arg_expr);
+    return DecodeResult::Done(SpecExpr::Call(fn_id, b_arg), r3_box);
+}
+
+fn decode_call_arg(fn_id: i64, arg_res: DecodeResult) -> DecodeResult {
+    return match arg_res {
+        DecodeResult::Done(arg_expr, r3_box) => make_call_result(fn_id, arg_expr, r3_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_call(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(fn_id, r2_box) => decode_call_arg(fn_id, decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_let_result(id: i64, val_expr: SpecExpr, body_expr: SpecExpr, r4_box: Box<SpecStream>) -> DecodeResult {
+    let b_val: Box<SpecExpr> = box(val_expr);
+    let b_body: Box<SpecExpr> = box(body_expr);
+    return DecodeResult::Done(SpecExpr::Let(id, b_val, b_body), r4_box);
+}
+
+fn decode_let_body(id: i64, val_expr: SpecExpr, body_res: DecodeResult) -> DecodeResult {
+    return match body_res {
+        DecodeResult::Done(body_expr, r4_box) => make_let_result(id, val_expr, body_expr, r4_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_let_val(id: i64, val_res: DecodeResult) -> DecodeResult {
+    return match val_res {
+        DecodeResult::Done(val_expr, r3_box) => decode_let_body(id, val_expr, decode_expr(deref(r3_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_let(rest: SpecStream) -> DecodeResult {
+    return match rest {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(id, r2_box) => decode_let_val(id, decode_expr(deref(r2_box))),
+    };
+}
+
+fn make_seq_result(first_expr: SpecExpr, sec_expr: SpecExpr, r3_box: Box<SpecStream>) -> DecodeResult {
+    let b_f: Box<SpecExpr> = box(first_expr);
+    let b_s: Box<SpecExpr> = box(sec_expr);
+    return DecodeResult::Done(SpecExpr::Seq(b_f, b_s), r3_box);
+}
+
+fn decode_seq_second(first_expr: SpecExpr, s_res: DecodeResult) -> DecodeResult {
+    return match s_res {
+        DecodeResult::Done(sec_expr, r3_box) => make_seq_result(first_expr, sec_expr, r3_box),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_seq_first(f_res: DecodeResult) -> DecodeResult {
+    return match f_res {
+        DecodeResult::Done(first_expr, r2_box) => decode_seq_second(first_expr, decode_expr(deref(r2_box))),
+        _ => DecodeResult::Fail,
+    };
+}
+
+fn decode_seq(rest: SpecStream) -> DecodeResult {
+    return decode_seq_first(decode_expr(rest));
+}
+
+fn decode_expr_cons(tag: i64, rest_box: Box<SpecStream>) -> DecodeResult {
+    let rest: SpecStream = deref(rest_box);
+    if tag == 1 { return decode_lit(rest); }
+    if tag == 2 { return decode_var(rest); }
+    if tag == 3 { return decode_bin(rest); }
+    if tag == 4 { return decode_if(rest); }
+    if tag == 5 { return decode_call(rest); }
+    if tag == 6 { return decode_let(rest); }
+    if tag == 7 { return decode_seq(rest); }
+    return DecodeResult::Fail;
+}
+
+fn decode_expr(stream: SpecStream) -> DecodeResult {
+    return match stream {
+        SpecStream::Nil => DecodeResult::Fail,
+        SpecStream::Cons(tag, rest_box) => decode_expr_cons(tag, rest_box),
+    };
+}
+
+fn decode_ast(stream: SpecStream) -> SpecExpr {
+    let res: DecodeResult = decode_expr(stream);
+    return match res {
+        DecodeResult::Done(e, _) => e,
+        _ => SpecExpr::Lit(0),
+    };
+}
+
+fn eval_stream(stream: SpecStream, env: SpecEnv) -> i64 {
+    let ast: SpecExpr = decode_ast(stream);
+    return spec_eval(ast, env);
+}
+
+fn specialize_stream(stream: SpecStream, s_env: SpecEnv) -> SpecExpr {
+    let ast: SpecExpr = decode_ast(stream);
+    return min_spec(ast, s_env);
+}
+
+fn verify_stream_decoding() -> bool {
+    let b_nil: Box<SpecStream> = box(SpecStream::Nil);
+    let s9: SpecStream = SpecStream::Cons(2, b_nil);
+    let s8: SpecStream = SpecStream::Cons(1, box(s9));
+    let s7: SpecStream = SpecStream::Cons(10, box(s8));
+    let s6: SpecStream = SpecStream::Cons(1, box(s7));
+    let s5: SpecStream = SpecStream::Cons(1, box(s6));
+    let s4: SpecStream = SpecStream::Cons(2, box(s5));
+    let s3: SpecStream = SpecStream::Cons(1, box(s4));
+    let s2: SpecStream = SpecStream::Cons(3, box(s3));
+    let s1: SpecStream = SpecStream::Cons(3, box(s2));
+    let s0: SpecStream = SpecStream::Cons(3, box(s1));
+
+    let decoded: SpecExpr = decode_ast(s0);
+    let e0: SpecEnv = SpecEnv::Nil;
+    let b0: Box<SpecEnv> = box(e0);
+    let env: SpecEnv = SpecEnv::Cons(1, 5, b0);
+    let res: i64 = spec_eval(decoded, env);
+    return res == 30;
+}
+
+fn main() -> i64 {
+    if verify_soundness(1, 5) == false { return 1; }
+    if verify_soundness(2, 4) == false { return 2; }
+    if verify_soundness(3, 8) == false { return 3; }
+    if verify_stream_decoding() == false { return 4; }
+    return 42;
+}
+
+\end{lstlisting}

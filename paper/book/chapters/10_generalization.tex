@@ -1,0 +1,341 @@
+\chapter{Generalization: Anti-Unification and MSG}
+\label{chap:generalization}
+
+\section{The Role of Generalization}
+\label{sec:generalization:role}
+
+When the whistle blows upon detecting that configuration $C_{\text{curr}}$ homeomorphically embeds an ancestor $C_{\text{anc}}$, the supercompiler must reconcile the two states. If the two states differ only by variable renaming, folding creates a direct recursion. However, if $C_{\text{curr}}$ contains growing sub-expressions (for instance, an accumulator variable growing from $0$ to $0 + 1$ to $0 + 1 + 2$), folding is impossible.
+
+To prevent infinite unrolling while still discovering the underlying recursive invariant, the supercompiler must perform \emph{generalization}: finding a common, more general template that subsumes both configurations.
+
+\section{The S\o{}rensen--Gl\"uck Most Specific Generalization Algorithm}
+\label{sec:generalization:msg_alg}
+
+NumLang implements the canonical S\o{}rensen and Gl\"uck (1995) anti-unification algorithm \citep{sorensen1995algorithm} in \texttt{src/mir/supercompiler/generalize.rs}.
+
+Algorithm~\ref{alg:anti_unification} presents the formal anti-unification procedure.
+
+\begin{algorithm}[h!]
+\caption{The Most Specific Generalization (Anti-Unification) Algorithm}
+\label{alg:anti_unification}
+\begin{algorithmic}[1]
+\Require Terms $t_1, t_2 \in \symterm$, Memoization Map $M : (\symterm \times \symterm) \to \mathcal{V}$
+\Ensure Generalized Term $g$, Substitutions $\theta_1, \theta_2$
+\Procedure{AntiUnify}{$t_1, t_2, M$}
+    \If{$(t_1, t_2) \in M$}
+        \State \Return $M(t_1, t_2)$
+    \EndIf
+    \If{$t_1 = f(u_1, \dots, u_n) \land t_2 = f(v_1, \dots, v_n)$}
+        \ForAll{$i \in \{1, \dots, n\}$}
+            \State $w_i \gets$ \Call{AntiUnify}{$u_i, v_i, M$}
+        \EndFor
+        \State \Return $f(w_1, \dots, w_n)$
+    \Else
+        \State Let $\alpha$ be a fresh symbolic variable
+        \State $M \gets M \cup \{(t_1, t_2) \mapsto \alpha\}$
+        \State $\theta_1 \gets \theta_1 \cup \{\alpha \mapsto t_1\}; \quad \theta_2 \gets \theta_2 \cup \{\alpha \mapsto t_2\}$
+        \State \Return $\alpha$
+    \EndIf
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\section{Variable Widening in the Interval Lattice}
+\label{sec:generalization:widening}
+
+When generalizing numeric state variables, naive anti-unification abstracts concrete bounds into unbounded fresh variables, destroying all downstream bounds check eliminations (BCE). 
+
+NumLang couples syntactic MSG with an interval widening operator $\nabla$ over the interval domain $[lo, hi]$:
+\begin{equation}
+[lo_1, hi_1] \nabla [lo_2, hi_2] = \left[
+\begin{cases}
+lo_1 & \text{if } lo_1 \le lo_2 \\
+-\infty & \text{otherwise}
+\end{cases}, \quad
+\begin{cases}
+hi_1 & \text{if } hi_1 \ge hi_2 \\
++\infty & \text{otherwise}
+\end{cases}
+\right]
+\end{equation}
+By preserving stable lower bounds (such as array indices known to satisfy $i \ge 0$), NumLang retains bounds check elimination guarantees across generalization knots.
+
+\section{Knot Materialization and Split vs. Generalize Decision}
+\label{sec:generalization:split}
+
+When an expression $e = f(t_1, t_2)$ triggers a whistle, the supercompiler faces a critical architectural decision:
+\begin{enumerate}
+    \item \textbf{Generalize}: Abstract growing subterms into variables and synthesize a generalized knot.
+    \item \textbf{Split (Decompose)}: Decompose the compound expression into independent sub-expressions $t_1$ and $t_2$, driving each separately.
+\end{enumerate}
+
+NumLang implements Phase 48 \emph{Structural Whistle Decoupling}: the decision to split versus generalize is determined strictly by term size ratios and variable dependency metrics, never by string-based function name heuristics. If subterms $t_1$ and $t_2$ share zero free variables, splitting is chosen unconditionally, preventing unnecessary knot creation.
+
+\section{The Anti-Unification Engine Implementation}
+\label{sec:generalize:impl_listing}
+
+The generalization engine computes Most Specific Generalizations (MSG) and widens states at knot points. Listing~\ref{lst:generalize_impl} reproduces the implementation from \texttt{src/mir/supercompiler/generalize.rs}:
+
+\begin{lstlisting}[language=Rust, caption={Anti-Unification and Knot Materialization (\texttt{src/mir/supercompiler/generalize.rs}).}, label={lst:generalize_impl}]
+
+use super::term::{SymTerm, SymTermId, TermInterner};
+use crate::ast::BinaryOp;
+use crate::mir::Place;
+use crate::typecheck::types::Type;
+
+#[derive(Debug, Clone)]
+pub struct GeneralizationResult {
+    pub common_term: SymTermId,
+    pub var_mappings: Vec<(Place, SymTermId, SymTermId)>, // (fresh_var, t1_val, t2_val)
+}
+
+/// Computes the Most Specific Generalization (MSG) between two terms.
+pub fn most_specific_generalization(
+    t1: SymTermId,
+    t2: SymTermId,
+    interner: &mut TermInterner,
+    next_var_id: &mut usize,
+) -> GeneralizationResult {
+    let mut memo: HashMap<(SymTermId, SymTermId), SymTermId> = HashMap::new();
+    let mut mappings = Vec::new();
+
+    let common = msg_helper(t1, t2, interner, next_var_id, &mut memo, &mut mappings);
+    GeneralizationResult {
+        common_term: common,
+        var_mappings: mappings,
+    }
+}
+
+/// Textbook first-order anti-unification (Sørensen & Glück 1995; Plotkin 1970).
+pub fn anti_unify(
+    t1: SymTermId,
+    t2: SymTermId,
+    interner: &mut TermInterner,
+    subst1: &mut HashMap<String, SymTermId>,
+    subst2: &mut HashMap<String, SymTermId>,
+) -> SymTermId {
+    let mut next_var_id = subst1.len();
+    let res = most_specific_generalization(t1, t2, interner, &mut next_var_id);
+    for (place, v1, v2) in res.var_mappings {
+        subst1.insert(place.local.clone(), v1);
+        subst2.insert(place.local, v2);
+    }
+    res.common_term
+}
+
+fn msg_helper(
+    t1: SymTermId,
+    t2: SymTermId,
+    interner: &mut TermInterner,
+    next_var_id: &mut usize,
+    memo: &mut HashMap<(SymTermId, SymTermId), SymTermId>,
+    mappings: &mut Vec<(Place, SymTermId, SymTermId)>,
+) -> SymTermId {
+    if t1 == t2 {
+        return t1;
+    }
+
+    if let Some(&cached) = memo.get(&(t1, t2)) {
+        return cached;
+    }
+
+    let term1 = interner.get(t1).clone();
+    let term2 = interner.get(t2).clone();
+
+    let result = match (&term1, &term2) {
+        (SymTerm::Binary(op1, l1, r1, ty1), SymTerm::Binary(op2, l2, r2, _)) if op1 == op2 => {
+            let common_l = msg_helper(*l1, *l2, interner, next_var_id, memo, mappings);
+            let common_r = msg_helper(*r1, *r2, interner, next_var_id, memo, mappings);
+            interner.intern_binary(*op1, common_l, common_r, ty1.clone())
+        }
+        (SymTerm::Unary(op1, in1, ty1), SymTerm::Unary(op2, in2, _)) if op1 == op2 => {
+            let common_in = msg_helper(*in1, *in2, interner, next_var_id, memo, mappings);
+            interner.intern_unary(*op1, common_in, ty1.clone())
+        }
+        (SymTerm::Constructor(n1, t1, f1, ty1), SymTerm::Constructor(n2, t2, f2, _))
+            if n1 == n2 && t1 == t2 && f1.len() == f2.len() =>
+        {
+            let mut common_f = Vec::with_capacity(f1.len());
+            for (&a, &b) in f1.iter().zip(f2.iter()) {
+                common_f.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_constructor(n1.clone(), *t1, common_f, ty1.clone())
+        }
+        (SymTerm::Call(c1, a1, ty1), SymTerm::Call(c2, a2, _))
+            if c1 == c2 && a1.len() == a2.len() =>
+        {
+            let mut common_a = Vec::with_capacity(a1.len());
+            for (&a, &b) in a1.iter().zip(a2.iter()) {
+                common_a.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_call(c1.clone(), common_a, ty1.clone())
+        }
+        (SymTerm::ClosureVal(fn1, c1, ty1), SymTerm::ClosureVal(fn2, c2, _))
+            if fn1 == fn2 && c1.len() == c2.len() =>
+        {
+            let mut common_c = Vec::with_capacity(c1.len());
+            for (&a, &b) in c1.iter().zip(c2.iter()) {
+                common_c.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_closure_val(fn1.clone(), common_c, ty1.clone())
+        }
+        (SymTerm::Thunk(b1, c1, ty1), SymTerm::Thunk(b2, c2, _))
+            if b1 == b2 && c1.len() == c2.len() =>
+        {
+            let mut common_c = Vec::with_capacity(c1.len());
+            for (&a, &b) in c1.iter().zip(c2.iter()) {
+                common_c.push(msg_helper(a, b, interner, next_var_id, memo, mappings));
+            }
+            interner.intern_thunk(b1.clone(), common_c, ty1.clone())
+        }
+        (SymTerm::Ref(i1, ty1), SymTerm::Ref(i2, _)) => {
+            let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
+            interner.intern_ref(common, ty1.clone())
+        }
+        (SymTerm::Deref(p1, ty1), SymTerm::Deref(p2, _)) => {
+            let common = msg_helper(*p1, *p2, interner, next_var_id, memo, mappings);
+            interner.intern_deref(common, ty1.clone())
+        }
+        (SymTerm::Discriminant(i1, _), SymTerm::Discriminant(i2, _)) => {
+            let common = msg_helper(*i1, *i2, interner, next_var_id, memo, mappings);
+            interner.intern_discriminant(common)
+        }
+        (SymTerm::Select(c1, t1, e1, ty1), SymTerm::Select(c2, t2, e2, _)) => {
+            let common_c = msg_helper(*c1, *c2, interner, next_var_id, memo, mappings);
+            let common_t = msg_helper(*t1, *t2, interner, next_var_id, memo, mappings);
+            let common_e = msg_helper(*e1, *e2, interner, next_var_id, memo, mappings);
+            interner.intern_select(common_c, common_t, common_e, ty1.clone())
+        }
+        _ => {
+            // Generalize to fresh variable
+            let var_name = format!("_gen_{}", *next_var_id);
+            *next_var_id += 1;
+            let ty = term1.ty().clone();
+            let place = Place {
+                local: var_name,
+                projections: vec![],
+            };
+            let var_id = interner.intern_var(place.clone(), ty);
+            mappings.push((place, t1, t2));
+            var_id
+        }
+    };
+
+    memo.insert((t1, t2), result);
+    result
+}
+
+/// Solves closed forms for numerical recurrence sequences:
+/// Given simulated initial states [s0, s1, s2, s3], detects polynomial degree
+/// and returns closed form in terms of `num_iters`.
+pub fn solve_recurrence(
+    samples: &[i64],
+    num_iters: SymTermId,
+    interner: &mut TermInterner,
+) -> Option<SymTermId> {
+    if samples.len() < 3 {
+        return None;
+    }
+
+    let s0 = samples[0];
+    let s1 = samples[1];
+    let s2 = samples[2];
+
+    // First differences
+    let d1_0 = s1.wrapping_sub(s0);
+    let d1_1 = s2.wrapping_sub(s1);
+
+    // Degree 1: Linear sequence s_k = s0 + k * d1
+    if d1_0 == d1_1 {
+        // s0 + N * d1
+        let s0_term = interner.intern_int(s0);
+        let d1_term = interner.intern_int(d1_0);
+        let n_times_d1 = interner.intern_binary(
+            BinaryOp::Mul,
+            num_iters,
+            d1_term,
+            Type::I64,
+        );
+        return Some(interner.intern_binary(
+            BinaryOp::Add,
+            s0_term,
+            n_times_d1,
+            Type::I64,
+        ));
+    }
+
+    // Degree 2: Quadratic / Triangular sequence
+    if samples.len() >= 4 {
+        let s3 = samples[3];
+        let d1_2 = s3.wrapping_sub(s2);
+        let d2_0 = d1_1.wrapping_sub(d1_0);
+        let d2_1 = d1_2.wrapping_sub(d1_1);
+
+        if d2_0 == d2_1 {
+            // Formula: s_k = s0 + k * d1_0 + (k * (k - 1) / 2) * d2_0
+            let s0_term = interner.intern_int(s0);
+            let d1_term = interner.intern_int(d1_0);
+            let d2_term = interner.intern_int(d2_0);
+            let one_term = interner.intern_int(1);
+            let two_term = interner.intern_int(2);
+
+            // k * d1_0
+            let linear_part = interner.intern_binary(
+                BinaryOp::Mul,
+                num_iters,
+                d1_term,
+                Type::I64,
+            );
+
+            // (k - 1)
+            let k_minus_1 = interner.intern_binary(
+                BinaryOp::Sub,
+                num_iters,
+                one_term,
+                Type::I64,
+            );
+
+            // k * (k - 1)
+            let k_times_k_minus_1 = interner.intern_binary(
+                BinaryOp::Mul,
+                num_iters,
+                k_minus_1,
+                Type::I64,
+            );
+
+            // k * (k - 1) / 2
+            let tri_part = interner.intern_binary(
+                BinaryOp::Div,
+                k_times_k_minus_1,
+                two_term,
+                Type::I64,
+            );
+
+            // (k * (k - 1) / 2) * d2_0
+            let quad_part = interner.intern_binary(
+                BinaryOp::Mul,
+                tri_part,
+                d2_term,
+                Type::I64,
+            );
+
+            // s0 + linear + quad
+            let part1 = interner.intern_binary(
+                BinaryOp::Add,
+                s0_term,
+                linear_part,
+                Type::I64,
+            );
+            return Some(interner.intern_binary(
+                BinaryOp::Add,
+                part1,
+                quad_part,
+                Type::I64,
+            ));
+        }
+    }
+
+    // Degree 3: Cubic sequence
+    if samples.len() >= 5 {
+
+\end{lstlisting}

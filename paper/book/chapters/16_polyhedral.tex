@@ -1,0 +1,167 @@
+\chapter{Polyhedral Loop Scheduling and Integer Linear Programming}
+\label{chap:polyhedral}
+
+\section{The Polyhedral Model in Metacomputation}
+\label{sec:polyhedral:intro}
+
+Loop nests operating over multi-dimensional arrays represent the computational core of scientific computing, computer vision, and machine learning. While supercompilation traditionally excels at algebraic tree manipulation, it has historically lacked structural awareness of affine iteration spaces.
+
+NumLang bridges this divide by incorporating a first-class \emph{Polyhedral Scheduling Engine} (Phase 23, \texttt{src/mir/supercompiler/polyhedral.rs}) coupled with a pure-Rust, fraction-free \emph{Bareiss Simplex Integer Linear Programming Solver} (Phase 55, \texttt{src/mir/supercompiler/polyhedral\_ilp.rs}).
+
+\section{Affine Iteration Spaces and Dependence Distance Vectors}
+\label{sec:polyhedral:iteration_space}
+
+A loop nest of depth $d$ is characterized by an iteration vector $\vec{i} = (i_1, i_2, \dots, i_d)^T \in \mathbb{Z}^d$. The \emph{iteration domain} $\mathcal{D}$ is defined as a convex polyhedron bounded by affine inequalities:
+\begin{equation}
+\mathcal{D} = \{ \vec{i} \in \mathbb{Z}^d \mid A \vec{i} + \vec{b} \ge \vec{0} \}
+\end{equation}
+
+\subsection{Dependence Polyhedra}
+Let $S_1$ and $S_2$ be two statements accessing array $A$. A data dependence exists from $S_1(\vec{i})$ to $S_2(\vec{j})$ if both statements access the same memory location, at least one access is a write, and $\vec{i} \prec \vec{j}$ in program execution order. The \emph{dependence distance vector} is:
+\begin{equation}
+\vec{d} = \vec{j} - \vec{i}
+\end{equation}
+
+\section{The Pluto Permutability Formulation}
+\label{sec:polyhedral:pluto}
+
+NumLang adapts the seminal Pluto algorithm \citep{bondhugula2008pluto} to find optimal multi-dimensional affine loop schedules $\Theta(\vec{i}) = C \vec{i} + \vec{c}_0$. To ensure that a 1D schedule $\theta(\vec{i})$ preserves all program semantics, the schedule must satisfy the \emph{causality condition}:
+\begin{equation}
+\theta(\vec{j}) - \theta(\vec{i}) \ge 0 \quad \text{for all dependences } \vec{i} \to \vec{j}
+\end{equation}
+Under the affine form of Farkas' Lemma, this non-negative condition over the polyhedron $\mathcal{D}$ transforms into a set of linear constraints on the schedule coefficients $\vec{\theta}$:
+\begin{equation}
+\vec{\theta} \cdot \vec{d} \ge 0 \quad \text{for all extremal dependence rays } \vec{d}
+\end{equation}
+
+\section{The Fraction-Free Bareiss Simplex Solver (Phase 55)}
+\label{sec:polyhedral:bareiss_solver}
+
+Standard floating-point simplex solvers (such as GLPK or CLP) suffer from rounding errors that can invalidate discrete integer schedules. NumLang implements a custom \emph{Bareiss Simplex Solver} operating strictly over 128-bit integers (\texttt{i128}).
+
+\subsection{Bareiss Determinant Division Theorem}
+Let $M^{(k)}$ be the simplex tableau after $k$ pivoting steps. To prevent coefficient explosion without introducing rational fractions, Bareiss's theorem guarantees that every division step is exact:
+\begin{equation}
+M_{i, j}^{(k+1)} = \frac{M_{k, k}^{(k)} M_{i, j}^{(k)} - M_{i, k}^{(k)} M_{k, j}^{(k)}}{M_{k-1, k-1}^{(k-1)}} \in \mathbb{Z}
+\end{equation}
+where $M_{-1, -1}^{(-1)} = 1$. 
+
+The solver executes pivoting with zero roundoff, finding integer-exact schedules that maximize loop tiling dimensions and minimize memory footprint.
+
+\section{Buffer Contraction and Tiled Code Generation}
+\label{sec:polyhedral:tiling}
+
+Once an optimal schedule $\Theta$ is computed:
+\begin{enumerate}
+    \item \textbf{Loop Tiling}: Outer loops are tiled by cache line factors ($B = 64$ elements), maximizing L1 data cache reuse.
+    \item \textbf{Buffer Contraction}: Intermediate arrays that are produced and consumed within the same tile are contracted into fixed-size local register arrays or scalar accumulators, eliminating heap allocations.
+\end{enumerate}
+
+\section{The Pure-Rust Bareiss Simplex Implementation}
+\label{sec:polyhedral:code_walk}
+
+The core pivoting engine from \texttt{src/mir/supercompiler/polyhedral\_ilp.rs} executes integer-exact pivot operations without float conversions:
+
+\begin{lstlisting}[language=Rust, caption={Bareiss Simplex Solver Types in NumLang (\texttt{src/mir/supercompiler/polyhedral\_ilp.rs}).}]
+// 1. Types & Data Structures
+// ============================================================================
+
+/// Comparison operator for linear constraints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintOp {
+    Le,
+    Ge,
+    Eq,
+}
+
+impl fmt::Display for ConstraintOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstraintOp::Le => write!(f, "<="),
+            ConstraintOp::Ge => write!(f, ">="),
+            ConstraintOp::Eq => write!(f, "=="),
+        }
+    }
+}
+
+/// A linear constraint: sum(coeffs[j] * x[j]) (op) rhs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinearConstraint {
+    pub coeffs: Vec<i64>,
+    pub op: ConstraintOp,
+    pub rhs: i64,
+}
+
+/// Result of solving an integer linear program via Bareiss Simplex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SimplexResult {
+    /// Optimal solution found with exact objective value, variable assignments, and pivot count.
+    Optimal {
+        objective: i64,
+        solution: Vec<i64>,
+        pivots: usize,
+    },
+    /// The constraints are contradictory and cannot be satisfied.
+    Infeasible,
+    /// The objective function is unbounded.
+    Unbounded,
+    /// The solver reached the maximum allowable pivot step budget.
+    MaxPivotsExceeded,
+}
+
+// ============================================================================
+// 2. Fraction-Free Bareiss Simplex Method
+// ============================================================================
+
+/// A fraction-free Simplex solver using exact integer arithmetic (i128)
+/// and the Bareiss determinantal division algorithm.
+#[derive(Debug, Clone)]
+pub struct BareissSimplex {
+    pub num_vars: usize,
+    pub constraints: Vec<LinearConstraint>,
+    pub objective: Vec<i64>,
+    pub minimize: bool,
+    pub max_pivots: usize,
+    pub pivot_count: usize,
+}
+
+impl BareissSimplex {
+    /// Creates a new Simplex solver with the specified number of decision variables.
+    pub fn new(num_vars: usize) -> Self {
+        BareissSimplex {
+            num_vars,
+            constraints: Vec::new(),
+            objective: vec![0; num_vars],
+            minimize: true,
+            max_pivots: 1000,
+            pivot_count: 0,
+        }
+    }
+
+    /// Sets the maximum allowable pivot budget (default 1,000).
+    pub fn set_max_pivots(&mut self, max: usize) {
+        self.max_pivots = max;
+    }
+
+    /// Returns the number of pivot operations executed in the last solve.
+    pub fn pivots(&self) -> usize {
+        self.pivot_count
+    }
+
+    /// Adds a linear constraint: sum(coeffs[j] * x[j]) (op) rhs.
+    pub fn add_constraint(&mut self, coeffs: &[i64], op: ConstraintOp, rhs: i64) {
+        let mut row_coeffs = coeffs.to_vec();
+        if row_coeffs.len() < self.num_vars {
+            row_coeffs.resize(self.num_vars, 0);
+        } else if row_coeffs.len() > self.num_vars {
+            row_coeffs.truncate(self.num_vars);
+        }
+        self.constraints.push(LinearConstraint {
+            coeffs: row_coeffs,
+            op,
+            rhs,
+        });
+    }
+
+
+\end{lstlisting}

@@ -1,0 +1,136 @@
+% Preamble for NumLang Technical Book (300+ Pages)
+\usepackage[margin=1in,headheight=15pt]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{booktabs,longtable,multirow}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage[numbers]{natbib}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{url}
+
+% Custom Colors
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.97,0.97,0.97}
+\definecolor{numlangblue}{rgb}{0.0,0.2,0.6}
+\definecolor{linkblue}{rgb}{0.05,0.25,0.65}
+
+% Hyperref setup
+\usepackage[colorlinks=true,
+            linkcolor=linkblue,
+            citecolor=numlangblue,
+            urlcolor=linkblue]{hyperref}
+\usepackage{cleveref}
+
+% Theorem Environments
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{proposition}[theorem]{Proposition}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% Listings: NumLang
+\lstdefinelanguage{NumLang}{
+  keywords={fn, let, mut, if, else, match, while, for, in, loop, return, break, continue, struct, enum, box, deref, type, true, false, as},
+  keywordstyle=\color{numlangblue}\bfseries,
+  ndkeywords={i64, i32, i16, i8, u64, u32, u16, u8, bool, f64, f32, Box},
+  ndkeywordstyle=\color{codepurple}\bfseries,
+  identifierstyle=\color{black},
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{codegreen}\itshape,
+  stringstyle=\color{red!70!black},
+  morestring=[b]",
+  morestring=[b]'
+}
+
+% Listings: Rust
+\lstdefinelanguage{Rust}{
+  keywords={fn, let, mut, if, else, match, while, for, in, loop, return, break, continue, struct, enum, impl, trait, pub, use, mod, type, true, false, unsafe, where, crate, self, Self},
+  keywordstyle=\color{numlangblue}\bfseries,
+  ndkeywords={i64, i32, u64, u32, usize, bool, Vec, Option, Result, Box, String, Rc, Arc},
+  ndkeywordstyle=\color{codepurple}\bfseries,
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{codegreen}\itshape,
+  stringstyle=\color{red!70!black},
+  morestring=[b]"
+}
+
+% Listings: Lean4
+\lstdefinelanguage{Lean4}{
+  keywords={def, theorem, lemma, inductive, structure, where, by, exact, intro, cases, induction, have, match, with, if, then, else, namespace, open, end, abbrev, import},
+  keywordstyle=\color{numlangblue}\bfseries,
+  ndkeywords={Prop, Type, Nat, Int, Bool, String, List, Option},
+  ndkeywordstyle=\color{codepurple}\bfseries,
+  sensitive=true,
+  comment=[l]{--},
+  morecomment=[s]{/-}{-/},
+  commentstyle=\color{codegreen}\itshape,
+  stringstyle=\color{red!70!black},
+  morestring=[b]"
+}
+
+\lstset{
+  backgroundcolor=\color{backcolour},
+  basicstyle=\ttfamily\small,
+  breakatwhitespace=false,
+  breaklines=true,
+  captionpos=b,
+  keepspaces=true,
+  numbers=left,
+  numbersep=7pt,
+  numberstyle=\tiny\color{codegray},
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  frame=single,
+  rulecolor=\color{codegray!40}
+}
+
+% Mathematical Macros
+\newcommand{\symterm}{\mathcal{T}}
+\newcommand{\embeds}{\trianglelefteq}
+\newcommand{\notembeds}{\ntrianglelefteq}
+\newcommand{\whistle}{\mathcal{W}}
+\newcommand{\evaluates}{\Downarrow}
+\newcommand{\msg}{\mathrm{msg}}
+\newcommand{\mrenv}{\rho}
+\newcommand{\mrheap}{\sigma}
+\newcommand{\env}{\rho}
+\newcommand{\heap}{\mu}
+\newcommand{\step}{\longrightarrow}
+\newcommand{\proctree}{\mathcal{P}}
+\newcommand{\sem}[1]{[\![ #1 ]\!]}
+
+% Headers and Footers
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[LO]{\slshape\nouppercase{\rightmark}}
+\fancyhead[RE]{\slshape\nouppercase{\leftmark}}
+\renewcommand{\headrulewidth}{0.4pt}

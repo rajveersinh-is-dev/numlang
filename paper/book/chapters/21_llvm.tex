@@ -1,0 +1,308 @@
+\chapter{LLVM Backend and Co-Optimization}
+\label{chap:llvm}
+
+\section{The Role of LLVM in NumLang}
+\label{sec:llvm:intro}
+
+While Cranelift provides instant compilation for JIT execution, the LLVM backend (\texttt{src/codegen/llvm\_backend.rs}, implemented using the \texttt{inkwell} Rust bindings) provides industrial-grade optimization for ahead-of-time (AOT) release builds.
+
+By supercompiling high-level recursion and deforestation into clean, canonical SSA MIR, NumLang presents LLVM with intermediate code that is uniquely receptive to low-level microarchitectural optimization:
+\begin{itemize}
+    \item Intermediate heap structures have already been eliminated by metacomputation.
+    \item Loops have been flattened into contiguous memory traversals.
+    \item Recurrences have been reduced to linear companion matrix powers.
+\end{itemize}
+
+\section{Type-Based Alias Analysis (TBAA) Tree Synthesis}
+\label{sec:llvm:tbaa}
+
+To enable LLVM to vectorize loops aggressively without fearing memory aliasing, NumLang synthesizes explicit Type-Based Alias Analysis (TBAA) metadata trees during code generation:
+\begin{enumerate}
+    \item The compiler emits a root TBAA metadata node representing all NumLang memory.
+    \item Struct fields and array slice allocations are assigned disjoint child nodes in the TBAA hierarchy.
+    \item Pointer load and store instructions attach \texttt{!tbaa} tags, proving statically to LLVM's alias analysis passes that array buffers never overlap with scalar environment records.
+\end{enumerate}
+
+\section{Parameter noalias Attributes}
+\label{sec:llvm:noalias}
+
+For all unique pointer parameters (such as arrays passed into specialized stencil kernels), the LLVM backend attaches the \texttt{noalias} parameter attribute. This guarantees that LLVM's auto-vectorizer can generate unrolled AVX2 SIMD instructions without emitting expensive runtime pointer alias checks.
+
+\section{AVX2 SIMD Unrolled Matrix Power Kernels}
+\label{sec:llvm:simd}
+
+For recurrence companion matrix systems (such as the coupled Fibonacci matrix power in \texttt{fib\_matrix}), the LLVM backend synthesizes specialized SIMD kernels using x86-64 AVX2 vector instructions:
+\begin{itemize}
+    \item Companion $2 \times 2$ matrices are packed into 256-bit SIMD registers (\texttt{<4 x i64>}).
+    \item Matrix multiplications execute via parallel vector broadcasts and SIMD multiply-accumulate sequences.
+    \item Binary exponentiation loops achieve sub-microsecond runtimes on modern hardware.
+\end{itemize}
+
+\section{The Inkwell LLVM Code Generation Pipeline}
+\label{sec:llvm:backend_impl}
+
+Listing~\ref{lst:llvm_backend_impl} reproduces the primary LLVM codegen pass from \texttt{src/codegen/llvm\_backend.rs}, emitting TBAA trees and vectorization hints:
+
+\begin{lstlisting}[language=Rust, caption={LLVM Code Generation and TBAA Construction (\texttt{src/codegen/llvm\_backend.rs}).}, label={lst:llvm_backend_impl}]
+//!
+//! Provides ahead-of-time (AOT) compilation of `MirProgram` to native object files (`.obj`)
+//! via LLVM (using the `inkwell` crate).
+//!
+//! When the `llvm-backend` Cargo feature is enabled, this module produces optimized machine code
+//! using LLVM's auto-vectorization, loop unrolling, and link-time optimizations.
+//! When disabled, it provides stub interfaces that report `LlvmError::BackendDisabled`.
+
+use std::path::Path;
+use thiserror::Error;
+use crate::mir::lower::MirProgram;
+
+/// LLVM optimization level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OptLevel {
+    O0,
+    O1,
+    #[default]
+    O2,
+    O3,
+}
+
+impl From<u8> for OptLevel {
+    fn from(val: u8) -> Self {
+        match val {
+            0 => OptLevel::O0,
+            1 => OptLevel::O1,
+            3 => OptLevel::O3,
+            _ => OptLevel::O2,
+        }
+    }
+}
+
+impl std::str::FromStr for OptLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "0" | "o0" | "O0" => Ok(OptLevel::O0),
+            "1" | "o1" | "O1" => Ok(OptLevel::O1),
+            "2" | "o2" | "O2" => Ok(OptLevel::O2),
+            "3" | "o3" | "O3" => Ok(OptLevel::O3),
+            other => Err(format!(
+                "Invalid optimization level '{}'. Expected 0, 1, 2, or 3.",
+                other
+            )),
+        }
+    }
+}
+
+/// Errors occurring during LLVM backend compilation.
+#[derive(Debug, Error)]
+pub enum LlvmError {
+    #[error("LLVM backend is not enabled in this build. Rebuild with `--features llvm-backend` to enable LLVM codegen.")]
+    BackendDisabled,
+
+    #[error("LLVM target initialization error: {0}")]
+    TargetInitError(String),
+
+    #[error("LLVM type lowering error: {0}")]
+    TypeLoweringError(String),
+
+    #[error("LLVM codegen error: {0}")]
+    CodegenError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+#[cfg(not(feature = "llvm-backend"))]
+pub struct LlvmCompiler {
+    opt_level: OptLevel,
+}
+
+#[cfg(not(feature = "llvm-backend"))]
+impl LlvmCompiler {
+    pub fn new(opt_level: OptLevel) -> Self {
+        Self { opt_level }
+    }
+
+    pub fn opt_level(&self) -> OptLevel {
+        self.opt_level
+    }
+
+    /// Emit textual LLVM IR with TBAA trees, noalias attributes, and loop vectorization metadata.
+    pub fn emit_llvm_ir(&self, program: &MirProgram) -> Result<String, LlvmError> {
+        emit_text_llvm_ir(program, self.opt_level)
+    }
+
+    /// Compile a `MirProgram` to an object file (`.obj`).
+    pub fn compile_mir_to_obj(
+        &mut self,
+        _program: &MirProgram,
+        _output_path: &Path,
+    ) -> Result<(), LlvmError> {
+        Err(LlvmError::BackendDisabled)
+    }
+
+    /// Compile a `MirProgram` to in-memory object bytes.
+    pub fn compile_mir_to_obj_bytes(
+        &mut self,
+        _program: &MirProgram,
+    ) -> Result<Vec<u8>, LlvmError> {
+        Err(LlvmError::BackendDisabled)
+    }
+}
+
+#[cfg(feature = "llvm-backend")]
+pub struct LlvmCompiler {
+    context: inkwell::context::Context,
+    opt_level: OptLevel,
+    struct_fields: std::collections::HashMap<String, Vec<(String, crate::typecheck::types::Type)>>,
+}
+
+#[cfg(feature = "llvm-backend")]
+impl LlvmCompiler {
+    pub fn new(opt_level: OptLevel) -> Self {
+        let context = inkwell::context::Context::create();
+        Self {
+            context,
+            opt_level,
+            struct_fields: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn opt_level(&self) -> OptLevel {
+        self.opt_level
+    }
+
+    /// Emit textual LLVM IR with TBAA trees, noalias attributes, and loop vectorization metadata.
+    pub fn emit_llvm_ir(&self, program: &MirProgram) -> Result<String, LlvmError> {
+        emit_text_llvm_ir(program, self.opt_level)
+    }
+
+    /// Compile a `MirProgram` to an object file (.obj) on disk.
+    pub fn compile_mir_to_obj(
+        &mut self,
+        program: &MirProgram,
+        output_path: &Path,
+    ) -> Result<(), LlvmError> {
+        let bytes = self.compile_mir_to_obj_bytes(program)?;
+        std::fs::write(output_path, bytes)?;
+        Ok(())
+    }
+
+    /// Compile a `MirProgram` to in-memory object bytes.
+    pub fn compile_mir_to_obj_bytes(
+        &mut self,
+        program: &MirProgram,
+    ) -> Result<Vec<u8>, LlvmError> {
+        use inkwell::{
+            module::{Linkage, Module},
+            passes::PassManager,
+            targets::{
+                CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
+                TargetTriple,
+            },
+            OptimizationLevel,
+        };
+
+        let module = self.context.create_module("numlang_module");
+        let builder = self.context.create_builder();
+
+        // 1. Lower struct definitions
+        self.struct_fields.clear();
+        for s in &program.structs {
+            self.struct_fields.insert(s.name.clone(), s.fields.clone());
+        }
+
+        let mut struct_types = std::collections::HashMap::new();
+        for s in &program.structs {
+            let st = self.context.opaque_struct_type(&s.name);
+            struct_types.insert(s.name.clone(), st);
+        }
+
+        for s in &program.structs {
+            let st = struct_types.get(&s.name).unwrap();
+            let mut field_tys = Vec::with_capacity(s.fields.len());
+            for (_, field_ty) in &s.fields {
+                let llvm_ty = self.type_to_llvm_basic(field_ty, &struct_types)?;
+                field_tys.push(llvm_ty);
+            }
+            st.set_body(&field_tys, false);
+        }
+
+        // 2. Declare all functions
+        let mut func_vals = std::collections::HashMap::new();
+        for func in &program.functions {
+            let mut param_tys = Vec::with_capacity(func.params.len());
+            for (_, p_ty) in &func.params {
+                let llvm_ty = self.type_to_llvm_basic(p_ty, &struct_types)?;
+                param_tys.push(llvm_ty.into());
+            }
+
+            let fn_type = if func.return_ty == crate::typecheck::types::Type::Void {
+                self.context.void_type().fn_type(&param_tys, false)
+            } else {
+                let ret_llvm = self.type_to_llvm_basic(&func.return_ty, &struct_types)?;
+                ret_llvm.fn_type(&param_tys, false)
+            };
+
+            let fn_val = module.add_function(&func.name, fn_type, Some(Linkage::External));
+            func_vals.insert(func.name.clone(), fn_val);
+        }
+
+        // 3. Declare intrinsic / external functions
+        self.declare_intrinsics(&module, &mut func_vals);
+
+        // 4. Compile function bodies
+        for func in &program.functions {
+            self.compile_mir_function(func, &module, &builder, &struct_types, &func_vals)?;
+        }
+
+        // 5. Emit Windows entry point `mainCRTStartup` if `main` is present on Windows
+        #[cfg(target_os = "windows")]
+        if let Some(&main_fn) = func_vals.get("main") {
+            self.emit_windows_entry_point(&module, &builder, main_fn);
+        }
+
+        // 6. Run LLVM optimization pipeline
+        self.run_optimization_passes(&module);
+
+        // 7. Emit object file bytes via TargetMachine
+        Target::initialize_x86(&InitializationConfig::default());
+        #[cfg(target_os = "windows")]
+        let triple_str = "x86_64-pc-windows-msvc";
+        #[cfg(target_os = "linux")]
+        let triple_str = "x86_64-unknown-linux-gnu";
+        #[cfg(target_os = "macos")]
+        let triple_str = "x86_64-apple-darwin";
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        let triple_str = "x86_64-unknown-linux-gnu";
+        let triple = TargetTriple::create(triple_str);
+        let target = Target::from_triple(&triple)
+            .map_err(|e| LlvmError::TargetInitError(e.to_string()))?;
+
+        let opt_llvm = match self.opt_level {
+            OptLevel::O0 => OptimizationLevel::None,
+            OptLevel::O1 => OptimizationLevel::Less,
+            OptLevel::O2 => OptimizationLevel::Default,
+            OptLevel::O3 => OptimizationLevel::Aggressive,
+        };
+
+        let target_machine = target
+            .create_target_machine(
+                &triple,
+                "x86-64",
+                "+avx2",
+                opt_llvm,
+                RelocMode::Default,
+                CodeModel::Default,
+            )
+            .ok_or_else(|| {
+                LlvmError::TargetInitError("Failed to initialize LLVM target machine".to_string())
+            })?;
+
+        let memory_buffer = target_machine
+            .write_to_memory_buffer(&module, FileType::Object)
+            .map_err(|e| LlvmError::CodegenError(e.to_string()))?;
+
+
+\end{lstlisting}

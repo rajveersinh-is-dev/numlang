@@ -1,0 +1,75 @@
+\documentclass[12pt,a4paper,openright,twoside]{book}
+\input{preamble}
+
+\title{\Huge\bfseries NumLang: Principles, Construction, and Mechanized Verification of a General Higher-Order Supercompiler for Native SSA Execution\\[1em]
+\Large An Exhaustive Architecture and Mathematical Reference}
+\author{\Large\textbf{Rajveersinh Jadeja}\\[0.5em]
+NumLang Engineering \& Formal Verification Group}
+\date{\today}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+This monograph presents the complete theoretical foundations, implementation architecture, and machine-checked formal verification of \textbf{NumLang}, an optimizing systems language and supercompiler. Spanning 66 systematic engineering phases, NumLang bridges four decades of separation between academic metacomputation (positive supercompilation, distillation, MRSC) and production-grade native compilation pipelines (SSA mid-level IR, Cranelift, LLVM, alias analysis, polyhedral scheduling). 
+
+Supercompilation, originally proposed by Valentin Turchin in 1986, promises radical program transformations by executing programs symbolically, constructing process trees of future computational states, and folding recurring configurations into optimal loops. However, practical industrial adoption was historically hindered by three fatal obstacles: the termination whistle explosion, the impedance mismatch between functional term rewriting and mutable Static Single Assignment (SSA) form, and the total lack of machine-checked semantic preservation proofs.
+
+NumLang resolves all three barriers simultaneously. By establishing a size-filtered homeomorphic embedding whistle backed by Kruskal's Tree Theorem, formulating symbolic driving directly over SSA Basic Blocks and Memory Tokens, deriving closed-form recurrences via polynomial difference tables and companion matrix exponentiation, and proving whole-program soundness in Lean 4 with zero unproven axioms and zero \texttt{sorry} gaps, NumLang demonstrates that general supercompilation is not merely feasible for systems programming, but delivers unprecedented speedups exceeding $100,000\times$ on recurrence workloads while rigorously preserving operational semantics.
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\mainmatter
+
+\part{Foundations of SSA Supercompilation}
+\include{chapters/01_introduction}
+\include{chapters/02_background}
+\include{chapters/03_language}
+\include{chapters/04_types}
+\include{chapters/05_ir}
+\include{chapters/06_architecture}
+
+\part{The Supercompiler Engine}
+\include{chapters/07_symbolic_state}
+\include{chapters/08_driving}
+\include{chapters/09_termination}
+\include{chapters/10_generalization}
+\include{chapters/11_distillation}
+\include{chapters/12_mrsc}
+\include{chapters/13_recurrences}
+\include{chapters/14_higher_order}
+
+\part{Advanced Compiler Optimizations}
+\include{chapters/15_refinements}
+\include{chapters/16_polyhedral}
+\include{chapters/17_compaction}
+\include{chapters/18_parallel}
+\include{chapters/19_speculative}
+
+\part{Native Code Generation and Validation}
+\include{chapters/20_cranelift}
+\include{chapters/21_llvm}
+\include{chapters/22_validation}
+
+\part{Mechanized Formal Verification in Lean 4}
+\include{chapters/23_lean_semantics}
+\include{chapters/24_preservation}
+\include{chapters/25_termination_proof}
+
+\part{Empirical Evaluation, Limitations, and Roadmap}
+\include{chapters/26_futamura}
+\include{chapters/27_evaluation}
+\include{chapters/28_testing}
+\include{chapters/29_limitations}
+\include{chapters/30_conclusion}
+
+\backmatter
+\bibliographystyle{alpha}
+\bibliography{references}
+
+\end{document}
