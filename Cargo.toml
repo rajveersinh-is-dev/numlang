@@ -2,7 +2,7 @@
 name = "numlang"
 version = "0.1.0"
 edition = "2021"
-authors = ["numlang team"]
+authors = ["Rajveersinh Pardeshi"]
 description = "A fast, statically typed compiled programming language for numerical computing"
 default-run = "numlang"
 
