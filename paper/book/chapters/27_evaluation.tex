@@ -32,7 +32,7 @@ The empirical benchmarks were executed on an AMD/Intel x86-64 workstation runnin
 
 \begin{table}[htbp]
 \centering
-\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{llccccr}
 \toprule
 \textbf{Benchmark} & \textbf{Category} & \textbf{NumLang-SC} & \textbf{NumLang-Base} & \textbf{Rustc-O} & \textbf{MSVC-O2} & \textbf{Winner} \\
@@ -54,7 +54,8 @@ The empirical benchmarks were executed on an AMD/Intel x86-64 workstation runnin
 \texttt{sum\_map} & G3: Higher-Order & \textbf{100\,ns} & 393.30\,$\mu$s & 984.10\,$\mu$s & 355.50\,$\mu$s & \textbf{NumLang-SC} \\
 \texttt{stream\_take} & G3: Higher-Order & \textbf{11.70\,$\mu$s} & 45.30\,$\mu$s & 26.50\,$\mu$s & 37.00\,$\mu$s & \textbf{NumLang-SC} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{The NumLang Supercompiler Showdown Empirical Results Table. ($^*$ indicates $O(1)$ compile-time collapse within timer quantization floor; $^\dagger$ indicates compile-time constant evaluation).}
 \label{tab:showdown_full_results}
 \end{table}

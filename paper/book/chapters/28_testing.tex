@@ -33,7 +33,7 @@ Table~\ref{tab:test_suites} summarizes key test suites and their verification cl
 
 \begin{table}[h!]
 \centering
-\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lp{10cm}}
 \toprule
 \textbf{Test Suite File} & \textbf{Core Verification Claim} \\
@@ -45,7 +45,8 @@ Table~\ref{tab:test_suites} summarizes key test suites and their verification cl
 \texttt{deep\_recursion\_safety\_tests.rs} & Verifies CPS trampoline driving at depth $>10,000$. \\
 \texttt{futamura2\_binary\_tests.rs} & Validates independent compilation via \texttt{minspec\_cogen.exe}. \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Key specialized verification test suites in NumLang.}
 \label{tab:test_suites}
 \end{table}

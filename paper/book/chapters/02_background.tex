@@ -169,7 +169,7 @@ Table~\ref{tab:competitor_comparison} positions NumLang against all prominent su
 
 \begin{table}[h!]
 \centering
-\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccccc}
 \toprule
 \textbf{Capability} & \textbf{NumLang} & \textbf{GHC-SC} & \textbf{HOSC} & \textbf{SPSC} & \textbf{Polly} & \textbf{MRSC-proto} \\
@@ -184,7 +184,8 @@ Reynolds Defunctionalization & Whole-Program & None & None & None & N/A & None \
 Proof Mechanization & Lean 4 (0 axiom) & Pen-and-paper & None & Coq (partial) & None & None \\
 Futamura Projections & Full (1, 2, 3) & None & None & Partial & N/A & None \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Comprehensive architectural comparison of NumLang against competing systems.}
 \label{tab:competitor_comparison}
 \end{table}

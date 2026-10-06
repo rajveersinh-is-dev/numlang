@@ -227,7 +227,7 @@ impl fmt::Display for SupercompilerStats {
     }
 }
 
-/// A single whistle-firing event --- records that the HE check detected `ancestor ⊴ descendant`
+/// A single whistle-firing event --- records that the HE check detected `ancestor <= descendant`
 /// at node `from_id`, causing a knot to be tied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhistleFiring {

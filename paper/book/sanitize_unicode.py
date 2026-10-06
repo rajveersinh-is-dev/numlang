@@ -7,6 +7,17 @@ replacements = {
     '\u201d': "''",  # right double quote
     '\u2018': '`',   # left single quote
     '\u2019': "'",   # right single quote
+    '→': '->',
+    '←': '<-',
+    '↔': '<->',
+    '∀': 'forall ',
+    '∈': ' in ',
+    '≠': '!=',
+    '≤': '<=',
+    '≥': '>=',
+    '×': ' x ',
+    '·': '  - ',
+    '⊴': '<=',
 }
 
 for f in glob.glob('paper/book/chapters/*.tex'):
