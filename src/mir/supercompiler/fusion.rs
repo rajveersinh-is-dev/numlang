@@ -43,7 +43,7 @@ pub fn build_alias_map(func: &MirFunction) -> HashMap<String, String> {
     // Resolve chains: a -> b -> c
     let keys: Vec<String> = aliases.keys().cloned().collect();
     for k in keys {
-        let mut curr = aliases.get(&k).cloned().unwrap();
+        let mut curr = aliases.get(&k).cloned().unwrap_or_else(|| k.clone());
         let mut depth = 0;
         while let Some(next) = aliases.get(&curr) {
             if *next == curr || depth > 20 {

@@ -173,7 +173,7 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
                 new_in.insert(thunk.clone(), Demand::FullyDemanded);
             }
 
-            let curr_in = in_demands.get_mut(&block.id).expect("block exists");
+            let Some(curr_in) = in_demands.get_mut(&block.id) else { continue; };
             if *curr_in != new_in {
                 *curr_in = new_in;
                 changed = true;

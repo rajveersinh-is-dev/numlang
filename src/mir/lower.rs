@@ -148,7 +148,7 @@ impl MirBuilder {
     }
 
     fn lower_expr(&mut self, expr: &TypedExpr, target_place: Option<Place>) -> Place {
-        let block_id = self.current_block.clone().expect("must be in a block");
+        let block_id = self.current_block.clone().unwrap_or(crate::mir::BasicBlockId(0));
         let ty = expr.ty();
 
         let place = target_place.unwrap_or_else(|| self.new_temp(ty.clone()));

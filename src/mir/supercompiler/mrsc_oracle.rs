@@ -215,7 +215,7 @@ impl<'a> MrscOracleEngine<'a> {
         let best = frontier
             .select_optimal(self.config.objective)
             .cloned()
-            .expect("Frontier is non-empty");
+            .unwrap_or_else(|| frontier.candidates[0].clone());
 
         (frontier, best)
     }

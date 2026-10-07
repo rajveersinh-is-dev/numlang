@@ -7,6 +7,28 @@
 //! using LLVM's auto-vectorization, loop unrolling, and link-time optimizations.
 //! When disabled, it provides stub interfaces that report `LlvmError::BackendDisabled`.
 
+pub trait UnwrapOrLlvmError<T> {
+    fn unwrap_or_err(self) -> Result<T, LlvmError>;
+    fn expect_or_err(self, msg: &str) -> Result<T, LlvmError>;
+}
+impl<T, E: std::fmt::Debug> UnwrapOrLlvmError<T> for Result<T, E> {
+    fn unwrap_or_err(self) -> Result<T, LlvmError> {
+        self.map_err(|e| LlvmError::CodegenError(format!("{:?}", e)))
+    }
+    fn expect_or_err(self, msg: &str) -> Result<T, LlvmError> {
+        self.map_err(|e| LlvmError::CodegenError(format!("{}: {:?}", msg, e)))
+    }
+}
+impl<T> UnwrapOrLlvmError<T> for Option<T> {
+    fn unwrap_or_err(self) -> Result<T, LlvmError> {
+        self.ok_or_else(|| LlvmError::CodegenError("unwrap failed".into()))
+    }
+    fn expect_or_err(self, msg: &str) -> Result<T, LlvmError> {
+        self.ok_or_else(|| LlvmError::CodegenError(msg.into()))
+    }
+}
+
+
 use std::path::Path;
 use thiserror::Error;
 use crate::mir::lower::MirProgram;
@@ -175,7 +197,7 @@ impl LlvmCompiler {
         }
 
         for s in &program.structs {
-            let st = struct_types.get(&s.name).unwrap();
+            let st = struct_types.get(&s.name).unwrap_or_err()?;
             let mut field_tys = Vec::with_capacity(s.fields.len());
             for (_, field_ty) in &s.fields {
                 let llvm_ty = self.type_to_llvm_basic(field_ty, &struct_types)?;
@@ -366,7 +388,7 @@ impl LlvmCompiler {
         let entry_bb = self.context.append_basic_block(entry_fn, "entry");
         builder.position_at_end(entry_bb);
 
-        let call_res = builder.build_direct_call(main_fn, &[], "main_call").unwrap();
+        let call_res = builder.build_direct_call(main_fn, &[], "main_call").unwrap_or_err()?;
         let exit_code = match call_res.try_as_basic_value().left() {
             Some(val) if val.is_int_value() => {
                 let iv = val.into_int_value();
@@ -374,19 +396,19 @@ impl LlvmCompiler {
                 if width == 32 {
                     iv
                 } else if width > 32 {
-                    builder.build_int_truncate(iv, self.context.i32_type(), "exit_code").unwrap()
+                    builder.build_int_truncate(iv, self.context.i32_type(), "exit_code").unwrap_or_err()?
                 } else {
-                    builder.build_int_z_extend(iv, self.context.i32_type(), "exit_code").unwrap()
+                    builder.build_int_z_extend(iv, self.context.i32_type(), "exit_code").unwrap_or_err()?
                 }
             }
             _ => self.context.i32_type().const_int(0, false),
         };
 
         if let Some(exit_fn) = module.get_function("ExitProcess") {
-            builder.build_direct_call(exit_fn, &[exit_code.into()], "").unwrap();
+            builder.build_direct_call(exit_fn, &[exit_code.into()], "").unwrap_or_err()?;
         }
 
-        builder.build_return(None).unwrap();
+        builder.build_return(None).unwrap_or_err()?;
     }
 
     fn type_to_llvm_basic(
@@ -433,16 +455,16 @@ impl LlvmCompiler {
         use crate::mir::{BasicBlockId, Terminator};
         use crate::typecheck::types::Type;
 
-        let fn_val = *func_vals.get(&func.name).unwrap();
+        let fn_val = *func_vals.get(&func.name).unwrap_or_err()?;
 
         if func.blocks.is_empty() {
             let bb = self.context.append_basic_block(fn_val, "entry");
             builder.position_at_end(bb);
             if func.return_ty == Type::Void {
-                builder.build_return(None).unwrap();
+                builder.build_return(None).unwrap_or_err()?;
             } else {
                 let zero = self.type_to_llvm_basic(&func.return_ty, struct_types)?.const_zero();
-                builder.build_return(Some(&zero)).unwrap();
+                builder.build_return(Some(&zero)).unwrap_or_err()?;
             }
             return Ok(());
         }
@@ -467,9 +489,9 @@ impl LlvmCompiler {
         // 1. Alloca for parameters and store incoming arg values
         for (i, (name, p_ty)) in func.params.iter().enumerate() {
             let llvm_ty = self.type_to_llvm_basic(p_ty, struct_types)?;
-            let alloca = builder.build_alloca(llvm_ty, name).unwrap();
-            let arg_val = fn_val.get_nth_param(i as u32).unwrap();
-            builder.build_store(alloca, arg_val).unwrap();
+            let alloca = builder.build_alloca(llvm_ty, name).unwrap_or_err()?;
+            let arg_val = fn_val.get_nth_param(i as u32).unwrap_or_err()?;
+            builder.build_store(alloca, arg_val).unwrap_or_err()?;
             local_allocas.insert(name.clone(), (alloca, p_ty.clone()));
         }
 
@@ -477,18 +499,18 @@ impl LlvmCompiler {
         for local in &func.locals {
             if !local_allocas.contains_key(&local.name) {
                 let llvm_ty = self.type_to_llvm_basic(&local.ty, struct_types)?;
-                let alloca = builder.build_alloca(llvm_ty, &local.name).unwrap();
+                let alloca = builder.build_alloca(llvm_ty, &local.name).unwrap_or_err()?;
                 local_allocas.insert(local.name.clone(), (alloca, local.ty.clone()));
             }
         }
 
         // Jump from entry_allocas to the first MIR block
-        let first_bb = bb_map.get(&func.blocks[0].id).unwrap();
-        builder.build_unconditional_branch(*first_bb).unwrap();
+        let first_bb = bb_map.get(&func.blocks[0].id).unwrap_or_err()?;
+        builder.build_unconditional_branch(*first_bb).unwrap_or_err()?;
 
         // Compile statements and terminator for each block
         for b in &func.blocks {
-            let current_bb = *bb_map.get(&b.id).unwrap();
+            let current_bb = *bb_map.get(&b.id).unwrap_or_err()?;
             builder.position_at_end(current_bb);
 
             for stmt in &b.statements {
@@ -497,8 +519,8 @@ impl LlvmCompiler {
 
             match &b.terminator {
                 Terminator::Branch { target } => {
-                    let target_bb = bb_map.get(target).unwrap();
-                    builder.build_unconditional_branch(*target_bb).unwrap();
+                    let target_bb = bb_map.get(target).unwrap_or_err()?;
+                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
                 }
                 Terminator::BranchIf {
                     condition,
@@ -507,11 +529,11 @@ impl LlvmCompiler {
                 } => {
                     let cond_val = self.eval_place_val(condition, builder, struct_types, &local_allocas)?;
                     let cond_int = cond_val.into_int_value();
-                    let then_bb = bb_map.get(then_target).unwrap();
-                    let else_bb = bb_map.get(else_target).unwrap();
+                    let then_bb = bb_map.get(then_target).unwrap_or_err()?;
+                    let else_bb = bb_map.get(else_target).unwrap_or_err()?;
                     builder
                         .build_conditional_branch(cond_int, *then_bb, *else_bb)
-                        .unwrap();
+                        .unwrap_or_err()?;
                 }
                 Terminator::Switch {
                     value,
@@ -519,10 +541,10 @@ impl LlvmCompiler {
                     default,
                 } => {
                     let val = self.eval_place_val(value, builder, struct_types, &local_allocas)?.into_int_value();
-                    let default_bb = *bb_map.get(default).unwrap();
-                    let switch = builder.build_switch(val, default_bb, targets.len() as u32).unwrap();
+                    let default_bb = *bb_map.get(default).unwrap_or_err()?;
+                    let switch = builder.build_switch(val, default_bb, targets.len() as u32).unwrap_or_err()?;
                     for (case_val, target_id) in targets {
-                        let target_bb = *bb_map.get(target_id).unwrap();
+                        let target_bb = *bb_map.get(target_id).unwrap_or_err()?;
                         let case_const = val.get_type().const_int(*case_val as u64, false);
                         switch.add_case(case_const, target_bb);
                     }
@@ -530,31 +552,31 @@ impl LlvmCompiler {
                 Terminator::Return { value } => {
                     if let Some(val_place) = value {
                         let ret_val = self.eval_place_val(val_place, builder, struct_types, &local_allocas)?;
-                        builder.build_return(Some(&ret_val)).unwrap();
+                        builder.build_return(Some(&ret_val)).unwrap_or_err()?;
                     } else {
-                        builder.build_return(None).unwrap();
+                        builder.build_return(None).unwrap_or_err()?;
                     }
                 }
                 Terminator::Unreachable => {
-                    builder.build_unreachable().unwrap();
+                    builder.build_unreachable().unwrap_or_err()?;
                 }
                 Terminator::Fork { left, .. } => {
-                    let target_bb = bb_map.get(left).unwrap();
-                    builder.build_unconditional_branch(*target_bb).unwrap();
+                    let target_bb = bb_map.get(left).unwrap_or_err()?;
+                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
                 }
                 Terminator::Force { cont, .. } => {
-                    let target_bb = bb_map.get(cont).unwrap();
-                    builder.build_unconditional_branch(*target_bb).unwrap();
+                    let target_bb = bb_map.get(cont).unwrap_or_err()?;
+                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
                 }
                 Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
-                    let fast_bb = bb_map.get(fast_path).unwrap();
-                    let deopt_bb = bb_map.get(deopt_stub).unwrap();
+                    let fast_bb = bb_map.get(fast_path).unwrap_or_err()?;
+                    let deopt_bb = bb_map.get(deopt_stub).unwrap_or_err()?;
                     let cond_val = context.bool_type().const_int(1, false);
-                    builder.build_conditional_branch(cond_val, *fast_bb, *deopt_bb).unwrap();
+                    builder.build_conditional_branch(cond_val, *fast_bb, *deopt_bb).unwrap_or_err()?;
                 }
                 Terminator::IndirectCall { next, .. } => {
-                    let target_bb = bb_map.get(next).unwrap();
-                    builder.build_unconditional_branch(*target_bb).unwrap();
+                    let target_bb = bb_map.get(next).unwrap_or_err()?;
+                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
                 }
             }
         }
@@ -582,15 +604,15 @@ impl LlvmCompiler {
                 Projection::Deref => {
                     // Dereference pointer
                     let elem_llvm_ty = self.type_to_llvm_basic(&current_ty, struct_types)?;
-                    let loaded = builder.build_load(elem_llvm_ty, current_ptr, "deref").unwrap();
+                    let loaded = builder.build_load(elem_llvm_ty, current_ptr, "deref").unwrap_or_err()?;
                     current_ptr = loaded.into_pointer_value();
                 }
                 Projection::Field(field_name) => {
                     if let Type::Struct(ref s_name) = current_ty {
-                        let st = struct_types.get(s_name).unwrap();
+                        let st = struct_types.get(s_name).unwrap_or_err()?;
                         // Find field index
                         let field_idx = self.find_struct_field_index(s_name, field_name)?;
-                        current_ptr = builder.build_struct_gep(*st, current_ptr, field_idx, field_name).unwrap();
+                        current_ptr = builder.build_struct_gep(*st, current_ptr, field_idx, field_name).unwrap_or_err()?;
                         current_ty = self.find_struct_field_type(s_name, field_name)?;
                     } else {
                         return Err(LlvmError::CodegenError(format!(
@@ -609,7 +631,7 @@ impl LlvmCompiler {
                         unsafe {
                             current_ptr = builder
                                 .build_gep(arr_llvm_ty, current_ptr, &[zero, idx_int], "arr_idx_gep")
-                                .unwrap();
+                                .unwrap_or_err()?;
                         }
                         current_ty = *elem_ty.clone();
                     } else {
@@ -627,13 +649,13 @@ impl LlvmCompiler {
                             current_ptr,
                             "load_enum_ptr",
                         )
-                        .unwrap()
+                        .unwrap_or_err()?
                         .into_pointer_value();
                     let offset = self.context.i64_type().const_int((1 + idx) as u64, false);
                     unsafe {
                         current_ptr = builder
                             .build_gep(i64_type, base_ptr, &[offset], "payload_ptr")
-                            .unwrap();
+                            .unwrap_or_err()?;
                     }
                     current_ty = Type::I64;
                 }
@@ -652,7 +674,7 @@ impl LlvmCompiler {
     ) -> Result<inkwell::values::BasicValueEnum, LlvmError> {
         let (ptr, ty) = self.eval_place_ptr(place, builder, struct_types, local_allocas)?;
         let llvm_ty = self.type_to_llvm_basic(&ty, struct_types)?;
-        let loaded = builder.build_load(llvm_ty, ptr, &format!("{}_val", place.local)).unwrap();
+        let loaded = builder.build_load(llvm_ty, ptr, &format!("{}_val", place.local)).unwrap_or_err()?;
         Ok(loaded)
     }
 
@@ -689,7 +711,7 @@ impl LlvmCompiler {
                             Some(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into())
                         }
                         TypedLiteral::Str(s) => {
-                            let global_str = builder.build_global_string_ptr(s, "str_const").unwrap();
+                            let global_str = builder.build_global_string_ptr(s, "str_const").unwrap_or_err()?;
                             Some(global_str.as_basic_value_enum())
                         }
                     },
@@ -703,45 +725,45 @@ impl LlvmCompiler {
                             let signed = dest_ty.is_signed();
 
                             let res = match op {
-                                BinaryOp::Add => builder.build_int_add(l, r, "add").unwrap(),
-                                BinaryOp::Sub => builder.build_int_sub(l, r, "sub").unwrap(),
-                                BinaryOp::Mul => builder.build_int_mul(l, r, "mul").unwrap(),
+                                BinaryOp::Add => builder.build_int_add(l, r, "add").unwrap_or_err()?,
+                                BinaryOp::Sub => builder.build_int_sub(l, r, "sub").unwrap_or_err()?,
+                                BinaryOp::Mul => builder.build_int_mul(l, r, "mul").unwrap_or_err()?,
                                 BinaryOp::Div => {
                                     if signed {
-                                        builder.build_int_signed_div(l, r, "sdiv").unwrap()
+                                        builder.build_int_signed_div(l, r, "sdiv").unwrap_or_err()?
                                     } else {
-                                        builder.build_int_unsigned_div(l, r, "udiv").unwrap()
+                                        builder.build_int_unsigned_div(l, r, "udiv").unwrap_or_err()?
                                     }
                                 }
                                 BinaryOp::Mod => {
                                     if signed {
-                                        builder.build_int_signed_rem(l, r, "srem").unwrap()
+                                        builder.build_int_signed_rem(l, r, "srem").unwrap_or_err()?
                                     } else {
-                                        builder.build_int_unsigned_rem(l, r, "urem").unwrap()
+                                        builder.build_int_unsigned_rem(l, r, "urem").unwrap_or_err()?
                                     }
                                 }
-                                BinaryOp::BitAnd => builder.build_int_and(l, r, "and").unwrap(),
-                                BinaryOp::BitOr => builder.build_int_or(l, r, "or").unwrap(),
-                                BinaryOp::BitXor => builder.build_int_xor(l, r, "xor").unwrap(),
-                                BinaryOp::Shl => builder.build_left_shift(l, r, "shl").unwrap(),
-                                BinaryOp::Shr => builder.build_right_shift(l, r, signed, "shr").unwrap(),
-                                BinaryOp::Eq => builder.build_int_compare(inkwell::IntPredicate::EQ, l, r, "eq").unwrap(),
-                                BinaryOp::Ne => builder.build_int_compare(inkwell::IntPredicate::NE, l, r, "ne").unwrap(),
+                                BinaryOp::BitAnd => builder.build_int_and(l, r, "and").unwrap_or_err()?,
+                                BinaryOp::BitOr => builder.build_int_or(l, r, "or").unwrap_or_err()?,
+                                BinaryOp::BitXor => builder.build_int_xor(l, r, "xor").unwrap_or_err()?,
+                                BinaryOp::Shl => builder.build_left_shift(l, r, "shl").unwrap_or_err()?,
+                                BinaryOp::Shr => builder.build_right_shift(l, r, signed, "shr").unwrap_or_err()?,
+                                BinaryOp::Eq => builder.build_int_compare(inkwell::IntPredicate::EQ, l, r, "eq").unwrap_or_err()?,
+                                BinaryOp::Ne => builder.build_int_compare(inkwell::IntPredicate::NE, l, r, "ne").unwrap_or_err()?,
                                 BinaryOp::Lt => {
                                     let pred = if signed { inkwell::IntPredicate::SLT } else { inkwell::IntPredicate::ULT };
-                                    builder.build_int_compare(pred, l, r, "lt").unwrap()
+                                    builder.build_int_compare(pred, l, r, "lt").unwrap_or_err()?
                                 }
                                 BinaryOp::Le => {
                                     let pred = if signed { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::ULE };
-                                    builder.build_int_compare(pred, l, r, "le").unwrap()
+                                    builder.build_int_compare(pred, l, r, "le").unwrap_or_err()?
                                 }
                                 BinaryOp::Gt => {
                                     let pred = if signed { inkwell::IntPredicate::SGT } else { inkwell::IntPredicate::UGT };
-                                    builder.build_int_compare(pred, l, r, "gt").unwrap()
+                                    builder.build_int_compare(pred, l, r, "gt").unwrap_or_err()?
                                 }
                                 BinaryOp::Ge => {
                                     let pred = if signed { inkwell::IntPredicate::SGE } else { inkwell::IntPredicate::UGE };
-                                    builder.build_int_compare(pred, l, r, "ge").unwrap()
+                                    builder.build_int_compare(pred, l, r, "ge").unwrap_or_err()?
                                 }
                                 BinaryOp::Pow => {
                                     // Power operation: inline simple integer exponentiation loop
@@ -754,17 +776,17 @@ impl LlvmCompiler {
                             let r = r_val.into_float_value();
 
                             let res: inkwell::values::BasicValueEnum = match op {
-                                BinaryOp::Add => builder.build_float_add(l, r, "fadd").unwrap().into(),
-                                BinaryOp::Sub => builder.build_float_sub(l, r, "fsub").unwrap().into(),
-                                BinaryOp::Mul => builder.build_float_mul(l, r, "fmul").unwrap().into(),
-                                BinaryOp::Div => builder.build_float_div(l, r, "fdiv").unwrap().into(),
-                                BinaryOp::Mod => builder.build_float_rem(l, r, "frem").unwrap().into(),
-                                BinaryOp::Eq => builder.build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feq").unwrap().into(),
-                                BinaryOp::Ne => builder.build_float_compare(inkwell::FloatPredicate::ONE, l, r, "fne").unwrap().into(),
-                                BinaryOp::Lt => builder.build_float_compare(inkwell::FloatPredicate::OLT, l, r, "flt").unwrap().into(),
-                                BinaryOp::Le => builder.build_float_compare(inkwell::FloatPredicate::OLE, l, r, "fle").unwrap().into(),
-                                BinaryOp::Gt => builder.build_float_compare(inkwell::FloatPredicate::OGT, l, r, "fgt").unwrap().into(),
-                                BinaryOp::Ge => builder.build_float_compare(inkwell::FloatPredicate::OGE, l, r, "fge").unwrap().into(),
+                                BinaryOp::Add => builder.build_float_add(l, r, "fadd").unwrap_or_err()?.into(),
+                                BinaryOp::Sub => builder.build_float_sub(l, r, "fsub").unwrap_or_err()?.into(),
+                                BinaryOp::Mul => builder.build_float_mul(l, r, "fmul").unwrap_or_err()?.into(),
+                                BinaryOp::Div => builder.build_float_div(l, r, "fdiv").unwrap_or_err()?.into(),
+                                BinaryOp::Mod => builder.build_float_rem(l, r, "frem").unwrap_or_err()?.into(),
+                                BinaryOp::Eq => builder.build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feq").unwrap_or_err()?.into(),
+                                BinaryOp::Ne => builder.build_float_compare(inkwell::FloatPredicate::ONE, l, r, "fne").unwrap_or_err()?.into(),
+                                BinaryOp::Lt => builder.build_float_compare(inkwell::FloatPredicate::OLT, l, r, "flt").unwrap_or_err()?.into(),
+                                BinaryOp::Le => builder.build_float_compare(inkwell::FloatPredicate::OLE, l, r, "fle").unwrap_or_err()?.into(),
+                                BinaryOp::Gt => builder.build_float_compare(inkwell::FloatPredicate::OGT, l, r, "fgt").unwrap_or_err()?.into(),
+                                BinaryOp::Ge => builder.build_float_compare(inkwell::FloatPredicate::OGE, l, r, "fge").unwrap_or_err()?.into(),
                                 _ => return Err(LlvmError::CodegenError(format!("Unsupported float binary op {:?}", op))),
                             };
                             Some(res)
@@ -777,16 +799,16 @@ impl LlvmCompiler {
                         match op {
                             UnaryOp::Neg => {
                                 if inner_val.is_int_value() {
-                                    Some(builder.build_int_neg(inner_val.into_int_value(), "neg").unwrap().into())
+                                    Some(builder.build_int_neg(inner_val.into_int_value(), "neg").unwrap_or_err()?.into())
                                 } else if inner_val.is_float_value() {
-                                    Some(builder.build_float_neg(inner_val.into_float_value(), "fneg").unwrap().into())
+                                    Some(builder.build_float_neg(inner_val.into_float_value(), "fneg").unwrap_or_err()?.into())
                                 } else {
                                     return Err(LlvmError::CodegenError("Cannot negate non-numeric value".to_string()));
                                 }
                             }
                             UnaryOp::Not => {
                                 if inner_val.is_int_value() {
-                                    Some(builder.build_not(inner_val.into_int_value(), "not").unwrap().into())
+                                    Some(builder.build_not(inner_val.into_int_value(), "not").unwrap_or_err()?.into())
                                 } else {
                                     return Err(LlvmError::CodegenError("Cannot invert non-integer value".to_string()));
                                 }
@@ -803,7 +825,7 @@ impl LlvmCompiler {
                                 let v = self.eval_place_val(arg, builder, struct_types, local_allocas)?;
                                 arg_vals.push(v.into());
                             }
-                            let call = builder.build_direct_call(callee_fn, &arg_vals, "call_res").unwrap();
+                            let call = builder.build_direct_call(callee_fn, &arg_vals, "call_res").unwrap_or_err()?;
                             call.try_as_basic_value().left()
                         } else {
                             return Err(LlvmError::CodegenError(format!("Callee '{}' not found", callee)));
@@ -819,19 +841,19 @@ impl LlvmCompiler {
                             unsafe {
                                 let elem_ptr = builder
                                     .build_gep(arr_llvm_ty, dest_ptr, &[zero, idx_const], "init_arr_gep")
-                                    .unwrap();
-                                builder.build_store(elem_ptr, elem_val).unwrap();
+                                    .unwrap_or_err()?;
+                                builder.build_store(elem_ptr, elem_val).unwrap_or_err()?;
                             }
                         }
                         None
                     }
                     Rvalue::Struct(s_name, fields) => {
-                        let st = struct_types.get(s_name).unwrap();
+                        let st = struct_types.get(s_name).unwrap_or_err()?;
                         for (field_name, field_p) in fields {
                             let field_val = self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
                             let field_idx = self.find_struct_field_index(s_name, field_name)?;
-                            let f_ptr = builder.build_struct_gep(*st, dest_ptr, field_idx, field_name).unwrap();
-                            builder.build_store(f_ptr, field_val).unwrap();
+                            let f_ptr = builder.build_struct_gep(*st, dest_ptr, field_idx, field_name).unwrap_or_err()?;
+                            builder.build_store(f_ptr, field_val).unwrap_or_err()?;
                         }
                         None
                     }
@@ -852,34 +874,34 @@ impl LlvmCompiler {
                                 i64_type.ptr_type(inkwell::AddressSpace::default()),
                                 "tag_ptr",
                             )
-                            .unwrap();
-                        let tag_val = builder.build_load(i64_type, tag_ptr, "tag").unwrap();
+                            .unwrap_or_err()?;
+                        let tag_val = builder.build_load(i64_type, tag_ptr, "tag").unwrap_or_err()?;
                         Some(tag_val)
                     }
                     Rvalue::EnumVariant { tag, fields, .. } => {
                         let i64_type = self.context.i64_type();
                         let total_words = 1 + fields.len();
                         let arr_type = i64_type.array_type(total_words as u32);
-                        let slot = builder.build_alloca(arr_type, "enum_slot").unwrap();
+                        let slot = builder.build_alloca(arr_type, "enum_slot").unwrap_or_err()?;
                         let slot_ptr = builder
                             .build_pointer_cast(
                                 slot,
                                 i64_type.ptr_type(inkwell::AddressSpace::default()),
                                 "enum_ptr",
                             )
-                            .unwrap();
+                            .unwrap_or_err()?;
                         builder
                             .build_store(slot_ptr, i64_type.const_int(*tag as u64, false))
-                            .unwrap();
+                            .unwrap_or_err()?;
                         for (idx, field_p) in fields.iter().enumerate() {
                             let field_val = self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
                             let field_offset = self.context.i64_type().const_int((1 + idx) as u64, false);
                             let field_ptr = unsafe {
                                 builder
                                     .build_gep(i64_type, slot_ptr, &[field_offset], "field_ptr")
-                                    .unwrap()
+                                    .unwrap_or_err()?
                             };
-                            builder.build_store(field_ptr, field_val).unwrap();
+                            builder.build_store(field_ptr, field_val).unwrap_or_err()?;
                         }
                         Some(slot_ptr.as_basic_value_enum())
                     }
@@ -891,7 +913,7 @@ impl LlvmCompiler {
                 };
 
                 if let Some(val) = value_to_store {
-                    builder.build_store(dest_ptr, val).unwrap();
+                    builder.build_store(dest_ptr, val).unwrap_or_err()?;
                 }
             }
         }
@@ -909,7 +931,7 @@ impl LlvmCompiler {
         // let mut a = 0; let mut b = 1; let mut i = 2;
         // while i <= n { let c = a + b; a = b; b = c; i += 1; }
         // return b;
-        let parent_fn = builder.get_insert_block().unwrap().get_parent().unwrap();
+        let parent_fn = builder.get_insert_block().unwrap_or_err()?.get_parent().unwrap_or_err()?;
         let loop_bb = self.context.append_basic_block(parent_fn, "fib_loop");
         let done_bb = self.context.append_basic_block(parent_fn, "fib_done");
 
@@ -918,39 +940,39 @@ impl LlvmCompiler {
         let n_i64 = if n.get_type().get_bit_width() == 64 {
             n
         } else {
-            builder.build_int_z_extend(n, self.context.i64_type(), "n_i64").unwrap()
+            builder.build_int_z_extend(n, self.context.i64_type(), "n_i64").unwrap_or_err()?
         };
 
-        let a_alloca = builder.build_alloca(self.context.i64_type(), "fib_a").unwrap();
-        let b_alloca = builder.build_alloca(self.context.i64_type(), "fib_b").unwrap();
-        let i_alloca = builder.build_alloca(self.context.i64_type(), "fib_i").unwrap();
+        let a_alloca = builder.build_alloca(self.context.i64_type(), "fib_a").unwrap_or_err()?;
+        let b_alloca = builder.build_alloca(self.context.i64_type(), "fib_b").unwrap_or_err()?;
+        let i_alloca = builder.build_alloca(self.context.i64_type(), "fib_i").unwrap_or_err()?;
 
-        builder.build_store(a_alloca, zero).unwrap();
-        builder.build_store(b_alloca, one).unwrap();
-        builder.build_store(i_alloca, self.context.i64_type().const_int(2, false)).unwrap();
+        builder.build_store(a_alloca, zero).unwrap_or_err()?;
+        builder.build_store(b_alloca, one).unwrap_or_err()?;
+        builder.build_store(i_alloca, self.context.i64_type().const_int(2, false)).unwrap_or_err()?;
 
-        let is_base = builder.build_int_compare(inkwell::IntPredicate::SLE, n_i64, one, "is_base").unwrap();
-        builder.build_conditional_branch(is_base, done_bb, loop_bb).unwrap();
+        let is_base = builder.build_int_compare(inkwell::IntPredicate::SLE, n_i64, one, "is_base").unwrap_or_err()?;
+        builder.build_conditional_branch(is_base, done_bb, loop_bb).unwrap_or_err()?;
 
         // Loop BB
         builder.position_at_end(loop_bb);
-        let cur_a = builder.build_load(self.context.i64_type(), a_alloca, "a").unwrap().into_int_value();
-        let cur_b = builder.build_load(self.context.i64_type(), b_alloca, "b").unwrap().into_int_value();
-        let cur_i = builder.build_load(self.context.i64_type(), i_alloca, "i").unwrap().into_int_value();
+        let cur_a = builder.build_load(self.context.i64_type(), a_alloca, "a").unwrap_or_err()?.into_int_value();
+        let cur_b = builder.build_load(self.context.i64_type(), b_alloca, "b").unwrap_or_err()?.into_int_value();
+        let cur_i = builder.build_load(self.context.i64_type(), i_alloca, "i").unwrap_or_err()?.into_int_value();
 
-        let next_c = builder.build_int_add(cur_a, cur_b, "next_c").unwrap();
-        builder.build_store(a_alloca, cur_b).unwrap();
-        builder.build_store(b_alloca, next_c).unwrap();
-        let next_i = builder.build_int_add(cur_i, one, "next_i").unwrap();
-        builder.build_store(i_alloca, next_i).unwrap();
+        let next_c = builder.build_int_add(cur_a, cur_b, "next_c").unwrap_or_err()?;
+        builder.build_store(a_alloca, cur_b).unwrap_or_err()?;
+        builder.build_store(b_alloca, next_c).unwrap_or_err()?;
+        let next_i = builder.build_int_add(cur_i, one, "next_i").unwrap_or_err()?;
+        builder.build_store(i_alloca, next_i).unwrap_or_err()?;
 
-        let continue_loop = builder.build_int_compare(inkwell::IntPredicate::SLE, next_i, n_i64, "cont").unwrap();
-        builder.build_conditional_branch(continue_loop, loop_bb, done_bb).unwrap();
+        let continue_loop = builder.build_int_compare(inkwell::IntPredicate::SLE, next_i, n_i64, "cont").unwrap_or_err()?;
+        builder.build_conditional_branch(continue_loop, loop_bb, done_bb).unwrap_or_err()?;
 
         // Done BB
         builder.position_at_end(done_bb);
-        let res = builder.build_phi(self.context.i64_type(), "fib_res").unwrap();
-        res.add_incoming(&[(&n_i64, parent_fn.get_first_basic_block().unwrap()), (&cur_b, loop_bb)]);
+        let res = builder.build_phi(self.context.i64_type(), "fib_res").unwrap_or_err()?;
+        res.add_incoming(&[(&n_i64, parent_fn.get_first_basic_block().unwrap_or_err()?), (&cur_b, loop_bb)]);
 
         res.as_basic_value().into_int_value()
     }
@@ -962,7 +984,7 @@ impl LlvmCompiler {
         builder: &inkwell::builder::Builder,
     ) -> inkwell::values::IntValue {
         // Exponentiation by squaring
-        let parent_fn = builder.get_insert_block().unwrap().get_parent().unwrap();
+        let parent_fn = builder.get_insert_block().unwrap_or_err()?.get_parent().unwrap_or_err()?;
         let loop_bb = self.context.append_basic_block(parent_fn, "pow_loop");
         let done_bb = self.context.append_basic_block(parent_fn, "pow_done");
 
@@ -970,49 +992,49 @@ impl LlvmCompiler {
         let one = int_ty.const_int(1, false);
         let zero = int_ty.const_zero();
 
-        let res_alloca = builder.build_alloca(int_ty, "pow_res").unwrap();
-        let base_alloca = builder.build_alloca(int_ty, "pow_base").unwrap();
-        let exp_alloca = builder.build_alloca(int_ty, "pow_exp").unwrap();
+        let res_alloca = builder.build_alloca(int_ty, "pow_res").unwrap_or_err()?;
+        let base_alloca = builder.build_alloca(int_ty, "pow_base").unwrap_or_err()?;
+        let exp_alloca = builder.build_alloca(int_ty, "pow_exp").unwrap_or_err()?;
 
-        builder.build_store(res_alloca, one).unwrap();
-        builder.build_store(base_alloca, base).unwrap();
-        builder.build_store(exp_alloca, exp).unwrap();
+        builder.build_store(res_alloca, one).unwrap_or_err()?;
+        builder.build_store(base_alloca, base).unwrap_or_err()?;
+        builder.build_store(exp_alloca, exp).unwrap_or_err()?;
 
-        builder.build_unconditional_branch(loop_bb).unwrap();
+        builder.build_unconditional_branch(loop_bb).unwrap_or_err()?;
 
         builder.position_at_end(loop_bb);
-        let cur_exp = builder.build_load(int_ty, exp_alloca, "e").unwrap().into_int_value();
-        let cond = builder.build_int_compare(inkwell::IntPredicate::SGT, cur_exp, zero, "e_gt_0").unwrap();
+        let cur_exp = builder.build_load(int_ty, exp_alloca, "e").unwrap_or_err()?.into_int_value();
+        let cond = builder.build_int_compare(inkwell::IntPredicate::SGT, cur_exp, zero, "e_gt_0").unwrap_or_err()?;
 
         let body_bb = self.context.append_basic_block(parent_fn, "pow_body");
-        builder.build_conditional_branch(cond, body_bb, done_bb).unwrap();
+        builder.build_conditional_branch(cond, body_bb, done_bb).unwrap_or_err()?;
 
         builder.position_at_end(body_bb);
-        let cur_res = builder.build_load(int_ty, res_alloca, "r").unwrap().into_int_value();
-        let cur_b = builder.build_load(int_ty, base_alloca, "b").unwrap().into_int_value();
+        let cur_res = builder.build_load(int_ty, res_alloca, "r").unwrap_or_err()?.into_int_value();
+        let cur_b = builder.build_load(int_ty, base_alloca, "b").unwrap_or_err()?.into_int_value();
 
-        let is_odd = builder.build_int_and(cur_exp, one, "odd").unwrap();
-        let is_odd_cond = builder.build_int_compare(inkwell::IntPredicate::NE, is_odd, zero, "is_odd").unwrap();
+        let is_odd = builder.build_int_and(cur_exp, one, "odd").unwrap_or_err()?;
+        let is_odd_cond = builder.build_int_compare(inkwell::IntPredicate::NE, is_odd, zero, "is_odd").unwrap_or_err()?;
 
         let mul_bb = self.context.append_basic_block(parent_fn, "pow_mul");
         let next_bb = self.context.append_basic_block(parent_fn, "pow_next");
 
-        builder.build_conditional_branch(is_odd_cond, mul_bb, next_bb).unwrap();
+        builder.build_conditional_branch(is_odd_cond, mul_bb, next_bb).unwrap_or_err()?;
 
         builder.position_at_end(mul_bb);
-        let new_res = builder.build_int_mul(cur_res, cur_b, "new_r").unwrap();
-        builder.build_store(res_alloca, new_res).unwrap();
-        builder.build_unconditional_branch(next_bb).unwrap();
+        let new_res = builder.build_int_mul(cur_res, cur_b, "new_r").unwrap_or_err()?;
+        builder.build_store(res_alloca, new_res).unwrap_or_err()?;
+        builder.build_unconditional_branch(next_bb).unwrap_or_err()?;
 
         builder.position_at_end(next_bb);
-        let next_b = builder.build_int_mul(cur_b, cur_b, "sqr_b").unwrap();
-        let next_e = builder.build_right_shift(cur_exp, one, false, "e_div_2").unwrap();
-        builder.build_store(base_alloca, next_b).unwrap();
-        builder.build_store(exp_alloca, next_e).unwrap();
-        builder.build_unconditional_branch(loop_bb).unwrap();
+        let next_b = builder.build_int_mul(cur_b, cur_b, "sqr_b").unwrap_or_err()?;
+        let next_e = builder.build_right_shift(cur_exp, one, false, "e_div_2").unwrap_or_err()?;
+        builder.build_store(base_alloca, next_b).unwrap_or_err()?;
+        builder.build_store(exp_alloca, next_e).unwrap_or_err()?;
+        builder.build_unconditional_branch(loop_bb).unwrap_or_err()?;
 
         builder.position_at_end(done_bb);
-        builder.build_load(int_ty, res_alloca, "final_res").unwrap().into_int_value()
+        builder.build_load(int_ty, res_alloca, "final_res").unwrap_or_err()?.into_int_value()
     }
 
     fn find_struct_field_index(&self, struct_name: &str, field_name: &str) -> Result<u32, LlvmError> {

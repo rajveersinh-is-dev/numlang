@@ -341,7 +341,7 @@ impl BoolFormula {
         if flat.is_empty() {
             BoolFormula::True
         } else if flat.len() == 1 {
-            flat.pop().unwrap()
+            flat.pop().unwrap_or(BoolFormula::True)
         } else {
             BoolFormula::And(flat)
         }
@@ -360,7 +360,7 @@ impl BoolFormula {
         if flat.is_empty() {
             BoolFormula::False
         } else if flat.len() == 1 {
-            flat.pop().unwrap()
+            flat.pop().unwrap_or(BoolFormula::True)
         } else {
             BoolFormula::Or(flat)
         }
@@ -398,7 +398,7 @@ impl BoolFormula {
                 if s_forms.is_empty() {
                     BoolFormula::True
                 } else if s_forms.len() == 1 {
-                    s_forms.pop().unwrap()
+                    s_forms.pop().unwrap_or(BoolFormula::True)
                 } else {
                     BoolFormula::And(s_forms)
                 }
@@ -415,7 +415,7 @@ impl BoolFormula {
                 if s_forms.is_empty() {
                     BoolFormula::False
                 } else if s_forms.len() == 1 {
-                    s_forms.pop().unwrap()
+                    s_forms.pop().unwrap_or(BoolFormula::True)
                 } else {
                     BoolFormula::Or(s_forms)
                 }
@@ -926,7 +926,7 @@ impl SatSolver {
             // Backtrack
             self.trail_lim.pop();
             while self.trail.len() > trail_mark {
-                let l = self.trail.pop().unwrap();
+                let Some(l) = self.trail.pop() else { break; };
                 let v = l.unsigned_abs() as usize;
                 self.assignment[v] = None;
             }
@@ -1645,7 +1645,7 @@ impl<'a> PathExtractor<'a> {
                             if sub_paths.len() == 1 {
                                 return subst_bv(&sub_paths[0].return_val, &param_map).simplify();
                             } else {
-                                let mut res = subst_bv(&sub_paths.last().unwrap().return_val, &param_map);
+                                let mut res = subst_bv(&sub_paths.last().map(|p| &p.return_val).unwrap_or(&BvExpr::Const(0, 64)), &param_map);
                                 for p in sub_paths.iter().rev().skip(1) {
                                     let c = subst_bool(&BoolFormula::and_all(p.conditions.clone()), &param_map);
                                     let val = subst_bv(&p.return_val, &param_map);
