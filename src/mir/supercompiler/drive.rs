@@ -2020,7 +2020,7 @@ impl<'a> SupercompilerDriver<'a> {
         for cand in &mutating_candidates {
             histories.insert(cand.local.clone(), Vec::with_capacity(9));
             if let Some(&init_val) = env.get(&cand.local) {
-                histories.get_mut(&cand.local).unwrap().push(init_val);
+                if let Some(h) = histories.get_mut(&cand.local) { h.push(init_val); }
             }
         }
 
@@ -2094,7 +2094,7 @@ impl<'a> SupercompilerDriver<'a> {
 
             for cand in &mutating_candidates {
                 if let Some(&val) = env.get(&cand.local) {
-                    histories.get_mut(&cand.local).unwrap().push(val);
+                    if let Some(h) = histories.get_mut(&cand.local) { h.push(val); }
                 } else {
                     sim_success = false;
                     break;

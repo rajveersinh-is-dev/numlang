@@ -497,11 +497,9 @@ impl<'a> DistillationEngine<'a> {
                 break;
             }
 
-            for candidate in candidates {
+                        for candidate in candidates {
                 let existing_specialized_name = if candidate.caller_fn != "main" {
                     Some(candidate.caller_fn.clone())
-                } else if candidate.f_func == "append" && candidate.g_func == "append" {
-                    Some("append3".to_string())
                 } else {
                     None
                 };
@@ -658,52 +656,122 @@ fn apply_composition_to_caller(
     }
 }
 
-fn is_list_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+
+fn is_append_like(func: &MirFunction) -> bool {
+    if func.params.len() != 2 || func.params[0].1 != func.params[1].1 || func.return_ty != func.params[0].1 {
+        println!("is_append_like({}): signature mismatch. params={}, p0={:?}, p1={:?}, ret={:?}", func.name, func.params.len(), func.params.get(0), func.params.get(1), func.return_ty);
+        return false;
+    }
+    let has_switch = func.blocks.iter().any(|b| matches!(b.terminator, Terminator::Switch { .. }));
+    let has_rec = func.blocks.iter().any(|b| b.statements.iter().any(|s| {
+        if let Statement::Assign(_, Rvalue::Call(callee, _)) = s { callee == &func.name } else { false }
+    }));
+    println!("is_append_like({}): has_switch={}, has_rec={}", func.name, has_switch, has_rec);
+    has_switch && has_rec
+}
+
+fn is_sum_list_like(func: &MirFunction) -> bool {
+    if func.params.len() != 1 || func.return_ty != Type::I64 {
+        return false;
+    }
+    let has_switch = func.blocks.iter().any(|b| matches!(b.terminator, Terminator::Switch { .. }));
+    let has_rec = func.blocks.iter().any(|b| b.statements.iter().any(|s| {
+        if let Statement::Assign(_, Rvalue::Call(callee, _)) = s { callee == &func.name } else { false }
+    }));
+    has_switch && has_rec
+}
+
+fn is_invert_like(func: &MirFunction) -> bool {
+    if func.params.len() != 1 || func.return_ty != func.params[0].1 {
+        return false;
+    }
+    let has_switch = func.blocks.iter().any(|b| matches!(b.terminator, Terminator::Switch { .. }));
+    let num_recs = func.blocks.iter().flat_map(|b| b.statements.iter()).filter(|s| {
+        if let Statement::Assign(_, Rvalue::Call(callee, _)) = s { callee == &func.name } else { false }
+    }).count();
+    has_switch && num_recs >= 2
+}
+
+struct RecursiveEnumInfo {
+    enum_name: String,
+    base_variant: String,
+    base_tag: usize,
+    rec_variant: String,
+    rec_tag: usize,
+}
+
+fn get_list_enum_info(program: &MirProgram, enum_name: &str) -> Option<RecursiveEnumInfo> {
+    let e = program.enums.iter().find(|e| e.name == enum_name)?;
+    let base = e.variants.iter().find(|v| v.payload.is_empty())?;
+    let rec = e.variants.iter().find(|v| v.payload.len() == 2)?;
+    Some(RecursiveEnumInfo {
+        enum_name: enum_name.to_string(),
+        base_variant: base.name.clone(),
+        base_tag: base.tag,
+        rec_variant: rec.name.clone(),
+        rec_tag: rec.tag,
+    })
+}
+
+fn get_tree_enum_info(program: &MirProgram, enum_name: &str) -> Option<RecursiveEnumInfo> {
+    let e = program.enums.iter().find(|e| e.name == enum_name)?;
+    let base = e.variants.iter().find(|v| v.payload.len() == 1)?;
+    let rec = e.variants.iter().find(|v| v.payload.len() == 2)?;
+    Some(RecursiveEnumInfo {
+        enum_name: enum_name.to_string(),
+        base_variant: base.name.clone(),
+        base_tag: base.tag,
+        rec_variant: rec.name.clone(),
+        rec_tag: rec.tag,
+    })
+}
+
+fn is_list_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> Option<String> {
     if let (Some(f), Some(g)) = (
         program.functions.iter().find(|f| f.name == candidate.f_func),
         program.functions.iter().find(|g| g.name == candidate.g_func),
     ) {
-        if f.params.len() >= 2 && g.params.len() == 2 && candidate.f_arg_idx == 0 {
+        if is_append_like(f) && is_append_like(g) && candidate.f_arg_idx == 0 {
             if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
                 if e1 == e2 && f.return_ty == g.return_ty {
-                    return true;
+                    return Some(e1.clone());
                 }
             }
         }
     }
-    (candidate.f_func == "append" || candidate.f_func == "append3") && candidate.g_func == "append"
+    None
 }
 
-fn is_list_sum_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+fn is_list_sum_append_composition(candidate: &CompositionCandidate, program: &MirProgram) -> Option<String> {
     if let (Some(f), Some(g)) = (
         program.functions.iter().find(|f| f.name == candidate.f_func),
         program.functions.iter().find(|g| g.name == candidate.g_func),
     ) {
-        if f.params.len() == 1 && g.params.len() == 2 && candidate.f_arg_idx == 0 {
+        if is_sum_list_like(f) && is_append_like(g) && candidate.f_arg_idx == 0 {
             if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
                 if e1 == e2 && f.return_ty == Type::I64 && g.return_ty == Type::Enum(e2.clone()) {
-                    return true;
+                    return Some(e1.clone());
                 }
             }
         }
     }
-    candidate.f_func == "sum_list" && candidate.g_func == "append"
+    None
 }
 
-fn is_tree_invert_invert_composition(candidate: &CompositionCandidate, program: &MirProgram) -> bool {
+fn is_tree_invert_invert_composition(candidate: &CompositionCandidate, program: &MirProgram) -> Option<String> {
     if let (Some(f), Some(g)) = (
         program.functions.iter().find(|f| f.name == candidate.f_func),
         program.functions.iter().find(|g| g.name == candidate.g_func),
     ) {
-        if f.params.len() == 1 && g.params.len() == 1 && candidate.f_arg_idx == 0 {
+        if is_invert_like(f) && is_invert_like(g) && candidate.f_arg_idx == 0 {
             if let (Type::Enum(ref e1), Type::Enum(ref e2)) = (&f.params[0].1, &g.params[0].1) {
                 if e1 == e2 && f.return_ty == Type::Enum(e1.clone()) && g.return_ty == Type::Enum(e2.clone()) {
-                    return true;
+                    return Some(e1.clone());
                 }
             }
         }
     }
-    candidate.f_func == "invert" && candidate.g_func == "invert"
+    None
 }
 
 // ============================================================================
@@ -715,27 +783,27 @@ fn synthesize_distilled_function(
     program: &MirProgram,
     synthesized_name: &str,
 ) -> Option<(MirFunction, GlobalProcessTree)> {
-    // 1. Deforestation of append(append(xs, ys), zs) -> append3(xs, ys, zs)
-    if is_list_append_composition(candidate, program) {
-        return Some(synthesize_append3(program, synthesized_name));
+    if let Some(enum_name) = is_list_append_composition(candidate, program) {
+        let enum_info = get_list_enum_info(program, &enum_name)?;
+        return Some(synthesize_append3(program, synthesized_name, enum_info));
     }
 
-    // 2. Deforestation of sum_list(append(xs, ys)) -> sum_append(xs, ys)
-    if is_list_sum_append_composition(candidate, program) {
-        return Some(synthesize_sum_list_append(program, synthesized_name));
+    if let Some(enum_name) = is_list_sum_append_composition(candidate, program) {
+        let enum_info = get_list_enum_info(program, &enum_name)?;
+        return Some(synthesize_sum_list_append(program, synthesized_name, enum_info));
     }
 
-    // 3. Deforestation of invert(invert(t)) -> invert_invert(t)
-    if is_tree_invert_invert_composition(candidate, program) {
-        return Some(synthesize_invert_invert(program, synthesized_name));
+    if let Some(enum_name) = is_tree_invert_invert_composition(candidate, program) {
+        let enum_info = get_tree_enum_info(program, &enum_name)?;
+        return Some(synthesize_invert_invert(program, synthesized_name, enum_info));
     }
 
     None
 }
 
 /// Synthesizes single-pass `append3(xs, ys, zs)` with ZERO intermediate allocations.
-fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, GlobalProcessTree) {
-    let list_ty = Type::Enum("List".to_string());
+fn synthesize_append3(_program: &MirProgram, name: &str, enum_info: RecursiveEnumInfo) -> (MirFunction, GlobalProcessTree) {
+    let list_ty = Type::Enum(enum_info.enum_name.clone());
     let box_list_ty = Type::Box(Box::new(list_ty.clone()));
 
     // Build Global Process Tree
@@ -766,9 +834,9 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
     knot_subst.insert("zs".to_string(), GlobalTerm::Var("zs".to_string()));
 
     let cons_term = GlobalTerm::Constructor {
-        enum_name: "List".to_string(),
-        variant_name: "Cons".to_string(),
-        tag: 1,
+        enum_name: enum_info.enum_name.clone(),
+        variant_name: enum_info.rec_variant.clone(),
+        tag: enum_info.rec_tag,
         fields: vec![
             GlobalTerm::Var("h".to_string()),
             GlobalTerm::Alloc(Box::new(GlobalTerm::Call {
@@ -787,17 +855,17 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
         term: root_term,
         kind: GlobalNodeKind::Branch {
             scrutinee_var: "xs".to_string(),
-            enum_name: "List".to_string(),
+            enum_name: enum_info.enum_name.clone(),
             arms: vec![
                 GlobalBranchArm {
-                    variant_name: "Nil".to_string(),
-                    tag: 0,
+                    variant_name: enum_info.base_variant.clone(),
+                    tag: enum_info.base_tag,
                     bindings: vec![],
                     child: nil_id,
                 },
                 GlobalBranchArm {
-                    variant_name: "Cons".to_string(),
-                    tag: 1,
+                    variant_name: enum_info.rec_variant.clone(),
+                    tag: enum_info.rec_tag,
                     bindings: vec![("h".to_string(), Type::I64), ("t".to_string(), box_list_ty.clone())],
                     child: cons_id,
                 },
@@ -879,7 +947,7 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
                 ],
                 terminator: Terminator::Switch {
                     value: Place { local: "_discr".to_string(), projections: vec![] },
-                    targets: vec![(0, BasicBlockId(1)), (1, BasicBlockId(2))],
+                    targets: vec![(enum_info.base_tag as i64, BasicBlockId(1)), (enum_info.rec_tag as i64, BasicBlockId(2))],
                     default: BasicBlockId(3),
                 },
             },
@@ -939,9 +1007,9 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
                     Statement::Assign(
                         Place { local: "_res_cons".to_string(), projections: vec![] },
                         Rvalue::EnumVariant {
-                            enum_name: "List".to_string(),
-                            variant_name: "Cons".to_string(),
-                            tag: 1,
+                            enum_name: enum_info.enum_name.clone(),
+                            variant_name: enum_info.rec_variant.clone(),
+                            tag: enum_info.rec_tag,
                             fields: vec![
                                 Place { local: "h".to_string(), projections: vec![] },
                                 Place { local: "_box_call".to_string(), projections: vec![] },
@@ -968,8 +1036,8 @@ fn synthesize_append3(_program: &MirProgram, name: &str) -> (MirFunction, Global
 }
 
 /// Synthesizes single-pass `sum_append(xs, ys)` with ZERO list allocations.
-fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction, GlobalProcessTree) {
-    let list_ty = Type::Enum("List".to_string());
+fn synthesize_sum_list_append(_program: &MirProgram, name: &str, enum_info: RecursiveEnumInfo) -> (MirFunction, GlobalProcessTree) {
+    let list_ty = Type::Enum(enum_info.enum_name.clone());
     let box_list_ty = Type::Box(Box::new(list_ty.clone()));
 
     let root_term = GlobalTerm::Call {
@@ -1011,17 +1079,17 @@ fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction
         term: root_term,
         kind: GlobalNodeKind::Branch {
             scrutinee_var: "xs".to_string(),
-            enum_name: "List".to_string(),
+            enum_name: enum_info.enum_name.clone(),
             arms: vec![
                 GlobalBranchArm {
-                    variant_name: "Nil".to_string(),
-                    tag: 0,
+                    variant_name: enum_info.base_variant.clone(),
+                    tag: enum_info.base_tag,
                     bindings: vec![],
                     child: nil_id,
                 },
                 GlobalBranchArm {
-                    variant_name: "Cons".to_string(),
-                    tag: 1,
+                    variant_name: enum_info.rec_variant.clone(),
+                    tag: enum_info.rec_tag,
                     bindings: vec![("h".to_string(), Type::I64), ("t".to_string(), box_list_ty.clone())],
                     child: cons_id,
                 },
@@ -1092,7 +1160,7 @@ fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction
                 ],
                 terminator: Terminator::Switch {
                     value: Place { local: "_discr".to_string(), projections: vec![] },
-                    targets: vec![(0, BasicBlockId(1)), (1, BasicBlockId(2))],
+                    targets: vec![(enum_info.base_tag as i64, BasicBlockId(1)), (enum_info.rec_tag as i64, BasicBlockId(2))],
                     default: BasicBlockId(3),
                 },
             },
@@ -1167,8 +1235,8 @@ fn synthesize_sum_list_append(_program: &MirProgram, name: &str) -> (MirFunction
 }
 
 /// Synthesizes single-pass `invert_invert(t)` with ZERO intermediate trees allocated.
-fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, GlobalProcessTree) {
-    let tree_ty = Type::Enum("Tree".to_string());
+fn synthesize_invert_invert(_program: &MirProgram, name: &str, enum_info: RecursiveEnumInfo) -> (MirFunction, GlobalProcessTree) {
+    let tree_ty = Type::Enum(enum_info.enum_name.clone());
     let box_tree_ty = Type::Box(Box::new(tree_ty.clone()));
 
     let root_term = GlobalTerm::Call {
@@ -1189,17 +1257,17 @@ fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, 
         term: root_term,
         kind: GlobalNodeKind::Branch {
             scrutinee_var: "t".to_string(),
-            enum_name: "Tree".to_string(),
+            enum_name: enum_info.enum_name.clone(),
             arms: vec![
                 GlobalBranchArm {
-                    variant_name: "Leaf".to_string(),
-                    tag: 0,
+                    variant_name: enum_info.base_variant.clone(),
+                    tag: enum_info.base_tag,
                     bindings: vec![("v".to_string(), Type::I64)],
                     child: leaf_id,
                 },
                 GlobalBranchArm {
-                    variant_name: "Node".to_string(),
-                    tag: 1,
+                    variant_name: enum_info.rec_variant.clone(),
+                    tag: enum_info.rec_tag,
                     bindings: vec![
                         ("l".to_string(), box_tree_ty.clone()),
                         ("r".to_string(), box_tree_ty.clone()),
@@ -1302,7 +1370,7 @@ fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, 
                 ],
                 terminator: Terminator::Switch {
                     value: Place { local: "_discr".to_string(), projections: vec![] },
-                    targets: vec![(0, BasicBlockId(1)), (1, BasicBlockId(2))],
+                    targets: vec![(enum_info.base_tag as i64, BasicBlockId(1)), (enum_info.rec_tag as i64, BasicBlockId(2))],
                     default: BasicBlockId(3),
                 },
             },
@@ -1381,9 +1449,9 @@ fn synthesize_invert_invert(_program: &MirProgram, name: &str) -> (MirFunction, 
                     Statement::Assign(
                         Place { local: "_res_node".to_string(), projections: vec![] },
                         Rvalue::EnumVariant {
-                            enum_name: "Tree".to_string(),
-                            variant_name: "Node".to_string(),
-                            tag: 1,
+                            enum_name: enum_info.enum_name.clone(),
+                            variant_name: enum_info.rec_variant.clone(),
+                            tag: enum_info.rec_tag,
                             fields: vec![
                                 Place { local: "_box_l".to_string(), projections: vec![] },
                                 Place { local: "_box_r".to_string(), projections: vec![] },

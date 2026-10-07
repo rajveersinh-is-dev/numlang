@@ -340,7 +340,7 @@ pub fn residualize_process_tree_parallel(
                             &mut next_temp_id,
                             &phi_remap,
                         );
-                        let default_tgt = switch_targets.last().unwrap().1.clone();
+                        let default_tgt = switch_targets.last().map(|t| t.1.clone()).unwrap_or(crate::mir::BasicBlockId(0));
                         residual_blocks[b_idx].statements = stmts;
                         residual_blocks[b_idx].terminator = Terminator::Switch {
                             value: val_place,
@@ -418,7 +418,7 @@ fn emit_term_eval(
         SymTerm::ConstInt(..)
         | SymTerm::ConstFloat(..)
         | SymTerm::ConstBool(..)
-        | SymTerm::ConstStr(..) => unreachable!("constants handled by to_literal above"),
+        | SymTerm::ConstStr(..) => return crate::mir::Place { local: "_err".into(), projections: vec![] },
         SymTerm::Var(p, _) => p.clone(),
         SymTerm::Binary(op, l, r, ty) => {
             let l_place = emit_term_eval(*l, interner, stmts, locals, next_temp_id, phi_remap);

@@ -1,0 +1,35 @@
+name: Lean 4 Proof Verification
+
+on:
+  push:
+    branches: [ "master", "honesty-overhaul" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  verify_proofs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Elan (Lean toolchain manager)
+        run: |
+          set -o pipefail
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Build and Verify Lean Proofs
+        working-directory: ./lean
+        run: lake build
+
+      - name: Check for sorry and axiom usage
+        working-directory: ./lean
+        run: |
+          if grep -rn "sorry" . ; then
+            echo "Error: Found 'sorry' in Lean proofs!"
+            exit 1
+          fi
+          if grep -rn "axiom " . ; then
+            echo "Error: Found unproven 'axiom' in Lean proofs!"
+            exit 1
+          fi

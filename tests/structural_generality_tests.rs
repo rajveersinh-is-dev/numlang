@@ -211,3 +211,57 @@ fn main() -> i64 {
     mir.functions[0].is_distilled = true;
     assert!(mir.functions[0].is_distilled);
 }
+
+#[test]
+fn test_structural_deforestation_arbitrary_names() {
+    let src = r#"
+    enum CustomList {
+        Empty,
+        Node(i64, Box<CustomList>),
+    }
+
+    fn combine_lists(left: CustomList, right: CustomList) -> CustomList {
+        return match left {
+            Empty => right,
+            Node(val, next) => Node(val, box(combine_lists(deref(next), right))),
+        };
+    }
+
+    fn combine_three(a: CustomList, b: CustomList, c: CustomList) -> CustomList {
+        return combine_lists(combine_lists(a, b), c);
+    }
+    "#;
+
+    let tokens = numlang::token::tokenize(src).expect("Tokenize failed");
+    let ast = numlang::parser::parse(&tokens).expect("Parse failed");
+    let typed = numlang::typecheck::typecheck(&ast).expect("Typecheck failed");
+    let mut mir = numlang::mir::lower::lower_program(&typed);
+
+    let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode(
+        &mut mir,
+        numlang::mir::supercompiler::SupercompileMode::Distill,
+        "size"
+    );
+
+    assert!(stats.knots_tied > 0, "Structural deforestation must tie knots");
+    assert!(stats.loops_collapsed > 0, "Structural deforestation must collapse loops");
+
+    let distilled_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "combine_three")
+        .expect("combine_three must exist in distilled MIR program");
+
+    let mut found_recursive_call = false;
+    for block in &distilled_func.blocks {
+        for stmt in &block.statements {
+            let numlang::mir::lower::Statement::Assign(_, rval) = stmt;
+            if let numlang::mir::lower::Rvalue::Call(callee, _) = rval {
+                if callee == "combine_three" {
+                    found_recursive_call = true;
+                }
+            }
+        }
+    }
+    assert!(found_recursive_call, "combine_three must recurse directly to combine_three");
+}

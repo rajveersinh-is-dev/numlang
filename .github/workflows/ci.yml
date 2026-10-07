@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master", "honesty-overhaul" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check Formatting
+        run: cargo fmt -- --check
+
+      - name: Run Clippy (Zero Warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Tests
+        run: cargo test
+        env:
+          QUICK_BENCHMARKS: "1" # Use quick mode to avoid CI timeouts, but logic must be valid

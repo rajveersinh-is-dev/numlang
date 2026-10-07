@@ -47,22 +47,39 @@ fn compile_numlang(
 }
 
 fn run_binary(exe: &Path) -> Result<(i32, u64), String> {
-    let output = Command::new(exe)
-        .output()
-        .map_err(|e| format!("Failed to run binary {}: {}", exe.display(), e))?;
+    let is_quick = std::env::var("QUICK_BENCHMARKS").is_ok();
+    let warmup_rounds = if is_quick { 1 } else { 5 };
+    let measure_rounds = if is_quick { 2 } else { 30 };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut compute_ns = 0u64;
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix("COMPUTE_NS: ") {
-            if let Ok(v) = rest.trim().parse::<u64>() {
-                compute_ns = v;
-            }
-        }
+    let mut last_code = -1;
+
+    // Warmup
+    for _ in 0..warmup_rounds {
+        let output = Command::new(exe)
+            .output()
+            .map_err(|e| format!("Failed to run binary {}: {}", exe.display(), e))?;
+        last_code = output.status.code().unwrap_or(-1);
     }
 
-    let code = output.status.code().unwrap_or(-1);
-    Ok((code, compute_ns))
+    let mut total_ns = 0u64;
+    for _ in 0..measure_rounds {
+        let output = Command::new(exe)
+            .output()
+            .map_err(|e| format!("Failed to run binary {}: {}", exe.display(), e))?;
+        last_code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut compute_ns = 0u64;
+        for line in stdout.lines() {
+            if let Some(rest) = line.strip_prefix("COMPUTE_NS: ") {
+                if let Ok(v) = rest.trim().parse::<u64>() {
+                    compute_ns = v;
+                }
+            }
+        }
+        total_ns += compute_ns;
+    }
+
+    Ok((last_code, total_ns / measure_rounds as u64))
 }
 
 fn format_duration(ns: u64) -> String {
