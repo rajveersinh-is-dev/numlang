@@ -1277,10 +1277,18 @@ impl<'a> SupercompilerDriver<'a> {
                         let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
                         let depth_ok = self.call_stack.len() < self.config.max_inline_depth
                             && callee_count < self.config.max_inline_depth;
+                        let has_inductive_arg = arg_terms.iter().any(|&a| {
+                            matches!(
+                                self.interner.get(a),
+                                SymTerm::Constructor(..)
+                                    | SymTerm::ConstInt(..)
+                                    | SymTerm::ConstBool(..)
+                            )
+                        });
                         let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
-                        let not_recursive = !self.call_stack.contains(callee);
+                        let recursion_ok = !self.call_stack.contains(callee) || has_inductive_arg;
 
-                        if loop_invariance_ok && depth_ok && budget_ok && not_recursive {
+                        if loop_invariance_ok && depth_ok && budget_ok && recursion_ok {
                             if let Some(callee_func) = self.program_funcs.get(callee).copied() {
                                 inlined_res = self.try_drive_interprocedural_call(
                                     callee_func,
@@ -2434,14 +2442,21 @@ impl<'a> SupercompilerDriver<'a> {
             return None;
         }
 
-        // Check if an inter-procedural call cycle exists in the call stack
-        if let Some(pos) = self.call_stack.iter().position(|name| name == &callee.name) {
-            let cycle: Vec<String> = self.call_stack[pos..].to_vec();
-            if let Some(closed_term) = self.try_solve_call_cycle(&cycle, &callee.name, args) {
-                self.stats.loops_collapsed += 1;
-                return Some(closed_term);
+        // Check if an inter-procedural call cycle exceeds inductive recursion threshold
+        let recursion_depth = self
+            .call_stack
+            .iter()
+            .filter(|&name| name == &callee.name)
+            .count();
+        if recursion_depth >= 16 {
+            if let Some(pos) = self.call_stack.iter().position(|name| name == &callee.name) {
+                let cycle: Vec<String> = self.call_stack[pos..].to_vec();
+                if let Some(closed_term) = self.try_solve_call_cycle(&cycle, &callee.name, args) {
+                    self.stats.loops_collapsed += 1;
+                    return Some(closed_term);
+                }
+                return None;
             }
-            return None;
         }
 
         let entry_id = callee.blocks[0].id.clone();
