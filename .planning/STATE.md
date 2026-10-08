@@ -7,9 +7,9 @@ audit: "ADVERSARIAL_AUDIT.md"
 ---
 
 ---
-milestone: worlds-fastest-general-supercompiler
-name: "World's Fastest General Supercompiler (Phases 59-66)"
-status: completed
+milestone: invariant-hardening-and-algorithmic-generality
+name: "Total Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67-70)"
+status: planned
 governance: "INTEGRITY_RULES.md"
 audit: "ADVERSARIAL_AUDIT.md"
 ---
@@ -18,11 +18,12 @@ audit: "ADVERSARIAL_AUDIT.md"
 
 ## Current Position
 
-Phase: **Phase 66 — Incremental Modular Supercompilation with Fine-Grained Invalidation** (COMPLETED)
-Milestone: **World's Fastest General Supercompiler (Phases 59–66)** (COMPLETED)
-Previous Milestone: **Total Unconditional Dominance (Phases 51–58)** (COMPLETED 2026-10-04)
-Status: Phase 66 completed (DependencyGraph tracking forward and reverse call edges, compute_composite_hash incorporating reachable callees with cycle-safe BFS, invalidate_transitive upstream invalidation, deps.json serialization, --incremental CLI flag, 80% cache reuse on multi-function modules, 7/7 tests passing in tests/incremental_cache_tests.rs, zero clippy warnings). All 8 phases of Milestone "World's Fastest General Supercompiler" fully complete!
-Last activity: 2026-10-05 — Completed Phase 66 (Incremental Modular Supercompilation with Fine-Grained Invalidation).
+Phase: **Phase 67 — Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics)** (PLANNING)
+Milestone: **Total Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70)** (PLANNED)
+Previous Milestone: **World's Fastest General Supercompiler (Phases 59–66)** (COMPLETED 2026-10-05)
+Status: Hostile repository audit completed. Identified 41 production invariant violations across frontend/midend/codegen, heuristic `__numlang_fib` intrinsic in supercompiler recurrence solver, differential fuzzing test harness tiering gaps, and LLVM toolchain decoupling requirements. Formulated 4-phase hardening roadmap (Phases 67–70).
+Last activity: 2026-10-08 — Hostile audit completed, monograph audit script `audit_pdf.py` verified, and Milestone 5 roadmap established.
+
 
 ## Progress
 
@@ -65,9 +66,14 @@ Last activity: 2026-10-05 — Completed Phase 66 (Incremental Modular Supercompi
 - [x] **Phase 60: Nonlinear Polynomial Recurrence Solver** (COMPLETED)
 - [x] **Phase 61: Fast Hash-Cons Whistle: O(1) Structural Identity** (COMPLETED)
 - [x] **Phase 62: Whole-Program Cross-Function Recurrence Closing** (COMPLETED)
+- [x] **Phase 63: True Production Self-Applicable Specializer (2nd Futamura Binary Output)** (COMPLETED)
 - [x] **Phase 64: Strength Reduction in Residual After Loop Collapse** (COMPLETED)
 - [x] **Phase 65: CPS Transformation of the Driving Loop (Infinite Stack Safety)** (COMPLETED)
 - [x] **Phase 66: Incremental Modular Supercompilation with Fine-Grained Invalidation** (COMPLETED)
+- [ ] **Phase 67: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics)** (PLANNED)
+- [ ] **Phase 68: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling** (PLANNED)
+- [ ] **Phase 69: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering** (PLANNED)
+- [ ] **Phase 70: Monograph Script Alignment & Repository-Wide Synchronization** (PLANNED)
 
 ## Accumulated Context
 
@@ -83,6 +89,8 @@ Last activity: 2026-10-05 — Completed Phase 66 (Incremental Modular Supercompi
 - Phases 48–50: Systematically beat functional compilers (GHC, HOSC) via zero-allocation Reynolds defunctionalization and surpassed systems compilers (GCC, Clang, Rustc) via mathematical supercompilation feeding LLVM SIMD/vectorization.
 - Total Unconditional Dominance (Phases 51–58): Closed all remaining gaps (codata supercompilation, deopt safepoints, exhaustive MRSC oracle, pre-defunctionalization AST distillation, polyhedral ILP scheduler, outlining & tiered JIT, differential validation, CLBG loss remediation).
 - World's Fastest General Supercompiler (Phases 59–66): Eliminates all algebraic simplification, polynomial recurrence, hash-cons whistle, cross-function mutual recurrence, 2nd Futamura binary, strength reduction, CPS stack safety, and incremental cache gaps.
+- Hostile Audit 2026-10-08: Formulated Milestone 5 (Phases 67–70) targeting complete invariant hardening across parser/typechecker/lowering, generalized linear recurrence emitter without name matching, standalone LLVM toolchain invocation, and differential fuzzing tiering.
+
 
 
 

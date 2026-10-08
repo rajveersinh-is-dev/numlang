@@ -347,33 +347,58 @@
 - [x] **XFUNC-04**: Emit residualized matrix exponentiation or closed-form expressions that compute the mutual recursion result in $O(\log N)$ or $O(1)$.
 - [x] **XFUNC-05**: Verification in `tests/mutual_recursion_collapse_tests.rs`: verify closed-form collapse of `even/odd`, 2-level mutual recursions, and Hofstadter-style linear systems.
 
-### 49. True Production Self-Applicable Specializer (2nd Futamura Binary Output) (Phase 63) [PLANNED]
-- [ ] **PROD-FUTA2-01**: Upgrade `MinSpec.nl` to accept serialized AST byte streams and evaluate arbitrary NumLang programs.
-- [ ] **PROD-FUTA2-02**: Drive `MinSpec.nl` specialized against itself using the supercompiler pipeline.
-- [ ] **PROD-FUTA2-03**: Compile the resulting residual MIR into a native standalone executable binary (`target/release/minspec_cogen.exe`).
-- [ ] **PROD-FUTA2-04**: Add `--futamura2` CLI command executing the self-specialization and verifying the generated binary.
-- [ ] **PROD-FUTA2-05**: Verification in `tests/futamura2_binary_tests.rs`: the generated compiler binary compiles 10 distinct NumLang test programs, matching outputs of the primary compiler.
+### 49. True Production Self-Applicable Specializer (2nd Futamura Binary Output) (Phase 63) [COMPLETE]
+- [x] **PROD-FUTA2-01**: Upgrade `MinSpec.nl` to accept serialized AST byte streams and evaluate arbitrary NumLang programs.
+- [x] **PROD-FUTA2-02**: Drive `MinSpec.nl` specialized against itself using the supercompiler pipeline.
+- [x] **PROD-FUTA2-03**: Compile the resulting residual MIR into a native standalone executable binary (`target/release/minspec_cogen.exe`).
+- [x] **PROD-FUTA2-04**: Add `--futamura2` CLI command executing the self-specialization and verifying the generated binary.
+- [x] **PROD-FUTA2-05**: Verification in `tests/futamura2_binary_tests.rs`: the generated compiler binary compiles 10 distinct NumLang test programs, matching outputs of the primary compiler.
 
-### 50. Strength Reduction in Residual After Loop Collapse (Phase 64) [PLANNED]
-- [ ] **STRENGTH-01**: Implement `src/mir/supercompiler/strength_reduce.rs` scanning residual basic blocks for strength reduction opportunities.
-- [ ] **STRENGTH-02**: Power-of-2 multiplication reduction: replace `mul(x, 2^k)` with `shl(x, k)`.
-- [ ] **STRENGTH-03**: Near-power-of-2 reduction: replace `mul(x, 2^a ± 2^b)` with shift and add/sub sequences.
-- [ ] **STRENGTH-04**: Power-of-2 division reduction: replace `div(x, 2^k)` with arithmetic right shifts (`shr`).
-- [ ] **STRENGTH-05**: Integrate Strassen block recursion for $N \times N$ matrix exponentiation where $N \ge 4$ in `recurrence.rs`.
+### 50. Strength Reduction in Residual After Loop Collapse (Phase 64) [COMPLETE]
+- [x] **STRENGTH-01**: Implement `src/mir/supercompiler/strength_reduce.rs` scanning residual basic blocks for strength reduction opportunities.
+- [x] **STRENGTH-02**: Power-of-2 multiplication reduction: replace `mul(x, 2^k)` with `shl(x, k)`.
+- [x] **STRENGTH-03**: Near-power-of-2 reduction: replace `mul(x, 2^a ± 2^b)` with shift and add/sub sequences.
+- [x] **STRENGTH-04**: Power-of-2 division reduction: replace `div(x, 2^k)` with arithmetic right shifts (`shr`).
+- [x] **STRENGTH-05**: Integrate Strassen block recursion for $N \times N$ matrix exponentiation where $N \ge 4$ in `recurrence.rs`.
 
-### 51. CPS Transformation of the Driving Loop (Infinite Stack Safety) (Phase 65) [PLANNED]
-- [ ] **CPS-01**: Define explicit driving task structures `enum DriveTask { ProcessNode(ProcessNodeId), HandleTransition(...) }`.
-- [ ] **CPS-02**: Replace recursive `drive_node` calls with a work-queue trampoline (`VecDeque<DriveTask>`).
-- [ ] **CPS-03**: Reconstruct ancestor chain paths directly from the process-tree DAG rather than relying on call-stack activation frames.
-- [ ] **CPS-04**: Enable parallel work-stealing driving using `crossbeam-deque` or scoped threads across independent process branches.
-- [ ] **CPS-05**: Verification in `tests/deep_recursion_safety_tests.rs`: verify programs with recursion depths > 1,000 drive cleanly without stack overflow, matching single-threaded outputs.
+### 51. CPS Transformation of the Driving Loop (Infinite Stack Safety) (Phase 65) [COMPLETE]
+- [x] **CPS-01**: Define explicit driving task structures `enum DriveTask { ProcessNode(ProcessNodeId), HandleTransition(...) }`.
+- [x] **CPS-02**: Replace recursive `drive_node` calls with a work-queue trampoline (`VecDeque<DriveTask>`).
+- [x] **CPS-03**: Reconstruct ancestor chain paths directly from the process-tree DAG rather than relying on call-stack activation frames.
+- [x] **CPS-04**: Enable parallel work-stealing driving using `crossbeam-deque` or scoped threads across independent process branches.
+- [x] **CPS-05**: Verification in `tests/deep_recursion_safety_tests.rs`: verify programs with recursion depths > 1,000 drive cleanly without stack overflow, matching single-threaded outputs.
 
-### 52. Incremental Modular Supercompilation with Fine-Grained Invalidation (Phase 66) [PLANNED]
-- [ ] **MODCACHE-01**: Extend `SpecializationCache` with an inter-function dependency graph: `HashMap<CacheKey, Vec<CacheKey>>` recording transitive callee dependencies.
-- [ ] **MODCACHE-02**: Compute composite cache keys incorporating the SHA-256 hashes of the function MIR body and all reachable callee bodies.
-- [ ] **MODCACHE-03**: Implement fine-grained cache invalidation: when a function changes, invalidate only its upstream callers in the dependency DAG.
-- [ ] **MODCACHE-04**: Serialize dependency graph and disk cache entries to `.numlang_cache/deps.json` under the `--incremental` CLI flag.
-- [ ] **MODCACHE-05**: Verification in `tests/incremental_cache_tests.rs`: in a multi-function module, modify a single leaf function and verify that only dependent callers are re-specialized, achieving $\ge 70\%$ cache reuse.
+### 52. Incremental Modular Supercompilation with Fine-Grained Invalidation (Phase 66) [COMPLETE]
+- [x] **MODCACHE-01**: Extend `SpecializationCache` with an inter-function dependency graph: `HashMap<CacheKey, Vec<CacheKey>>` recording transitive callee dependencies.
+- [x] **MODCACHE-02**: Compute composite cache keys incorporating the SHA-256 hashes of the function MIR body and all reachable callee bodies.
+- [x] **MODCACHE-03**: Implement fine-grained cache invalidation: when a function changes, invalidate only its upstream callers in the dependency DAG.
+- [x] **MODCACHE-04**: Serialize dependency graph and disk cache entries to `.numlang_cache/deps.json` under the `--incremental` CLI flag.
+- [x] **MODCACHE-05**: Verification in `tests/incremental_cache_tests.rs`: in a multi-function module, modify a single leaf function and verify that only dependent callers are re-specialized, achieving $\ge 70\%$ cache reuse.
+
+### 53. Total Frontend & Midend Invariant Hardening (Phase 67) [PLANNED]
+- [ ] **INV-01**: Replace all 13 `.unwrap()` and 4 `unreachable!()` calls in `src/parser/` with structured `ParseError` diagnostic variants.
+- [ ] **INV-02**: Replace `.expect()`, `.unwrap()`, and `unreachable!()` calls in `src/typecheck/checker.rs` with `TypeError` variants.
+- [ ] **INV-03**: Eliminate all `.unwrap()` and `.expect()` calls in `src/ir/lower.rs`, `src/opt/recursion.rs`, `src/opt/inlining.rs`, and `src/ast/hodistill.rs`.
+- [ ] **INV-04**: Replace Cranelift `unreachable!()` and `GLOBAL_DEOPT_TABLE.write().unwrap()` lock unwraps with structured error handling.
+
+### 54. Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling (Phase 68) [PLANNED]
+- [ ] **REC-01**: Eliminate heuristic string matching on `__numlang_fib` in `src/mir/supercompiler/generalize.rs`.
+- [ ] **REC-02**: Implement generalized order-2 linear recurrence emission `__numlang_linear_rec2(c1, c2, s0, s1, n)` supporting arbitrary non-zero coefficients.
+- [ ] **REC-03**: Update `src/codegen/cranelift/mir_emit.rs` to lower `__numlang_linear_rec2` symmetrically without checking for "fib".
+- [ ] **REC-04**: Update `src/codegen/llvm_backend.rs` to emit general iterative loops for `__numlang_linear_rec2` without special-casing Fibonacci.
+
+### 55. Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering (Phase 69) [PLANNED]
+- [ ] **TOOL-01**: Add standalone CLI toolchain driver in `src/codegen/llvm_backend.rs` invoking external `clang`/`llc` on textual LLVM IR when `inkwell` is disabled.
+- [ ] **TOOL-02**: Un-ignore `tests/differential_correctness_tests.rs` by adapting iteration bounds dynamically for debug vs release modes.
+- [ ] **TOOL-03**: Add adaptive tiering to `tests/differential_validation_tests.rs` so default debug test runs complete within 120s.
+- [ ] **TOOL-04**: Configure `tests/differential_fuzz_100k.rs` smoke vs nightly tiering via environment variables.
+
+### 56. Monograph Script Alignment & Repository-Wide Synchronization (Phase 70) [PLANNED]
+- [ ] **SYNC-01**: Verify `paper/book/audit_pdf.py` successfully validates monograph page count, TOC, cross-references, and citations.
+- [ ] **SYNC-02**: Synchronize root `ROADMAP.md` with `.planning/ROADMAP.md` and `.planning/STATE.md`.
+- [ ] **SYNC-03**: Ensure zero warnings under `cargo clippy --all-targets -- -D warnings` and zero diffs under `cargo fmt -- --check`.
+- [ ] **SYNC-04**: Push all local commits to remote GitHub `master` branch and verify remote tracking synchronization.
+
 
 ---
 
@@ -430,7 +455,12 @@
 | POLYREC-01..05 | Phase 60 | Complete | `src/mir/supercompiler/recurrence.rs`, `src/mir/supercompiler/drive.rs`, `tests/polynomial_recurrence_tests.rs` |
 | HASHCONS-01..05 | Phase 61 | Complete | `src/mir/supercompiler/term.rs`, `src/mir/supercompiler/whistle.rs` |
 | XFUNC-01..05 | Phase 62 | Complete | `src/mir/supercompiler/drive.rs`, `src/mir/supercompiler/recurrence.rs` |
-| PROD-FUTA2-01..05 | Phase 63 | Planned | `src/stdlib/minspec.nl`, `src/compiler.rs`, `src/main.rs` |
-| STRENGTH-01..05 | Phase 64 | Planned | `src/mir/supercompiler/strength_reduce.rs`, `src/mir/supercompiler/recurrence.rs` |
-| CPS-01..05 | Phase 65 | Planned | `src/mir/supercompiler/drive.rs`, `src/mir/supercompiler/parallel.rs` |
-| MODCACHE-01..05 | Phase 66 | Planned | `src/mir/supercompiler/cache.rs`, `src/compiler.rs`, `src/main.rs` |
+| PROD-FUTA2-01..05 | Phase 63 | Complete | `src/stdlib/minspec.nl`, `src/compiler.rs`, `src/main.rs` |
+| STRENGTH-01..05 | Phase 64 | Complete | `src/mir/supercompiler/strength_reduce.rs`, `src/mir/supercompiler/recurrence.rs` |
+| CPS-01..05 | Phase 65 | Complete | `src/mir/supercompiler/drive.rs`, `src/mir/supercompiler/parallel.rs` |
+| MODCACHE-01..05 | Phase 66 | Complete | `src/mir/supercompiler/cache.rs`, `src/compiler.rs`, `src/main.rs` |
+| INV-01..04 | Phase 67 | Planned | `src/parser/`, `src/typecheck/`, `src/ir/`, `src/opt/`, `src/ast/`, `src/codegen/cranelift/` |
+| REC-01..04 | Phase 68 | Planned | `src/mir/supercompiler/generalize.rs`, `src/codegen/cranelift/mir_emit.rs`, `src/codegen/llvm_backend.rs` |
+| TOOL-01..04 | Phase 69 | Planned | `src/codegen/llvm_backend.rs`, `tests/differential_*` |
+| SYNC-01..04 | Phase 70 | Planned | `paper/book/audit_pdf.py`, `.planning/*`, `ROADMAP.md` |
+

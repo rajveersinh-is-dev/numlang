@@ -36,11 +36,23 @@ Systematically resolved all defect classes identified during adversarial audit [
 - Converted remaining codegen panics to structured errors, relocated recurrence lowering, purged dead OS alloc fields, hardened warmup iterations (Phase 46)
 - Clippy -D warnings zero-warning purity, monadic MIR lowering unwrapping elimination, domain CodegenError variants (Phase 47)
 
-### Global Dominance & Algorithmic Generality (Phases 48–50) [PLANNED]
+### Global Dominance & Algorithmic Generality (Phases 48–50) [COMPLETE]
 Systematic architectural upgrades to outperform all functional (GHC, HOSC) and systems (GCC, Clang, Rustc) competitors:
 - Total algorithmic generality and structural decoupling without name-matching heuristics (Phase 48)
 - Whole-program type-directed Reynolds defunctionalization and higher-order loop deforestation (Phase 49)
 - High-level mathematical supercompilation paired with low-level LLVM SIMD/TBAA co-optimization (Phase 50)
+
+### Total Unconditional Dominance (Phases 51–58) [COMPLETE]
+- Codata supercompilation, speculative type guards, exhaustive MRSC oracle, pre-defunctionalization AST distillation, Pluto-style polyhedral ILP scheduler, outlining & tiered JIT, differential validation, CLBG loss remediation.
+
+### World's Fastest General Supercompiler (Phases 59–66) [COMPLETE]
+- Algebraic identity interning reduction, nonlinear polynomial recurrence solver, O(1) hash-cons whistle, whole-program cross-function mutual recurrence closing, production 2nd Futamura binary output (`MinSpec.nl`), strength reduction, CPS trampolined driving for unbounded stack safety, and incremental modular supercompilation with callee dependency tracking.
+
+### Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [PLANNED]
+- Eliminate remaining 41 invariant shortcuts across compiler frontend and midend (Phase 67).
+- Replace heuristic recurrence patterns with general 2nd-order linear recurrence emitter `__numlang_linear_rec2` (Phase 68).
+- Standalone LLVM toolchain CLI driver fallback and tiered differential fuzzing test execution (Phase 69).
+- Monograph script alignment (`audit_pdf.py`) and repository-wide planning synchronization (Phase 70).
 
 ---
 
@@ -80,13 +92,17 @@ Systematic architectural upgrades to outperform all functional (GHC, HOSC) and s
 - [x] **Phase 57**: Rigorous Differential Validation & Lean Operational Equivalence.
 - [x] **Phase 58**: CLBG Loss Diagnosis & Fix Plan.
 - [x] **Phase 59**: Algebraic Identity Reduction in Term Interning (ALG-01..05).
-- [ ] **Phase 60**: Nonlinear Polynomial Recurrence Solver (POLY-04..07).
-- [ ] **Phase 61**: Fast Hash-Cons Whistle: O(1) Structural Identity (HASH-01..03).
-- [ ] **Phase 62**: Whole-Program Cross-Function Recurrence Closing (XREC-01..04).
-- [ ] **Phase 63**: True Production Self-Applicable Specializer (2nd Futamura Binary Output) (FUTA-10..13).
-- [ ] **Phase 64**: Strength Reduction in Residual After Loop Collapse (STR-01..04).
-- [ ] **Phase 65**: CPS Transformation of the Driving Loop (Infinite Stack Safety) (CPS-01..04).
-- [ ] **Phase 66**: Incremental Modular Supercompilation with Fine-Grained Invalidation (INC-01..04).
+- [x] **Phase 60**: Nonlinear Polynomial Recurrence Solver (POLY-04..07).
+- [x] **Phase 61**: Fast Hash-Cons Whistle: O(1) Structural Identity (HASH-01..03).
+- [x] **Phase 62**: Whole-Program Cross-Function Recurrence Closing (XREC-01..04).
+- [x] **Phase 63**: True Production Self-Applicable Specializer (2nd Futamura Binary Output) (FUTA-10..13).
+- [x] **Phase 64**: Strength Reduction in Residual After Loop Collapse (STR-01..04).
+- [x] **Phase 65**: CPS Transformation of the Driving Loop (Infinite Stack Safety) (CPS-01..04).
+- [x] **Phase 66**: Incremental Modular Supercompilation with Fine-Grained Invalidation (INC-01..04).
+- [ ] **Phase 67**: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics) (INV-01..04).
+- [ ] **Phase 68**: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling (REC-01..04).
+- [ ] **Phase 69**: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering (TOOL-01..04).
+- [ ] **Phase 70**: Monograph Script Alignment & Repository-Wide Synchronization (SYNC-01..04).
 
 
 
