@@ -49,10 +49,7 @@ pub fn serialize_expr_to_stream(
             stream.push(id);
         }
         Expr::Binary {
-            op,
-            left,
-            right,
-            ..
+            op, left, right, ..
         } => {
             stream.push(3);
             let op_code = match op {
@@ -76,7 +73,11 @@ pub fn serialize_expr_to_stream(
             stream.extend(serialize_expr_to_stream(inner, var_map, next_id));
         }
         Expr::Call { callee, args, .. } => {
-            let fn_id = if callee == "identity" || callee == "eval_call" { 1 } else { 2 };
+            let fn_id = if callee == "identity" || callee == "eval_call" {
+                1
+            } else {
+                2
+            };
             stream.push(5);
             stream.push(fn_id);
             if let Some(arg) = args.first() {
@@ -128,7 +129,11 @@ pub fn serialize_stmts_to_stream(
         } => {
             let mut stream = vec![4];
             stream.extend(serialize_expr_to_stream(condition, var_map, next_id));
-            stream.extend(serialize_stmts_to_stream(&then_branch.stmts, var_map, next_id));
+            stream.extend(serialize_stmts_to_stream(
+                &then_branch.stmts,
+                var_map,
+                next_id,
+            ));
             if let Some(ref eb) = else_branch {
                 stream.extend(serialize_stmts_to_stream(&eb.stmts, var_map, next_id));
             } else {
@@ -258,10 +263,16 @@ pub fn build_minspec_cogen_binary(out_path: &Path) -> Result<PathBuf, String> {
     let _residual_mir = supercompile_2nd_futamura_cogen()?;
 
     // 2. Locate or build minspec_cogen executable
-    let candidate_release = PathBuf::from("target/release")
-        .join(if cfg!(windows) { "minspec_cogen.exe" } else { "minspec_cogen" });
-    let candidate_debug = PathBuf::from("target/debug")
-        .join(if cfg!(windows) { "minspec_cogen.exe" } else { "minspec_cogen" });
+    let candidate_release = PathBuf::from("target/release").join(if cfg!(windows) {
+        "minspec_cogen.exe"
+    } else {
+        "minspec_cogen"
+    });
+    let candidate_debug = PathBuf::from("target/debug").join(if cfg!(windows) {
+        "minspec_cogen.exe"
+    } else {
+        "minspec_cogen"
+    });
 
     let source_exe = if candidate_release.exists() {
         candidate_release
@@ -275,13 +286,19 @@ pub fn build_minspec_cogen_binary(out_path: &Path) -> Result<PathBuf, String> {
             .map_err(|e| format!("Failed to invoke cargo build for minspec_cogen: {}", e))?;
 
         if !status.success() {
-            return Err(format!("cargo build --release --bin minspec_cogen failed with exit code: {:?}", status.code()));
+            return Err(format!(
+                "cargo build --release --bin minspec_cogen failed with exit code: {:?}",
+                status.code()
+            ));
         }
         candidate_release
     };
 
     if !source_exe.exists() {
-        return Err(format!("Expected binary does not exist at {}", source_exe.display()));
+        return Err(format!(
+            "Expected binary does not exist at {}",
+            source_exe.display()
+        ));
     }
 
     // 3. If out_path differs from source, copy it

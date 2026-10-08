@@ -6,9 +6,8 @@ use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram};
 use numlang::mir::supercompiler::drive::SupercompilerStats;
 use numlang::mir::supercompiler::mrsc::{
-    CandidateMetrics, CustomWeightedObjective, MinCodeSizeObjective,
-    MinDynamicBranchObjective, MultiResultEngine, ParetoCandidate, ParetoFrontier,
-    ParetoObjective, ResidualObjective,
+    CandidateMetrics, CustomWeightedObjective, MinCodeSizeObjective, MinDynamicBranchObjective,
+    MultiResultEngine, ParetoCandidate, ParetoFrontier, ParetoObjective, ResidualObjective,
 };
 use numlang::mir::supercompiler::SupercompileMode;
 use numlang::mir::Terminator;
@@ -23,7 +22,12 @@ fn get_mir(source: &str) -> MirProgram {
     lower_program(&typed)
 }
 
-fn compile_and_run_mode(src: &str, test_name: &str, mode: SupercompileMode, objective: &str) -> i32 {
+fn compile_and_run_mode(
+    src: &str,
+    test_name: &str,
+    mode: SupercompileMode,
+    objective: &str,
+) -> i32 {
     let tokens = tokenize(src).expect("Tokenize failed");
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
@@ -68,21 +72,34 @@ fn test_mrsc_hypergraph_construction_and_alternative_paths() {
     "#;
 
     let mir = get_mir(code);
-    let func = mir.functions.iter().find(|f| f.name == "unroll_kernel").unwrap();
+    let func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "unroll_kernel")
+        .unwrap();
 
     let mrsc = MultiResultEngine::new(func, &mir.functions);
     let (hypergraph, frontier) = mrsc.explore_hypergraph();
 
     // Verify non-trivial hypergraph properties
-    assert!(hypergraph.node_count() > 1, "Hypergraph must contain multiple configuration nodes");
-    assert!(hypergraph.edge_count() > 1, "Hypergraph must contain multiple hyperedges");
+    assert!(
+        hypergraph.node_count() > 1,
+        "Hypergraph must contain multiple configuration nodes"
+    );
+    assert!(
+        hypergraph.edge_count() > 1,
+        "Hypergraph must contain multiple hyperedges"
+    );
     assert!(
         hypergraph.has_alternative_paths(),
         "Hypergraph must branch into alternative actions (e.g. unrolling vs knot-tying/recurrence)"
     );
 
     // Verify Pareto frontier contains multiple valid derivations
-    assert!(!frontier.is_empty(), "Frontier must contain non-dominated candidates");
+    assert!(
+        !frontier.is_empty(),
+        "Frontier must contain non-dominated candidates"
+    );
 }
 
 #[test]
@@ -121,11 +138,20 @@ fn test_mrsc_pareto_dominance_mathematical_properties() {
     // 1. Strict dominance
     assert!(m_a.dominates(&m_b), "A must dominate B");
     assert!(!m_b.dominates(&m_a), "B must NOT dominate A");
-    assert!(!m_a.dominates(&m_a), "A must NOT dominate itself (strict inequality required)");
+    assert!(
+        !m_a.dominates(&m_a),
+        "A must NOT dominate itself (strict inequality required)"
+    );
 
     // 2. Incomparability (Trade-off)
-    assert!(!m_a.dominates(&m_c), "A must not dominate C (C has smaller size)");
-    assert!(!m_c.dominates(&m_a), "C must not dominate A (A has fewer branches)");
+    assert!(
+        !m_a.dominates(&m_c),
+        "A must not dominate C (C has smaller size)"
+    );
+    assert!(
+        !m_c.dominates(&m_a),
+        "C must not dominate A (A has fewer branches)"
+    );
 
     // 3. Pareto frontier insertion and pruning
     let mut frontier = ParetoFrontier::new();
@@ -158,7 +184,11 @@ fn test_mrsc_pareto_dominance_mathematical_properties() {
         metrics: m_c,
     };
     assert!(frontier.insert(cand_c));
-    assert_eq!(frontier.len(), 2, "Both A and C must coexist on the Pareto frontier");
+    assert_eq!(
+        frontier.len(),
+        2,
+        "Both A and C must coexist on the Pareto frontier"
+    );
 }
 
 #[test]
@@ -193,9 +223,17 @@ fn test_mrsc_competing_objectives_selection_and_divergence() {
     let branch_count = branch_res
         .blocks
         .iter()
-        .filter(|b| matches!(b.terminator, Terminator::BranchIf { .. } | Terminator::Switch { .. }))
+        .filter(|b| {
+            matches!(
+                b.terminator,
+                Terminator::BranchIf { .. } | Terminator::Switch { .. }
+            )
+        })
         .count();
-    assert_eq!(branch_count, 0, "Unrolled candidate under MinDynamicBranchObjective must have zero branches");
+    assert_eq!(
+        branch_count, 0,
+        "Unrolled candidate under MinDynamicBranchObjective must have zero branches"
+    );
 
     // 2. MinCodeSizeObjective selects candidate with minimal instruction/block footprint
     let (size_res, _size_tree, size_score) = mrsc.explore_and_select(&MinCodeSizeObjective);
@@ -214,8 +252,14 @@ fn test_mrsc_competing_objectives_selection_and_divergence() {
 
     // Pareto objective combines both
     let (pareto_res, _pareto_tree, pareto_score) = mrsc.explore_and_select(&ParetoObjective);
-    assert!(pareto_score >= size_score, "Pareto score combines size and branch penalties");
-    assert!(!pareto_res.blocks.is_empty(), "Pareto residual must be valid");
+    assert!(
+        pareto_score >= size_score,
+        "Pareto score combines size and branch penalties"
+    );
+    assert!(
+        !pareto_res.blocks.is_empty(),
+        "Pareto residual must be valid"
+    );
 }
 
 #[test]
@@ -237,7 +281,11 @@ fn test_mrsc_custom_weighted_objective() {
     "#;
 
     let mir = get_mir(code);
-    let func = mir.functions.iter().find(|f| f.name == "loop_accum").unwrap();
+    let func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "loop_accum")
+        .unwrap();
 
     let mrsc = MultiResultEngine::new(func, &mir.functions);
 
@@ -284,14 +332,34 @@ fn test_mrsc_end_to_end_execution_parity() {
     "#;
 
     // 1. Run under MRSC with size objective
-    let res_size = compile_and_run_mode(code, "test_mrsc_size_exec", SupercompileMode::Mrsc, "size");
-    assert_eq!(res_size, 161, "MRSC size-optimized execution must produce 161");
+    let res_size =
+        compile_and_run_mode(code, "test_mrsc_size_exec", SupercompileMode::Mrsc, "size");
+    assert_eq!(
+        res_size, 161,
+        "MRSC size-optimized execution must produce 161"
+    );
 
     // 2. Run under MRSC with branch objective
-    let res_branch = compile_and_run_mode(code, "test_mrsc_branch_exec", SupercompileMode::Mrsc, "branch");
-    assert_eq!(res_branch, 161, "MRSC branch-optimized execution must produce 161");
+    let res_branch = compile_and_run_mode(
+        code,
+        "test_mrsc_branch_exec",
+        SupercompileMode::Mrsc,
+        "branch",
+    );
+    assert_eq!(
+        res_branch, 161,
+        "MRSC branch-optimized execution must produce 161"
+    );
 
     // 3. Run under MRSC with pareto objective
-    let res_pareto = compile_and_run_mode(code, "test_mrsc_pareto_exec", SupercompileMode::Mrsc, "pareto");
-    assert_eq!(res_pareto, 161, "MRSC pareto-optimized execution must produce 161");
+    let res_pareto = compile_and_run_mode(
+        code,
+        "test_mrsc_pareto_exec",
+        SupercompileMode::Mrsc,
+        "pareto",
+    );
+    assert_eq!(
+        res_pareto, 161,
+        "MRSC pareto-optimized execution must produce 161"
+    );
 }

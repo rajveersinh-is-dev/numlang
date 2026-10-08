@@ -24,7 +24,10 @@ fn find_vcvars64() -> Option<PathBuf> {
 }
 
 fn wrap_rust(src: &str) -> String {
-    let s = src.replace("fn main() {", "fn main() {\n    let _bench_t0 = std::time::Instant::now();");
+    let s = src.replace(
+        "fn main() {",
+        "fn main() {\n    let _bench_t0 = std::time::Instant::now();",
+    );
     let s = s.replace("std::process::exit(", "__bench_exit(&_bench_t0, ");
     let helper = r#"
 fn __bench_exit(t0: &std::time::Instant, code: i32) -> ! {
@@ -69,7 +72,12 @@ int main() {{
     )
 }
 
-fn compile_numlang(src: &str, test_dir: &Path, name: &str, supercompile: bool) -> (PathBuf, Duration) {
+fn compile_numlang(
+    src: &str,
+    test_dir: &Path,
+    name: &str,
+    supercompile: bool,
+) -> (PathBuf, Duration) {
     let flag = if supercompile { "sc" } else { "base" };
     let src_file = test_dir.join(format!("{}_{}.nl", name, flag));
     let exe_file = test_dir.join(format!("{}_{}.exe", name, flag));
@@ -138,7 +146,12 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<(PathBuf, Duratio
 
     let t0 = Instant::now();
     let output = Command::new("cmd.exe")
-        .args(["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
+        .args([
+            "/c",
+            bat_path.to_str()?,
+            src_file.to_str()?,
+            exe_file.to_str()?,
+        ])
         .output()
         .ok()?;
     let compile_time = t0.elapsed();
@@ -158,7 +171,9 @@ fn benchmark_cmd(cmd: &Path, expected_exit: i32, iterations: usize) -> (Duration
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let output = Command::new(cmd).output().expect("Failed to run benchmark binary");
+        let output = Command::new(cmd)
+            .output()
+            .expect("Failed to run benchmark binary");
         let elapsed = start.elapsed();
         last_code = output.status.code().unwrap_or(-1);
 
@@ -262,7 +277,6 @@ int __user_main(void) {
 "#,
             iterations: 5,
         },
-
         // 2. Triangular Summation (50M iterations)
         HeadToHeadBench {
             name: "Triangular Summation Loop (50M iters)",
@@ -314,7 +328,6 @@ int __user_main(void) {
 "#,
             iterations: 5,
         },
-
         // 3. Cubic Polynomial Sum (10M iterations)
         HeadToHeadBench {
             name: "Cubic Polynomial Sum (10M iters)",
@@ -366,7 +379,6 @@ int __user_main(void) {
 "#,
             iterations: 5,
         },
-
         // 4. Interprocedural Call & Triangular Loop Fusion
         HeadToHeadBench {
             name: "Interprocedural Loop Fusion (10M iters)",
@@ -428,7 +440,6 @@ int __user_main(void) {
 "#,
             iterations: 5,
         },
-
         // 5. Geometric Power of Two Loop (100 iters)
         HeadToHeadBench {
             name: "Geometric Power Loop (100 iters)",
@@ -492,11 +503,14 @@ int __user_main(void) {
 
         // Compile NumLang Supercompiled
         let (nl_sc_exe, nl_sc_compile) = compile_numlang(b.nl_code, &test_dir, &safe_name, true);
-        let (nl_sc_time, nl_sc_exit, nl_sc_ok) = benchmark_cmd(&nl_sc_exe, b.expected_exit, b.iterations);
+        let (nl_sc_time, nl_sc_exit, nl_sc_ok) =
+            benchmark_cmd(&nl_sc_exe, b.expected_exit, b.iterations);
 
         // Compile NumLang Baseline
-        let (nl_base_exe, nl_base_compile) = compile_numlang(b.nl_code, &test_dir, &safe_name, false);
-        let (nl_base_time, nl_base_exit, nl_base_ok) = benchmark_cmd(&nl_base_exe, b.expected_exit, b.iterations);
+        let (nl_base_exe, nl_base_compile) =
+            compile_numlang(b.nl_code, &test_dir, &safe_name, false);
+        let (nl_base_time, nl_base_exit, nl_base_ok) =
+            benchmark_cmd(&nl_base_exe, b.expected_exit, b.iterations);
 
         // Compile Rust -O
         let rust_res = compile_rust(b.rs_code, &test_dir, &safe_name);
@@ -506,16 +520,24 @@ int __user_main(void) {
 
         println!("-----------------------------------------------------------------------------------------------------");
         println!("Benchmark #{}: {}", idx + 1, b.name);
-        println!("Asymptotics: Baseline [{}] -> Supercompiled [{}]", b.asymptotics_unoptimized, b.asymptotics_supercompiled);
+        println!(
+            "Asymptotics: Baseline [{}] -> Supercompiled [{}]",
+            b.asymptotics_unoptimized, b.asymptotics_supercompiled
+        );
         println!("-----------------------------------------------------------------------------------------------------");
 
-        println!("  NumLang Supercompiled : {:>10.3?} | Compile: {:>8.2?} | Exit: {:>4} (match: {})",
-            nl_sc_time, nl_sc_compile, nl_sc_exit, nl_sc_ok);
-        println!("  NumLang Baseline      : {:>10.3?} | Compile: {:>8.2?} | Exit: {:>4} (match: {})",
-            nl_base_time, nl_base_compile, nl_base_exit, nl_base_ok);
+        println!(
+            "  NumLang Supercompiled : {:>10.3?} | Compile: {:>8.2?} | Exit: {:>4} (match: {})",
+            nl_sc_time, nl_sc_compile, nl_sc_exit, nl_sc_ok
+        );
+        println!(
+            "  NumLang Baseline      : {:>10.3?} | Compile: {:>8.2?} | Exit: {:>4} (match: {})",
+            nl_base_time, nl_base_compile, nl_base_exit, nl_base_ok
+        );
 
         if let Some((rust_exe, rust_compile)) = rust_res {
-            let (rust_time, rust_exit, rust_ok) = benchmark_cmd(&rust_exe, b.expected_exit, b.iterations);
+            let (rust_time, rust_exit, rust_ok) =
+                benchmark_cmd(&rust_exe, b.expected_exit, b.iterations);
             let speedup_vs_rust = rust_time.as_nanos() as f64 / nl_sc_time.as_nanos().max(1) as f64;
             println!("  Rust (rustc -O)       : {:>10.3?} | Compile: {:>8.2?} | Exit: {:>4} (match: {}) | Speedup vs Rust: {:>8.2}x",
                 rust_time, rust_compile, rust_exit, rust_ok, speedup_vs_rust);
@@ -528,8 +550,12 @@ int __user_main(void) {
                 c_time, c_compile, c_exit, c_ok, speedup_vs_c);
         }
 
-        let speedup_sc_vs_base = nl_base_time.as_nanos() as f64 / nl_sc_time.as_nanos().max(1) as f64;
-        println!("  >>> Supercompiler Acceleration Factor: {:>8.2}x", speedup_sc_vs_base);
+        let speedup_sc_vs_base =
+            nl_base_time.as_nanos() as f64 / nl_sc_time.as_nanos().max(1) as f64;
+        println!(
+            "  >>> Supercompiler Acceleration Factor: {:>8.2}x",
+            speedup_sc_vs_base
+        );
         println!();
     }
 }

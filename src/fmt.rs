@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    BinaryOp, Block, EnumDef, Expr, Function, Item, Literal, MatchPattern, Program, Stmt, StructDef,
-    UnaryOp,
+    BinaryOp, Block, EnumDef, Expr, Function, Item, Literal, MatchPattern, Program, Stmt,
+    StructDef, UnaryOp,
 };
 use crate::parser::parse;
 use crate::span::Span;
@@ -213,7 +213,12 @@ pub fn format_expr_at(expr: &Expr, depth: usize) -> String {
             s.push_str(&format!("{close_indent}}}"));
             s
         }
-        Expr::Lambda { params, param_tys, body, .. } => {
+        Expr::Lambda {
+            params,
+            param_tys,
+            body,
+            ..
+        } => {
             let mut p_strs = Vec::new();
             for (i, p) in params.iter().enumerate() {
                 if let Some(Some(ref ty)) = param_tys.get(i) {
@@ -244,12 +249,7 @@ fn format_block(
     }
 }
 
-fn format_stmt(
-    stmt: &Stmt,
-    depth: usize,
-    inferred_types: &HashMap<Span, Type>,
-    out: &mut String,
-) {
+fn format_stmt(stmt: &Stmt, depth: usize, inferred_types: &HashMap<Span, Type>, out: &mut String) {
     let indent = " ".repeat(depth * 4);
     match stmt {
         Stmt::Let {
@@ -352,7 +352,10 @@ fn format_stmt(
             else_branch,
             ..
         } => {
-            out.push_str(&format!("{indent}if {} {{\n", format_expr_at(condition, depth)));
+            out.push_str(&format!(
+                "{indent}if {} {{\n",
+                format_expr_at(condition, depth)
+            ));
             format_block(then_branch, depth + 1, inferred_types, out);
 
             let mut current_else = else_branch.as_ref();
@@ -365,7 +368,10 @@ fn format_stmt(
                         ..
                     } = eb.stmts[0]
                     {
-                        out.push_str(&format!("{indent}}} else if {} {{\n", format_expr_at(c, depth)));
+                        out.push_str(&format!(
+                            "{indent}}} else if {} {{\n",
+                            format_expr_at(c, depth)
+                        ));
                         format_block(tb, depth + 1, inferred_types, out);
                         current_else = next_eb.as_ref();
                         continue;
@@ -404,11 +410,7 @@ fn format_struct(s: &StructDef, out: &mut String) {
     }
 }
 
-fn format_function(
-    f: &Function,
-    inferred_types: &HashMap<Span, Type>,
-    out: &mut String,
-) {
+fn format_function(f: &Function, inferred_types: &HashMap<Span, Type>, out: &mut String) {
     if let Some(ref doc) = f.doc_comment {
         for line in doc.lines() {
             if line.is_empty() {

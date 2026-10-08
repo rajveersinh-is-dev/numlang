@@ -34,7 +34,11 @@ fn test_lake_build_zero_errors() {
         .status()
         .expect("Failed to execute lake build");
 
-    assert!(status.success(), "lake build failed with status: {:?}", status);
+    assert!(
+        status.success(),
+        "lake build failed with status: {:?}",
+        status
+    );
 }
 
 #[test]
@@ -67,7 +71,11 @@ fn test_no_unproven_axioms_in_supercompiler() {
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("axiom ") {
-                panic!("Found unexpected unproven axiom in {}: {}", file.display(), trimmed);
+                panic!(
+                    "Found unexpected unproven axiom in {}: {}",
+                    file.display(),
+                    trimmed
+                );
             }
         }
     }
@@ -76,8 +84,7 @@ fn test_no_unproven_axioms_in_supercompiler() {
 #[test]
 fn test_evaluates_is_constructive_with_stepstar() {
     let semantics_path = get_supercompiler_dir().join("Semantics.lean");
-    let content = fs::read_to_string(&semantics_path)
-        .expect("Failed to read Semantics.lean");
+    let content = fs::read_to_string(&semantics_path).expect("Failed to read Semantics.lean");
 
     // Must define StepStar
     assert!(
@@ -107,12 +114,11 @@ fn test_evaluates_is_constructive_with_stepstar() {
 #[test]
 fn test_no_circular_tautology_premises_in_theorems() {
     let dir = get_supercompiler_dir();
-    let main_content = fs::read_to_string(dir.join("Main.lean"))
-        .expect("Failed to read Main.lean");
+    let main_content = fs::read_to_string(dir.join("Main.lean")).expect("Failed to read Main.lean");
     let dist_content = fs::read_to_string(dir.join("Distillation.lean"))
         .expect("Failed to read Distillation.lean");
-    let comp_content = fs::read_to_string(dir.join("Compaction.lean"))
-        .expect("Failed to read Compaction.lean");
+    let comp_content =
+        fs::read_to_string(dir.join("Compaction.lean")).expect("Failed to read Compaction.lean");
     let pres_content = fs::read_to_string(dir.join("Preservation.lean"))
         .expect("Failed to read Preservation.lean");
 

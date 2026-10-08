@@ -8,9 +8,9 @@
 //! - DEOPT-05: Real 10,000-call execution verifying >= 99% fast-path execution and bit-identical output upon deoptimization.
 
 use numlang::codegen::cranelift::deopt::{
-    get_runtime_deopt_count, init_global_deopt_table, reconstruct_interpreter_frame,
+    __nl_deopt, get_runtime_deopt_count, init_global_deopt_table, reconstruct_interpreter_frame,
     register_global_deopt, reset_runtime_deopt_counter, DeoptMetadata, DeoptTable,
-    OsrTransitionSlot, __nl_deopt,
+    OsrTransitionSlot,
 };
 use numlang::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl};
 use numlang::mir::speculate::{
@@ -56,15 +56,26 @@ fn test_type_guard_mir_construction_and_validation() {
         params: vec![("arg0".to_string(), Type::I64)],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "arg0".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "res".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "arg0".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "res".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![
             MirBasicBlock {
                 id: BasicBlockId(0),
                 statements: vec![],
                 terminator: Terminator::TypeGuard {
-                    local: Place { local: "arg0".to_string(), projections: vec![] },
+                    local: Place {
+                        local: "arg0".to_string(),
+                        projections: vec![],
+                    },
                     expected_tag: 1,
                     fast_path: BasicBlockId(1),
                     deopt_stub: BasicBlockId(2),
@@ -75,7 +86,10 @@ fn test_type_guard_mir_construction_and_validation() {
                 id: BasicBlockId(1),
                 statements: vec![],
                 terminator: Terminator::Return {
-                    value: Some(Place { local: "res".to_string(), projections: vec![] }),
+                    value: Some(Place {
+                        local: "res".to_string(),
+                        projections: vec![],
+                    }),
                 },
                 arguments: vec![],
             },
@@ -83,7 +97,10 @@ fn test_type_guard_mir_construction_and_validation() {
                 id: BasicBlockId(2),
                 statements: vec![],
                 terminator: Terminator::Return {
-                    value: Some(Place { local: "arg0".to_string(), projections: vec![] }),
+                    value: Some(Place {
+                        local: "arg0".to_string(),
+                        projections: vec![],
+                    }),
                 },
                 arguments: vec![],
             },
@@ -102,7 +119,10 @@ fn test_type_guard_mir_construction_and_validation() {
     // Test that invalid block target fails validation
     let mut invalid_func = func.clone();
     invalid_func.blocks[0].terminator = Terminator::TypeGuard {
-        local: Place { local: "arg0".to_string(), projections: vec![] },
+        local: Place {
+            local: "arg0".to_string(),
+            projections: vec![],
+        },
         expected_tag: 1,
         fast_path: BasicBlockId(99),
         deopt_stub: BasicBlockId(2),
@@ -120,18 +140,39 @@ fn test_speculative_guard_insertion_high_confidence() {
         ],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "callee_fn".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "arg_val".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "result".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "callee_fn".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "arg_val".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "result".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![
             MirBasicBlock {
                 id: BasicBlockId(0),
                 statements: vec![],
                 terminator: Terminator::IndirectCall {
-                    callee: Place { local: "callee_fn".to_string(), projections: vec![] },
-                    args: vec![Place { local: "arg_val".to_string(), projections: vec![] }],
-                    dest: Place { local: "result".to_string(), projections: vec![] },
+                    callee: Place {
+                        local: "callee_fn".to_string(),
+                        projections: vec![],
+                    },
+                    args: vec![Place {
+                        local: "arg_val".to_string(),
+                        projections: vec![],
+                    }],
+                    dest: Place {
+                        local: "result".to_string(),
+                        projections: vec![],
+                    },
                     next: BasicBlockId(1),
                 },
                 arguments: vec![],
@@ -140,7 +181,10 @@ fn test_speculative_guard_insertion_high_confidence() {
                 id: BasicBlockId(1),
                 statements: vec![],
                 terminator: Terminator::Return {
-                    value: Some(Place { local: "result".to_string(), projections: vec![] }),
+                    value: Some(Place {
+                        local: "result".to_string(),
+                        projections: vec![],
+                    }),
                 },
                 arguments: vec![],
             },
@@ -163,7 +207,11 @@ fn test_speculative_guard_insertion_high_confidence() {
 
     // Assert that the entry block now ends with TypeGuard
     match &func.blocks[0].terminator {
-        Terminator::TypeGuard { local, expected_tag, .. } => {
+        Terminator::TypeGuard {
+            local,
+            expected_tag,
+            ..
+        } => {
             assert_eq!(local.local, "arg_val");
             assert_eq!(*expected_tag, 1);
         }
@@ -173,9 +221,18 @@ fn test_speculative_guard_insertion_high_confidence() {
     // Now test with low confidence (< 0.95), guards should NOT be inserted
     let mut low_conf_func = func.clone();
     low_conf_func.blocks[0].terminator = Terminator::IndirectCall {
-        callee: Place { local: "callee_fn".to_string(), projections: vec![] },
-        args: vec![Place { local: "arg_val".to_string(), projections: vec![] }],
-        dest: Place { local: "result".to_string(), projections: vec![] },
+        callee: Place {
+            local: "callee_fn".to_string(),
+            projections: vec![],
+        },
+        args: vec![Place {
+            local: "arg_val".to_string(),
+            projections: vec![],
+        }],
+        dest: Place {
+            local: "result".to_string(),
+            projections: vec![],
+        },
         next: BasicBlockId(1),
     };
 
@@ -188,7 +245,10 @@ fn test_speculative_guard_insertion_high_confidence() {
     }
     let low_profiles = low_profiler.compute_profiles();
     let low_guards = insert_speculative_type_guards(&mut low_conf_func, &low_profiles, 0.95);
-    assert_eq!(low_guards, 0, "No guards should be inserted for low confidence");
+    assert_eq!(
+        low_guards, 0,
+        "No guards should be inserted for low confidence"
+    );
 }
 
 #[test]
@@ -264,7 +324,11 @@ fn test_speculative_fast_path_and_deopt_execution() {
         "Fast path rate must be >= 99%, was {:.4}",
         fast_path_rate
     );
-    assert_eq!(get_runtime_deopt_count(), 1, "Deopt counter must record 1 deopt event");
+    assert_eq!(
+        get_runtime_deopt_count(),
+        1,
+        "Deopt counter must record 1 deopt event"
+    );
 }
 
 #[test]
@@ -284,7 +348,10 @@ fn test_osr_transition_slot_activation() {
 
     // 100th invocation triggers hot threshold
     let crossed_threshold = slot.record_invocation();
-    assert!(crossed_threshold, "100th invocation must cross hot threshold");
+    assert!(
+        crossed_threshold,
+        "100th invocation must cross hot threshold"
+    );
     assert_eq!(slot.get_invocation_count(), 100);
 
     // Simulate Tier 1 background compilation completing and upgrading slot
@@ -303,8 +370,16 @@ fn test_collect_function_type_profiles_helper() {
         params: vec![("param_a".to_string(), Type::I64)],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "param_a".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "temp_b".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "param_a".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "temp_b".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![],
         is_distilled: false,

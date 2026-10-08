@@ -46,7 +46,11 @@ fn assert_buffer_eliminated(mir: &MirProgram, buf_name: &str) {
             for stmt in &b.statements {
                 let Statement::Assign(dest, rval) = stmt;
                 if dest.local == buf_name {
-                    assert!(!matches!(rval, Rvalue::Array(_)), "Array allocation for `{}` must be eliminated", buf_name);
+                    assert!(
+                        !matches!(rval, Rvalue::Array(_)),
+                        "Array allocation for `{}` must be eliminated",
+                        buf_name
+                    );
                 }
             }
         }
@@ -158,7 +162,10 @@ fn test_fold_over_map() {
     let mut mir = get_mir(code);
     let stats = supercompile_mir_program(&mut mir);
     assert_buffer_eliminated(&mir, "a");
-    assert!(stats.loops_collapsed >= 1, "Loop should be collapsed by recurrence solver");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Loop should be collapsed by recurrence solver"
+    );
 
     let exit_code = compile_and_run_supercompiled(code, "test_fold_over_map");
     assert_eq!(exit_code, 285);
@@ -215,7 +222,10 @@ fn test_accumulator_fold_closed_form() {
 
     let mut mir = get_mir(code);
     let stats = supercompile_mir_program(&mut mir);
-    assert!(stats.loops_collapsed >= 1, "Loop should be collapsed to closed form");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Loop should be collapsed to closed form"
+    );
 
     let exit_code = compile_and_run_supercompiled(code, "test_accumulator_fold_closed_form");
     assert_eq!(exit_code, 328350);

@@ -197,7 +197,10 @@ fn run_copy_propagation_pass(func: &mut MirFunction) -> usize {
                     if dest.local == *ret_local
                         && dest.projections.is_empty()
                         && src.local != *ret_local
-                        && !src.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+                        && !src
+                            .projections
+                            .iter()
+                            .any(|p| matches!(p, Projection::Index(_)))
                     {
                         def_stmt_idx = Some((s_idx, src.clone()));
                         break;

@@ -133,7 +133,10 @@ fn main() -> i32 {
     );
 
     // Verify cache directory has cached items
-    assert!(cache_dir.exists(), "Cache directory should have been created");
+    assert!(
+        cache_dir.exists(),
+        "Cache directory should have been created"
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }

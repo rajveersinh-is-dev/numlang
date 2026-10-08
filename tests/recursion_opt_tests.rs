@@ -1,7 +1,7 @@
+use numlang::opt::optimize_program;
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
-use numlang::opt::optimize_program;
 use std::fs;
 use std::process::Command;
 

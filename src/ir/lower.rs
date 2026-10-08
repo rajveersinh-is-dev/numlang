@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::ir::{BasicBlock, BlockId, Instruction, IrFunction, IrOp, IrParam, IrProgram, Operand, ValueId};
-use crate::typecheck::{
-    Type, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
+use crate::ir::{
+    BasicBlock, BlockId, Instruction, IrFunction, IrOp, IrParam, IrProgram, Operand, ValueId,
 };
+use crate::typecheck::{Type, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt};
+use std::collections::HashMap;
 
 pub struct IrLowerer {
     next_value: usize,
@@ -65,7 +65,9 @@ impl IrLowerer {
             if let Some(last) = bb.instructions.last() {
                 return matches!(
                     last,
-                    Instruction::Return { .. } | Instruction::Branch { .. } | Instruction::BranchIf { .. }
+                    Instruction::Return { .. }
+                        | Instruction::Branch { .. }
+                        | Instruction::BranchIf { .. }
                 );
             }
         }
@@ -153,10 +155,7 @@ impl IrLowerer {
     fn lower_stmt(&mut self, stmt: &TypedStmt) {
         match stmt {
             TypedStmt::Let {
-                name,
-                ty,
-                value,
-                ..
+                name, ty, value, ..
             } => {
                 let op = self.lower_expr(value);
                 let dest = self.new_value();
@@ -270,9 +269,7 @@ impl IrLowerer {
             }
 
             TypedStmt::While {
-                condition,
-                body,
-                ..
+                condition, body, ..
             } => {
                 let cond_bb = self.new_block();
                 let body_bb = self.new_block();
@@ -475,7 +472,9 @@ impl IrLowerer {
                 Operand::Value(dest)
             }
 
-            TypedExpr::Index { target, index, ty, .. } => {
+            TypedExpr::Index {
+                target, index, ty, ..
+            } => {
                 let target_op = self.lower_expr(target);
                 let idx_op = self.lower_expr(index);
                 let dest = self.new_value();
@@ -489,10 +488,7 @@ impl IrLowerer {
             }
 
             TypedExpr::Call {
-                callee,
-                args,
-                ty,
-                ..
+                callee, args, ty, ..
             } => {
                 let mut lowered_args = Vec::new();
                 for a in args {
@@ -526,9 +522,7 @@ impl IrLowerer {
             | TypedExpr::Lambda { ty, .. }
             | TypedExpr::CallIndirect { ty, .. }
             | TypedExpr::Box { ty, .. }
-            | TypedExpr::Deref { ty, .. } => {
-                Operand::IntConst(0, ty.clone())
-            }
+            | TypedExpr::Deref { ty, .. } => Operand::IntConst(0, ty.clone()),
         }
     }
 }

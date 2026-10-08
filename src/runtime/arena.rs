@@ -29,7 +29,11 @@ pub struct Arena {
 
 impl Arena {
     pub fn new(capacity: usize) -> Self {
-        let cap = if capacity == 0 { DEFAULT_CHUNK_CAPACITY } else { capacity };
+        let cap = if capacity == 0 {
+            DEFAULT_CHUNK_CAPACITY
+        } else {
+            capacity
+        };
         let chunk = Self::alloc_chunk(cap);
         Arena {
             head: chunk,
@@ -44,18 +48,27 @@ impl Arena {
         unsafe {
             let data_layout = Layout::from_size_align_unchecked(capacity, 16);
             let data = alloc(data_layout);
-            assert!(!data.is_null(), "Arena: out of memory allocating chunk data");
+            assert!(
+                !data.is_null(),
+                "Arena: out of memory allocating chunk data"
+            );
 
             let chunk_layout = Layout::new::<ArenaChunk>();
             let chunk_ptr = alloc(chunk_layout) as *mut ArenaChunk;
-            assert!(!chunk_ptr.is_null(), "Arena: out of memory allocating chunk header");
+            assert!(
+                !chunk_ptr.is_null(),
+                "Arena: out of memory allocating chunk header"
+            );
 
-            ptr::write(chunk_ptr, ArenaChunk {
-                data,
-                capacity,
-                offset: 0,
-                next: ptr::null_mut(),
-            });
+            ptr::write(
+                chunk_ptr,
+                ArenaChunk {
+                    data,
+                    capacity,
+                    offset: 0,
+                    next: ptr::null_mut(),
+                },
+            );
             chunk_ptr
         }
     }
@@ -230,7 +243,10 @@ mod tests {
             assert_eq!((*arena_ptr).total_allocated, 0);
 
             let p3 = __nl_arena_alloc(arena_ptr, 64);
-            assert_eq!(p1, p3, "Resetting arena reuses the exact same initial address");
+            assert_eq!(
+                p1, p3,
+                "Resetting arena reuses the exact same initial address"
+            );
 
             __nl_arena_destroy(arena_ptr);
         }

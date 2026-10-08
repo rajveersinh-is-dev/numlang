@@ -68,7 +68,9 @@ fn test_fma_vector_dot_product_execution() {
     assert!(output.status.success());
     assert!(exe_file.exists());
 
-    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    let run_output = Command::new(&exe_file)
+        .output()
+        .expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(42));
 }
 
@@ -102,7 +104,9 @@ fn test_unrolled_vector_sum_and_add() {
     assert!(output.status.success());
     assert!(exe_file.exists());
 
-    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    let run_output = Command::new(&exe_file)
+        .output()
+        .expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(140));
 }
 
@@ -144,7 +148,9 @@ fn test_simd_large_array_copy() {
     assert!(output.status.success());
     assert!(exe_file.exists());
 
-    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    let run_output = Command::new(&exe_file)
+        .output()
+        .expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(32));
 }
 
@@ -194,7 +200,9 @@ fn test_simd_large_vec_add() {
     assert!(output.status.success());
     assert!(exe_file.exists());
 
-    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    let run_output = Command::new(&exe_file)
+        .output()
+        .expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(96));
 }
 
@@ -250,6 +258,8 @@ fn test_bitwise_rule110_automaton() {
     assert!(output.status.success());
     assert!(exe_file.exists());
 
-    let run_output = Command::new(&exe_file).output().expect("Failed to run binary");
+    let run_output = Command::new(&exe_file)
+        .output()
+        .expect("Failed to run binary");
     assert_eq!(run_output.status.code(), Some(38));
 }

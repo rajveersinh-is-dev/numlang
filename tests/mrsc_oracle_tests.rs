@@ -77,8 +77,14 @@ fn test_4d_cost_model_evaluation() {
 
     assert!(cost.dynamic_steps > 0.0, "Dynamic steps should be computed");
     assert!(cost.residual_blocks >= 1, "Residual blocks must be >= 1");
-    assert!(cost.register_pressure >= 1, "Register pressure must be >= 1");
-    assert_eq!(cost.allocation_count, 0, "No heap allocations in primitive loop");
+    assert!(
+        cost.register_pressure >= 1,
+        "Register pressure must be >= 1"
+    );
+    assert_eq!(
+        cost.allocation_count, 0,
+        "No heap allocations in primitive loop"
+    );
 
     let score_speed = cost_model.score(&cost, MrscObjective::Speed);
     let score_size = cost_model.score(&cost, MrscObjective::Size);
@@ -205,13 +211,19 @@ fn test_iddfs_reaches_depth_20_and_reduces_steps() {
     let oracle = MrscOracleEngine::new(func, &mir.functions, config);
     let (frontier, winner) = oracle.explore_iddfs();
 
-    assert!(!frontier.is_empty(), "Frontier must contain Pareto candidates");
+    assert!(
+        !frontier.is_empty(),
+        "Frontier must contain Pareto candidates"
+    );
     assert!(
         frontier.max_depth_evaluated >= 20,
         "IDDFS must explore depths >= 20, reached: {}",
         frontier.max_depth_evaluated
     );
-    assert!(frontier.total_evaluated >= 5, "Must evaluate candidates across deepening iterations");
+    assert!(
+        frontier.total_evaluated >= 5,
+        "Must evaluate candidates across deepening iterations"
+    );
 
     // The winning candidate should have low dynamic steps
     assert!(winner.cost.dynamic_steps <= frontier.candidates[0].cost.dynamic_steps);
@@ -264,7 +276,10 @@ fn test_pareto_objective_selection_deterministic() {
     );
 
     // Cost model distinguishes Speed vs Size
-    assert!(winner_size.cost.residual_blocks <= winner_speed1.cost.residual_blocks || winner_size.cost.register_pressure <= winner_speed1.cost.register_pressure);
+    assert!(
+        winner_size.cost.residual_blocks <= winner_speed1.cost.residual_blocks
+            || winner_size.cost.register_pressure <= winner_speed1.cost.register_pressure
+    );
 }
 
 #[test]
@@ -328,8 +343,14 @@ fn test_l2_cache_integration_bypasses_driving() {
     let (_res3, _cost3, from_cache3) = oracle
         .run_with_cache(&cache)
         .expect("Oracle run_with_cache hit failed");
-    assert!(from_cache3, "Third run with cache instance must be a cache hit");
-    assert!(cache.metrics().l2_hits >= 1, "Cache should record at least 1 L2 hit");
+    assert!(
+        from_cache3,
+        "Third run with cache instance must be a cache hit"
+    );
+    assert!(
+        cache.metrics().l2_hits >= 1,
+        "Cache should record at least 1 L2 hit"
+    );
 
     // Clean up temporary cache dir
     let _ = fs::remove_dir_all(&cache_dir);
@@ -365,7 +386,10 @@ fn test_mrsc_exhaustive_program_supercompilation() {
         Some(&cache),
     );
 
-    assert!(stats.residual_block_count > 0, "Residual blocks must be > 0");
+    assert!(
+        stats.residual_block_count > 0,
+        "Residual blocks must be > 0"
+    );
     assert!(stats.residual_stmt_count > 0, "Residual stmts must be > 0");
 
     let _ = fs::remove_dir_all(&cache_dir);
@@ -398,5 +422,8 @@ fn test_e2e_executable_execution_with_mrsc_exhaustive() {
         SupercompileMode::MrscExhaustive,
         "speed",
     );
-    assert_eq!(exit_code, 0, "Binary compiled with --mrsc-exhaustive must execute correctly and return 0");
+    assert_eq!(
+        exit_code, 0,
+        "Binary compiled with --mrsc-exhaustive must execute correctly and return 0"
+    );
 }

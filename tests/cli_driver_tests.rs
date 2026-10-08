@@ -48,7 +48,10 @@ fn test_cli_subcommand_build_with_output() {
         .expect("Failed to execute numlang build");
 
     assert!(output.status.success());
-    assert!(out_exe.exists(), "Executable must be created at custom path");
+    assert!(
+        out_exe.exists(),
+        "Executable must be created at custom path"
+    );
 
     // Execute generated binary
     let exec_out = Command::new(&out_exe)
@@ -67,11 +70,7 @@ fn test_cli_subcommand_build_default_output() {
         let _ = fs::remove_file(&expected_exe);
     }
 
-    fs::write(
-        &src_file,
-        "fn main() -> i64 { return 17; }",
-    )
-    .unwrap();
+    fs::write(&src_file, "fn main() -> i64 { return 17; }").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
         .arg("build")

@@ -248,7 +248,12 @@ impl BareissSimplex {
                 // Bland's rule: find first column with negative reduced cost in row 0
                 // (only consider decision and slack/surplus columns, not artificial)
                 let mut pivot_col = None;
-                for (col, &cost) in tableau[0].iter().enumerate().take(1 + n + num_slack_surplus).skip(1) {
+                for (col, &cost) in tableau[0]
+                    .iter()
+                    .enumerate()
+                    .take(1 + n + num_slack_surplus)
+                    .skip(1)
+                {
                     if cost < 0 {
                         pivot_col = Some(col);
                         break;
@@ -333,7 +338,12 @@ impl BareissSimplex {
             // Bland's rule: find first column with negative reduced cost in row 0
             // Only consider non-artificial columns 1..(1 + n + num_slack_surplus)
             let mut pivot_col = None;
-            for (col, &cost) in tableau[0].iter().enumerate().take(1 + n + num_slack_surplus).skip(1) {
+            for (col, &cost) in tableau[0]
+                .iter()
+                .enumerate()
+                .take(1 + n + num_slack_surplus)
+                .skip(1)
+            {
                 if cost < 0 {
                     pivot_col = Some(col);
                     break;

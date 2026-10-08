@@ -13,8 +13,7 @@ use std::collections::HashMap;
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::span::Span;
 use crate::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedFunction, TypedMatchArm, TypedMatchPattern,
-    TypedProgram, TypedStmt,
+    TypedBlock, TypedExpr, TypedFunction, TypedMatchArm, TypedMatchPattern, TypedProgram, TypedStmt,
 };
 use crate::typecheck::types::Type;
 
@@ -116,7 +115,13 @@ impl AstProcessTree {
         }
     }
 
-    pub fn alloc(&mut self, term: AstProcessTerm, span: Span, parent: Option<AstProcessNodeId>, depth: usize) -> AstProcessNodeId {
+    pub fn alloc(
+        &mut self,
+        term: AstProcessTerm,
+        span: Span,
+        parent: Option<AstProcessNodeId>,
+        depth: usize,
+    ) -> AstProcessNodeId {
         let id = AstProcessNodeId(self.nodes.len());
         self.nodes.push(AstProcessNode {
             id,
@@ -186,8 +191,16 @@ pub fn is_alpha_equivalent(
         }
         (AstProcessTerm::Lit(l1, t1), AstProcessTerm::Lit(l2, t2)) => t1 == t2 && l1 == l2,
         (
-            AstProcessTerm::Lam { params: p1, body: b1, ty: t1 },
-            AstProcessTerm::Lam { params: p2, body: b2, ty: t2 },
+            AstProcessTerm::Lam {
+                params: p1,
+                body: b1,
+                ty: t1,
+            },
+            AstProcessTerm::Lam {
+                params: p2,
+                body: b2,
+                ty: t2,
+            },
         ) => {
             if t1 != t2 || p1.len() != p2.len() {
                 return false;
@@ -202,8 +215,16 @@ pub fn is_alpha_equivalent(
             is_alpha_equivalent(tree, *b1, *b2, map1_to_2, map2_to_1)
         }
         (
-            AstProcessTerm::Call { func_name: f1, args: a1, ty: t1 },
-            AstProcessTerm::Call { func_name: f2, args: a2, ty: t2 },
+            AstProcessTerm::Call {
+                func_name: f1,
+                args: a1,
+                ty: t1,
+            },
+            AstProcessTerm::Call {
+                func_name: f2,
+                args: a2,
+                ty: t2,
+            },
         ) => {
             if f1 != f2 || t1 != t2 || a1.len() != a2.len() {
                 return false;
@@ -216,8 +237,16 @@ pub fn is_alpha_equivalent(
             true
         }
         (
-            AstProcessTerm::App { fun: f1, args: a1, ty: t1 },
-            AstProcessTerm::App { fun: f2, args: a2, ty: t2 },
+            AstProcessTerm::App {
+                fun: f1,
+                args: a1,
+                ty: t1,
+            },
+            AstProcessTerm::App {
+                fun: f2,
+                args: a2,
+                ty: t2,
+            },
         ) => {
             if t1 != t2 || a1.len() != a2.len() {
                 return false;
@@ -233,8 +262,18 @@ pub fn is_alpha_equivalent(
             true
         }
         (
-            AstProcessTerm::Binary { op: op1, left: l1, right: r1, ty: t1 },
-            AstProcessTerm::Binary { op: op2, left: l2, right: r2, ty: t2 },
+            AstProcessTerm::Binary {
+                op: op1,
+                left: l1,
+                right: r1,
+                ty: t1,
+            },
+            AstProcessTerm::Binary {
+                op: op2,
+                left: l2,
+                right: r2,
+                ty: t2,
+            },
         ) => {
             if op1 != op2 || t1 != t2 {
                 return false;
@@ -243,8 +282,16 @@ pub fn is_alpha_equivalent(
                 && is_alpha_equivalent(tree, *r1, *r2, map1_to_2, map2_to_1)
         }
         (
-            AstProcessTerm::Unary { op: op1, expr: e1, ty: t1 },
-            AstProcessTerm::Unary { op: op2, expr: e2, ty: t2 },
+            AstProcessTerm::Unary {
+                op: op1,
+                expr: e1,
+                ty: t1,
+            },
+            AstProcessTerm::Unary {
+                op: op2,
+                expr: e2,
+                ty: t2,
+            },
         ) => {
             if op1 != op2 || t1 != t2 {
                 return false;
@@ -284,7 +331,13 @@ impl<'a> AstDistiller<'a> {
 
         for stmt in &func.body.stmts {
             match stmt {
-                TypedStmt::Let { name, is_mutable, ty, value, span } => {
+                TypedStmt::Let {
+                    name,
+                    is_mutable,
+                    ty,
+                    value,
+                    span,
+                } => {
                     let mut optimized_val = self.distill_expr(value, &local_closures);
                     // Check if value is a lambda abstraction
                     if let TypedExpr::Lambda { .. } = &optimized_val {
@@ -339,7 +392,12 @@ impl<'a> AstDistiller<'a> {
     ) -> TypedExpr {
         match expr {
             // Function call: may be higher-order function like compose, or returning a closure
-            TypedExpr::Call { callee, args, ty, span } => {
+            TypedExpr::Call {
+                callee,
+                args,
+                ty,
+                span,
+            } => {
                 let distilled_args: Vec<TypedExpr> = args
                     .iter()
                     .map(|a| self.distill_expr(a, local_closures))
@@ -347,7 +405,14 @@ impl<'a> AstDistiller<'a> {
 
                 // Check if this callee is a closure-returning function definition
                 if let Some(target_fn) = self.functions.get(callee) {
-                    if let Some(TypedExpr::Lambda { params, body, ty: lam_ty, span: lam_span, .. }) = get_direct_return_expr(&target_fn.body) {
+                    if let Some(TypedExpr::Lambda {
+                        params,
+                        body,
+                        ty: lam_ty,
+                        span: lam_span,
+                        ..
+                    }) = get_direct_return_expr(&target_fn.body)
+                    {
                         // Higher-order function returning a lambda: unfold!
                         // Substitute arguments into lambda body
                         let mut subst_body = *body.clone();
@@ -375,7 +440,12 @@ impl<'a> AstDistiller<'a> {
             }
 
             // Application of closure or indirect call: App(fun, args)
-            TypedExpr::CallIndirect { callee, args, ty, span } => {
+            TypedExpr::CallIndirect {
+                callee,
+                args,
+                ty,
+                span,
+            } => {
                 let distilled_callee = self.distill_expr(callee, local_closures);
                 let distilled_args: Vec<TypedExpr> = args
                     .iter()
@@ -384,7 +454,10 @@ impl<'a> AstDistiller<'a> {
 
                 // If callee is an identifier bound to a local closure, resolve it
                 let resolved_callee = if let TypedExpr::Ident { name, .. } = &distilled_callee {
-                    local_closures.get(name).cloned().unwrap_or(distilled_callee.clone())
+                    local_closures
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(distilled_callee.clone())
                 } else {
                     distilled_callee.clone()
                 };
@@ -422,7 +495,13 @@ impl<'a> AstDistiller<'a> {
                 }
             }
 
-            TypedExpr::Lambda { params, body, captured, ty, span } => {
+            TypedExpr::Lambda {
+                params,
+                body,
+                captured,
+                ty,
+                span,
+            } => {
                 let distilled_body = self.distill_expr(body, local_closures);
                 TypedExpr::Lambda {
                     params: params.clone(),
@@ -433,7 +512,13 @@ impl<'a> AstDistiller<'a> {
                 }
             }
 
-            TypedExpr::Binary { op, left, right, ty, span } => {
+            TypedExpr::Binary {
+                op,
+                left,
+                right,
+                ty,
+                span,
+            } => {
                 let l = self.distill_expr(left, local_closures);
                 let r = self.distill_expr(right, local_closures);
                 TypedExpr::Binary {
@@ -455,7 +540,12 @@ impl<'a> AstDistiller<'a> {
                 }
             }
 
-            TypedExpr::Match { scrutinee, arms, ty, span } => {
+            TypedExpr::Match {
+                scrutinee,
+                arms,
+                ty,
+                span,
+            } => {
                 let s = self.distill_expr(scrutinee, local_closures);
                 let new_arms = arms
                     .iter()
@@ -480,9 +570,15 @@ impl<'a> AstDistiller<'a> {
     /// Recursively simplifies expressions via beta-reduction.
     pub fn beta_reduce_expr(&mut self, expr: &TypedExpr) -> TypedExpr {
         match expr {
-            TypedExpr::CallIndirect { callee, args, ty, span } => {
+            TypedExpr::CallIndirect {
+                callee,
+                args,
+                ty,
+                span,
+            } => {
                 let red_callee = self.beta_reduce_expr(callee);
-                let red_args: Vec<TypedExpr> = args.iter().map(|a| self.beta_reduce_expr(a)).collect();
+                let red_args: Vec<TypedExpr> =
+                    args.iter().map(|a| self.beta_reduce_expr(a)).collect();
 
                 if let TypedExpr::Lambda { params, body, .. } = &red_callee {
                     if params.len() == red_args.len() {
@@ -515,7 +611,13 @@ impl<'a> AstDistiller<'a> {
                     span: *span,
                 }
             }
-            TypedExpr::Binary { op, left, right, ty, span } => TypedExpr::Binary {
+            TypedExpr::Binary {
+                op,
+                left,
+                right,
+                ty,
+                span,
+            } => TypedExpr::Binary {
                 op: *op,
                 left: Box::new(self.beta_reduce_expr(left)),
                 right: Box::new(self.beta_reduce_expr(right)),
@@ -538,10 +640,7 @@ impl<'a> AstDistiller<'a> {
 // ============================================================================
 
 /// Detects mutual recursion across functions and folds them into a unified single-function loop.
-pub fn distill_mutual_recursion(
-    functions: &mut [TypedFunction],
-    stats: &mut AstDistillStats,
-) {
+pub fn distill_mutual_recursion(functions: &mut [TypedFunction], stats: &mut AstDistillStats) {
     let fn_map: HashMap<String, TypedFunction> = functions
         .iter()
         .map(|f| (f.name.clone(), f.clone()))
@@ -574,7 +673,11 @@ fn find_tail_call_callee(body: &TypedBlock) -> Option<String> {
             TypedStmt::Return(Some(TypedExpr::Call { callee, .. }), _) => {
                 return Some(callee.clone());
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 if let Some(c) = find_tail_call_callee(then_branch) {
                     return Some(c);
                 }
@@ -618,7 +721,12 @@ fn inline_function_call_in_block(
     let mut new_stmts = Vec::new();
     for stmt in &block.stmts {
         match stmt {
-            TypedStmt::Return(Some(TypedExpr::Call { callee, args, span, .. }), _) if callee == callee_name => {
+            TypedStmt::Return(
+                Some(TypedExpr::Call {
+                    callee, args, span, ..
+                }),
+                _,
+            ) if callee == callee_name => {
                 // Inlined body with substituted arguments
                 let mut inlined = callee_fn.body.clone();
                 for (param, arg) in callee_fn.params.iter().zip(args.iter()) {
@@ -626,7 +734,12 @@ fn inline_function_call_in_block(
                 }
                 new_stmts.extend(inlined.stmts);
             }
-            TypedStmt::If { condition, then_branch, else_branch, span } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
                 let new_then = inline_function_call_in_block(then_branch, callee_name, callee_fn);
                 let new_else = else_branch
                     .as_ref()
@@ -652,7 +765,13 @@ fn substitute_in_block(block: &TypedBlock, var_name: &str, replacement: &TypedEx
     let mut new_stmts = Vec::new();
     for stmt in &block.stmts {
         match stmt {
-            TypedStmt::Let { name, is_mutable, ty, value, span } => {
+            TypedStmt::Let {
+                name,
+                is_mutable,
+                ty,
+                value,
+                span,
+            } => {
                 new_stmts.push(TypedStmt::Let {
                     name: name.clone(),
                     is_mutable: *is_mutable,
@@ -670,15 +789,24 @@ fn substitute_in_block(block: &TypedBlock, var_name: &str, replacement: &TypedEx
             }
             TypedStmt::Return(opt_expr, span) => {
                 new_stmts.push(TypedStmt::Return(
-                    opt_expr.as_ref().map(|e| substitute_var(e, var_name, replacement)),
+                    opt_expr
+                        .as_ref()
+                        .map(|e| substitute_var(e, var_name, replacement)),
                     *span,
                 ));
             }
-            TypedStmt::If { condition, then_branch, else_branch, span } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
                 new_stmts.push(TypedStmt::If {
                     condition: substitute_var(condition, var_name, replacement),
                     then_branch: substitute_in_block(then_branch, var_name, replacement),
-                    else_branch: else_branch.as_ref().map(|eb| substitute_in_block(eb, var_name, replacement)),
+                    else_branch: else_branch
+                        .as_ref()
+                        .map(|eb| substitute_in_block(eb, var_name, replacement)),
                     span: *span,
                 });
             }
@@ -700,7 +828,13 @@ fn substitute_in_block(block: &TypedBlock, var_name: &str, replacement: &TypedEx
 pub fn substitute_var(expr: &TypedExpr, var_name: &str, replacement: &TypedExpr) -> TypedExpr {
     match expr {
         TypedExpr::Ident { name, .. } if name == var_name => replacement.clone(),
-        TypedExpr::Binary { op, left, right, ty, span } => TypedExpr::Binary {
+        TypedExpr::Binary {
+            op,
+            left,
+            right,
+            ty,
+            span,
+        } => TypedExpr::Binary {
             op: *op,
             left: Box::new(substitute_var(left, var_name, replacement)),
             right: Box::new(substitute_var(right, var_name, replacement)),
@@ -713,19 +847,41 @@ pub fn substitute_var(expr: &TypedExpr, var_name: &str, replacement: &TypedExpr)
             ty: ty.clone(),
             span: *span,
         },
-        TypedExpr::Call { callee, args, ty, span } => TypedExpr::Call {
+        TypedExpr::Call {
+            callee,
+            args,
+            ty,
+            span,
+        } => TypedExpr::Call {
             callee: callee.clone(),
-            args: args.iter().map(|a| substitute_var(a, var_name, replacement)).collect(),
+            args: args
+                .iter()
+                .map(|a| substitute_var(a, var_name, replacement))
+                .collect(),
             ty: ty.clone(),
             span: *span,
         },
-        TypedExpr::CallIndirect { callee, args, ty, span } => TypedExpr::CallIndirect {
+        TypedExpr::CallIndirect {
+            callee,
+            args,
+            ty,
+            span,
+        } => TypedExpr::CallIndirect {
             callee: Box::new(substitute_var(callee, var_name, replacement)),
-            args: args.iter().map(|a| substitute_var(a, var_name, replacement)).collect(),
+            args: args
+                .iter()
+                .map(|a| substitute_var(a, var_name, replacement))
+                .collect(),
             ty: ty.clone(),
             span: *span,
         },
-        TypedExpr::Lambda { params, body, captured, ty, span } => {
+        TypedExpr::Lambda {
+            params,
+            body,
+            captured,
+            ty,
+            span,
+        } => {
             // Avoid capture if parameter shadows var_name
             if params.iter().any(|(p, _)| p == var_name) {
                 expr.clone()
@@ -739,7 +895,12 @@ pub fn substitute_var(expr: &TypedExpr, var_name: &str, replacement: &TypedExpr)
                 }
             }
         }
-        TypedExpr::Match { scrutinee, arms, ty, span } => {
+        TypedExpr::Match {
+            scrutinee,
+            arms,
+            ty,
+            span,
+        } => {
             let new_arms = arms
                 .iter()
                 .map(|arm| {

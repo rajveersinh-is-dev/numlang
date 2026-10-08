@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use crate::typecheck::typed_ast::TypedLiteral;
 use crate::mir::lower::{MirFunction, Rvalue, Statement};
 use crate::mir::{Place, Projection};
+use crate::typecheck::typed_ast::TypedLiteral;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AliasResult {
@@ -211,7 +211,10 @@ fn collect_reads_for_alias(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         }
         Rvalue::Thunk { env, .. } => {
             for e in env {
-                reads.push(Place { local: e.clone(), projections: vec![] });
+                reads.push(Place {
+                    local: e.clone(),
+                    projections: vec![],
+                });
             }
         }
     }

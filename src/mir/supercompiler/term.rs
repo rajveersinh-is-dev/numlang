@@ -271,7 +271,9 @@ impl TermInterner {
                 }
                 // Constant reassociation: (x + c1) + c2 => x + (c1 + c2)
                 if let SymTerm::Binary(BinaryOp::Add, inner_x, inner_c, _) = left_term {
-                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                    if let (Some(c1_lit), Some(c2_lit)) =
+                        (self.get(inner_c).to_literal(), right_term.to_literal())
+                    {
                         if let Some(c_sum) = fold_const_binary(BinaryOp::Add, &c1_lit, &c2_lit) {
                             let c_sum_id = self.intern_const(c_sum);
                             return self.intern_binary(BinaryOp::Add, inner_x, c_sum_id, ty);
@@ -280,7 +282,9 @@ impl TermInterner {
                 }
                 // Constant reassociation: (x - c1) + c2 => x + (c2 - c1)
                 if let SymTerm::Binary(BinaryOp::Sub, inner_x, inner_c, _) = left_term {
-                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                    if let (Some(c1_lit), Some(c2_lit)) =
+                        (self.get(inner_c).to_literal(), right_term.to_literal())
+                    {
                         if let Some(c_diff) = fold_const_binary(BinaryOp::Sub, &c2_lit, &c1_lit) {
                             let c_diff_id = self.intern_const(c_diff);
                             return self.intern_binary(BinaryOp::Add, inner_x, c_diff_id, ty);
@@ -300,7 +304,9 @@ impl TermInterner {
                 }
                 // Constant reassociation: (x + c1) - c2 => x + (c1 - c2)
                 if let SymTerm::Binary(BinaryOp::Add, inner_x, inner_c, _) = left_term {
-                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                    if let (Some(c1_lit), Some(c2_lit)) =
+                        (self.get(inner_c).to_literal(), right_term.to_literal())
+                    {
                         if let Some(c_diff) = fold_const_binary(BinaryOp::Sub, &c1_lit, &c2_lit) {
                             let c_diff_id = self.intern_const(c_diff);
                             return self.intern_binary(BinaryOp::Add, inner_x, c_diff_id, ty);
@@ -309,7 +315,9 @@ impl TermInterner {
                 }
                 // Constant reassociation: (x - c1) - c2 => x - (c1 + c2)
                 if let SymTerm::Binary(BinaryOp::Sub, inner_x, inner_c, _) = left_term {
-                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                    if let (Some(c1_lit), Some(c2_lit)) =
+                        (self.get(inner_c).to_literal(), right_term.to_literal())
+                    {
                         if let Some(c_sum) = fold_const_binary(BinaryOp::Add, &c1_lit, &c2_lit) {
                             let c_sum_id = self.intern_const(c_sum);
                             return self.intern_binary(BinaryOp::Sub, inner_x, c_sum_id, ty);
@@ -335,7 +343,9 @@ impl TermInterner {
                 }
                 // Constant reassociation: (x * c1) * c2 => x * (c1 * c2)
                 if let SymTerm::Binary(BinaryOp::Mul, inner_x, inner_c, _) = left_term {
-                    if let (Some(c1_lit), Some(c2_lit)) = (self.get(inner_c).to_literal(), right_term.to_literal()) {
+                    if let (Some(c1_lit), Some(c2_lit)) =
+                        (self.get(inner_c).to_literal(), right_term.to_literal())
+                    {
                         if let Some(c_prod) = fold_const_binary(BinaryOp::Mul, &c1_lit, &c2_lit) {
                             let c_prod_id = self.intern_const(c_prod);
                             return self.intern_binary(BinaryOp::Mul, inner_x, c_prod_id, ty);
@@ -588,11 +598,7 @@ impl TermInterner {
         self.intern(SymTerm::Select(cond, then_term, else_term, ty))
     }
 
-    pub fn intern_phi(
-        &mut self,
-        incoming: Vec<(BasicBlockId, SymTermId)>,
-        ty: Type,
-    ) -> SymTermId {
+    pub fn intern_phi(&mut self, incoming: Vec<(BasicBlockId, SymTermId)>, ty: Type) -> SymTermId {
         if !incoming.is_empty() {
             let first = incoming[0].1;
             if incoming.iter().all(|(_, t)| *t == first) {
@@ -612,12 +618,7 @@ impl TermInterner {
         self.intern(SymTerm::Constructor(name, tag, fields, ty))
     }
 
-    pub fn intern_call(
-        &mut self,
-        callee: String,
-        args: Vec<SymTermId>,
-        ty: Type,
-    ) -> SymTermId {
+    pub fn intern_call(&mut self, callee: String, args: Vec<SymTermId>, ty: Type) -> SymTermId {
         if callee == "i64_to_f64" && args.len() == 1 {
             if let Some(TypedLiteral::Int(i, _)) = self.get(args[0]).to_literal() {
                 return self.intern_const(TypedLiteral::Float(i as f64, Type::F64));
@@ -720,7 +721,10 @@ impl TermInterner {
                 self.intern(SymTerm::Discriminant(inner_new, ty))
             }
             SymTerm::ClosureVal(fn_name, captured, ty) => {
-                let captured_new = captured.iter().map(|&c| self.import_from(other, c)).collect();
+                let captured_new = captured
+                    .iter()
+                    .map(|&c| self.import_from(other, c))
+                    .collect();
                 self.intern_closure_val(fn_name, captured_new, ty)
             }
             SymTerm::Thunk(body, env, ty) => {
@@ -730,12 +734,7 @@ impl TermInterner {
         }
     }
 
-    pub fn intern_thunk(
-        &mut self,
-        body: String,
-        env: Vec<SymTermId>,
-        ty: Type,
-    ) -> SymTermId {
+    pub fn intern_thunk(&mut self, body: String, env: Vec<SymTermId>, ty: Type) -> SymTermId {
         self.intern(SymTerm::Thunk(body, env, ty))
     }
 
@@ -813,7 +812,11 @@ impl TermInterner {
             }
             SymTerm::Phi(incoming, _) => {
                 let s = 1 + incoming.iter().map(|(_, t)| self.sizes[t.0]).sum::<usize>();
-                let d = 1 + incoming.iter().map(|(_, t)| self.depths[t.0]).max().unwrap_or(0);
+                let d = 1 + incoming
+                    .iter()
+                    .map(|(_, t)| self.depths[t.0])
+                    .max()
+                    .unwrap_or(0);
                 let mut h = fx_hash_step(11, incoming.len() as u64);
                 for (bb, t) in incoming {
                     h = fx_hash_step(h, bb.0 as u64);
@@ -910,7 +913,9 @@ impl TermInterner {
             }
             SymTerm::Ref(inner, _) => format!("&({})", self.format_term(*inner)),
             SymTerm::Deref(ptr, _) => format!("*({})", self.format_term(*ptr)),
-            SymTerm::Discriminant(inner, _) => format!("discriminant({})", self.format_term(*inner)),
+            SymTerm::Discriminant(inner, _) => {
+                format!("discriminant({})", self.format_term(*inner))
+            }
             SymTerm::ClosureVal(fn_name, captured, _) => {
                 let c_str: Vec<String> = captured.iter().map(|c| self.format_term(*c)).collect();
                 format!("closure:{}({})", fn_name, c_str.join(", "))
@@ -1057,7 +1062,9 @@ fn fold_const_binary(op: BinaryOp, l: &TypedLiteral, r: &TypedLiteral) -> Option
 
 fn fold_const_unary(op: UnaryOp, lit: &TypedLiteral) -> Option<TypedLiteral> {
     match (op, lit) {
-        (UnaryOp::Neg, TypedLiteral::Int(i, ty)) => Some(TypedLiteral::Int(i.wrapping_neg(), ty.clone())),
+        (UnaryOp::Neg, TypedLiteral::Int(i, ty)) => {
+            Some(TypedLiteral::Int(i.wrapping_neg(), ty.clone()))
+        }
         (UnaryOp::Neg, TypedLiteral::Float(f, ty)) => Some(TypedLiteral::Float(-f, ty.clone())),
         (UnaryOp::Not, TypedLiteral::Bool(b)) => Some(TypedLiteral::Bool(!b)),
         (UnaryOp::Not, TypedLiteral::Int(i, ty)) => Some(TypedLiteral::Int(!i, ty.clone())),

@@ -389,5 +389,3 @@ fn main() -> i64 {
 "#;
     assert_eq!(run_numlang_code(code), Some(48));
 }
-
-

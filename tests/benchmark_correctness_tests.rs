@@ -62,7 +62,10 @@ fn test_canonical_kmp() {
     let (base_code, base_out) = run_benchmark(&src, false);
     let (sc_code, sc_out) = run_benchmark(&src, true);
 
-    assert_eq!(base_code, 88, "KMP baseline exit code expected 88 (600 % 256)");
+    assert_eq!(
+        base_code, 88,
+        "KMP baseline exit code expected 88 (600 % 256)"
+    );
     assert_eq!(sc_code, 88, "KMP supercompiled exit code expected 88");
     assert_eq!(base_out.trim(), "600");
     assert_eq!(sc_out.trim(), "600");
@@ -77,8 +80,14 @@ fn test_canonical_double_nrev() {
     let (base_code, base_out) = run_benchmark(&src, false);
     let (sc_code, sc_out) = run_benchmark(&src, true);
 
-    assert_eq!(base_code, 224, "double_nrev baseline exit code expected 224 (12000 % 256)");
-    assert_eq!(sc_code, 224, "double_nrev supercompiled exit code expected 224");
+    assert_eq!(
+        base_code, 224,
+        "double_nrev baseline exit code expected 224 (12000 % 256)"
+    );
+    assert_eq!(
+        sc_code, 224,
+        "double_nrev supercompiled exit code expected 224"
+    );
     assert_eq!(base_out.trim(), "12000");
     assert_eq!(sc_out.trim(), "12000");
 }
@@ -92,8 +101,14 @@ fn test_canonical_peano_mul() {
     let (base_code, base_out) = run_benchmark(&src, false);
     let (sc_code, sc_out) = run_benchmark(&src, true);
 
-    assert_eq!(base_code, 176, "peano_mul baseline exit code expected 176 (1200 % 256)");
-    assert_eq!(sc_code, 176, "peano_mul supercompiled exit code expected 176");
+    assert_eq!(
+        base_code, 176,
+        "peano_mul baseline exit code expected 176 (1200 % 256)"
+    );
+    assert_eq!(
+        sc_code, 176,
+        "peano_mul supercompiled exit code expected 176"
+    );
     assert_eq!(base_out.trim(), "1200");
     assert_eq!(sc_out.trim(), "1200");
 }
@@ -107,8 +122,14 @@ fn test_canonical_power_spec() {
     let (base_code, base_out) = run_benchmark(&src, false);
     let (sc_code, sc_out) = run_benchmark(&src, true);
 
-    assert_eq!(base_code, 202, "power_spec baseline exit code expected 202 (773133258 % 256)");
-    assert_eq!(sc_code, 202, "power_spec supercompiled exit code expected 202");
+    assert_eq!(
+        base_code, 202,
+        "power_spec baseline exit code expected 202 (773133258 % 256)"
+    );
+    assert_eq!(
+        sc_code, 202,
+        "power_spec supercompiled exit code expected 202"
+    );
     assert_eq!(base_out.trim(), "773133258");
     assert_eq!(sc_out.trim(), "773133258");
 }
@@ -122,7 +143,10 @@ fn test_canonical_nrev() {
     let (base_code, base_out) = run_benchmark(&src, false);
     let (sc_code, sc_out) = run_benchmark(&src, true);
 
-    assert_eq!(base_code, 224, "nrev baseline exit code expected 224 (12000 % 256)");
+    assert_eq!(
+        base_code, 224,
+        "nrev baseline exit code expected 224 (12000 % 256)"
+    );
     assert_eq!(sc_code, 224, "nrev supercompiled exit code expected 224");
     assert_eq!(base_out.trim(), "12000");
     assert_eq!(sc_out.trim(), "12000");

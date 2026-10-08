@@ -142,8 +142,16 @@ impl PathConstraintStore {
                 if left_lead == right_lead {
                     return Some(false);
                 }
-                let (l_min, l_max) = self.integer_bounds.get(&left_lead).copied().unwrap_or((None, None));
-                let (r_min, r_max) = self.integer_bounds.get(&right_lead).copied().unwrap_or((None, None));
+                let (l_min, l_max) = self
+                    .integer_bounds
+                    .get(&left_lead)
+                    .copied()
+                    .unwrap_or((None, None));
+                let (r_min, r_max) = self
+                    .integer_bounds
+                    .get(&right_lead)
+                    .copied()
+                    .unwrap_or((None, None));
 
                 if let (Some(max_l), Some(min_r)) = (l_max, r_min) {
                     if max_l < min_r {
@@ -232,14 +240,17 @@ impl PathConstraintStore {
 /// Interval refinement attached to a symbolic term at a given program point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interval {
-    pub lo: Option<i64>,   // None = -∞
-    pub hi: Option<i64>,   // None = +∞
+    pub lo: Option<i64>, // None = -∞
+    pub hi: Option<i64>, // None = +∞
 }
 
 impl Interval {
     pub const FULL: Self = Interval { lo: None, hi: None };
     pub const fn exact(v: i64) -> Self {
-        Interval { lo: Some(v), hi: Some(v) }
+        Interval {
+            lo: Some(v),
+            hi: Some(v),
+        }
     }
 
     pub fn meet(&self, other: &Interval) -> Interval {
@@ -336,7 +347,9 @@ impl SymbolicState {
         if let Some(iv) = self.refinements.get(&leader) {
             return iv.clone();
         }
-        self.refinements.get(&term).cloned().unwrap_or(Interval::FULL)
+        self.refinements
+            .get(&term)
+            .cloned()
+            .unwrap_or(Interval::FULL)
     }
 }
-

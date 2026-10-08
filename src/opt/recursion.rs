@@ -8,10 +8,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::BinaryOp;
-use crate::typecheck::types::Type;
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedParam, TypedProgram, TypedStmt,
 };
+use crate::typecheck::types::Type;
 
 pub fn optimize_program(_program: &mut TypedProgram) {
     // AST remains pristine for tests inspecting AST structures.
@@ -60,8 +60,16 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
         let check_m1 = TypedStmt::If {
             condition: TypedExpr::Binary {
                 op: BinaryOp::Eq,
-                left: Box::new(TypedExpr::Ident { name: m_name.clone(), ty: Type::I64, span }),
-                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                left: Box::new(TypedExpr::Ident {
+                    name: m_name.clone(),
+                    ty: Type::I64,
+                    span,
+                }),
+                right: Box::new(TypedExpr::Literal {
+                    lit: TypedLiteral::Int(1, Type::I64),
+                    ty: Type::I64,
+                    span,
+                }),
                 ty: Type::Bool,
                 span,
             },
@@ -69,8 +77,16 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
                 stmts: vec![TypedStmt::Return(
                     Some(TypedExpr::Binary {
                         op: BinaryOp::Add,
-                        left: Box::new(TypedExpr::Ident { name: n_name.clone(), ty: Type::I64, span }),
-                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+                        left: Box::new(TypedExpr::Ident {
+                            name: n_name.clone(),
+                            ty: Type::I64,
+                            span,
+                        }),
+                        right: Box::new(TypedExpr::Literal {
+                            lit: TypedLiteral::Int(2, Type::I64),
+                            ty: Type::I64,
+                            span,
+                        }),
                         ty: Type::I64,
                         span,
                     }),
@@ -85,8 +101,16 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
         let check_m2 = TypedStmt::If {
             condition: TypedExpr::Binary {
                 op: BinaryOp::Eq,
-                left: Box::new(TypedExpr::Ident { name: m_name.clone(), ty: Type::I64, span }),
-                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
+                left: Box::new(TypedExpr::Ident {
+                    name: m_name.clone(),
+                    ty: Type::I64,
+                    span,
+                }),
+                right: Box::new(TypedExpr::Literal {
+                    lit: TypedLiteral::Int(2, Type::I64),
+                    ty: Type::I64,
+                    span,
+                }),
                 ty: Type::Bool,
                 span,
             },
@@ -96,12 +120,24 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
                         op: BinaryOp::Add,
                         left: Box::new(TypedExpr::Binary {
                             op: BinaryOp::Mul,
-                            left: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(2, Type::I64), ty: Type::I64, span }),
-                            right: Box::new(TypedExpr::Ident { name: n_name.clone(), ty: Type::I64, span }),
+                            left: Box::new(TypedExpr::Literal {
+                                lit: TypedLiteral::Int(2, Type::I64),
+                                ty: Type::I64,
+                                span,
+                            }),
+                            right: Box::new(TypedExpr::Ident {
+                                name: n_name.clone(),
+                                ty: Type::I64,
+                                span,
+                            }),
                             ty: Type::I64,
                             span,
                         }),
-                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(3, Type::I64), ty: Type::I64, span }),
+                        right: Box::new(TypedExpr::Literal {
+                            lit: TypedLiteral::Int(3, Type::I64),
+                            ty: Type::I64,
+                            span,
+                        }),
                         ty: Type::I64,
                         span,
                     }),
@@ -127,11 +163,23 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
         let check_tak1 = TypedStmt::If {
             condition: TypedExpr::Binary {
                 op: BinaryOp::Eq,
-                left: Box::new(TypedExpr::Ident { name: x_name.clone(), ty: Type::I64, span }),
+                left: Box::new(TypedExpr::Ident {
+                    name: x_name.clone(),
+                    ty: Type::I64,
+                    span,
+                }),
                 right: Box::new(TypedExpr::Binary {
                     op: BinaryOp::Add,
-                    left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
-                    right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                    left: Box::new(TypedExpr::Ident {
+                        name: y_name.clone(),
+                        ty: Type::I64,
+                        span,
+                    }),
+                    right: Box::new(TypedExpr::Literal {
+                        lit: TypedLiteral::Int(1, Type::I64),
+                        ty: Type::I64,
+                        span,
+                    }),
                     ty: Type::I64,
                     span,
                 }),
@@ -142,11 +190,23 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
                 stmts: vec![TypedStmt::If {
                     condition: TypedExpr::Binary {
                         op: BinaryOp::Le,
-                        left: Box::new(TypedExpr::Ident { name: z_name.clone(), ty: Type::I64, span }),
+                        left: Box::new(TypedExpr::Ident {
+                            name: z_name.clone(),
+                            ty: Type::I64,
+                            span,
+                        }),
                         right: Box::new(TypedExpr::Binary {
                             op: BinaryOp::Add,
-                            left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
-                            right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                            left: Box::new(TypedExpr::Ident {
+                                name: y_name.clone(),
+                                ty: Type::I64,
+                                span,
+                            }),
+                            right: Box::new(TypedExpr::Literal {
+                                lit: TypedLiteral::Int(1, Type::I64),
+                                ty: Type::I64,
+                                span,
+                            }),
                             ty: Type::I64,
                             span,
                         }),
@@ -155,7 +215,11 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
                     },
                     then_branch: TypedBlock {
                         stmts: vec![TypedStmt::Return(
-                            Some(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
+                            Some(TypedExpr::Ident {
+                                name: y_name.clone(),
+                                ty: Type::I64,
+                                span,
+                            }),
                             span,
                         )],
                         span,
@@ -164,8 +228,16 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
                         stmts: vec![TypedStmt::Return(
                             Some(TypedExpr::Binary {
                                 op: BinaryOp::Add,
-                                left: Box::new(TypedExpr::Ident { name: y_name.clone(), ty: Type::I64, span }),
-                                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, Type::I64), ty: Type::I64, span }),
+                                left: Box::new(TypedExpr::Ident {
+                                    name: y_name.clone(),
+                                    ty: Type::I64,
+                                    span,
+                                }),
+                                right: Box::new(TypedExpr::Literal {
+                                    lit: TypedLiteral::Int(1, Type::I64),
+                                    ty: Type::I64,
+                                    span,
+                                }),
                                 ty: Type::I64,
                                 span,
                             }),
@@ -313,7 +385,12 @@ fn rename_identifiers_block(
                     }
                 }
             }
-            TypedStmt::IndexAssign { index, value, target, .. } => {
+            TypedStmt::IndexAssign {
+                index,
+                value,
+                target,
+                ..
+            } => {
                 if !local_shadowed.contains(target) {
                     if let Some(new_name) = param_map.get(target) {
                         *target = new_name.clone();
@@ -337,7 +414,9 @@ fn rename_identifiers_block(
                     rename_identifiers_block(eb, param_map, &local_shadowed);
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 rename_identifiers_expr(condition, param_map, &local_shadowed);
                 rename_identifiers_block(body, param_map, &local_shadowed);
             }
@@ -359,9 +438,12 @@ fn replace_tail_calls_block(
 
     let last_idx = block.stmts.len() - 1;
     match &mut block.stmts[last_idx] {
-        TypedStmt::Return(Some(TypedExpr::Call { callee, args, span, .. }), _)
-            if callee == fn_name =>
-        {
+        TypedStmt::Return(
+            Some(TypedExpr::Call {
+                callee, args, span, ..
+            }),
+            _,
+        ) if callee == fn_name => {
             let call_span = *span;
             let call_args = args.clone();
             let mut replacements = Vec::new();
@@ -372,7 +454,12 @@ fn replace_tail_calls_block(
                 tmp_bindings.push((tmp_name.clone(), arg.ty(), call_span));
 
                 if is_permutation_rec {
-                    if let TypedExpr::Call { ref callee, ref args, .. } = arg {
+                    if let TypedExpr::Call {
+                        ref callee,
+                        ref args,
+                        ..
+                    } = arg
+                    {
                         if callee == fn_name && args.len() == 3 {
                             let a = args[0].clone();
                             let b = args[1].clone();
@@ -479,15 +566,34 @@ pub(crate) fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<T
         return None;
     }
     let (cond, then_b, else_b) = match &func.body.stmts[0] {
-        TypedStmt::If { condition, then_branch, else_branch: Some(eb), .. } => (condition, then_branch, eb),
+        TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch: Some(eb),
+            ..
+        } => (condition, then_branch, eb),
         _ => return None,
     };
 
     // Verify condition: n <= K where K is a small non-negative constant
     let base_limit = match cond {
-        TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
-            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(k, _), .. }) = (&**left, &**right) {
-                if name != p_name || *k < 0 || *k > 8 { return None; }
+        TypedExpr::Binary {
+            op: BinaryOp::Le,
+            left,
+            right,
+            ..
+        } => {
+            if let (
+                TypedExpr::Ident { name, .. },
+                TypedExpr::Literal {
+                    lit: TypedLiteral::Int(k, _),
+                    ..
+                },
+            ) = (&**left, &**right)
+            {
+                if name != p_name || *k < 0 || *k > 8 {
+                    return None;
+                }
                 *k
             } else {
                 return None;
@@ -510,13 +616,36 @@ pub(crate) fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<T
         return None;
     }
     let (offset_a, offset_b) = match &else_b.stmts[0] {
-        TypedStmt::Return(Some(TypedExpr::Binary { op: BinaryOp::Add, left, right, .. }), _) => {
+        TypedStmt::Return(
+            Some(TypedExpr::Binary {
+                op: BinaryOp::Add,
+                left,
+                right,
+                ..
+            }),
+            _,
+        ) => {
             let get_offset = |e: &TypedExpr| -> Option<i64> {
                 if let TypedExpr::Call { callee, args, .. } = e {
                     if callee == &func.name && args.len() == 1 {
-                        if let TypedExpr::Binary { op: BinaryOp::Sub, left: al, right: ar, .. } = &args[0] {
-                            if let (TypedExpr::Ident { name, .. }, TypedExpr::Literal { lit: TypedLiteral::Int(off, _), .. }) = (&**al, &**ar) {
-                                if name == p_name && *off > 0 && *off <= 8 { return Some(*off); }
+                        if let TypedExpr::Binary {
+                            op: BinaryOp::Sub,
+                            left: al,
+                            right: ar,
+                            ..
+                        } = &args[0]
+                        {
+                            if let (
+                                TypedExpr::Ident { name, .. },
+                                TypedExpr::Literal {
+                                    lit: TypedLiteral::Int(off, _),
+                                    ..
+                                },
+                            ) = (&**al, &**ar)
+                            {
+                                if name == p_name && *off > 0 && *off <= 8 {
+                                    return Some(*off);
+                                }
                             }
                         }
                     }
@@ -526,7 +655,7 @@ pub(crate) fn try_lower_binary_recurrence_tree(func: &TypedFunction) -> Option<T
             match (get_offset(left), get_offset(right)) {
                 (Some(a), Some(b)) if a != b => {
                     let (small, large) = if a < b { (a, b) } else { (b, a) };
-                    (small, large)  // offset_a=1, offset_b=2 for standard Fibonacci
+                    (small, large) // offset_a=1, offset_b=2 for standard Fibonacci
                 }
                 _ => return None,
             }
@@ -682,7 +811,13 @@ fn is_int_lit(expr: &TypedExpr, val: i64) -> bool {
 }
 
 fn is_sub_one(expr: &TypedExpr, var: &str) -> bool {
-    if let TypedExpr::Binary { op: BinaryOp::Sub, left, right, .. } = expr {
+    if let TypedExpr::Binary {
+        op: BinaryOp::Sub,
+        left,
+        right,
+        ..
+    } = expr
+    {
         is_ident(left, var) && is_int_lit(right, 1)
     } else {
         false
@@ -690,16 +825,30 @@ fn is_sub_one(expr: &TypedExpr, var: &str) -> bool {
 }
 
 fn is_add_one(expr: &TypedExpr, var: &str) -> bool {
-    if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = expr {
-        (is_ident(left, var) && is_int_lit(right, 1)) || (is_int_lit(left, 1) && is_ident(right, var))
+    if let TypedExpr::Binary {
+        op: BinaryOp::Add,
+        left,
+        right,
+        ..
+    } = expr
+    {
+        (is_ident(left, var) && is_int_lit(right, 1))
+            || (is_int_lit(left, 1) && is_ident(right, var))
     } else {
         false
     }
 }
 
 fn is_eq_zero(expr: &TypedExpr, var: &str) -> bool {
-    if let TypedExpr::Binary { op: BinaryOp::Eq, left, right, .. } = expr {
-        (is_ident(left, var) && is_int_lit(right, 0)) || (is_int_lit(left, 0) && is_ident(right, var))
+    if let TypedExpr::Binary {
+        op: BinaryOp::Eq,
+        left,
+        right,
+        ..
+    } = expr
+    {
+        (is_ident(left, var) && is_int_lit(right, 0))
+            || (is_int_lit(left, 0) && is_ident(right, var))
     } else {
         false
     }
@@ -728,7 +877,12 @@ fn returns_self_call_sub_one_and_one(block: &TypedBlock, fn_name: &str, m: &str)
 fn is_stmt_return_nested(stmt: &TypedStmt, fn_name: &str, m: &str, n: &str) -> bool {
     if let TypedStmt::Return(Some(TypedExpr::Call { callee, args, .. }), _) = stmt {
         if callee == fn_name && args.len() == 2 && is_sub_one(&args[0], m) {
-            if let TypedExpr::Call { callee: inner_callee, args: inner_args, .. } = &args[1] {
+            if let TypedExpr::Call {
+                callee: inner_callee,
+                args: inner_args,
+                ..
+            } = &args[1]
+            {
                 return inner_callee == fn_name
                     && inner_args.len() == 2
                     && is_ident(&inner_args[0], m)
@@ -757,7 +911,9 @@ pub struct NestedHyperRecurrencePattern {
 /// A(m, 0) = A(m - 1, 1)
 /// A(m, n) = A(m - 1, A(m, n - 1))
 /// completely agnostically to function and variable names.
-pub fn detect_nested_hyper_recurrence(func: &TypedFunction) -> Option<NestedHyperRecurrencePattern> {
+pub fn detect_nested_hyper_recurrence(
+    func: &TypedFunction,
+) -> Option<NestedHyperRecurrencePattern> {
     if func.params.len() != 2 || func.return_ty != Type::I64 {
         return None;
     }
@@ -771,9 +927,24 @@ pub fn detect_nested_hyper_recurrence(func: &TypedFunction) -> Option<NestedHype
     // Pattern 1: Single top-level if/else:
     // if m == 0 { return n + 1; } else { if n == 0 { return f(m - 1, 1); } else { return f(m - 1, f(m, n - 1)); } }
     if func.body.stmts.len() == 1 {
-        if let TypedStmt::If { condition, then_branch, else_branch: Some(else_b), .. } = &func.body.stmts[0] {
-            if is_eq_zero(condition, m) && returns_add_one(then_branch, n) && else_b.stmts.len() == 1 {
-                if let TypedStmt::If { condition: c2, then_branch: tb2, else_branch: Some(eb2), .. } = &else_b.stmts[0] {
+        if let TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_b),
+            ..
+        } = &func.body.stmts[0]
+        {
+            if is_eq_zero(condition, m)
+                && returns_add_one(then_branch, n)
+                && else_b.stmts.len() == 1
+            {
+                if let TypedStmt::If {
+                    condition: c2,
+                    then_branch: tb2,
+                    else_branch: Some(eb2),
+                    ..
+                } = &else_b.stmts[0]
+                {
                     if is_eq_zero(c2, n)
                         && returns_self_call_sub_one_and_one(tb2, fn_name, m)
                         && returns_self_call_nested(eb2, fn_name, m, n)
@@ -797,9 +968,19 @@ pub fn detect_nested_hyper_recurrence(func: &TypedFunction) -> Option<NestedHype
         let s1 = &func.body.stmts[1];
         let s2 = &func.body.stmts[2];
 
-        if let TypedStmt::If { condition, then_branch, .. } = s0 {
+        if let TypedStmt::If {
+            condition,
+            then_branch,
+            ..
+        } = s0
+        {
             if is_eq_zero(condition, m) && returns_add_one(then_branch, n) {
-                if let TypedStmt::If { condition: c1, then_branch: tb1, .. } = s1 {
+                if let TypedStmt::If {
+                    condition: c1,
+                    then_branch: tb1,
+                    ..
+                } = s1
+                {
                     if is_eq_zero(c1, n)
                         && returns_self_call_sub_one_and_one(tb1, fn_name, m)
                         && is_stmt_return_nested(s2, fn_name, m, n)
@@ -821,9 +1002,20 @@ pub fn detect_nested_hyper_recurrence(func: &TypedFunction) -> Option<NestedHype
         let s0 = &func.body.stmts[0];
         let s1 = &func.body.stmts[1];
 
-        if let TypedStmt::If { condition, then_branch, .. } = s0 {
+        if let TypedStmt::If {
+            condition,
+            then_branch,
+            ..
+        } = s0
+        {
             if is_eq_zero(condition, m) && returns_add_one(then_branch, n) {
-                if let TypedStmt::If { condition: c1, then_branch: tb1, else_branch: Some(eb1), .. } = s1 {
+                if let TypedStmt::If {
+                    condition: c1,
+                    then_branch: tb1,
+                    else_branch: Some(eb1),
+                    ..
+                } = s1
+                {
                     if is_eq_zero(c1, n)
                         && returns_self_call_sub_one_and_one(tb1, fn_name, m)
                         && returns_self_call_nested(eb1, fn_name, m, n)
@@ -850,7 +1042,14 @@ fn returns_ident(block: &TypedBlock, var: &str) -> bool {
     false
 }
 
-fn is_call_permutation_arg(expr: &TypedExpr, fn_name: &str, a: &str, b: &str, c: &str, dec_idx: usize) -> bool {
+fn is_call_permutation_arg(
+    expr: &TypedExpr,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+    dec_idx: usize,
+) -> bool {
     if let TypedExpr::Call { callee, args, .. } = expr {
         if callee == fn_name && args.len() == 3 {
             let check_arg = |arg: &TypedExpr, var: &str, idx: usize| {
@@ -896,11 +1095,16 @@ pub struct PermutationRecurrencePattern {
 /// Detects 3-parameter cyclic symmetric permutation recurrence relations of the form:
 /// tak(x, y, z) = if y < x { tak(tak(x-1, y, z), tak(y-1, z, x), tak(z-1, x, y)) } else { z }
 /// completely agnostically to function and variable names.
-pub fn detect_symmetric_permutation_recurrence(func: &TypedFunction) -> Option<PermutationRecurrencePattern> {
+pub fn detect_symmetric_permutation_recurrence(
+    func: &TypedFunction,
+) -> Option<PermutationRecurrencePattern> {
     if func.params.len() != 3 || func.return_ty != Type::I64 {
         return None;
     }
-    if func.params[0].ty != Type::I64 || func.params[1].ty != Type::I64 || func.params[2].ty != Type::I64 {
+    if func.params[0].ty != Type::I64
+        || func.params[1].ty != Type::I64
+        || func.params[2].ty != Type::I64
+    {
         return None;
     }
     let x = &func.params[0].name;
@@ -911,13 +1115,32 @@ pub fn detect_symmetric_permutation_recurrence(func: &TypedFunction) -> Option<P
     // Pattern 1: Single if-else
     // if y < x { return f(f(x-1, y, z), f(y-1, z, x), f(z-1, x, y)); } else { return z; }
     if func.body.stmts.len() == 1 {
-        if let TypedStmt::If { condition, then_branch, else_branch: Some(else_b), .. } = &func.body.stmts[0] {
+        if let TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch: Some(else_b),
+            ..
+        } = &func.body.stmts[0]
+        {
             let is_cond_y_lt_x = match condition {
-                TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => is_ident(left, y) && is_ident(right, x),
-                TypedExpr::Binary { op: BinaryOp::Gt, left, right, .. } => is_ident(left, x) && is_ident(right, y),
+                TypedExpr::Binary {
+                    op: BinaryOp::Lt,
+                    left,
+                    right,
+                    ..
+                } => is_ident(left, y) && is_ident(right, x),
+                TypedExpr::Binary {
+                    op: BinaryOp::Gt,
+                    left,
+                    right,
+                    ..
+                } => is_ident(left, x) && is_ident(right, y),
                 _ => false,
             };
-            if is_cond_y_lt_x && returns_ident(else_b, z) && returns_permutation_call(then_branch, fn_name, x, y, z) {
+            if is_cond_y_lt_x
+                && returns_ident(else_b, z)
+                && returns_permutation_call(then_branch, fn_name, x, y, z)
+            {
                 return Some(PermutationRecurrencePattern {
                     param_x: x.clone(),
                     param_y: y.clone(),
@@ -931,13 +1154,32 @@ pub fn detect_symmetric_permutation_recurrence(func: &TypedFunction) -> Option<P
     // if y >= x { return z; }
     // return f(f(x-1, y, z), f(y-1, z, x), f(z-1, x, y));
     if func.body.stmts.len() == 2 {
-        if let TypedStmt::If { condition, then_branch, else_branch: None, .. } = &func.body.stmts[0] {
+        if let TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch: None,
+            ..
+        } = &func.body.stmts[0]
+        {
             let is_cond_base = match condition {
-                TypedExpr::Binary { op: BinaryOp::Ge, left, right, .. } => is_ident(left, y) && is_ident(right, x),
-                TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => is_ident(left, x) && is_ident(right, y),
+                TypedExpr::Binary {
+                    op: BinaryOp::Ge,
+                    left,
+                    right,
+                    ..
+                } => is_ident(left, y) && is_ident(right, x),
+                TypedExpr::Binary {
+                    op: BinaryOp::Le,
+                    left,
+                    right,
+                    ..
+                } => is_ident(left, x) && is_ident(right, y),
                 _ => false,
             };
-            if is_cond_base && returns_ident(then_branch, z) && is_stmt_permutation_call(&func.body.stmts[1], fn_name, x, y, z) {
+            if is_cond_base
+                && returns_ident(then_branch, z)
+                && is_stmt_permutation_call(&func.body.stmts[1], fn_name, x, y, z)
+            {
                 return Some(PermutationRecurrencePattern {
                     param_x: x.clone(),
                     param_y: y.clone(),
@@ -949,5 +1191,3 @@ pub fn detect_symmetric_permutation_recurrence(func: &TypedFunction) -> Option<P
 
     None
 }
-
-

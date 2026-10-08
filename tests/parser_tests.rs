@@ -9,11 +9,18 @@ fn test_pratt_operator_precedence() {
 
     // Must be 1 + (2 * 3)
     match expr {
-        Expr::Binary { op, left, right, .. } => {
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             assert_eq!(op, BinaryOp::Add);
             assert_eq!(*left, Expr::Literal(Literal::Int(1), left.span()));
             match *right {
-                Expr::Binary { op: op2, left: l2, right: r2, .. } => {
+                Expr::Binary {
+                    op: op2,
+                    left: l2,
+                    right: r2,
+                    ..
+                } => {
                     assert_eq!(op2, BinaryOp::Mul);
                     assert_eq!(*l2, Expr::Literal(Literal::Int(2), l2.span()));
                     assert_eq!(*r2, Expr::Literal(Literal::Int(3), r2.span()));
@@ -32,7 +39,9 @@ fn test_pratt_grouped_precedence() {
 
     // Must be (1 + 2) * 3
     match expr {
-        Expr::Binary { op, left, right, .. } => {
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             assert_eq!(op, BinaryOp::Mul);
             match *left {
                 Expr::Group(inner, _) => match *inner {
@@ -56,11 +65,18 @@ fn test_pratt_exponentiation_right_associativity() {
 
     // 2 ** (3 ** 2) -> 2 ** 9
     match expr {
-        Expr::Binary { op, left, right, .. } => {
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             assert_eq!(op, BinaryOp::Pow);
             assert_eq!(*left, Expr::Literal(Literal::Int(2), left.span()));
             match *right {
-                Expr::Binary { op: op2, left: l2, right: r2, .. } => {
+                Expr::Binary {
+                    op: op2,
+                    left: l2,
+                    right: r2,
+                    ..
+                } => {
                     assert_eq!(op2, BinaryOp::Pow);
                     assert_eq!(*l2, Expr::Literal(Literal::Int(3), l2.span()));
                     assert_eq!(*r2, Expr::Literal(Literal::Int(2), r2.span()));
@@ -80,21 +96,33 @@ fn test_pratt_bitwise_operators() {
     // In C / Rust: & has highest precedence, then ^, then |
     // a | (b ^ (c & d))
     match expr {
-        Expr::Binary { op, left, right, .. } => {
+        Expr::Binary {
+            op, left, right, ..
+        } => {
             assert_eq!(op, BinaryOp::BitOr);
             match *left {
                 Expr::Ident(name, _) => assert_eq!(name, "a"),
                 _ => panic!("Expected ident a on LHS"),
             }
             match *right {
-                Expr::Binary { op: op2, left: l2, right: r2, .. } => {
+                Expr::Binary {
+                    op: op2,
+                    left: l2,
+                    right: r2,
+                    ..
+                } => {
                     assert_eq!(op2, BinaryOp::BitXor);
                     match *l2 {
                         Expr::Ident(name, _) => assert_eq!(name, "b"),
                         _ => panic!("Expected ident b"),
                     }
                     match *r2 {
-                        Expr::Binary { op: op3, left: l3, right: r3, .. } => {
+                        Expr::Binary {
+                            op: op3,
+                            left: l3,
+                            right: r3,
+                            ..
+                        } => {
                             assert_eq!(op3, BinaryOp::BitAnd);
                             match *l3 {
                                 Expr::Ident(name, _) => assert_eq!(name, "c"),
@@ -195,4 +223,3 @@ fn test_parse_mut_and_assignment() {
         _ => panic!("Expected assign statement"),
     }
 }
-

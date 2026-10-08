@@ -1,5 +1,5 @@
-use logos::Logos;
 use crate::span::Span;
+use logos::Logos;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\f\r]+")]

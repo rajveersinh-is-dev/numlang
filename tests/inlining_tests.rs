@@ -17,15 +17,15 @@ fn inlines_single_return_function() {
     let mut program = typecheck(&ast).unwrap();
     optimize_program(&mut program);
 
-    let main = program
-        .functions
-        .iter()
-        .find(|f| f.name == "main")
-        .unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
 
     let mut has_call = false;
     for stmt in &main.body.stmts {
-        if let TypedStmt::Let { value: TypedExpr::Call { .. }, .. } = stmt {
+        if let TypedStmt::Let {
+            value: TypedExpr::Call { .. },
+            ..
+        } = stmt
+        {
             has_call = true;
         }
     }
@@ -50,15 +50,15 @@ fn inlines_early_return_function() {
     let mut program = typecheck(&ast).unwrap();
     optimize_program(&mut program);
 
-    let main = program
-        .functions
-        .iter()
-        .find(|f| f.name == "main")
-        .unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
 
     let mut has_call = false;
     for stmt in &main.body.stmts {
-        if let TypedStmt::Let { value: TypedExpr::Call { .. }, .. } = stmt {
+        if let TypedStmt::Let {
+            value: TypedExpr::Call { .. },
+            ..
+        } = stmt
+        {
             has_call = true;
         }
     }
@@ -87,15 +87,15 @@ fn inlines_while_loop_with_early_return() {
     let mut program = typecheck(&ast).unwrap();
     optimize_program(&mut program);
 
-    let main = program
-        .functions
-        .iter()
-        .find(|f| f.name == "main")
-        .unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
 
     let mut has_call = false;
     for stmt in &main.body.stmts {
-        if let TypedStmt::Let { value: TypedExpr::Call { .. }, .. } = stmt {
+        if let TypedStmt::Let {
+            value: TypedExpr::Call { .. },
+            ..
+        } = stmt
+        {
             has_call = true;
         }
     }

@@ -1,12 +1,10 @@
 use std::fs;
 use std::process::Command;
 
-use numlang::codegen::linker::link_executable;
 use numlang::codegen::compile_supercompiled_to_obj_with_mode;
+use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
-use numlang::mir::supercompiler::mrsc::{
-    MinCodeSizeObjective, MultiResultEngine, ParetoObjective,
-};
+use numlang::mir::supercompiler::mrsc::{MinCodeSizeObjective, MultiResultEngine, ParetoObjective};
 use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -19,7 +17,12 @@ fn get_mir(source: &str) -> MirProgram {
     lower_program(&typed)
 }
 
-fn compile_and_run_mode(src: &str, test_name: &str, mode: SupercompileMode, objective: &str) -> i32 {
+fn compile_and_run_mode(
+    src: &str,
+    test_name: &str,
+    mode: SupercompileMode,
+    objective: &str,
+) -> i32 {
     let tokens = tokenize(src).expect("Tokenize failed");
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
@@ -75,13 +78,22 @@ fn test_distillation_nested_tree_inversion() {
     }
     "#;
 
-    let res = compile_and_run_mode(code, "test_distillation_nested_tree_inversion", SupercompileMode::Distill, "size");
+    let res = compile_and_run_mode(
+        code,
+        "test_distillation_nested_tree_inversion",
+        SupercompileMode::Distill,
+        "size",
+    );
     assert_eq!(res, 30, "Double invert of [10, 20] must produce sum 30");
 
     // Verify structural distillation folding on process tree
     let mut mir_program = get_mir(code);
-    let stats = supercompile_mir_program_with_mode(&mut mir_program, SupercompileMode::Distill, "size");
-    assert!(stats.nodes_explored > 0, "Distillation must explore process tree nodes");
+    let stats =
+        supercompile_mir_program_with_mode(&mut mir_program, SupercompileMode::Distill, "size");
+    assert!(
+        stats.nodes_explored > 0,
+        "Distillation must explore process tree nodes"
+    );
 }
 
 #[test]
@@ -108,7 +120,12 @@ fn test_distillation_double_zip() {
     }
     "#;
 
-    let res = compile_and_run_mode(code, "test_distillation_double_zip", SupercompileMode::Distill, "size");
+    let res = compile_and_run_mode(
+        code,
+        "test_distillation_double_zip",
+        SupercompileMode::Distill,
+        "size",
+    );
     // (1*10+100) + (2*20+200) + (3*30+300) + (4*40+400) = 110 + 240 + 390 + 560 = 1300
     assert_eq!(res, 1300, "double_zip exit code must match 1300");
 
@@ -132,7 +149,10 @@ fn test_distillation_double_zip() {
             }
         }
     }
-    assert!(!has_temp_array_alloc, "Intermediate array `temp` must be eliminated by deforestation/distillation");
+    assert!(
+        !has_temp_array_alloc,
+        "Intermediate array `temp` must be eliminated by deforestation/distillation"
+    );
 }
 
 #[test]
@@ -158,7 +178,11 @@ fn test_mrsc_optimal_code_size() {
             "#;
 
             let mir = get_mir(code);
-            let func = mir.functions.iter().find(|f| f.name == "branch_tree").unwrap();
+            let func = mir
+                .functions
+                .iter()
+                .find(|f| f.name == "branch_tree")
+                .unwrap();
 
             let mrsc = MultiResultEngine::new(func, &mir.functions);
             let (best_res, _best_tree, score) = mrsc.explore_and_select(&MinCodeSizeObjective);
@@ -167,15 +191,30 @@ fn test_mrsc_optimal_code_size() {
             for b in &best_res.blocks {
                 actual_count += 1 + b.statements.len();
             }
-            assert_eq!(score, actual_count as f64, "MRSC score must equal residual block/stmt count");
+            assert_eq!(
+                score, actual_count as f64,
+                "MRSC score must equal residual block/stmt count"
+            );
 
             // Also test Pareto objective
-            let (pareto_res, _pareto_tree, pareto_score) = mrsc.explore_and_select(&ParetoObjective);
-            assert!(pareto_score >= score, "Pareto score should incorporate branch penalties");
-            assert!(!pareto_res.blocks.is_empty(), "Pareto residual must have blocks");
+            let (pareto_res, _pareto_tree, pareto_score) =
+                mrsc.explore_and_select(&ParetoObjective);
+            assert!(
+                pareto_score >= score,
+                "Pareto score should incorporate branch penalties"
+            );
+            assert!(
+                !pareto_res.blocks.is_empty(),
+                "Pareto residual must have blocks"
+            );
 
             // Test execution of program compiled with MRSC
-            let res = compile_and_run_mode(code, "test_mrsc_optimal_code_size", SupercompileMode::Mrsc, "size");
+            let res = compile_and_run_mode(
+                code,
+                "test_mrsc_optimal_code_size",
+                SupercompileMode::Mrsc,
+                "size",
+            );
             assert!(res >= 0, "Execution under MRSC must succeed");
         })
         .unwrap();
@@ -215,7 +254,14 @@ fn test_cli_mode_flags() {
 
     // 3. Test --mode mrsc --mrsc-objective size
     let out_mrsc = Command::new(env!("CARGO_BIN_EXE_numlang"))
-        .args(["run", "--mode", "mrsc", "--mrsc-objective", "size", src_file.to_str().unwrap()])
+        .args([
+            "run",
+            "--mode",
+            "mrsc",
+            "--mrsc-objective",
+            "size",
+            src_file.to_str().unwrap(),
+        ])
         .output()
         .expect("Run mrsc failed");
     assert_eq!(out_mrsc.status.code(), Some(15));

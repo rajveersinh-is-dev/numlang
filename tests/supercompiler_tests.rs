@@ -56,7 +56,10 @@ fn run_rust_reference(rust_code: &str) -> Option<i32> {
         .expect("Failed to compile rust reference");
 
     if !compile.status.success() {
-        eprintln!("Rust compile failed: {}", String::from_utf8_lossy(&compile.stderr));
+        eprintln!(
+            "Rust compile failed: {}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
         let _ = fs::remove_dir_all(&test_dir);
         return None;
     }
@@ -106,8 +109,15 @@ fn main() {
     assert_eq!(rust_exit, Some(32), "Rust reference must yield 32");
 
     let (nl_exit, elapsed) = run_numlang_code(nl_code);
-    assert_eq!(nl_exit, Some(32), "NumLang exit code must match closed-form expectation");
-    assert_eq!(nl_exit, rust_exit, "NumLang exit code must match Rust reference");
+    assert_eq!(
+        nl_exit,
+        Some(32),
+        "NumLang exit code must match closed-form expectation"
+    );
+    assert_eq!(
+        nl_exit, rust_exit,
+        "NumLang exit code must match Rust reference"
+    );
     println!("Novel 1 (tri_sum) execution time: {:?}", elapsed);
 }
 
@@ -148,8 +158,15 @@ fn main() {
     assert_eq!(rust_exit, Some(0), "Rust reference must yield 0");
 
     let (nl_exit, elapsed) = run_numlang_code(nl_code);
-    assert_eq!(nl_exit, Some(0), "NumLang exit code must match closed-form expectation");
-    assert_eq!(nl_exit, rust_exit, "NumLang exit code must match Rust reference");
+    assert_eq!(
+        nl_exit,
+        Some(0),
+        "NumLang exit code must match closed-form expectation"
+    );
+    assert_eq!(
+        nl_exit, rust_exit,
+        "NumLang exit code must match Rust reference"
+    );
     println!("Novel 2 (pow2) execution time: {:?}", elapsed);
 }
 
@@ -192,8 +209,15 @@ fn main() {
     assert_eq!(rust_exit, Some(0), "Rust reference must yield 0");
 
     let (nl_exit, elapsed) = run_numlang_code(nl_code);
-    assert_eq!(nl_exit, Some(0), "NumLang exit code must match closed-form expectation");
-    assert_eq!(nl_exit, rust_exit, "NumLang exit code must match Rust reference");
+    assert_eq!(
+        nl_exit,
+        Some(0),
+        "NumLang exit code must match closed-form expectation"
+    );
+    assert_eq!(
+        nl_exit, rust_exit,
+        "NumLang exit code must match Rust reference"
+    );
     println!("Novel 3 (xor_period) execution time: {:?}", elapsed);
 }
 
@@ -234,8 +258,15 @@ fn main() {
     assert_eq!(rust_exit, Some(28), "Rust reference must yield 28");
 
     let (nl_exit, elapsed) = run_numlang_code(nl_code);
-    assert_eq!(nl_exit, Some(28), "NumLang exit code must match closed-form expectation");
-    assert_eq!(nl_exit, rust_exit, "NumLang exit code must match Rust reference");
+    assert_eq!(
+        nl_exit,
+        Some(28),
+        "NumLang exit code must match closed-form expectation"
+    );
+    assert_eq!(
+        nl_exit, rust_exit,
+        "NumLang exit code must match Rust reference"
+    );
     println!("Novel 4 (cubic_sum) execution time: {:?}", elapsed);
 }
 
@@ -280,7 +311,9 @@ fn main() {
 
     let rust_exit = run_rust_reference(rust_code);
     let (nl_exit, elapsed) = run_numlang_code(nl_code);
-    assert_eq!(nl_exit, rust_exit, "NumLang exit code must match Rust reference");
+    assert_eq!(
+        nl_exit, rust_exit,
+        "NumLang exit code must match Rust reference"
+    );
     println!("Novel 5 (fibonacci_coupled) execution time: {:?}", elapsed);
 }
-

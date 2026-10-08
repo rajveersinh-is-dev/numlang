@@ -1,6 +1,6 @@
+use numlang::fmt::format_source;
 use std::fs;
 use std::process::Command;
-use numlang::fmt::format_source;
 
 #[test]
 fn test_fmt_idempotent() {
@@ -25,15 +25,26 @@ return 0;
 fn test_fmt_already_formatted_unchanged() {
     let formatted = "fn foo(a: i64, b: f64) -> i64 {\n    let mut x: i64 = 10;\n    let y: i64 = a + x * 2;\n    if y > 0 {\n        return y;\n    } else {\n        return 0;\n    }\n}\n";
     let res = format_source(formatted).expect("Formatting failed");
-    assert_eq!(res, formatted, "Already formatted code must remain unchanged");
+    assert_eq!(
+        res, formatted,
+        "Already formatted code must remain unchanged"
+    );
 }
 
 #[test]
 fn test_fmt_type_inference_for_let() {
     let code = "fn main() -> i64 {\nlet x = 42;\nlet f = 3.14;\nreturn x;\n}\n";
     let formatted = format_source(code).expect("Formatting failed");
-    assert!(formatted.contains("let x: i64 = 42;"), "Expected inferred i64 type: {}", formatted);
-    assert!(formatted.contains("let f: f64 = 3.14;"), "Expected inferred f64 type: {}", formatted);
+    assert!(
+        formatted.contains("let x: i64 = 42;"),
+        "Expected inferred i64 type: {}",
+        formatted
+    );
+    assert!(
+        formatted.contains("let f: f64 = 3.14;"),
+        "Expected inferred f64 type: {}",
+        formatted
+    );
 }
 
 #[test]
@@ -51,7 +62,8 @@ return Point{x:0.0,y:0.0};
 
 #[test]
 fn test_fmt_match_expression() {
-    let code = "fn eval(x: i64) -> i64 {\nreturn match x {\n0 => 10,\n1 | 2 => 20,\n_ => 0,\n};\n}\n";
+    let code =
+        "fn eval(x: i64) -> i64 {\nreturn match x {\n0 => 10,\n1 | 2 => 20,\n_ => 0,\n};\n}\n";
     let formatted = format_source(code).expect("Formatting failed");
     let expected = "fn eval(x: i64) -> i64 {\n    return match x {\n        0 => 10,\n        1 | 2 => 20,\n        _ => 0,\n    };\n}\n";
     assert_eq!(formatted, expected);
@@ -59,7 +71,14 @@ fn test_fmt_match_expression() {
 
 #[test]
 fn test_fmt_cli_check_and_stdout() {
-    let id = format!("{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let id = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     let test_dir = std::env::temp_dir().join(format!("numlang_test_fmt_{}", id));
     fs::create_dir_all(&test_dir).unwrap();
 
@@ -85,7 +104,10 @@ fn test_fmt_cli_check_and_stdout() {
         .expect("Failed to run fmt --stdout");
     assert!(stdout_out.status.success());
     let stdout_str = String::from_utf8_lossy(&stdout_out.stdout);
-    assert_eq!(stdout_str, "fn main() -> i64 {\n    let x: i64 = 1;\n    return x;\n}\n");
+    assert_eq!(
+        stdout_str,
+        "fn main() -> i64 {\n    let x: i64 = 1;\n    return x;\n}\n"
+    );
 
     // In-place format
     let inplace_status = Command::new(env!("CARGO_BIN_EXE_numlang"))

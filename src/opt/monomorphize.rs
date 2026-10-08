@@ -5,14 +5,13 @@
 //! and produces a concrete copy of each generic function for each
 //! distinct instantiation. Generic originals are removed from the program.
 
-use std::collections::HashMap;
 use crate::span::Span;
 use crate::typecheck::checker::TypeError;
 use crate::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram,
-    TypedStmt,
+    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt,
 };
 use crate::typecheck::types::{ClosureType, Type};
+use std::collections::HashMap;
 
 /// Substitution: map from type param name to concrete Type
 pub type Subst = HashMap<String, Type>;
@@ -135,7 +134,11 @@ pub fn type_to_ident(ty: &Type) -> String {
         ),
         Type::Closure(c) => format!(
             "closure_{}_ret_{}",
-            c.params.iter().map(type_to_ident).collect::<Vec<_>>().join("_"),
+            c.params
+                .iter()
+                .map(type_to_ident)
+                .collect::<Vec<_>>()
+                .join("_"),
             type_to_ident(&c.ret)
         ),
         Type::Param(p) => p.clone(),
@@ -168,7 +171,9 @@ pub fn substitute_expr(expr: &mut TypedExpr, subst: &Subst) {
             *ty = substitute_type(ty, subst);
             substitute_expr(expr, subst);
         }
-        TypedExpr::Binary { left, right, ty, .. } => {
+        TypedExpr::Binary {
+            left, right, ty, ..
+        } => {
             *ty = substitute_type(ty, subst);
             substitute_expr(left, subst);
             substitute_expr(right, subst);
@@ -185,7 +190,9 @@ pub fn substitute_expr(expr: &mut TypedExpr, subst: &Subst) {
                 substitute_expr(el, subst);
             }
         }
-        TypedExpr::Index { target, index, ty, .. } => {
+        TypedExpr::Index {
+            target, index, ty, ..
+        } => {
             *ty = substitute_type(ty, subst);
             substitute_expr(target, subst);
             substitute_expr(index, subst);
@@ -200,7 +207,12 @@ pub fn substitute_expr(expr: &mut TypedExpr, subst: &Subst) {
             *ty = substitute_type(ty, subst);
             substitute_expr(target, subst);
         }
-        TypedExpr::Match { scrutinee, arms, ty, .. } => {
+        TypedExpr::Match {
+            scrutinee,
+            arms,
+            ty,
+            ..
+        } => {
             *ty = substitute_type(ty, subst);
             substitute_expr(scrutinee, subst);
             for arm in arms {
@@ -220,7 +232,13 @@ pub fn substitute_expr(expr: &mut TypedExpr, subst: &Subst) {
                 substitute_expr(arg, subst);
             }
         }
-        TypedExpr::Lambda { params, body, captured, ty, .. } => {
+        TypedExpr::Lambda {
+            params,
+            body,
+            captured,
+            ty,
+            ..
+        } => {
             *ty = substitute_type(ty, subst);
             for (_, p_ty) in params {
                 *p_ty = substitute_type(p_ty, subst);
@@ -230,7 +248,9 @@ pub fn substitute_expr(expr: &mut TypedExpr, subst: &Subst) {
             }
             substitute_expr(body, subst);
         }
-        TypedExpr::CallIndirect { callee, args, ty, .. } => {
+        TypedExpr::CallIndirect {
+            callee, args, ty, ..
+        } => {
             *ty = substitute_type(ty, subst);
             substitute_expr(callee, subst);
             for arg in args {
@@ -276,14 +296,21 @@ pub fn substitute_stmt(stmt: &mut TypedStmt, subst: &Subst) {
         TypedStmt::Expr(e) => {
             substitute_expr(e, subst);
         }
-        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+        TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             substitute_expr(condition, subst);
             substitute_block(then_branch, subst);
             if let Some(eb) = else_branch {
                 substitute_block(eb, subst);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             substitute_expr(condition, subst);
             substitute_block(body, subst);
         }
@@ -308,7 +335,12 @@ fn rewrite_calls_in_expr(
             rewrite_calls_in_expr(left, templates, worklist);
             rewrite_calls_in_expr(right, templates, worklist);
         }
-        TypedExpr::Call { callee, args, ty, span } => {
+        TypedExpr::Call {
+            callee,
+            args,
+            ty,
+            span,
+        } => {
             for arg in args.iter_mut() {
                 rewrite_calls_in_expr(arg, templates, worklist);
             }
@@ -338,7 +370,9 @@ fn rewrite_calls_in_expr(
             }
         }
         TypedExpr::FieldAccess { target, .. } => rewrite_calls_in_expr(target, templates, worklist),
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             rewrite_calls_in_expr(scrutinee, templates, worklist);
             for arm in arms {
                 rewrite_calls_in_expr(&mut arm.body, templates, worklist);
@@ -384,14 +418,21 @@ fn rewrite_calls_in_stmt(
             rewrite_calls_in_block(body, templates, worklist);
         }
         TypedStmt::Expr(e) => rewrite_calls_in_expr(e, templates, worklist),
-        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+        TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             rewrite_calls_in_expr(condition, templates, worklist);
             rewrite_calls_in_block(then_branch, templates, worklist);
             if let Some(eb) = else_branch {
                 rewrite_calls_in_block(eb, templates, worklist);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             rewrite_calls_in_expr(condition, templates, worklist);
             rewrite_calls_in_block(body, templates, worklist);
         }

@@ -9,12 +9,12 @@
 //! 4. Lowers `Terminator::IndirectCall` into direct `Terminator::Switch` over tags, dispatching
 //!    to monomorphic static `Rvalue::Call` sites in specialized basic blocks.
 
-use std::collections::BTreeMap;
-use crate::span::Span;
-use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::mir::lower::{MirBasicBlock, MirLocalDecl, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
+use crate::span::Span;
 use crate::typecheck::typed_ast::{TypedEnumDef, TypedEnumVariant};
 use crate::typecheck::types::Type;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClosureSignature {
@@ -128,7 +128,12 @@ pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats
             });
             variant_map.insert(
                 cand.fn_name.clone(),
-                (enum_name.clone(), variant_name, tag, cand.captured_types.clone()),
+                (
+                    enum_name.clone(),
+                    variant_name,
+                    tag,
+                    cand.captured_types.clone(),
+                ),
             );
             resolved_variants.push(ResolvedVariant {
                 fn_name: cand.fn_name.clone(),
@@ -176,11 +181,17 @@ pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats
         let mut max_bb = func.blocks.iter().map(|b| b.id.0).max().unwrap_or(0) + 1;
 
         for block in &mut func.blocks {
-            if let Terminator::IndirectCall { callee, args, dest, next } = &block.terminator {
+            if let Terminator::IndirectCall {
+                callee,
+                args,
+                dest,
+                next,
+            } = &block.terminator
+            {
                 // Find matching signature by arity
-                let matching_group = sig_groups.iter().find(|g| {
-                    g.signature.param_tys.len() == args.len()
-                });
+                let matching_group = sig_groups
+                    .iter()
+                    .find(|g| g.signature.param_tys.len() == args.len());
 
                 if let Some(group) = matching_group {
                     let tag_place = Place {
@@ -204,7 +215,8 @@ pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats
                         let arm_bb_id = BasicBlockId(max_bb);
                         max_bb += 1;
                         let mut arm_stmts = Vec::new();
-                        let mut call_args = Vec::with_capacity(variant.captured_types.len() + args.len());
+                        let mut call_args =
+                            Vec::with_capacity(variant.captured_types.len() + args.len());
 
                         // Unpack captured environment payload fields
                         for (j, cap_ty) in variant.captured_types.iter().enumerate() {
@@ -219,7 +231,8 @@ pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats
                             });
                             let mut proj_place = callee.clone();
                             proj_place.projections.push(Projection::Payload(j));
-                            arm_stmts.push(Statement::Assign(cap_temp.clone(), Rvalue::Use(proj_place)));
+                            arm_stmts
+                                .push(Statement::Assign(cap_temp.clone(), Rvalue::Use(proj_place)));
                             call_args.push(cap_temp);
                         }
 
@@ -238,7 +251,9 @@ pub fn defunctionalize_program(program: &mut MirProgram) -> DefunctionalizeStats
                             id: arm_bb_id.clone(),
                             arguments: vec![],
                             statements: arm_stmts,
-                            terminator: Terminator::Branch { target: next.clone() },
+                            terminator: Terminator::Branch {
+                                target: next.clone(),
+                            },
                         });
 
                         targets.push((variant.tag as i64, arm_bb_id));

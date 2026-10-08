@@ -9,9 +9,7 @@ use numlang::mir::supercompiler::polyhedral::fuse_polyhedral_stencils;
 use numlang::mir::supercompiler::validate::{
     verify_program_equivalence, TranslationValidator, ValidationError,
 };
-use numlang::mir::supercompiler::{
-    supercompile_mir_program_with_mode, SupercompileMode,
-};
+use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
@@ -30,12 +28,9 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let obj_bytes = compile_supercompiled_to_obj_with_mode(
-        &typed,
-        SupercompileMode::Classic,
-        "size",
-    )
-    .expect("Codegen failed");
+    let obj_bytes =
+        compile_supercompiled_to_obj_with_mode(&typed, SupercompileMode::Classic, "size")
+            .expect("Codegen failed");
 
     let test_dir = std::env::temp_dir().join(format!("numlang_phase19_{}", test_name));
     let _ = fs::create_dir_all(&test_dir);
@@ -84,9 +79,16 @@ fn test_polyhedral_stencil_fusion() {
 
     // Polyhedral analysis test: verify `temp` array allocation is eliminated
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "stencil_pipeline").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "stencil_pipeline")
+        .unwrap();
     let fusions = fuse_polyhedral_stencils(func);
-    assert!(fusions > 0, "Polyhedral stencil fusion must fuse intermediate pipeline");
+    assert!(
+        fusions > 0,
+        "Polyhedral stencil fusion must fuse intermediate pipeline"
+    );
 
     let mut has_temp_alloc = false;
     for b in &func.blocks {
@@ -97,7 +99,10 @@ fn test_polyhedral_stencil_fusion() {
             }
         }
     }
-    assert!(!has_temp_alloc, "Intermediate array `temp` must be eliminated from MIR");
+    assert!(
+        !has_temp_alloc,
+        "Intermediate array `temp` must be eliminated from MIR"
+    );
 }
 
 #[test]
@@ -118,20 +123,36 @@ fn test_translation_validation_equivalence() {
     let mut sc_mir = orig_mir.clone();
     supercompile_mir_program_with_mode(&mut sc_mir, SupercompileMode::Classic, "size");
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "add_scaled").unwrap();
-    let res_func = sc_mir.functions.iter().find(|f| f.name == "add_scaled").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "add_scaled")
+        .unwrap();
+    let res_func = sc_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "add_scaled")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, res_func);
-    let cert = validator.verify().expect("Translation validation must succeed");
+    let cert = validator
+        .verify()
+        .expect("Translation validation must succeed");
 
-    assert!(cert.is_certified, "Validation certificate must be certified");
+    assert!(
+        cert.is_certified,
+        "Validation certificate must be certified"
+    );
     assert_eq!(cert.function_name, "add_scaled");
     assert!(cert.paths_verified >= 1);
 
     // Verify program-wide equivalence
     let program_certs = verify_program_equivalence(&orig_mir, &sc_mir)
         .expect("Program-wide translation validation must succeed");
-    assert!(!program_certs.is_empty(), "Must produce certificates for all functions");
+    assert!(
+        !program_certs.is_empty(),
+        "Must produce certificates for all functions"
+    );
 }
 
 #[test]
@@ -150,7 +171,11 @@ fn test_translation_validation_detects_unsoundness() {
     let mut tampered_mir = orig_mir.clone();
 
     // Intentionally tamper with the return value in tampered_mir
-    let func = tampered_mir.functions.iter_mut().find(|f| f.name == "identity_plus_one").unwrap();
+    let func = tampered_mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "identity_plus_one")
+        .unwrap();
     for b in &mut func.blocks {
         for stmt in &mut b.statements {
             let Statement::Assign(_, rval) = stmt;
@@ -158,13 +183,26 @@ fn test_translation_validation_detects_unsoundness() {
         }
     }
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "identity_plus_one").unwrap();
-    let tampered_func = tampered_mir.functions.iter().find(|f| f.name == "identity_plus_one").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "identity_plus_one")
+        .unwrap();
+    let tampered_func = tampered_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "identity_plus_one")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, tampered_func);
-    let err = validator.verify().expect_err("Validation must fail on tampered residual");
+    let err = validator
+        .verify()
+        .expect_err("Validation must fail on tampered residual");
 
-    assert!(matches!(err, ValidationError::OutputMismatch { .. }), "Expected OutputMismatch error");
+    assert!(
+        matches!(err, ValidationError::OutputMismatch { .. }),
+        "Expected OutputMismatch error"
+    );
 }
 
 #[test]
@@ -186,15 +224,18 @@ fn test_parallel_supercompilation() {
     "#;
 
     let mut mir_parallel = get_mir(code);
-    let stats = supercompile_mir_program_parallel(
-        &mut mir_parallel,
-        SupercompileMode::Classic,
-        "size",
-        4,
-    );
+    let stats =
+        supercompile_mir_program_parallel(&mut mir_parallel, SupercompileMode::Classic, "size", 4);
 
-    assert!(stats.nodes_explored > 0, "Parallel driving must explore nodes");
-    assert_eq!(mir_parallel.functions.len(), 3, "All functions must be preserved");
+    assert!(
+        stats.nodes_explored > 0,
+        "Parallel driving must explore nodes"
+    );
+    assert_eq!(
+        mir_parallel.functions.len(),
+        3,
+        "All functions must be preserved"
+    );
 
     // Validate equivalence of parallel supercompiled program
     let orig_mir = get_mir(code);
@@ -228,10 +269,20 @@ fn test_cli_verify_equivalence() {
         .output()
         .expect("CLI execution failed");
 
-    assert!(output.status.success(), "CLI run with --verify-equivalence must succeed");
+    assert!(
+        output.status.success(),
+        "CLI run with --verify-equivalence must succeed"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("translation validation certified"), "Stdout must confirm certification: {}", stdout);
-    assert!(stdout.contains("square"), "Stdout must mention verified function `square`");
+    assert!(
+        stdout.contains("translation validation certified"),
+        "Stdout must confirm certification: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("square"),
+        "Stdout must mention verified function `square`"
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }

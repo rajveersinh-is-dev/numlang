@@ -27,12 +27,9 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let obj_bytes = compile_supercompiled_to_obj_with_mode(
-        &typed,
-        SupercompileMode::Classic,
-        "size",
-    )
-    .expect("Codegen failed");
+    let obj_bytes =
+        compile_supercompiled_to_obj_with_mode(&typed, SupercompileMode::Classic, "size")
+            .expect("Codegen failed");
 
     let test_dir = std::env::temp_dir().join(format!("numlang_poly_phase23_{}", test_name));
     let _ = fs::create_dir_all(&test_dir);
@@ -109,7 +106,10 @@ fn test_polyhedral_affine_algebra_and_inequalities() {
         BasicBlockId(5),
         BasicBlockId(6),
     );
-    assert!(dom1.is_compatible(&dom2), "Domains with identical bounds must be compatible");
+    assert!(
+        dom1.is_compatible(&dom2),
+        "Domains with identical bounds must be compatible"
+    );
 
     let dom_diff = IterationDomain::new_1d(
         "k",
@@ -120,7 +120,10 @@ fn test_polyhedral_affine_algebra_and_inequalities() {
         BasicBlockId(8),
         BasicBlockId(9),
     );
-    assert!(!dom1.is_compatible(&dom_diff), "Domains with different bounds must not be compatible");
+    assert!(
+        !dom1.is_compatible(&dom_diff),
+        "Domains with different bounds must not be compatible"
+    );
 }
 
 #[test]
@@ -136,7 +139,10 @@ fn test_polyhedral_dependence_distance_vectors() {
     assert!(dep_forward.is_legal);
 
     let dep_anti = DependenceDistance::new(-1);
-    assert!(!dep_anti.is_legal, "Negative dependence distance must be rejected as anti-causal");
+    assert!(
+        !dep_anti.is_legal,
+        "Negative dependence distance must be rejected as anti-causal"
+    );
 }
 
 #[test]
@@ -168,7 +174,11 @@ fn test_polyhedral_single_pass_elementwise_fusion_and_buffer_elimination() {
 
     // 2. MIR analysis: verify intermediate buffer `temp` is eliminated
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "pipeline_1d").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "pipeline_1d")
+        .unwrap();
     let fusions = fuse_polyhedral_stencils(func);
     assert!(fusions > 0, "Polyhedral fusion must succeed");
 
@@ -181,7 +191,10 @@ fn test_polyhedral_single_pass_elementwise_fusion_and_buffer_elimination() {
             }
         }
     }
-    assert!(!has_temp_alloc, "Intermediate array `temp` allocation must be completely eliminated");
+    assert!(
+        !has_temp_alloc,
+        "Intermediate array `temp` allocation must be completely eliminated"
+    );
 }
 
 #[test]
@@ -217,20 +230,32 @@ fn test_polyhedral_horizontal_vertical_2d_stencil_deforestation() {
 
     // 2. MIR analysis: verify intermediate buffers `h_blur` and `v_blur` are deforested
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "multi_pass_blur").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "multi_pass_blur")
+        .unwrap();
     let fusions = fuse_polyhedral_stencils(func);
-    assert!(fusions >= 2, "Both h_blur and v_blur pipelines must be fused (fusions >= 2)");
+    assert!(
+        fusions >= 2,
+        "Both h_blur and v_blur pipelines must be fused (fusions >= 2)"
+    );
 
     let mut has_intermediate_alloc = false;
     for b in &func.blocks {
         for stmt in &b.statements {
             let Statement::Assign(dest, rval) = stmt;
-            if (dest.local == "h_blur" || dest.local == "v_blur") && matches!(rval, Rvalue::Array(_)) {
+            if (dest.local == "h_blur" || dest.local == "v_blur")
+                && matches!(rval, Rvalue::Array(_))
+            {
                 has_intermediate_alloc = true;
             }
         }
     }
-    assert!(!has_intermediate_alloc, "All intermediate stencil buffers must be eliminated from MIR");
+    assert!(
+        !has_intermediate_alloc,
+        "All intermediate stencil buffers must be eliminated from MIR"
+    );
 }
 
 #[test]
@@ -266,9 +291,16 @@ fn test_polyhedral_multi_stage_3pass_deforestation() {
 
     // 2. Fixed-point deforestation: p1 and p2 eliminated
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "three_stage_pipeline").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "three_stage_pipeline")
+        .unwrap();
     let fusions = fuse_polyhedral_stencils(func);
-    assert!(fusions >= 2, "Fixed-point fusion must fuse at least 2 stages");
+    assert!(
+        fusions >= 2,
+        "Fixed-point fusion must fuse at least 2 stages"
+    );
 
     let mut has_p1_or_p2 = false;
     for b in &func.blocks {
@@ -279,5 +311,8 @@ fn test_polyhedral_multi_stage_3pass_deforestation() {
             }
         }
     }
-    assert!(!has_p1_or_p2, "Neither p1 nor p2 should allocate array memory in MIR");
+    assert!(
+        !has_p1_or_p2,
+        "Neither p1 nor p2 should allocate array memory in MIR"
+    );
 }

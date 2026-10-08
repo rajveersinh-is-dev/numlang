@@ -9,10 +9,9 @@ pub mod intrinsics;
 pub mod mir_emit;
 
 pub use abi::*;
-pub use deopt::*;
 use ast_stmt::{FunctionTranslationState, Storage};
+pub use deopt::*;
 
-use std::collections::HashMap;
 use cranelift_codegen::ir::{
     types, AbiParam, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, TrapCode, Value,
 };
@@ -21,9 +20,10 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_native;
 use cranelift_object::{ObjectBuilder, ObjectModule};
+use std::collections::HashMap;
 
-use crate::typecheck::{Type, TypedFunction, TypedProgram};
 use crate::codegen::backend_trait::BackendCompiler;
+use crate::typecheck::{Type, TypedFunction, TypedProgram};
 
 pub struct CraneliftCompiler {
     pub(crate) module: ObjectModule,
@@ -55,7 +55,6 @@ pub struct CraneliftCompiler {
     pub(crate) arena_end_id: DataId,
     pub(crate) arena_start_id: DataId,
 }
-
 
 impl CraneliftCompiler {
     pub fn new() -> Result<Self, CodegenError> {
@@ -95,7 +94,6 @@ impl CraneliftCompiler {
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
-
 
         let builder = ObjectBuilder::new(
             isa,
@@ -319,7 +317,8 @@ impl CraneliftCompiler {
                 sig.params.push(AbiParam::new(types::I64)); // hidden sret pointer
                 sig.returns.push(AbiParam::new(types::I64));
             } else if func.return_ty != Type::Void {
-                sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+                sig.returns
+                    .push(AbiParam::new(type_to_clif(func.return_ty.clone())));
             }
 
             for param in &func.params {
@@ -333,11 +332,15 @@ impl CraneliftCompiler {
                 } else if let Type::Enum(_) = &param.ty {
                     sig.params.push(AbiParam::new(types::I64));
                 } else {
-                    sig.params.push(AbiParam::new(type_to_clif(param.ty.clone())));
+                    sig.params
+                        .push(AbiParam::new(type_to_clif(param.ty.clone())));
                 }
             }
 
-            let export_name = if func.name == "main" && std::env::var("NUMLANG_BENCH").is_ok() && !cfg!(target_os = "windows") {
+            let export_name = if func.name == "main"
+                && std::env::var("NUMLANG_BENCH").is_ok()
+                && !cfg!(target_os = "windows")
+            {
                 "numlang_main"
             } else {
                 &func.name
@@ -378,7 +381,6 @@ impl CraneliftCompiler {
 
         Ok(obj_bytes)
     }
-
 
     fn compile_entry_point(
         &mut self,
@@ -427,9 +429,9 @@ impl CraneliftCompiler {
         let config = self.module.target_config();
         builder.finalize(config);
 
-        self.module
-            .define_function(entry_id, ctx)
-            .map_err(|e| CodegenError::BackendError(format!("Verifier error in entry: {:#?}", e)))?;
+        self.module.define_function(entry_id, ctx).map_err(|e| {
+            CodegenError::BackendError(format!("Verifier error in entry: {:#?}", e))
+        })?;
         self.module.clear_context(ctx);
 
         Ok(())
@@ -441,7 +443,9 @@ impl CraneliftCompiler {
         ctx: &mut cranelift_codegen::Context,
         fn_builder_ctx: &mut FunctionBuilderContext,
     ) -> Result<(), CodegenError> {
-        let func_id = *self.func_ids.get(&func.name).ok_or_else(|| CodegenError::BackendError(format!("Function '{}' not declared", func.name)))?;
+        let func_id = *self.func_ids.get(&func.name).ok_or_else(|| {
+            CodegenError::BackendError(format!("Function '{}' not declared", func.name))
+        })?;
 
         let mut sig = self.module.make_signature();
         let is_sret = matches!(&func.return_ty, Type::Struct(_) | Type::Enum(_));
@@ -449,7 +453,8 @@ impl CraneliftCompiler {
             sig.params.push(AbiParam::new(types::I64)); // hidden sret pointer
             sig.returns.push(AbiParam::new(types::I64));
         } else if func.return_ty != Type::Void {
-            sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+            sig.returns
+                .push(AbiParam::new(type_to_clif(func.return_ty.clone())));
         }
 
         for param in &func.params {
@@ -463,7 +468,8 @@ impl CraneliftCompiler {
             } else if let Type::Enum(_) = &param.ty {
                 sig.params.push(AbiParam::new(types::I64));
             } else {
-                sig.params.push(AbiParam::new(type_to_clif(param.ty.clone())));
+                sig.params
+                    .push(AbiParam::new(type_to_clif(param.ty.clone())));
             }
         }
 
@@ -490,7 +496,9 @@ impl CraneliftCompiler {
 
         for param in &func.params {
             if let Type::Struct(sname) = &param.ty {
-                let layout = self.struct_layouts.get(sname.as_str()).ok_or_else(|| CodegenError::BackendError(format!("Struct layout for '{}' not found", sname)))?;
+                let layout = self.struct_layouts.get(sname.as_str()).ok_or_else(|| {
+                    CodegenError::BackendError(format!("Struct layout for '{}' not found", sname))
+                })?;
                 let slot_data = StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     layout.total_size,
@@ -503,11 +511,28 @@ impl CraneliftCompiler {
                 for (leaf_offset, _leaf_ty) in leaves {
                     let leaf_val = block_params[block_param_idx];
                     block_param_idx += 1;
-                    builder.ins().store(MemFlagsData::trusted(), leaf_val, slot_addr, leaf_offset as i32);
+                    builder.ins().store(
+                        MemFlagsData::trusted(),
+                        leaf_val,
+                        slot_addr,
+                        leaf_offset as i32,
+                    );
                 }
-                variables.insert(param.name.clone(), Storage::Struct { slot, struct_name: sname.clone() });
+                variables.insert(
+                    param.name.clone(),
+                    Storage::Struct {
+                        slot,
+                        struct_name: sname.clone(),
+                    },
+                );
             } else if let Type::Enum(ename) = &param.ty {
-                let layout = self.enum_layouts.get(ename.as_str()).cloned().ok_or_else(|| CodegenError::BackendError(format!("Enum layout for '{}' not found", ename)))?;
+                let layout = self
+                    .enum_layouts
+                    .get(ename.as_str())
+                    .cloned()
+                    .ok_or_else(|| {
+                        CodegenError::BackendError(format!("Enum layout for '{}' not found", ename))
+                    })?;
                 let slot_data = StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     layout.total_size,
@@ -517,8 +542,19 @@ impl CraneliftCompiler {
                 let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
                 let incoming_ptr = block_params[block_param_idx];
                 block_param_idx += 1;
-                FunctionTranslationState::emit_copy_bytes(&mut builder, incoming_ptr, slot_addr, layout.total_size as usize);
-                variables.insert(param.name.clone(), Storage::Enum { slot, enum_name: ename.clone() });
+                FunctionTranslationState::emit_copy_bytes(
+                    &mut builder,
+                    incoming_ptr,
+                    slot_addr,
+                    layout.total_size as usize,
+                );
+                variables.insert(
+                    param.name.clone(),
+                    Storage::Enum {
+                        slot,
+                        enum_name: ename.clone(),
+                    },
+                );
             } else {
                 let clif_ty = type_to_clif(param.ty.clone());
                 let var = builder.declare_var(clif_ty);
@@ -535,7 +571,8 @@ impl CraneliftCompiler {
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
         let known_non_negative_vars = collect_known_non_negative_vars(&body_to_translate);
         let known_u32_vars = collect_known_u32_vars(&body_to_translate, &known_non_negative_vars);
-        let known_var_bounds = collect_known_var_upper_bounds(&body_to_translate, &known_non_negative_vars);
+        let known_var_bounds =
+            collect_known_var_upper_bounds(&body_to_translate, &known_non_negative_vars);
         let mut const_pool = HashMap::new();
         let mut f64_pool = HashMap::new();
         let mut f32_pool = HashMap::new();
@@ -547,15 +584,17 @@ impl CraneliftCompiler {
             f32_pool.insert(f.to_bits(), builder.ins().f32const(f));
         }
 
-
-
         let mut divisors = Vec::new();
         collect_constant_divisors_block(&body_to_translate, &mut divisors);
         for d in divisors {
-            const_pool.entry((types::I64, d as u64)).or_insert_with(|| builder.ins().iconst(types::I64, d));
+            const_pool
+                .entry((types::I64, d as u64))
+                .or_insert_with(|| builder.ins().iconst(types::I64, d));
             let ad = d.unsigned_abs();
             if let Some((m, _)) = compute_magic_u32_fast(ad) {
-                const_pool.entry((types::I64, m)).or_insert_with(|| builder.ins().iconst(types::I64, m as i64));
+                const_pool
+                    .entry((types::I64, m))
+                    .or_insert_with(|| builder.ins().iconst(types::I64, m as i64));
             }
             if let Some((m, _)) = compute_magic_u64_nonneg(ad) {
                 const_pool.entry((types::I64, m)).or_insert_with(|| {
@@ -567,7 +606,9 @@ impl CraneliftCompiler {
             let (m, _, _) = compute_magic_s64(d.abs());
             const_pool.entry((types::I64, m as u64)).or_insert_with(|| {
                 let m_u = m as u64;
-                let c1 = builder.ins().iconst(types::I64, (m_u.wrapping_sub(1)) as i64);
+                let c1 = builder
+                    .ins()
+                    .iconst(types::I64, (m_u.wrapping_sub(1)) as i64);
                 let c2 = builder.ins().iconst(types::I64, 1);
                 builder.ins().iadd(c1, c2)
             });
@@ -626,7 +667,10 @@ impl CraneliftCompiler {
         }
 
         if let Err(e) = self.module.define_function(func_id, ctx) {
-            eprintln!("VERIFIER ERROR for function {}:\n{:#?}\nIR:\n{}", func.name, e, ctx.func);
+            eprintln!(
+                "VERIFIER ERROR for function {}:\n{:#?}\nIR:\n{}",
+                func.name, e, ctx.func
+            );
             return Err(CodegenError::BackendError(format!("{:#?}", e)));
         }
         self.module.clear_context(ctx);
@@ -662,7 +706,11 @@ pub fn compile_mir_to_obj(mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>
 }
 
 pub fn compile_supercompiled_to_obj(program: &TypedProgram) -> Result<Vec<u8>, CodegenError> {
-    compile_supercompiled_to_obj_with_mode(program, crate::mir::supercompiler::SupercompileMode::Classic, "size")
+    compile_supercompiled_to_obj_with_mode(
+        program,
+        crate::mir::supercompiler::SupercompileMode::Classic,
+        "size",
+    )
 }
 
 pub fn compile_supercompiled_to_obj_with_mode(
@@ -709,9 +757,6 @@ pub fn compile_supercompiled_to_obj_with_cache(
     compile_mir_to_obj(&mir_program)
 }
 
-
-
-
 impl BackendCompiler for CraneliftCompiler {
     fn name(&self) -> &'static str {
         "cranelift"
@@ -721,7 +766,10 @@ impl BackendCompiler for CraneliftCompiler {
         compile_to_obj(program).map_err(|e| e.to_string())
     }
 
-    fn compile_mir_to_obj_bytes(&mut self, mir: &crate::mir::lower::MirProgram) -> Result<Vec<u8>, String> {
+    fn compile_mir_to_obj_bytes(
+        &mut self,
+        mir: &crate::mir::lower::MirProgram,
+    ) -> Result<Vec<u8>, String> {
         compile_mir_to_obj(mir).map_err(|e| e.to_string())
     }
 }

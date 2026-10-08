@@ -178,17 +178,25 @@ fn test_cps_binary_branching_tree() {
     let tree = driver.run();
 
     // Verify the process tree has branches exploring both true and false paths
-    let has_branch_true = tree
-        .nodes
-        .iter()
-        .any(|n| n.edges.iter().any(|e| matches!(e, ProcessEdge::BranchTrue(..))));
-    let has_branch_false = tree
-        .nodes
-        .iter()
-        .any(|n| n.edges.iter().any(|e| matches!(e, ProcessEdge::BranchFalse(..))));
+    let has_branch_true = tree.nodes.iter().any(|n| {
+        n.edges
+            .iter()
+            .any(|e| matches!(e, ProcessEdge::BranchTrue(..)))
+    });
+    let has_branch_false = tree.nodes.iter().any(|n| {
+        n.edges
+            .iter()
+            .any(|e| matches!(e, ProcessEdge::BranchFalse(..)))
+    });
 
-    assert!(has_branch_true, "Process tree should contain BranchTrue edges");
-    assert!(has_branch_false, "Process tree should contain BranchFalse edges");
+    assert!(
+        has_branch_true,
+        "Process tree should contain BranchTrue edges"
+    );
+    assert!(
+        has_branch_false,
+        "Process tree should contain BranchFalse edges"
+    );
     assert!(tree.nodes.len() > 1, "Should explore multiple tree nodes");
 }
 

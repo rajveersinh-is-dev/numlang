@@ -7,13 +7,13 @@
 //! frontier, selects the optimal candidate, and commits the winner to the L2 persistent
 //! specialization disk cache.
 
-use std::path::Path;
 use super::cache::{sha256_str, CacheKey, CachedSpecialization, SpecializationCache};
 use super::distill::DistillationEngine;
 use super::drive::{DriverConfig, ProcessTree, SupercompilerDriver};
 use super::mrsc::{MrscCostModel, MrscCostVector, MrscObjective};
 use super::residualize::residualize_process_tree;
 use crate::mir::lower::MirFunction;
+use std::path::Path;
 
 /// Configuration for the MRSC Iterative Deepening Depth-First Search (IDDFS) Oracle.
 #[derive(Debug, Clone)]
@@ -73,10 +73,15 @@ impl OracleParetoFrontier {
     /// Rejects the candidate if dominated by any existing member.
     /// Removes any existing members dominated by the new candidate.
     pub fn insert(&mut self, candidate: OracleCandidate) -> bool {
-        if self.candidates.iter().any(|c| c.cost.dominates(&candidate.cost)) {
+        if self
+            .candidates
+            .iter()
+            .any(|c| c.cost.dominates(&candidate.cost))
+        {
             return false;
         }
-        self.candidates.retain(|c| !candidate.cost.dominates(&c.cost));
+        self.candidates
+            .retain(|c| !candidate.cost.dominates(&c.cost));
         self.candidates.push(candidate);
         true
     }
@@ -96,7 +101,9 @@ impl OracleParetoFrontier {
         self.candidates.iter().min_by(|a, b| {
             let score_a = cost_model.score(&a.cost, objective);
             let score_b = cost_model.score(&b.cost, objective);
-            score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+            score_a
+                .partial_cmp(&score_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
 }
@@ -225,8 +232,11 @@ impl<'a> MrscOracleEngine<'a> {
         &self,
         cache: &SpecializationCache,
     ) -> Result<(MirFunction, MrscCostVector, bool), String> {
-        let funcs_map: std::collections::HashMap<String, &MirFunction> =
-            self.program_funcs.iter().map(|f| (f.name.clone(), f)).collect();
+        let funcs_map: std::collections::HashMap<String, &MirFunction> = self
+            .program_funcs
+            .iter()
+            .map(|f| (f.name.clone(), f))
+            .collect();
         let src_hash = if !funcs_map.is_empty() {
             super::cache::compute_composite_hash(&self.func.name, &funcs_map)
         } else {
@@ -267,10 +277,17 @@ impl<'a> MrscOracleEngine<'a> {
             stats_calls_inlined: winner.tree.stats.calls_inlined,
             stats_sc_bce_eliminated: winner.tree.stats.sc_bce_eliminated,
             stats_residual_block_count: winner.residual.blocks.len(),
-            stats_residual_stmt_count: winner.residual.blocks.iter().map(|b| b.statements.len()).sum(),
+            stats_residual_stmt_count: winner
+                .residual
+                .blocks
+                .iter()
+                .map(|b| b.statements.len())
+                .sum(),
         };
 
-        cache.store(&entry).map_err(|e| format!("Failed to store in cache: {}", e))?;
+        cache
+            .store(&entry)
+            .map_err(|e| format!("Failed to store in cache: {}", e))?;
 
         Ok((winner.residual, winner.cost, false))
     }

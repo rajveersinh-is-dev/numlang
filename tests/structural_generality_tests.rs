@@ -68,7 +68,11 @@ fn main() -> i64 {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let func = typed.functions.iter().find(|f| f.name == "custom_hyper_op_42").unwrap();
+    let func = typed
+        .functions
+        .iter()
+        .find(|f| f.name == "custom_hyper_op_42")
+        .unwrap();
     let pattern = detect_nested_hyper_recurrence(func);
     assert_eq!(
         pattern,
@@ -125,7 +129,11 @@ fn main() -> i64 {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let func = typed.functions.iter().find(|f| f.name == "cyclic_takeuchi_kernel").unwrap();
+    let func = typed
+        .functions
+        .iter()
+        .find(|f| f.name == "cyclic_takeuchi_kernel")
+        .unwrap();
     let pattern = detect_symmetric_permutation_recurrence(func);
     assert_eq!(
         pattern,
@@ -182,7 +190,10 @@ fn main() -> i64 {
 }
 "#;
     let (code, _) = compile_and_run(src, "arbitrary_struct_fields");
-    assert_eq!(code, 62, "Arbitrary struct layout must compute exact offset (77 - 15 = 62)");
+    assert_eq!(
+        code, 62,
+        "Arbitrary struct layout must compute exact offset (77 - 15 = 62)"
+    );
 }
 
 #[test]
@@ -204,7 +215,10 @@ fn main() -> i64 {
 
     assert_eq!(mir.functions.len(), 2);
     for func in &mir.functions {
-        assert!(!func.is_distilled, "User-defined functions default to is_distilled=false");
+        assert!(
+            !func.is_distilled,
+            "User-defined functions default to is_distilled=false"
+        );
     }
 
     // Setting is_distilled explicitly
@@ -240,11 +254,17 @@ fn test_structural_deforestation_arbitrary_names() {
     let stats = numlang::mir::supercompiler::supercompile_mir_program_with_mode(
         &mut mir,
         numlang::mir::supercompiler::SupercompileMode::Distill,
-        "size"
+        "size",
     );
 
-    assert!(stats.knots_tied > 0, "Structural deforestation must tie knots");
-    assert!(stats.loops_collapsed > 0, "Structural deforestation must collapse loops");
+    assert!(
+        stats.knots_tied > 0,
+        "Structural deforestation must tie knots"
+    );
+    assert!(
+        stats.loops_collapsed > 0,
+        "Structural deforestation must collapse loops"
+    );
 
     let distilled_func = mir
         .functions
@@ -263,5 +283,8 @@ fn test_structural_deforestation_arbitrary_names() {
             }
         }
     }
-    assert!(found_recursive_call, "combine_three must recurse directly to combine_three");
+    assert!(
+        found_recursive_call,
+        "combine_three must recurse directly to combine_three"
+    );
 }

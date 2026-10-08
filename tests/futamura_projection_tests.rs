@@ -85,7 +85,10 @@ fn main() -> i64 {
 
     let has_eval = main_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "eval",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "eval",
             _ => false,
         })
     });
@@ -139,11 +142,17 @@ fn main() -> i64 {
     let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
     let has_nat_mul = main_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "nat_mul",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "nat_mul",
             _ => false,
         })
     });
-    assert!(!has_nat_mul, "Residual main must contain NO calls to nat_mul");
+    assert!(
+        !has_nat_mul,
+        "Residual main must contain NO calls to nat_mul"
+    );
 }
 
 #[test]
@@ -194,11 +203,17 @@ fn main() -> i64 {
     let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
     let has_bool_eval = main_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "bool_eval",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "bool_eval",
             _ => false,
         })
     });
-    assert!(!has_bool_eval, "Residual main must contain NO calls to bool_eval");
+    assert!(
+        !has_bool_eval,
+        "Residual main must contain NO calls to bool_eval"
+    );
 }
 
 #[test]
@@ -230,14 +245,24 @@ fn main() -> i64 {
     let area_fn = mir.functions.iter().find(|f| f.name == "area").unwrap();
     let has_discriminant = area_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|stmt| {
-            matches!(stmt, numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Discriminant(_)))
+            matches!(
+                stmt,
+                numlang::mir::lower::Statement::Assign(
+                    _,
+                    numlang::mir::lower::Rvalue::Discriminant(_)
+                )
+            )
         })
     });
-    assert!(has_discriminant, "MIR for match must use Rvalue::Discriminant");
+    assert!(
+        has_discriminant,
+        "MIR for match must use Rvalue::Discriminant"
+    );
 
-    let has_switch = area_fn.blocks.iter().any(|b| {
-        matches!(&b.terminator, numlang::mir::Terminator::Switch { .. })
-    });
+    let has_switch = area_fn
+        .blocks
+        .iter()
+        .any(|b| matches!(&b.terminator, numlang::mir::Terminator::Switch { .. }));
     assert!(has_switch, "MIR for match must terminate with Switch");
 
     // Build process tree for main and verify branches are pruned
@@ -291,11 +316,17 @@ fn main() -> i64 {
     let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
     let has_color_val = main_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "color_val",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "color_val",
             _ => false,
         })
     });
-    assert!(!has_color_val, "Residual main must contain NO calls to color_val");
+    assert!(
+        !has_color_val,
+        "Residual main must contain NO calls to color_val"
+    );
 }
 
 #[test]
@@ -327,7 +358,10 @@ fn main() -> i64 {
     let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
     let has_double = main_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "double",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "double",
             _ => false,
         })
     });
@@ -394,11 +428,17 @@ fn main() -> i64 {
 
     let has_eval = compiled_fn.blocks.iter().any(|b| {
         b.statements.iter().any(|s| match s {
-            numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Call(callee, _)) => callee == "eval",
+            numlang::mir::lower::Statement::Assign(
+                _,
+                numlang::mir::lower::Rvalue::Call(callee, _),
+            ) => callee == "eval",
             _ => false,
         })
     });
-    assert!(!has_eval, "Residual compiled_prog must contain NO calls to eval");
+    assert!(
+        !has_eval,
+        "Residual compiled_prog must contain NO calls to eval"
+    );
 
     // 4. Execution correctness: test inputs x = 5, x = 10, x = 0
     let test_inputs = [(5, 16), (10, 26), (0, 6)];
@@ -442,6 +482,3 @@ fn main() -> i64 {{
         );
     }
 }
-
-
-

@@ -63,10 +63,7 @@ impl CompilerConfig {
 /// Executes pre-lowering optimization passes:
 /// 1. Higher-order AST distillation (if `ho_distill` or `supercompile` enabled and not Tier 0).
 /// 2. Typed AST optimization passes (monomorphization, inlining, loop opts, SROA).
-pub fn distill_and_optimize(
-    typed: &mut TypedProgram,
-    config: &CompilerConfig,
-) -> AstDistillStats {
+pub fn distill_and_optimize(typed: &mut TypedProgram, config: &CompilerConfig) -> AstDistillStats {
     let stats = if !config.tiered && (config.ho_distill || config.supercompile) {
         distill_program(typed)
     } else {

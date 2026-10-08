@@ -206,10 +206,7 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
 
                     if let Some((x, c)) = candidate {
                         if let Some(reduction) = classify_mul_const(c) {
-                            let var_ty = local_types
-                                .get(&x.local)
-                                .cloned()
-                                .unwrap_or(Type::I64);
+                            let var_ty = local_types.get(&x.local).cloned().unwrap_or(Type::I64);
 
                             match reduction {
                                 MulReduction::Zero => {
@@ -221,10 +218,7 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                     continue;
                                 }
                                 MulReduction::Identity => {
-                                    new_stmts.push(Statement::Assign(
-                                        dest.clone(),
-                                        Rvalue::Use(x),
-                                    ));
+                                    new_stmts.push(Statement::Assign(dest.clone(), Rvalue::Use(x)));
                                     reductions += 1;
                                     continue;
                                 }
@@ -245,7 +239,10 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                     );
                                     new_stmts.push(Statement::Assign(
                                         k_place.clone(),
-                                        Rvalue::Constant(TypedLiteral::Int(k as i64, var_ty.clone())),
+                                        Rvalue::Constant(TypedLiteral::Int(
+                                            k as i64,
+                                            var_ty.clone(),
+                                        )),
                                     ));
                                     new_stmts.push(Statement::Assign(
                                         dest.clone(),
@@ -269,7 +266,10 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                     );
                                     new_stmts.push(Statement::Assign(
                                         k_place.clone(),
-                                        Rvalue::Constant(TypedLiteral::Int(k as i64, var_ty.clone())),
+                                        Rvalue::Constant(TypedLiteral::Int(
+                                            k as i64,
+                                            var_ty.clone(),
+                                        )),
                                     ));
                                     new_stmts.push(Statement::Assign(
                                         t1.clone(),
@@ -298,7 +298,10 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                         );
                                         new_stmts.push(Statement::Assign(
                                             a_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(a as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                a as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             t1.clone(),
@@ -335,11 +338,17 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                         );
                                         new_stmts.push(Statement::Assign(
                                             a_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(a as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                a as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             b_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(b as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                b as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             t1.clone(),
@@ -373,7 +382,10 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                         );
                                         new_stmts.push(Statement::Assign(
                                             a_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(a as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                a as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             t1.clone(),
@@ -410,11 +422,17 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                         );
                                         new_stmts.push(Statement::Assign(
                                             a_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(a as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                a as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             b_place.clone(),
-                                            Rvalue::Constant(TypedLiteral::Int(b as i64, var_ty.clone())),
+                                            Rvalue::Constant(TypedLiteral::Int(
+                                                b as i64,
+                                                var_ty.clone(),
+                                            )),
                                         ));
                                         new_stmts.push(Statement::Assign(
                                             t1.clone(),
@@ -447,10 +465,7 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
 
                     if let Some((c, _)) = right_const {
                         if let Some(reduction) = classify_div_const(c) {
-                            let var_ty = local_types
-                                .get(&left.local)
-                                .cloned()
-                                .unwrap_or(Type::I64);
+                            let var_ty = local_types.get(&left.local).cloned().unwrap_or(Type::I64);
 
                             match reduction {
                                 DivReduction::Identity => {
@@ -470,7 +485,10 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
                                     );
                                     new_stmts.push(Statement::Assign(
                                         k_place.clone(),
-                                        Rvalue::Constant(TypedLiteral::Int(k as i64, var_ty.clone())),
+                                        Rvalue::Constant(TypedLiteral::Int(
+                                            k as i64,
+                                            var_ty.clone(),
+                                        )),
                                     ));
                                     new_stmts.push(Statement::Assign(
                                         dest.clone(),

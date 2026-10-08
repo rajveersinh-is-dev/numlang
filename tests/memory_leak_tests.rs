@@ -1,6 +1,6 @@
+use numlang::runtime::arena::*;
 use std::fs;
 use std::process::Command;
-use numlang::runtime::arena::*;
 
 #[test]
 fn test_scoped_arena_runtime_lifecycle() {
@@ -12,7 +12,11 @@ fn test_scoped_arena_runtime_lifecycle() {
         for _ in 0..10 {
             let p = __nl_arena_alloc(arena_ptr, 64);
             assert!(!p.is_null());
-            assert_eq!(p as usize % 8, 0, "Allocated pointer must be 8-byte aligned");
+            assert_eq!(
+                p as usize % 8,
+                0,
+                "Allocated pointer must be 8-byte aligned"
+            );
             ptrs.push(p);
         }
 
@@ -29,7 +33,10 @@ fn test_scoped_arena_runtime_lifecycle() {
 
         // First allocation after reset must reuse the head chunk's start pointer
         let p_reused = __nl_arena_alloc(arena_ptr, 64);
-        assert_eq!(p_reused, ptrs[0], "Reset arena must reuse chunk memory in O(1)");
+        assert_eq!(
+            p_reused, ptrs[0],
+            "Reset arena must reuse chunk memory in O(1)"
+        );
 
         __nl_arena_destroy(arena_ptr);
     }
@@ -154,7 +161,9 @@ fn main() -> i64 {
         .expect("Failed to execute nrev_50k.exe");
 
     assert_eq!(run_output.status.code(), Some(0));
-    let stdout = String::from_utf8_lossy(&run_output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&run_output.stdout)
+        .trim()
+        .to_string();
     // 50,000 iterations of sum_list(nrev(make_list(10))) = 50,000 * 55 = 2,750,000
     assert_eq!(stdout, "2750000");
 }
@@ -228,7 +237,9 @@ fn main() -> i64 {
         .expect("Failed to execute tree_flip_50k.exe");
 
     assert_eq!(run_output.status.code(), Some(0));
-    let stdout = String::from_utf8_lossy(&run_output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&run_output.stdout)
+        .trim()
+        .to_string();
     // 50,000 iterations of tree_flip(4, 1) = 50,000 * 376 = 18,800,000
     assert_eq!(stdout, "18800000");
 }
@@ -296,7 +307,9 @@ fn main() -> i64 {
         .expect("Failed to execute escaping.exe");
 
     assert_eq!(run_output.status.code(), Some(0));
-    let stdout = String::from_utf8_lossy(&run_output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&run_output.stdout)
+        .trim()
+        .to_string();
     // Sum of leaves for make_tree(3, 5) is 348
     assert_eq!(stdout, "348");
 }

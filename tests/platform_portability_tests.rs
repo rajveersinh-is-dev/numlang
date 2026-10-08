@@ -46,7 +46,9 @@ fn test_c_benchmarks_are_cross_platform() {
         let p = Path::new("bench/c").join(name);
         if let Ok(src) = fs::read_to_string(&p) {
             assert!(
-                src.contains("#ifdef _WIN32") || src.contains("clock_gettime") || src.contains("time.h"),
+                src.contains("#ifdef _WIN32")
+                    || src.contains("clock_gettime")
+                    || src.contains("time.h"),
                 "{} must support cross-platform timing",
                 name
             );
@@ -56,8 +58,7 @@ fn test_c_benchmarks_are_cross_platform() {
 
 #[test]
 fn test_linker_handles_posix_bench_mode() {
-    let content = fs::read_to_string("src/codegen/linker.rs")
-        .expect("linker.rs must exist");
+    let content = fs::read_to_string("src/codegen/linker.rs").expect("linker.rs must exist");
 
     assert!(
         content.contains("ENTRY_BENCH_C"),
@@ -82,7 +83,8 @@ fn test_cranelift_backend_abstracts_win32_symbols() {
 
     // Ensure conditional compilation guards exist for Windows vs POSIX
     assert!(
-        content.contains("#[cfg(target_os = \"windows\")]") && content.contains("#[cfg(not(target_os = \"windows\"))]"),
+        content.contains("#[cfg(target_os = \"windows\")]")
+            && content.contains("#[cfg(not(target_os = \"windows\"))]"),
         "cranelift_backend.rs must contain target_os conditional guards for syscall symbols"
     );
     assert!(
@@ -101,12 +103,13 @@ fn test_cranelift_backend_abstracts_win32_symbols() {
 
 #[test]
 fn test_llvm_backend_abstracts_win32_symbols() {
-    let raw = fs::read_to_string("src/codegen/llvm_backend.rs")
-        .expect("llvm_backend.rs must exist");
+    let raw =
+        fs::read_to_string("src/codegen/llvm_backend.rs").expect("llvm_backend.rs must exist");
     let content = raw.replace("\r\n", "\n");
 
     assert!(
-        content.contains("#[cfg(target_os = \"windows\")]") && content.contains("#[cfg(not(target_os = \"windows\"))]"),
+        content.contains("#[cfg(target_os = \"windows\")]")
+            && content.contains("#[cfg(not(target_os = \"windows\"))]"),
         "llvm_backend.rs must guard Windows vs POSIX symbols"
     );
     assert!(
@@ -132,5 +135,8 @@ fn test_cranelift_code_emission_on_current_host() {
     let typed = typecheck(&ast).unwrap();
     let obj_bytes = compile_to_obj(&typed).unwrap();
 
-    assert!(!obj_bytes.is_empty(), "Generated object bytes must not be empty");
+    assert!(
+        !obj_bytes.is_empty(),
+        "Generated object bytes must not be empty"
+    );
 }

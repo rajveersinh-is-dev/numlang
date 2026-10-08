@@ -1,8 +1,8 @@
+use numlang::testing::random_program_gen::generate_random_program;
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use numlang::testing::random_program_gen::generate_random_program;
 
 fn run_numlang_code(code: &str, supercompile: bool) -> Option<i32> {
     let id = format!(

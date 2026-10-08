@@ -6,9 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{
-    BinaryOp, Block, Expr, Function, Literal, MatchPattern, Program, Stmt, UnaryOp,
-};
+use crate::ast::{BinaryOp, Block, Expr, Function, Literal, MatchPattern, Program, Stmt, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OracleValue {
@@ -183,14 +181,19 @@ impl<'a> OracleInterpreter<'a> {
                 let new_val = self.eval_expr(value, env)?;
                 let idx = idx_val
                     .as_i64()
-                    .ok_or_else(|| "Index must be integer".to_string())? as usize;
+                    .ok_or_else(|| "Index must be integer".to_string())?
+                    as usize;
                 match env.get_mut(target) {
                     Some(OracleValue::Array(arr)) => {
                         if idx < arr.len() {
                             arr[idx] = new_val;
                             Ok(Control::None)
                         } else {
-                            Err(format!("Array index out of bounds: {} >= {}", idx, arr.len()))
+                            Err(format!(
+                                "Array index out of bounds: {} >= {}",
+                                idx,
+                                arr.len()
+                            ))
                         }
                     }
                     _ => Err(format!("Target {} is not an array", target)),
@@ -235,7 +238,9 @@ impl<'a> OracleInterpreter<'a> {
                     Ok(Control::None)
                 }
             }
-            Stmt::While { condition, body, .. } => {
+            Stmt::While {
+                condition, body, ..
+            } => {
                 loop {
                     self.check_budget()?;
                     let cond_val = self.eval_expr(condition, env)?;
@@ -351,12 +356,16 @@ impl<'a> OracleInterpreter<'a> {
                     }
                 }
                 if callee == "min" && evaluated_args.len() == 2 {
-                    if let (Some(a), Some(b)) = (evaluated_args[0].as_i64(), evaluated_args[1].as_i64()) {
+                    if let (Some(a), Some(b)) =
+                        (evaluated_args[0].as_i64(), evaluated_args[1].as_i64())
+                    {
                         return Ok(OracleValue::Int(a.min(b)));
                     }
                 }
                 if callee == "max" && evaluated_args.len() == 2 {
-                    if let (Some(a), Some(b)) = (evaluated_args[0].as_i64(), evaluated_args[1].as_i64()) {
+                    if let (Some(a), Some(b)) =
+                        (evaluated_args[0].as_i64(), evaluated_args[1].as_i64())
+                    {
                         return Ok(OracleValue::Int(a.max(b)));
                     }
                 }
@@ -432,7 +441,9 @@ impl<'a> OracleInterpreter<'a> {
                     _ => Err("Deref of non-box value".to_string()),
                 }
             }
-            Expr::Match { scrutinee, arms, .. } => {
+            Expr::Match {
+                scrutinee, arms, ..
+            } => {
                 let s_val = self.eval_expr(scrutinee, env)?;
                 for arm in arms {
                     for pat in &arm.patterns {
@@ -443,7 +454,9 @@ impl<'a> OracleInterpreter<'a> {
                 }
                 Err("Non-exhaustive match".to_string())
             }
-            Expr::EnumConstructor { variant_name, args, .. } => {
+            Expr::EnumConstructor {
+                variant_name, args, ..
+            } => {
                 let mut evaluated_args = Vec::with_capacity(args.len());
                 for a in args {
                     evaluated_args.push(self.eval_expr(a, env)?);
@@ -453,7 +466,9 @@ impl<'a> OracleInterpreter<'a> {
                     payload: evaluated_args,
                 })
             }
-            Expr::Lambda { .. } => Err("Lambda not directly supported in first-order oracle".to_string()),
+            Expr::Lambda { .. } => {
+                Err("Lambda not directly supported in first-order oracle".to_string())
+            }
         }
     }
 
@@ -491,7 +506,12 @@ impl<'a> OracleInterpreter<'a> {
         }
     }
 
-    fn eval_binop(&self, op: BinaryOp, left: OracleValue, right: OracleValue) -> Result<OracleValue, String> {
+    fn eval_binop(
+        &self,
+        op: BinaryOp,
+        left: OracleValue,
+        right: OracleValue,
+    ) -> Result<OracleValue, String> {
         match (left, right) {
             (OracleValue::Int(a), OracleValue::Int(b)) => match op {
                 BinaryOp::Add => Ok(OracleValue::Int(a.wrapping_add(b))),
@@ -554,7 +574,10 @@ impl<'a> OracleInterpreter<'a> {
                 BinaryOp::Ne => Ok(OracleValue::Bool(a != b)),
                 _ => Err("Invalid boolean binary op".to_string()),
             },
-            (l, r) => Err(format!("Type mismatch in binary operation {:?} on {:?} and {:?}", op, l, r)),
+            (l, r) => Err(format!(
+                "Type mismatch in binary operation {:?} on {:?} and {:?}",
+                op, l, r
+            )),
         }
     }
 }
@@ -564,4 +587,3 @@ pub fn evaluate_program(program: &Program) -> OracleResult {
     let mut interp = OracleInterpreter::new(program, 10_000_000);
     interp.eval_program()
 }
-

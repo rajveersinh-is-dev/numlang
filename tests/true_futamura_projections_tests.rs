@@ -20,7 +20,12 @@ fn run_minspec(extra_args: &[&str]) -> (Option<i32>, String, String) {
 #[test]
 fn test_minspec_exits_42() {
     let (code, _, stderr) = run_minspec(&[]);
-    assert_eq!(code, Some(42), "minspec.nl must exit 42; stderr:\n{}", stderr);
+    assert_eq!(
+        code,
+        Some(42),
+        "minspec.nl must exit 42; stderr:\n{}",
+        stderr
+    );
 }
 
 /// Phase 25 Test 2: first_futamura(1) yields Mul(Add(Var(1), Lit(10)), Lit(2))
@@ -59,7 +64,12 @@ fn main() -> i64 {
     cmd.arg("run").arg(&src);
     let out = cmd.output().unwrap();
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(out.status.code(), Some(42), "first_futamura(1) shape check failed;\nstderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(42),
+        "first_futamura(1) shape check failed;\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Phase 25 Test 3: spec_eval(first_futamura(1), {1→5}) = 30  (i.e. (5+10)*2 = 30)
@@ -82,11 +92,7 @@ fn main_test() -> i64 {
 fn main() -> i64 { return main_test(); }
 "#;
     // Replace only the first occurrence of fn main() in minspec
-    let minspec_stripped = minspec.replacen(
-        "fn main()",
-        "fn _orig_main()",
-        1,
-    );
+    let minspec_stripped = minspec.replacen("fn main()", "fn _orig_main()", 1);
     let combined = format!("{}\n{}", minspec_stripped, harness);
     let src = dir.join("test.nl");
     fs::write(&src, &combined).unwrap();
@@ -94,7 +100,9 @@ fn main() -> i64 { return main_test(); }
     cmd.arg("run").arg(&src);
     let out = cmd.output().unwrap();
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(out.status.code(), Some(42),
+    assert_eq!(
+        out.status.code(),
+        Some(42),
         "spec_eval(first_futamura(1), {{1→5}}) must equal 30; exit={:?}, stderr: {}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
@@ -107,6 +115,10 @@ fn test_verify_soundness_all_programs() {
     // This test simply runs minspec.nl with the final main that calls verify_soundness.
     // If it exits 42, all 3 Futamura projections are sound.
     let (code, _, stderr) = run_minspec(&[]);
-    assert_eq!(code, Some(42),
-        "verify_soundness must pass for prog_id in {{1,2,3}}; stderr:\n{}", stderr);
+    assert_eq!(
+        code,
+        Some(42),
+        "verify_soundness must pass for prog_id in {{1,2,3}}; stderr:\n{}",
+        stderr
+    );
 }

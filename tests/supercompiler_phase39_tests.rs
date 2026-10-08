@@ -7,7 +7,11 @@ fn get_repo_root() -> PathBuf {
 
 fn run_benchmark(rel_path: &str, supercompile: bool) -> (Option<i32>, String, String) {
     let full_path = get_repo_root().join(rel_path);
-    assert!(full_path.exists(), "Benchmark path does not exist: {}", full_path.display());
+    assert!(
+        full_path.exists(),
+        "Benchmark path does not exist: {}",
+        full_path.display()
+    );
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_numlang"));
     cmd.arg("run");
@@ -16,9 +20,9 @@ fn run_benchmark(rel_path: &str, supercompile: bool) -> (Option<i32>, String, St
     }
     cmd.arg(&full_path);
 
-    let output = cmd.output().unwrap_or_else(|e| {
-        panic!("Failed to execute numlang run on {}: {}", rel_path, e)
-    });
+    let output = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to execute numlang run on {}: {}", rel_path, e));
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -60,7 +64,11 @@ fn test_all_30_benchmarks_compile() {
         ("bench/numlang/fold_map.nl", 129),
     ];
 
-    assert_eq!(benchmarks.len(), 30, "Suite must contain exactly 30 benchmarks");
+    assert_eq!(
+        benchmarks.len(),
+        30,
+        "Suite must contain exactly 30 benchmarks"
+    );
 
     for (path, expected_code) in benchmarks {
         let (code, stdout, stderr) = run_benchmark(path, false);
@@ -89,8 +97,18 @@ fn test_new_string_benchmarks_correctness() {
         let (base_code, base_out, _) = run_benchmark(path, false);
         let (sc_code, sc_out, _) = run_benchmark(path, true);
 
-        assert_eq!(base_code, Some(expected_code), "Baseline failed on {}", path);
-        assert_eq!(sc_code, Some(expected_code), "Supercompiled failed on {}", path);
+        assert_eq!(
+            base_code,
+            Some(expected_code),
+            "Baseline failed on {}",
+            path
+        );
+        assert_eq!(
+            sc_code,
+            Some(expected_code),
+            "Supercompiled failed on {}",
+            path
+        );
         assert_eq!(
             base_out.trim(),
             sc_out.trim(),
@@ -114,8 +132,18 @@ fn test_new_sort_benchmarks_correctness() {
         let (base_code, base_out, _) = run_benchmark(path, false);
         let (sc_code, sc_out, _) = run_benchmark(path, true);
 
-        assert_eq!(base_code, Some(expected_code), "Baseline failed on {}", path);
-        assert_eq!(sc_code, Some(expected_code), "Supercompiled failed on {}", path);
+        assert_eq!(
+            base_code,
+            Some(expected_code),
+            "Baseline failed on {}",
+            path
+        );
+        assert_eq!(
+            sc_code,
+            Some(expected_code),
+            "Supercompiled failed on {}",
+            path
+        );
         assert_eq!(
             base_out.trim(),
             sc_out.trim(),
@@ -138,7 +166,12 @@ fn test_new_numerical_benchmarks_correctness() {
     assert_eq!(sqrt_out.trim(), "1414", "Newton sqrt stdout should be 1414");
 
     let (pi_code, pi_out, _) = run_benchmark("bench/numlang/euler_pi.nl", true);
-    assert_eq!(pi_code, Some(183), "Euler pi unexpected code: {:?}", pi_code);
+    assert_eq!(
+        pi_code,
+        Some(183),
+        "Euler pi unexpected code: {:?}",
+        pi_code
+    );
     assert_eq!(pi_out.trim(), "31415", "Euler pi stdout should be 31415");
 }
 

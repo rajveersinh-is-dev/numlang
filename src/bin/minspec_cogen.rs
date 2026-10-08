@@ -38,16 +38,15 @@ fn main() -> Result<()> {
 
     let source = fs::read_to_string(&cli.file)
         .into_diagnostic()
-        .map_err(|e| miette::miette!("Failed to read source file '{}': {}", cli.file.display(), e))?;
+        .map_err(|e| {
+            miette::miette!("Failed to read source file '{}': {}", cli.file.display(), e)
+        })?;
 
-    let tokens = tokenize(&source)
-        .map_err(|e| miette::miette!("Lexer error: {:?}", e))?;
+    let tokens = tokenize(&source).map_err(|e| miette::miette!("Lexer error: {:?}", e))?;
 
-    let program = parse(&tokens)
-        .map_err(|e| miette::miette!("Parser error: {:?}", e))?;
+    let program = parse(&tokens).map_err(|e| miette::miette!("Parser error: {:?}", e))?;
 
-    let mut typed = typecheck(&program)
-        .map_err(|e| miette::miette!("Typecheck error: {:?}", e))?;
+    let mut typed = typecheck(&program).map_err(|e| miette::miette!("Typecheck error: {:?}", e))?;
 
     numlang::opt::optimize_program(&mut typed);
 
@@ -57,8 +56,8 @@ fn main() -> Result<()> {
         supercompile_mir_program(&mut mir);
     }
 
-    let obj_bytes = compile_mir_to_obj(&mir)
-        .map_err(|e| miette::miette!("Codegen error: {}", e))?;
+    let obj_bytes =
+        compile_mir_to_obj(&mir).map_err(|e| miette::miette!("Codegen error: {}", e))?;
 
     let temp_dir = std::env::temp_dir();
     let obj_file = temp_dir.join(format!(

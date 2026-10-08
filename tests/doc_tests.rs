@@ -1,8 +1,8 @@
-use std::fs;
-use std::process::Command;
+use numlang::doc::generate_doc;
 use numlang::parser::parse;
 use numlang::token::tokenize;
-use numlang::doc::generate_doc;
+use std::fs;
+use std::process::Command;
 
 #[test]
 fn test_doc_comments_on_functions_and_structs() {
@@ -31,25 +31,53 @@ struct Point {
     let doc = generate_doc(&program);
 
     // 1. Doc comment on function appears
-    assert!(doc.contains("triangular"), "Missing function triangular in doc");
-    assert!(doc.contains("Computes the nth triangular number"), "Missing doc comment text in doc");
-    assert!(doc.contains("# Arguments"), "Missing doc comment sub-header in doc");
+    assert!(
+        doc.contains("triangular"),
+        "Missing function triangular in doc"
+    );
+    assert!(
+        doc.contains("Computes the nth triangular number"),
+        "Missing doc comment text in doc"
+    );
+    assert!(
+        doc.contains("# Arguments"),
+        "Missing doc comment sub-header in doc"
+    );
 
     // 2. Function without doc comment still appears
-    assert!(doc.contains("undocumented"), "Missing undocumented function in doc");
-    assert!(doc.contains("_No description provided._"), "Missing placeholder for undocumented item");
+    assert!(
+        doc.contains("undocumented"),
+        "Missing undocumented function in doc"
+    );
+    assert!(
+        doc.contains("_No description provided._"),
+        "Missing placeholder for undocumented item"
+    );
 
     // 3. Struct and fields table appear
     assert!(doc.contains("struct Point"), "Missing struct Point in doc");
-    assert!(doc.contains("Represents a 2D Cartesian point."), "Missing struct doc comment");
-    assert!(doc.contains("| Field | Type |"), "Missing fields table header");
+    assert!(
+        doc.contains("Represents a 2D Cartesian point."),
+        "Missing struct doc comment"
+    );
+    assert!(
+        doc.contains("| Field | Type |"),
+        "Missing fields table header"
+    );
     assert!(doc.contains("| `x` | `f64` |"), "Missing field x row");
     assert!(doc.contains("| `y` | `f64` |"), "Missing field y row");
 }
 
 #[test]
 fn test_doc_cli_stdout_and_file_output() {
-    let id = format!("{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let id = format!(
+        "{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
     let test_dir = std::env::temp_dir().join(format!("numlang_test_doc_{}", id));
     fs::create_dir_all(&test_dir).unwrap();
 

@@ -19,10 +19,22 @@ pub struct Place {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Terminator {
-    Branch { target: BasicBlockId },
-    BranchIf { condition: Place, then_target: BasicBlockId, else_target: BasicBlockId },
-    Switch { value: Place, targets: Vec<(i64, BasicBlockId)>, default: BasicBlockId },
-    Return { value: Option<Place> },
+    Branch {
+        target: BasicBlockId,
+    },
+    BranchIf {
+        condition: Place,
+        then_target: BasicBlockId,
+        else_target: BasicBlockId,
+    },
+    Switch {
+        value: Place,
+        targets: Vec<(i64, BasicBlockId)>,
+        default: BasicBlockId,
+    },
+    Return {
+        value: Option<Place>,
+    },
     Unreachable,
     /// Indirect call through a runtime function pointer or closure fat pointer
     IndirectCall {
@@ -58,10 +70,16 @@ impl Terminator {
     pub fn successors(&self) -> Vec<BasicBlockId> {
         match self {
             Terminator::Branch { target } => vec![target.clone()],
-            Terminator::BranchIf { then_target, else_target, .. } => {
+            Terminator::BranchIf {
+                then_target,
+                else_target,
+                ..
+            } => {
                 vec![then_target.clone(), else_target.clone()]
             }
-            Terminator::Switch { targets, default, .. } => {
+            Terminator::Switch {
+                targets, default, ..
+            } => {
                 let mut succs = Vec::with_capacity(targets.len() + 1);
                 for (_, t) in targets {
                     succs.push(t.clone());
@@ -74,7 +92,11 @@ impl Terminator {
                 vec![left.clone(), right.clone(), join.clone()]
             }
             Terminator::Force { cont, .. } => vec![cont.clone()],
-            Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+            Terminator::TypeGuard {
+                fast_path,
+                deopt_stub,
+                ..
+            } => {
                 vec![fast_path.clone(), deopt_stub.clone()]
             }
             Terminator::Return { .. } | Terminator::Unreachable => vec![],
@@ -136,7 +158,12 @@ impl MirPrinter {
         match rval {
             lower::Rvalue::Use(p) => Self::print_place(p),
             lower::Rvalue::BinaryOp(op, l, r) => {
-                format!("{:?} {}, {}", op, Self::print_place(l), Self::print_place(r))
+                format!(
+                    "{:?} {}, {}",
+                    op,
+                    Self::print_place(l),
+                    Self::print_place(r)
+                )
             }
             lower::Rvalue::UnaryOp(op, p) => format!("{:?} {}", op, Self::print_place(p)),
             lower::Rvalue::Constant(c) => format!("{:?}", c),
@@ -155,7 +182,12 @@ impl MirPrinter {
                     .collect();
                 format!("{} {{ {} }}", name, f_strs.join(", "))
             }
-            lower::Rvalue::EnumVariant { enum_name, variant_name, fields, .. } => {
+            lower::Rvalue::EnumVariant {
+                enum_name,
+                variant_name,
+                fields,
+                ..
+            } => {
                 let f_strs: Vec<_> = fields.iter().map(Self::print_place).collect();
                 format!("{}::{}({})", enum_name, variant_name, f_strs.join(", "))
             }
@@ -183,30 +215,77 @@ impl MirPrinter {
     pub fn print_terminator(term: &Terminator) -> String {
         match term {
             Terminator::Branch { target } => format!("br bb{}", target.0),
-            Terminator::BranchIf { condition, then_target, else_target } => {
-                format!("br_if {}, bb{}, bb{}", Self::print_place(condition), then_target.0, else_target.0)
+            Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } => {
+                format!(
+                    "br_if {}, bb{}, bb{}",
+                    Self::print_place(condition),
+                    then_target.0,
+                    else_target.0
+                )
             }
-            Terminator::Switch { value, targets, default } => {
-                let t_strs: Vec<_> = targets.iter().map(|(v, bb)| format!("{} => bb{}", v, bb.0)).collect();
-                format!("switch {}, [{}], default: bb{}", Self::print_place(value), t_strs.join(", "), default.0)
+            Terminator::Switch {
+                value,
+                targets,
+                default,
+            } => {
+                let t_strs: Vec<_> = targets
+                    .iter()
+                    .map(|(v, bb)| format!("{} => bb{}", v, bb.0))
+                    .collect();
+                format!(
+                    "switch {}, [{}], default: bb{}",
+                    Self::print_place(value),
+                    t_strs.join(", "),
+                    default.0
+                )
             }
             Terminator::Return { value } => match value {
                 Some(p) => format!("ret {}", Self::print_place(p)),
                 None => "ret void".to_string(),
             },
             Terminator::Unreachable => "unreachable".to_string(),
-            Terminator::IndirectCall { callee, args, dest, next } => {
+            Terminator::IndirectCall {
+                callee,
+                args,
+                dest,
+                next,
+            } => {
                 let arg_strs: Vec<_> = args.iter().map(Self::print_place).collect();
-                format!("{} = indirect_call {}({}), next: bb{}", Self::print_place(dest), Self::print_place(callee), arg_strs.join(", "), next.0)
+                format!(
+                    "{} = indirect_call {}({}), next: bb{}",
+                    Self::print_place(dest),
+                    Self::print_place(callee),
+                    arg_strs.join(", "),
+                    next.0
+                )
             }
             Terminator::Fork { left, right, join } => {
                 format!("fork bb{}, bb{}, join bb{}", left.0, right.0, join.0)
             }
-            Terminator::Force { thunk, result, cont } => {
+            Terminator::Force {
+                thunk,
+                result,
+                cont,
+            } => {
                 format!("{} = force {}, cont: bb{}", result, thunk, cont.0)
             }
-            Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
-                format!("type_guard {} == {}, fast: bb{}, deopt: bb{}", Self::print_place(local), expected_tag, fast_path.0, deopt_stub.0)
+            Terminator::TypeGuard {
+                local,
+                expected_tag,
+                fast_path,
+                deopt_stub,
+            } => {
+                format!(
+                    "type_guard {} == {}, fast: bb{}, deopt: bb{}",
+                    Self::print_place(local),
+                    expected_tag,
+                    fast_path.0,
+                    deopt_stub.0
+                )
             }
         }
     }
@@ -223,7 +302,10 @@ impl MirPrinter {
             for stmt in &block.statements {
                 out.push_str(&format!("    {};\n", Self::print_statement(stmt)));
             }
-            out.push_str(&format!("    {}\n", Self::print_terminator(&block.terminator)));
+            out.push_str(&format!(
+                "    {}\n",
+                Self::print_terminator(&block.terminator)
+            ));
         }
         out.push_str("}\n");
         out
@@ -257,26 +339,47 @@ pub fn validate_mir_function(func: &lower::MirFunction) -> Result<(), String> {
             }
         }
         match &block.terminator {
-            Terminator::Force { thunk, result, cont } => {
+            Terminator::Force {
+                thunk,
+                result,
+                cont,
+            } => {
                 if !local_set.contains(thunk) {
                     return Err(format!("Force references undeclared thunk local {}", thunk));
                 }
                 if !local_set.contains(result) {
-                    return Err(format!("Force assigns to undeclared result local {}", result));
+                    return Err(format!(
+                        "Force assigns to undeclared result local {}",
+                        result
+                    ));
                 }
                 if !block_set.contains(cont) {
                     return Err(format!("Force continuation bb{} does not exist", cont.0));
                 }
             }
-            Terminator::TypeGuard { local, fast_path, deopt_stub, .. } => {
+            Terminator::TypeGuard {
+                local,
+                fast_path,
+                deopt_stub,
+                ..
+            } => {
                 if !local_set.contains(&local.local) {
-                    return Err(format!("TypeGuard references undeclared local {}", local.local));
+                    return Err(format!(
+                        "TypeGuard references undeclared local {}",
+                        local.local
+                    ));
                 }
                 if !block_set.contains(fast_path) {
-                    return Err(format!("TypeGuard fast_path bb{} does not exist", fast_path.0));
+                    return Err(format!(
+                        "TypeGuard fast_path bb{} does not exist",
+                        fast_path.0
+                    ));
                 }
                 if !block_set.contains(deopt_stub) {
-                    return Err(format!("TypeGuard deopt_stub bb{} does not exist", deopt_stub.0));
+                    return Err(format!(
+                        "TypeGuard deopt_stub bb{} does not exist",
+                        deopt_stub.0
+                    ));
                 }
             }
             _ => {

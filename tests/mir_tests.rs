@@ -1,9 +1,9 @@
+use numlang::mir::dominance::{compute_dominance, detect_loops};
+use numlang::mir::lower::lower_program;
+use numlang::mir::{BasicBlockId, Projection, Terminator};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
-use numlang::mir::lower::lower_program;
-use numlang::mir::{Terminator, BasicBlockId, Projection};
-use numlang::mir::dominance::{compute_dominance, detect_loops};
 use std::collections::HashMap;
 
 fn get_mir(source: &str) -> numlang::mir::lower::MirProgram {
@@ -64,11 +64,21 @@ fn test_mir_loop_headers_detection() {
                 succs.get_mut(&b.id).unwrap().push(target.clone());
                 preds.entry(target.clone()).or_default().push(b.id.clone());
             }
-            Terminator::BranchIf { then_target, else_target, .. } => {
+            Terminator::BranchIf {
+                then_target,
+                else_target,
+                ..
+            } => {
                 succs.get_mut(&b.id).unwrap().push(then_target.clone());
                 succs.get_mut(&b.id).unwrap().push(else_target.clone());
-                preds.entry(then_target.clone()).or_default().push(b.id.clone());
-                preds.entry(else_target.clone()).or_default().push(b.id.clone());
+                preds
+                    .entry(then_target.clone())
+                    .or_default()
+                    .push(b.id.clone());
+                preds
+                    .entry(else_target.clone())
+                    .or_default()
+                    .push(b.id.clone());
             }
             _ => {}
         }
@@ -97,8 +107,13 @@ fn test_mir_place_projection_lowering() {
     let mut found_field_proj = false;
     for b in &f.blocks {
         for stmt in &b.statements {
-            if let numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Use(p)) = stmt {
-                if p.projections.iter().any(|proj| matches!(proj, Projection::Field(_))) {
+            if let numlang::mir::lower::Statement::Assign(_, numlang::mir::lower::Rvalue::Use(p)) =
+                stmt
+            {
+                if p.projections
+                    .iter()
+                    .any(|proj| matches!(proj, Projection::Field(_)))
+                {
                     found_field_proj = true;
                 }
             }
@@ -119,7 +134,10 @@ fn test_mir_ssa_correctness() {
 
     // Check that locals include temp variables `_t0`, `_t1`, etc.
     let temp_count = f.locals.iter().filter(|l| l.name.starts_with("_t")).count();
-    assert!(temp_count > 0, "Expected temp variables to be generated for complex expressions");
+    assert!(
+        temp_count > 0,
+        "Expected temp variables to be generated for complex expressions"
+    );
 }
 
 #[test]
@@ -330,8 +348,8 @@ fn test_alias_array_constant_and_dynamic_indices() {
 
 #[test]
 fn test_mem2reg_candidate_identification_and_idf() {
-    use numlang::mir::mem2reg::{compute_idf, find_promotion_candidates};
     use numlang::mir::dominance::compute_dominance;
+    use numlang::mir::mem2reg::{compute_idf, find_promotion_candidates};
     use numlang::mir::{compute_cfg, BasicBlockId};
     use std::collections::HashSet;
 
@@ -369,7 +387,10 @@ fn test_mem2reg_candidate_identification_and_idf() {
         defs.insert(f.blocks[2].id.clone());
     }
     let idf = compute_idf(&defs, &dom.dominance_frontiers);
-    assert!(!idf.is_empty(), "IDF should identify loop header / join blocks");
+    assert!(
+        !idf.is_empty(),
+        "IDF should identify loop header / join blocks"
+    );
 }
 
 #[test]
@@ -444,7 +465,9 @@ fn test_rle_redundant_load_elimination() {
     // The second load `b = x` should be forwarded to `a`
     let mut found_forwarded = false;
     for stmt in &f.blocks[0].statements {
-        if let numlang::mir::lower::Statement::Assign(dest, numlang::mir::lower::Rvalue::Use(src)) = stmt {
+        if let numlang::mir::lower::Statement::Assign(dest, numlang::mir::lower::Rvalue::Use(src)) =
+            stmt
+        {
             if dest.local == "b" && src.local != "x" {
                 found_forwarded = true;
             }
@@ -453,4 +476,3 @@ fn test_rle_redundant_load_elimination() {
     // RLE forwards second load to earlier loaded value
     assert!(found_forwarded, "Expected second load to be forwarded");
 }
-

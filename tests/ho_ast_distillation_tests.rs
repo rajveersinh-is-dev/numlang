@@ -2,8 +2,7 @@ use std::fs;
 use std::process::Command;
 
 use numlang::ast::hodistill::{
-    distill_program, is_alpha_equivalent, AstProcessTerm,
-    AstProcessTree,
+    distill_program, is_alpha_equivalent, AstProcessTerm, AstProcessTree,
 };
 use numlang::ast::BinaryOp;
 use numlang::codegen::linker::link_executable;
@@ -12,9 +11,7 @@ use numlang::parser::parse;
 use numlang::span::Span;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
-use numlang::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedLiteral, TypedProgram, TypedStmt,
-};
+use numlang::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedLiteral, TypedProgram, TypedStmt};
 use numlang::typecheck::types::Type;
 
 fn get_typed_program(src: &str) -> TypedProgram {
@@ -28,8 +25,8 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     let _stats = distill_program(&mut typed);
     numlang::opt::optimize_program(&mut typed);
 
-    let obj_bytes = numlang::codegen::compile_to_obj_with_opt(&typed, false)
-        .expect("Codegen failed");
+    let obj_bytes =
+        numlang::codegen::compile_to_obj_with_opt(&typed, false).expect("Codegen failed");
 
     let test_dir = std::env::temp_dir().join(format!("numlang_hodistill_{}", test_name));
     let _ = fs::create_dir_all(&test_dir);
@@ -55,7 +52,12 @@ fn test_process_tree_representation_and_alpha_equivalence() {
     let span = Span::default();
 
     // Build Node 1: λ(x: i64). x + 1
-    let x_var = tree.alloc(AstProcessTerm::Var("x".to_string(), Type::I64), span, None, 1);
+    let x_var = tree.alloc(
+        AstProcessTerm::Var("x".to_string(), Type::I64),
+        span,
+        None,
+        1,
+    );
     let one_lit = tree.alloc(
         AstProcessTerm::Lit(TypedLiteral::Int(1, Type::I64), Type::I64),
         span,
@@ -85,7 +87,12 @@ fn test_process_tree_representation_and_alpha_equivalence() {
     );
 
     // Build Node 2: λ(y: i64). y + 1 (alpha-equivalent to Node 1 under renaming x <-> y)
-    let y_var = tree.alloc(AstProcessTerm::Var("y".to_string(), Type::I64), span, None, 1);
+    let y_var = tree.alloc(
+        AstProcessTerm::Var("y".to_string(), Type::I64),
+        span,
+        None,
+        1,
+    );
     let one_lit2 = tree.alloc(
         AstProcessTerm::Lit(TypedLiteral::Int(1, Type::I64), Type::I64),
         span,
@@ -115,7 +122,12 @@ fn test_process_tree_representation_and_alpha_equivalence() {
     );
 
     // Build Node 3: λ(z: i64). z + 2 (NOT alpha-equivalent to Node 1)
-    let z_var = tree.alloc(AstProcessTerm::Var("z".to_string(), Type::I64), span, None, 1);
+    let z_var = tree.alloc(
+        AstProcessTerm::Var("z".to_string(), Type::I64),
+        span,
+        None,
+        1,
+    );
     let two_lit = tree.alloc(
         AstProcessTerm::Lit(TypedLiteral::Int(2, Type::I64), Type::I64),
         span,
@@ -239,7 +251,10 @@ fn test_compose_5_deep_chain_deforestation() {
 
     // Verify end-to-end execution
     let exit_code = compile_and_run(src, "compose_5_deep");
-    assert_eq!(exit_code, 0, "5-deep compose must execute correctly and return 0");
+    assert_eq!(
+        exit_code, 0,
+        "5-deep compose must execute correctly and return 0"
+    );
 }
 
 #[test]
@@ -285,7 +300,10 @@ fn test_mutual_recursion_distillation() {
     );
 
     let exit_code = compile_and_run(src, "mutual_recursion");
-    assert_eq!(exit_code, 0, "Mutual recursion program must execute correctly and return 0");
+    assert_eq!(
+        exit_code, 0,
+        "Mutual recursion program must execute correctly and return 0"
+    );
 }
 
 #[test]
@@ -358,7 +376,10 @@ fn test_compiler_pipeline_with_ho_distill_flag() {
     let (mir, stats) = compile_pipeline(&mut typed, &config);
 
     assert!(stats.closures_eliminated >= 1);
-    assert!(!mir.functions.is_empty(), "Pipeline must lower to MIR functions");
+    assert!(
+        !mir.functions.is_empty(),
+        "Pipeline must lower to MIR functions"
+    );
 }
 
 fn count_callee_calls(block: &TypedBlock, target_callee: &str) -> usize {
@@ -377,7 +398,12 @@ fn count_callee_calls(block: &TypedBlock, target_callee: &str) -> usize {
             TypedStmt::Expr(expr) => {
                 count += count_calls_in_expr(expr, target_callee);
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 count += count_calls_in_expr(condition, target_callee);
                 count += count_callee_calls(then_branch, target_callee);
                 if let Some(ref eb) = else_branch {

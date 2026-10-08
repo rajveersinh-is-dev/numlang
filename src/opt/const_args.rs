@@ -105,11 +105,9 @@ fn collect_local_literal_bindings(
 ) {
     for stmt in &block.stmts {
         match stmt {
-            TypedStmt::Let {
-                name,
-                value,
-                ..
-            } if decl_counts.get(name) == Some(&1) && !block_mutates_name(block, name) => {
+            TypedStmt::Let { name, value, .. }
+                if decl_counts.get(name) == Some(&1) && !block_mutates_name(block, name) =>
+            {
                 // A binding may only be read after its declaration because the
                 // type checker rejects use-before-definition. Since it is declared
                 // uniquely and never mutated, substituting throughout the function is sound.
@@ -232,7 +230,9 @@ fn collect_calls_in_expr(
         TypedExpr::FieldAccess { target, .. } => {
             collect_calls_in_expr(target, function_names, calls);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_calls_in_expr(scrutinee, function_names, calls);
             for arm in arms {
                 collect_calls_in_expr(&arm.body, function_names, calls);
@@ -279,9 +279,7 @@ fn block_mutates_any(block: &TypedBlock, names: &HashSet<&str>) -> bool {
     block.stmts.iter().any(|stmt| match stmt {
         TypedStmt::Assign { name, .. }
         | TypedStmt::IndexAssign { target: name, .. }
-        | TypedStmt::FieldAssign { target: name, .. } => {
-            names.contains(name.as_str())
-        }
+        | TypedStmt::FieldAssign { target: name, .. } => names.contains(name.as_str()),
         TypedStmt::If {
             then_branch,
             else_branch,
@@ -292,7 +290,9 @@ fn block_mutates_any(block: &TypedBlock, names: &HashSet<&str>) -> bool {
                     .as_ref()
                     .is_some_and(|branch| block_mutates_any(branch, names))
         }
-        TypedStmt::While { body, .. } | TypedStmt::For { body, .. } => block_mutates_any(body, names),
+        TypedStmt::While { body, .. } | TypedStmt::For { body, .. } => {
+            block_mutates_any(body, names)
+        }
         _ => false,
     })
 }
@@ -332,9 +332,7 @@ fn replace_in_block(block: &mut TypedBlock, replacements: &HashMap<String, Typed
                 replace_in_expr(condition, replacements);
                 replace_in_block(body, replacements);
             }
-            TypedStmt::For {
-                lo, hi, body, ..
-            } => {
+            TypedStmt::For { lo, hi, body, .. } => {
                 replace_in_expr(lo, replacements);
                 replace_in_expr(hi, replacements);
                 replace_in_block(body, replacements);
@@ -377,7 +375,9 @@ fn replace_in_expr(expr: &mut TypedExpr, replacements: &HashMap<String, TypedExp
         TypedExpr::FieldAccess { target, .. } => {
             replace_in_expr(target, replacements);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             replace_in_expr(scrutinee, replacements);
             for arm in arms {
                 replace_in_expr(&mut arm.body, replacements);

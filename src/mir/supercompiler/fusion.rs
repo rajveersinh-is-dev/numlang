@@ -74,7 +74,13 @@ pub fn find_fusion_candidates(func: &MirFunction) -> Vec<FusionCandidate> {
     let all_block_ids: Vec<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
     let entry = func.blocks[0].id.clone();
     let dom = compute_dominance(entry, &preds, &succs, &all_block_ids);
-    let loop_info = detect_loops(func.blocks[0].id.clone(), &preds, &succs, &all_block_ids, &dom);
+    let loop_info = detect_loops(
+        func.blocks[0].id.clone(),
+        &preds,
+        &succs,
+        &all_block_ids,
+        &dom,
+    );
 
     if loop_info.headers.len() < 2 {
         return Vec::new();
@@ -135,7 +141,10 @@ pub fn find_fusion_candidates(func: &MirFunction) -> Vec<FusionCandidate> {
                             for stmt in &b.statements {
                                 let Statement::Assign(dest, rval) = stmt;
                                 if !dest.projections.is_empty()
-                                    && dest.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+                                    && dest
+                                        .projections
+                                        .iter()
+                                        .any(|p| matches!(p, Projection::Index(_)))
                                 {
                                     let real_dest = resolve_alias(&dest.local, &aliases);
                                     written_arrays.push((real_dest.to_string(), dest.clone()));
@@ -179,18 +188,29 @@ pub fn find_fusion_candidates(func: &MirFunction) -> Vec<FusionCandidate> {
             // Find an intermediate buffer written in loop A and read in loop B
             for (buf_name_a, place_a) in &loop_a.written_arrays {
                 // Must be read in loop B
-                let is_read_in_b = loop_b.read_arrays.iter().any(|(name, _)| name == buf_name_a);
+                let is_read_in_b = loop_b
+                    .read_arrays
+                    .iter()
+                    .any(|(name, _)| name == buf_name_a);
                 if !is_read_in_b {
                     continue;
                 }
 
                 // Loop A must NOT read from buf_name_a
-                if loop_a.read_arrays.iter().any(|(name, _)| name == buf_name_a) {
+                if loop_a
+                    .read_arrays
+                    .iter()
+                    .any(|(name, _)| name == buf_name_a)
+                {
                     continue;
                 }
 
                 // Loop B must NOT write to buf_name_a
-                if loop_b.written_arrays.iter().any(|(name, _)| name == buf_name_a) {
+                if loop_b
+                    .written_arrays
+                    .iter()
+                    .any(|(name, _)| name == buf_name_a)
+                {
                     continue;
                 }
 
@@ -199,7 +219,8 @@ pub fn find_fusion_candidates(func: &MirFunction) -> Vec<FusionCandidate> {
                     continue;
                 }
 
-                let trip_count_term = intern_bound(&loop_a.bound, &block_map, &mut interner, &aliases);
+                let trip_count_term =
+                    intern_bound(&loop_a.bound, &block_map, &mut interner, &aliases);
 
                 candidates.push(FusionCandidate {
                     producer_header: loop_a.header.clone(),
@@ -246,7 +267,11 @@ fn resolve_const_int(
     let target = resolve_alias(&place.local, aliases);
     for b in block_map.values() {
         for stmt in &b.statements {
-            if let Statement::Assign(dest, Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt {
+            if let Statement::Assign(
+                dest,
+                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)),
+            ) = stmt
+            {
                 let dest_name = resolve_alias(&dest.local, aliases);
                 if dest.local == place.local || dest.local == target || dest_name == target {
                     return Some(*v);
@@ -276,7 +301,10 @@ fn collect_read_arrays_from_rvalue(
     aliases: &HashMap<String, String>,
 ) {
     let check_place = |p: &Place, out: &mut Vec<(String, Place)>| {
-        if p.projections.iter().any(|proj| matches!(proj, Projection::Index(_))) {
+        if p.projections
+            .iter()
+            .any(|proj| matches!(proj, Projection::Index(_)))
+        {
             let real_name = resolve_alias(&p.local, aliases);
             out.push((real_name.to_string(), p.clone()));
         }
@@ -318,7 +346,8 @@ fn has_external_uses(
                     Rvalue::Array(_) => continue,
                     Rvalue::Constant(_) => continue,
                     Rvalue::Use(src)
-                        if resolve_alias(&src.local, aliases) == buf_name && src.projections.is_empty() =>
+                        if resolve_alias(&src.local, aliases) == buf_name
+                            && src.projections.is_empty() =>
                     {
                         continue
                     }
@@ -337,7 +366,9 @@ fn has_external_uses(
         }
         // Check terminator uses
         match &b.terminator {
-            Terminator::Return { value: Some(p) } if resolve_alias(&p.local, aliases) == buf_name => {
+            Terminator::Return { value: Some(p) }
+                if resolve_alias(&p.local, aliases) == buf_name =>
+            {
                 return true
             }
             Terminator::BranchIf { condition, .. }
@@ -384,7 +415,13 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     let all_block_ids: Vec<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
     let entry = func.blocks[0].id.clone();
     let dom = compute_dominance(entry, &preds, &succs, &all_block_ids);
-    let loop_info = detect_loops(func.blocks[0].id.clone(), &preds, &succs, &all_block_ids, &dom);
+    let loop_info = detect_loops(
+        func.blocks[0].id.clone(),
+        &preds,
+        &succs,
+        &all_block_ids,
+        &dom,
+    );
 
     let blocks_a = match loop_info.natural_loops.get(&candidate.producer_header) {
         Some(b) => b.clone(),
@@ -399,15 +436,35 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     let mut exit_a_id = None;
     let mut iv_a = None;
 
-    if let Some(hb_a) = func.blocks.iter().find(|b| b.id == candidate.producer_header) {
-        if let Terminator::BranchIf { condition, then_target, else_target } = &hb_a.terminator {
-            body_a_id = if blocks_a.contains(then_target) { Some(then_target.clone()) } else { Some(else_target.clone()) };
-            exit_a_id = if blocks_a.contains(then_target) { Some(else_target.clone()) } else { Some(then_target.clone()) };
+    if let Some(hb_a) = func
+        .blocks
+        .iter()
+        .find(|b| b.id == candidate.producer_header)
+    {
+        if let Terminator::BranchIf {
+            condition,
+            then_target,
+            else_target,
+        } = &hb_a.terminator
+        {
+            body_a_id = if blocks_a.contains(then_target) {
+                Some(then_target.clone())
+            } else {
+                Some(else_target.clone())
+            };
+            exit_a_id = if blocks_a.contains(then_target) {
+                Some(else_target.clone())
+            } else {
+                Some(then_target.clone())
+            };
             for stmt in &hb_a.statements {
                 if let Statement::Assign(dest, Rvalue::BinaryOp(_, l, _)) = stmt {
                     if dest == condition {
                         let real_l = resolve_alias(&l.local, &aliases);
-                        iv_a = Some(Place { local: real_l.to_string(), projections: vec![] });
+                        iv_a = Some(Place {
+                            local: real_l.to_string(),
+                            projections: vec![],
+                        });
                         break;
                     }
                 }
@@ -419,15 +476,35 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     let mut exit_b_id = None;
     let mut iv_b = None;
 
-    if let Some(hb_b) = func.blocks.iter().find(|b| b.id == candidate.consumer_header) {
-        if let Terminator::BranchIf { condition, then_target, else_target } = &hb_b.terminator {
-            body_b_id = if blocks_b.contains(then_target) { Some(then_target.clone()) } else { Some(else_target.clone()) };
-            exit_b_id = if blocks_b.contains(then_target) { Some(else_target.clone()) } else { Some(then_target.clone()) };
+    if let Some(hb_b) = func
+        .blocks
+        .iter()
+        .find(|b| b.id == candidate.consumer_header)
+    {
+        if let Terminator::BranchIf {
+            condition,
+            then_target,
+            else_target,
+        } = &hb_b.terminator
+        {
+            body_b_id = if blocks_b.contains(then_target) {
+                Some(then_target.clone())
+            } else {
+                Some(else_target.clone())
+            };
+            exit_b_id = if blocks_b.contains(then_target) {
+                Some(else_target.clone())
+            } else {
+                Some(then_target.clone())
+            };
             for stmt in &hb_b.statements {
                 if let Statement::Assign(dest, Rvalue::BinaryOp(_, l, _)) = stmt {
                     if dest == condition {
                         let real_l = resolve_alias(&l.local, &aliases);
-                        iv_b = Some(Place { local: real_l.to_string(), projections: vec![] });
+                        iv_b = Some(Place {
+                            local: real_l.to_string(),
+                            projections: vec![],
+                        });
                         break;
                     }
                 }
@@ -476,7 +553,14 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
 
             // Rewrite uses of buf[k] => val_temp, and iv_b => iv_a
             let mut rewritten_rval = rval.clone();
-            rewrite_rval_uses(&mut rewritten_rval, &buf_name, &val_temp, &iv_b, &iv_a, &aliases);
+            rewrite_rval_uses(
+                &mut rewritten_rval,
+                &buf_name,
+                &val_temp,
+                &iv_b,
+                &iv_a,
+                &aliases,
+            );
             let mut rewritten_dest = dest.clone();
             for proj in &mut rewritten_dest.projections {
                 if let Projection::Index(idx_box) = proj {
@@ -498,9 +582,9 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     }
 
     // 6. Hoist initializations between loop A and loop B into loop A's preheader
-    let preheader_a_id = preds.get(&candidate.producer_header).and_then(|p_list| {
-        p_list.iter().find(|p| !blocks_a.contains(p)).cloned()
-    });
+    let preheader_a_id = preds
+        .get(&candidate.producer_header)
+        .and_then(|p_list| p_list.iter().find(|p| !blocks_a.contains(p)).cloned());
 
     let mut hoisted_stmts = Vec::new();
     if let Some(exit_a_block) = func.blocks.iter_mut().find(|b| b.id == exit_a_id) {
@@ -526,8 +610,17 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     }
 
     // 7. Redirect Loop A exit directly to Loop B exit (bypassing loop B entirely)
-    if let Some(hb_a) = func.blocks.iter_mut().find(|b| b.id == candidate.producer_header) {
-        if let Terminator::BranchIf { then_target, else_target, .. } = &mut hb_a.terminator {
+    if let Some(hb_a) = func
+        .blocks
+        .iter_mut()
+        .find(|b| b.id == candidate.producer_header)
+    {
+        if let Terminator::BranchIf {
+            then_target,
+            else_target,
+            ..
+        } = &mut hb_a.terminator
+        {
             if *else_target == exit_a_id {
                 *else_target = exit_b_id.clone();
             } else if *then_target == exit_a_id {
@@ -537,9 +630,7 @@ pub fn fuse_loops(func: &mut MirFunction, candidate: &FusionCandidate) {
     }
 
     if let Some(exit_a_block) = func.blocks.iter_mut().find(|b| b.id == exit_a_id) {
-        exit_a_block.terminator = Terminator::Branch {
-            target: exit_b_id,
-        };
+        exit_a_block.terminator = Terminator::Branch { target: exit_b_id };
     }
 
     // 8. Eliminate the intermediate buffer allocation
@@ -612,7 +703,13 @@ fn find_map_filter_plan(func: &MirFunction) -> Option<MapFilterPlan> {
     let all_block_ids: Vec<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
     let entry = func.blocks[0].id.clone();
     let dom = compute_dominance(entry, &preds, &succs, &all_block_ids);
-    let loop_info = detect_loops(func.blocks[0].id.clone(), &preds, &succs, &all_block_ids, &dom);
+    let loop_info = detect_loops(
+        func.blocks[0].id.clone(),
+        &preds,
+        &succs,
+        &all_block_ids,
+        &dom,
+    );
 
     if loop_info.headers.len() < 2 {
         return None;
@@ -665,7 +762,12 @@ fn find_map_filter_plan(func: &MirFunction) -> Option<MapFilterPlan> {
 
         let exit1_id = match block_map.get(h1) {
             Some(hb1) => {
-                if let Terminator::BranchIf { then_target, else_target, .. } = &hb1.terminator {
+                if let Terminator::BranchIf {
+                    then_target,
+                    else_target,
+                    ..
+                } = &hb1.terminator
+                {
                     if blocks1.contains(then_target) {
                         else_target.clone()
                     } else {
@@ -678,9 +780,10 @@ fn find_map_filter_plan(func: &MirFunction) -> Option<MapFilterPlan> {
             None => continue,
         };
 
-        let preheader1_id = preds.get(h1).and_then(|p_list| {
-            p_list.iter().find(|p| !blocks1.contains(p)).cloned()
-        }).unwrap_or(BasicBlockId(0));
+        let preheader1_id = preds
+            .get(h1)
+            .and_then(|p_list| p_list.iter().find(|p| !blocks1.contains(p)).cloned())
+            .unwrap_or(BasicBlockId(0));
 
         // Look for map loop (h2) where bound is counter_j and reads from tmp_buf
         for h2 in &loop_info.headers {
@@ -697,7 +800,12 @@ fn find_map_filter_plan(func: &MirFunction) -> Option<MapFilterPlan> {
                 None => continue,
             };
 
-            if let Terminator::BranchIf { condition, then_target, else_target } = &hb2.terminator {
+            if let Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } = &hb2.terminator
+            {
                 let mut bound_is_j = false;
                 let mut iv_k_opt = None;
 
@@ -727,8 +835,16 @@ fn find_map_filter_plan(func: &MirFunction) -> Option<MapFilterPlan> {
                     None => continue,
                 };
 
-                let body2_id = if blocks2.contains(then_target) { then_target.clone() } else { else_target.clone() };
-                let exit2_id = if blocks2.contains(then_target) { else_target.clone() } else { then_target.clone() };
+                let body2_id = if blocks2.contains(then_target) {
+                    then_target.clone()
+                } else {
+                    else_target.clone()
+                };
+                let exit2_id = if blocks2.contains(then_target) {
+                    else_target.clone()
+                } else {
+                    then_target.clone()
+                };
 
                 let body2_block = match block_map.get(&body2_id) {
                     Some(b) => b,
@@ -782,7 +898,11 @@ pub fn fuse_map_filter(func: &mut MirFunction) -> bool {
     let aliases = build_alias_map(func);
 
     // 1. Fuse map into filter's then block
-    if let Some(then_b) = func.blocks.iter_mut().find(|b| b.id == plan.filter_then_block) {
+    if let Some(then_b) = func
+        .blocks
+        .iter_mut()
+        .find(|b| b.id == plan.filter_then_block)
+    {
         let mut src_val_opt = None;
         let mut assign_idx = None;
 
@@ -803,7 +923,14 @@ pub fn fuse_map_filter(func: &mut MirFunction) -> bool {
             then_b.statements.remove(idx);
             for (offset, m_stmt) in plan.map_transforms.into_iter().enumerate() {
                 let Statement::Assign(mut dest_rewritten, mut rval) = m_stmt;
-                rewrite_rval_uses(&mut rval, &plan.tmp_buf, &src_val, &plan.iv_k, &plan.counter_j, &aliases);
+                rewrite_rval_uses(
+                    &mut rval,
+                    &plan.tmp_buf,
+                    &src_val,
+                    &plan.iv_k,
+                    &plan.counter_j,
+                    &aliases,
+                );
                 for proj in &mut dest_rewritten.projections {
                     if let Projection::Index(idx_box) = proj {
                         let real_idx = resolve_alias(&idx_box.local, &aliases);
@@ -812,7 +939,9 @@ pub fn fuse_map_filter(func: &mut MirFunction) -> bool {
                         }
                     }
                 }
-                then_b.statements.insert(idx + offset, Statement::Assign(dest_rewritten, rval));
+                then_b
+                    .statements
+                    .insert(idx + offset, Statement::Assign(dest_rewritten, rval));
             }
         }
     }
@@ -845,7 +974,11 @@ pub fn fuse_map_filter(func: &mut MirFunction) -> bool {
             Terminator::Branch { target } if *target == plan.h2 => {
                 *target = plan.exit2_id.clone();
             }
-            Terminator::BranchIf { then_target, else_target, .. } => {
+            Terminator::BranchIf {
+                then_target,
+                else_target,
+                ..
+            } => {
                 if *then_target == plan.h2 {
                     *then_target = plan.exit2_id.clone();
                 }

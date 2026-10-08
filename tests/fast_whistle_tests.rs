@@ -12,7 +12,6 @@ fn make_var(name: &str) -> Place {
         local: name.to_string(),
         projections: Vec::new(),
     }
-
 }
 
 /// Naive unindexed homeomorphic embedding baseline without O(1) canonical ID, size, or depth pre-filters.
@@ -26,26 +25,26 @@ fn unindexed_is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) 
             unindexed_is_embedded(t1, *l2, interner) || unindexed_is_embedded(t1, *r2, interner)
         }
         SymTerm::Unary(_, inner2, _) => unindexed_is_embedded(t1, *inner2, interner),
-        SymTerm::Constructor(_, _, fields2, _) => {
-            fields2.iter().any(|&f| unindexed_is_embedded(t1, f, interner))
-        }
-        SymTerm::Call(_, args2, _) => {
-            args2.iter().any(|&a| unindexed_is_embedded(t1, a, interner))
-        }
+        SymTerm::Constructor(_, _, fields2, _) => fields2
+            .iter()
+            .any(|&f| unindexed_is_embedded(t1, f, interner)),
+        SymTerm::Call(_, args2, _) => args2
+            .iter()
+            .any(|&a| unindexed_is_embedded(t1, a, interner)),
         SymTerm::Select(c2, th2, el2, _) => {
             unindexed_is_embedded(t1, *c2, interner)
                 || unindexed_is_embedded(t1, *th2, interner)
                 || unindexed_is_embedded(t1, *el2, interner)
         }
-        SymTerm::Phi(incoming2, _) => {
-            incoming2.iter().any(|(_, t)| unindexed_is_embedded(t1, *t, interner))
-        }
+        SymTerm::Phi(incoming2, _) => incoming2
+            .iter()
+            .any(|(_, t)| unindexed_is_embedded(t1, *t, interner)),
         SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => {
             unindexed_is_embedded(t1, *inner2, interner)
         }
-        SymTerm::ClosureVal(_, captured2, _) | SymTerm::Thunk(_, captured2, _) => {
-            captured2.iter().any(|&c| unindexed_is_embedded(t1, c, interner))
-        }
+        SymTerm::ClosureVal(_, captured2, _) | SymTerm::Thunk(_, captured2, _) => captured2
+            .iter()
+            .any(|&c| unindexed_is_embedded(t1, c, interner)),
         _ => false,
     };
     if embedded_in_child {
@@ -134,12 +133,18 @@ fn test_canonical_hash_consing_identity() {
     // 1. Leaf terms
     let v_x1 = interner.intern_var(make_var("x"), Type::I64);
     let v_x2 = interner.intern_var(make_var("x"), Type::I64);
-    assert_eq!(v_x1, v_x2, "HASHCONS-01: Identical variables must have identical SymTermId");
+    assert_eq!(
+        v_x1, v_x2,
+        "HASHCONS-01: Identical variables must have identical SymTermId"
+    );
     assert!(interner.structural_eq(v_x1, v_x2));
 
     let c_10a = interner.intern_int(10);
     let c_10b = interner.intern_int(10);
-    assert_eq!(c_10a, c_10b, "HASHCONS-01: Identical constants must have identical SymTermId");
+    assert_eq!(
+        c_10a, c_10b,
+        "HASHCONS-01: Identical constants must have identical SymTermId"
+    );
 
     // 2. Binary terms with commutative canonicalization
     let x_plus_10 = interner.intern_binary(BinaryOp::Add, v_x1, c_10a, Type::I64);
@@ -228,10 +233,16 @@ fn test_whistle_size_depth_filters() {
     let deep = interner.intern_binary(BinaryOp::Mul, shallow, c2, Type::I64); // size 5, depth 3
 
     // Shallow embeds in Deep (via diving into left child shallow)
-    assert!(is_embedded(shallow, deep, &interner), "HASHCONS-04: shallow ⊴ deep must be true");
+    assert!(
+        is_embedded(shallow, deep, &interner),
+        "HASHCONS-04: shallow ⊴ deep must be true"
+    );
 
     // Deep CANNOT embed in Shallow: size filter (5 > 3) and depth filter (3 > 2) prune in O(1)
-    assert!(!is_embedded(deep, shallow, &interner), "HASHCONS-04: deep ⊴ shallow must be false");
+    assert!(
+        !is_embedded(deep, shallow, &interner),
+        "HASHCONS-04: deep ⊴ shallow must be false"
+    );
 
     // Variable embeds in expression containing variable
     assert!(is_embedded(vx, deep, &interner));
@@ -364,20 +375,14 @@ fn test_whistle_throughput_speedup_benchmark() {
     let optimized_micros = elapsed_optimized.as_micros().max(1);
     let speedup = unindexed_micros as f64 / optimized_micros as f64;
 
-    eprintln!(
-        "\n=================== HASHCONS-05 BENCHMARK RESULTS ==================="
-    );
-    eprintln!(
-        "Workload: 64 symbolic variables with deep expression trees (depth 7)"
-    );
+    eprintln!("\n=================== HASHCONS-05 BENCHMARK RESULTS ===================");
+    eprintln!("Workload: 64 symbolic variables with deep expression trees (depth 7)");
     eprintln!("Workload mix: invariant places + growing places + rejection queries");
     eprintln!("Rounds:   {} measured rounds (after 10 warmups)", ROUNDS);
     eprintln!("Unindexed baseline time: {:>8} µs", unindexed_micros);
     eprintln!("Optimized whistle time:  {:>8} µs", optimized_micros);
     eprintln!("Throughput Speedup:      {:>8.2}x", speedup);
-    eprintln!(
-        "====================================================================\n"
-    );
+    eprintln!("====================================================================\n");
 
     assert!(
         speedup >= 5.0,

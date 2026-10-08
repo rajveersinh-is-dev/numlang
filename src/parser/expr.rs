@@ -101,7 +101,10 @@ impl<'a> Parser<'a> {
             Token::TypedIntLiteral((n, ref s)) => {
                 let s_clone = s.clone();
                 self.advance();
-                Ok(Expr::Literal(Literal::TypedInt(n, s_clone), token_spanned.span))
+                Ok(Expr::Literal(
+                    Literal::TypedInt(n, s_clone),
+                    token_spanned.span,
+                ))
             }
             Token::FloatLiteral(f) => {
                 self.advance();
@@ -171,7 +174,8 @@ impl<'a> Parser<'a> {
                                 }
                             }
                         }
-                        end_span = self.consume(&Token::RParen, "')' after enum constructor arguments")?;
+                        end_span =
+                            self.consume(&Token::RParen, "')' after enum constructor arguments")?;
                     }
                     let span = token_spanned.span.merge(&end_span);
                     Ok(Expr::EnumConstructor {
@@ -206,10 +210,11 @@ impl<'a> Parser<'a> {
                     if !self.check(&Token::RBrace) {
                         loop {
                             let prev_span = self.previous_span();
-                            let field_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
-                                expected: "field name in struct literal".to_string(),
-                                span: prev_span,
-                            })?;
+                            let field_tok =
+                                self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                                    expected: "field name in struct literal".to_string(),
+                                    span: prev_span,
+                                })?;
                             let field_name = match &field_tok.token {
                                 Token::Ident(id) => id.clone(),
                                 other => {
@@ -233,13 +238,10 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    let end_span = self.consume(&Token::RBrace, "'}' after struct literal fields")?;
+                    let end_span =
+                        self.consume(&Token::RBrace, "'}' after struct literal fields")?;
                     let span = token_spanned.span.merge(&end_span);
-                    Ok(Expr::StructLiteral {
-                        name,
-                        fields,
-                        span,
-                    })
+                    Ok(Expr::StructLiteral { name, fields, span })
                 } else {
                     Ok(Expr::Ident(name, token_spanned.span))
                 }
@@ -277,7 +279,10 @@ impl<'a> Parser<'a> {
                 self.consume(&Token::LBrace, "'{' after match scrutinee")?;
                 let mut arms = Vec::new();
                 while !self.check(&Token::RBrace) && !self.is_at_end() {
-                    let arm_start_span = self.peek_token().map(|t| t.span).unwrap_or(token_spanned.span);
+                    let arm_start_span = self
+                        .peek_token()
+                        .map(|t| t.span)
+                        .unwrap_or(token_spanned.span);
                     let mut patterns = Vec::new();
                     loop {
                         let pat = self.parse_match_pattern()?;
@@ -364,10 +369,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_pattern(&mut self) -> Result<MatchPattern, ParseError> {
-        let tok = self.peek_token().ok_or_else(|| ParseError::UnexpectedEof {
-            expected: "pattern in match arm".to_string(),
-            span: self.previous_span(),
-        })?.clone();
+        let tok = self
+            .peek_token()
+            .ok_or_else(|| ParseError::UnexpectedEof {
+                expected: "pattern in match arm".to_string(),
+                span: self.previous_span(),
+            })?
+            .clone();
 
         match tok.token {
             Token::Underscore => {
@@ -384,13 +392,18 @@ impl<'a> Parser<'a> {
             }
             Token::Minus => {
                 self.advance();
-                let next_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
-                    expected: "integer literal after '-' in match pattern".to_string(),
-                    span: tok.span,
-                })?.clone();
+                let next_tok = self
+                    .advance()
+                    .ok_or_else(|| ParseError::UnexpectedEof {
+                        expected: "integer literal after '-' in match pattern".to_string(),
+                        span: tok.span,
+                    })?
+                    .clone();
                 match next_tok.token {
                     Token::IntLiteral(n) => Ok(MatchPattern::Literal(Literal::Int(-n))),
-                    Token::TypedIntLiteral((n, s)) => Ok(MatchPattern::Literal(Literal::TypedInt(-n, s))),
+                    Token::TypedIntLiteral((n, s)) => {
+                        Ok(MatchPattern::Literal(Literal::TypedInt(-n, s)))
+                    }
                     other => Err(ParseError::UnexpectedToken {
                         found: other,
                         expected: "integer literal after '-' in match pattern".to_string(),
@@ -435,17 +448,19 @@ impl<'a> Parser<'a> {
                     if !self.check(&Token::RParen) {
                         loop {
                             let prev_sp = self.previous_span();
-                            let b_tok = self.advance().ok_or_else(|| ParseError::UnexpectedEof {
-                                expected: "binding variable name or ')' in pattern".to_string(),
-                                span: prev_sp,
-                            })?;
+                            let b_tok =
+                                self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+                                    expected: "binding variable name or ')' in pattern".to_string(),
+                                    span: prev_sp,
+                                })?;
                             let b_name = match &b_tok.token {
                                 Token::Ident(id) => id.clone(),
                                 Token::Underscore => "_".to_string(),
                                 other => {
                                     return Err(ParseError::UnexpectedToken {
                                         found: other.clone(),
-                                        expected: "binding variable name or '_' in pattern".to_string(),
+                                        expected: "binding variable name or '_' in pattern"
+                                            .to_string(),
                                         span: b_tok.span,
                                     });
                                 }

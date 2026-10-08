@@ -4,10 +4,10 @@
 //! when speculative type guards fail, runtime deoptimization stubs, and atomic OSR
 //! transition slots for hot-path upgrade from baseline to specialized native code.
 
+use crate::typecheck::Type;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::RwLock;
-use crate::typecheck::Type;
 
 /// Metadata describing a deoptimization safepoint site.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

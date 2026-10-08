@@ -114,12 +114,8 @@ impl Type {
         match (self, other) {
             (Type::Param(_), _) | (_, Type::Param(_)) => true,
             (Type::Closure(c1), Type::Fn(args2, ret2))
-            | (Type::Fn(args2, ret2), Type::Closure(c1)) => {
-                &c1.params == args2 && &c1.ret == ret2
-            }
-            (Type::Closure(c1), Type::Closure(c2)) => {
-                c1.params == c2.params && c1.ret == c2.ret
-            }
+            | (Type::Fn(args2, ret2), Type::Closure(c1)) => &c1.params == args2 && &c1.ret == ret2,
+            (Type::Closure(c1), Type::Closure(c2)) => c1.params == c2.params && c1.ret == c2.ret,
             _ => false,
         }
     }
@@ -271,7 +267,9 @@ impl Type {
             "str" => Some(Type::Str),
             "void" | "()" => Some(Type::Void),
             _ => {
-                if s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                if s.chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
                     && s.chars().all(|c| c.is_alphanumeric() || c == '_')
                 {
                     Some(Type::Struct(s.to_string()))
@@ -307,7 +305,9 @@ impl fmt::Display for Type {
             Type::Fn(args, ret) => {
                 write!(f, "fn(")?;
                 for (i, a) in args.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", a)?;
                 }
                 write!(f, ") -> {}", ret)
@@ -315,7 +315,9 @@ impl fmt::Display for Type {
             Type::Closure(c) => {
                 write!(f, "closure(")?;
                 for (i, a) in c.params.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}", a)?;
                 }
                 write!(f, ") -> {}", c.ret)

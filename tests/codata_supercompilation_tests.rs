@@ -8,7 +8,9 @@
 //! - LAZY-05: LLVM IR zero heap allocation validation and functional parity
 
 use numlang::codegen::llvm_backend::{emit_llvm_ir, OptLevel};
-use numlang::mir::lower::{lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+use numlang::mir::lower::{
+    lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement,
+};
 use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::thunk_analysis::{compute_thunk_demands, Demand};
 use numlang::mir::{validate_mir_function, BasicBlockId, Place, Terminator};
@@ -54,11 +56,20 @@ fn test_thunk_rvalue_mir_structure() {
                 arguments: vec![],
                 statements: vec![
                     Statement::Assign(
-                        Place { local: "_t0".to_string(), projections: vec![] },
-                        Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(42, Type::I64)),
+                        Place {
+                            local: "_t0".to_string(),
+                            projections: vec![],
+                        },
+                        Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(
+                            42,
+                            Type::I64,
+                        )),
                     ),
                     Statement::Assign(
-                        Place { local: "_thunk".to_string(), projections: vec![] },
+                        Place {
+                            local: "_thunk".to_string(),
+                            projections: vec![],
+                        },
                         Rvalue::Thunk {
                             body: "step_body".to_string(),
                             env: vec!["_t0".to_string()],
@@ -76,7 +87,10 @@ fn test_thunk_rvalue_mir_structure() {
                 arguments: vec![],
                 statements: vec![],
                 terminator: Terminator::Return {
-                    value: Some(Place { local: "_res".to_string(), projections: vec![] }),
+                    value: Some(Place {
+                        local: "_res".to_string(),
+                        projections: vec![],
+                    }),
                 },
             },
         ],
@@ -84,7 +98,11 @@ fn test_thunk_rvalue_mir_structure() {
     };
 
     let val_res = validate_mir_function(&func);
-    assert!(val_res.is_ok(), "MIR validation must pass for valid Thunk and Force: {:?}", val_res.err());
+    assert!(
+        val_res.is_ok(),
+        "MIR validation must pass for valid Thunk and Force: {:?}",
+        val_res.err()
+    );
 
     // Check invalid continuation detection
     let mut invalid_func = func.clone();
@@ -93,7 +111,10 @@ fn test_thunk_rvalue_mir_structure() {
         result: "_res".to_string(),
         cont: BasicBlockId(99),
     };
-    assert!(validate_mir_function(&invalid_func).is_err(), "Must reject nonexistent continuation");
+    assert!(
+        validate_mir_function(&invalid_func).is_err(),
+        "Must reject nonexistent continuation"
+    );
 }
 
 #[test]
@@ -104,22 +125,41 @@ fn test_demand_analysis_fully_demanded() {
         params: vec![("cond".to_string(), Type::Bool)],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "_thunk".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_r1".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_r2".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "_thunk".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_r1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_r2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![
             MirBasicBlock {
                 id: BasicBlockId(0),
                 arguments: vec![],
-                statements: vec![
-                    Statement::Assign(
-                        Place { local: "_thunk".to_string(), projections: vec![] },
-                        Rvalue::Thunk { body: "step".to_string(), env: vec![] },
-                    ),
-                ],
+                statements: vec![Statement::Assign(
+                    Place {
+                        local: "_thunk".to_string(),
+                        projections: vec![],
+                    },
+                    Rvalue::Thunk {
+                        body: "step".to_string(),
+                        env: vec![],
+                    },
+                )],
                 terminator: Terminator::BranchIf {
-                    condition: Place { local: "cond".to_string(), projections: vec![] },
+                    condition: Place {
+                        local: "cond".to_string(),
+                        projections: vec![],
+                    },
                     then_target: BasicBlockId(1),
                     else_target: BasicBlockId(2),
                 },
@@ -170,21 +210,36 @@ fn test_demand_analysis_guard_demanded() {
         params: vec![("cond".to_string(), Type::Bool)],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "_thunk".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_r1".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "_thunk".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_r1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![
             MirBasicBlock {
                 id: BasicBlockId(0),
                 arguments: vec![],
-                statements: vec![
-                    Statement::Assign(
-                        Place { local: "_thunk".to_string(), projections: vec![] },
-                        Rvalue::Thunk { body: "step".to_string(), env: vec![] },
-                    ),
-                ],
+                statements: vec![Statement::Assign(
+                    Place {
+                        local: "_thunk".to_string(),
+                        projections: vec![],
+                    },
+                    Rvalue::Thunk {
+                        body: "step".to_string(),
+                        env: vec![],
+                    },
+                )],
                 terminator: Terminator::BranchIf {
-                    condition: Place { local: "cond".to_string(), projections: vec![] },
+                    condition: Place {
+                        local: "cond".to_string(),
+                        projections: vec![],
+                    },
                     then_target: BasicBlockId(1),
                     else_target: BasicBlockId(2),
                 },
@@ -251,7 +306,10 @@ fn main() -> i64 {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
-    assert!(stats.nodes_explored >= 1, "Supercompiler should explore stream pipeline");
+    assert!(
+        stats.nodes_explored >= 1,
+        "Supercompiler should explore stream pipeline"
+    );
 
     let llvm_ir = emit_llvm_ir(&mir, OptLevel::O3).expect("LLVM IR generation failed");
 
@@ -309,7 +367,10 @@ fn main() -> i64 {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
-    assert!(stats.nodes_explored >= 1, "Supercompiler should explore zipWith stream pipeline");
+    assert!(
+        stats.nodes_explored >= 1,
+        "Supercompiler should explore zipWith stream pipeline"
+    );
 
     let llvm_ir = emit_llvm_ir(&mir, OptLevel::O3).expect("LLVM IR generation failed");
 
@@ -347,10 +408,26 @@ fn test_direct_mir_thunk_loop_fusion() {
         params: vec![("n".to_string(), Type::I64)],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "n".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "acc".to_string(), ty: Type::I64, mutable: true },
-            MirLocalDecl { name: "thunk".to_string(), ty: Type::I64, mutable: true },
-            MirLocalDecl { name: "res".to_string(), ty: Type::I64, mutable: true },
+            MirLocalDecl {
+                name: "n".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "acc".to_string(),
+                ty: Type::I64,
+                mutable: true,
+            },
+            MirLocalDecl {
+                name: "thunk".to_string(),
+                ty: Type::I64,
+                mutable: true,
+            },
+            MirLocalDecl {
+                name: "res".to_string(),
+                ty: Type::I64,
+                mutable: true,
+            },
         ],
         blocks: vec![
             MirBasicBlock {
@@ -358,12 +435,24 @@ fn test_direct_mir_thunk_loop_fusion() {
                 arguments: vec![],
                 statements: vec![
                     Statement::Assign(
-                        Place { local: "acc".to_string(), projections: vec![] },
-                        Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(1, Type::I64)),
+                        Place {
+                            local: "acc".to_string(),
+                            projections: vec![],
+                        },
+                        Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(
+                            1,
+                            Type::I64,
+                        )),
                     ),
                     Statement::Assign(
-                        Place { local: "thunk".to_string(), projections: vec![] },
-                        Rvalue::Thunk { body: "step".to_string(), env: vec!["acc".to_string()] },
+                        Place {
+                            local: "thunk".to_string(),
+                            projections: vec![],
+                        },
+                        Rvalue::Thunk {
+                            body: "step".to_string(),
+                            env: vec!["acc".to_string()],
+                        },
                     ),
                 ],
                 terminator: Terminator::Force {
@@ -377,7 +466,10 @@ fn test_direct_mir_thunk_loop_fusion() {
                 arguments: vec![],
                 statements: vec![],
                 terminator: Terminator::Return {
-                    value: Some(Place { local: "res".to_string(), projections: vec![] }),
+                    value: Some(Place {
+                        local: "res".to_string(),
+                        projections: vec![],
+                    }),
                 },
             },
         ],
@@ -394,15 +486,24 @@ fn test_direct_mir_thunk_loop_fusion() {
     numlang::mir::supercompiler::distill::fuse_stream_pipeline(&mut prog, &mut stats);
 
     let fused_fn = &prog.functions[0];
-    assert!(fused_fn.is_distilled, "Fused function must be marked is_distilled");
+    assert!(
+        fused_fn.is_distilled,
+        "Fused function must be marked is_distilled"
+    );
     assert_eq!(stats.loops_collapsed, 1, "Must record collapsed loop");
 
     // Assert absence of Rvalue::Thunk and Terminator::Force in transformed function
     for b in &fused_fn.blocks {
         for stmt in &b.statements {
             let Statement::Assign(_, rval) = stmt;
-            assert!(!matches!(rval, Rvalue::Thunk { .. }), "Rvalue::Thunk must be eliminated");
+            assert!(
+                !matches!(rval, Rvalue::Thunk { .. }),
+                "Rvalue::Thunk must be eliminated"
+            );
         }
-        assert!(!matches!(b.terminator, Terminator::Force { .. }), "Terminator::Force must be replaced with Branch");
+        assert!(
+            !matches!(b.terminator, Terminator::Force { .. }),
+            "Terminator::Force must be replaced with Branch"
+        );
     }
 }

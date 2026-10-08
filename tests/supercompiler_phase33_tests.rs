@@ -28,10 +28,20 @@ fn main() -> i64 {
 "#;
 
     let program = get_mir(src);
-    let check_func = program.functions.iter().find(|f| f.name == "check").unwrap();
+    let check_func = program
+        .functions
+        .iter()
+        .find(|f| f.name == "check")
+        .unwrap();
 
     let tree = SupercompilerDriver::new(check_func)
-        .with_param_refinement("x", Interval { lo: Some(0), hi: Some(50) })
+        .with_param_refinement(
+            "x",
+            Interval {
+                lo: Some(0),
+                hi: Some(50),
+            },
+        )
         .run();
 
     // Assert that the root node's edges do NOT branch into 2 edges (edge count is 1, not 2)
@@ -47,11 +57,17 @@ fn main() -> i64 {
     for node in &tree.nodes {
         if let Some(ret) = node.return_term {
             if let SymTerm::ConstInt(val, _) = tree.interner.get(ret) {
-                assert_ne!(*val, 99, "Found return term 99 from supposedly pruned dead branch");
+                assert_ne!(
+                    *val, 99,
+                    "Found return term 99 from supposedly pruned dead branch"
+                );
             }
         }
     }
-    assert!(tree.stats.branches_pruned >= 1, "Expected at least 1 branch pruned");
+    assert!(
+        tree.stats.branches_pruned >= 1,
+        "Expected at least 1 branch pruned"
+    );
 }
 
 #[test]
@@ -70,17 +86,30 @@ fn main() -> i64 {
     let f_func = program.functions.iter().find(|f| f.name == "f").unwrap();
 
     let tree = SupercompilerDriver::new(f_func)
-        .with_param_refinement("x", Interval { lo: Some(5), hi: Some(20) })
+        .with_param_refinement(
+            "x",
+            Interval {
+                lo: Some(5),
+                hi: Some(20),
+            },
+        )
         .run();
 
     // Assert that the return term has interval [15, 30]
-    let ret_node = tree.nodes.iter().find(|n| n.return_term.is_some()).expect("Expected a return node");
+    let ret_node = tree
+        .nodes
+        .iter()
+        .find(|n| n.return_term.is_some())
+        .expect("Expected a return node");
     let ret_term = ret_node.return_term.unwrap();
     let ret_iv = ret_node.state.get_refinement(ret_term);
 
     assert_eq!(
         ret_iv,
-        Interval { lo: Some(15), hi: Some(30) },
+        Interval {
+            lo: Some(15),
+            hi: Some(30)
+        },
         "Expected return interval [15, 30], got {:?}",
         ret_iv
     );
@@ -107,7 +136,13 @@ fn main() -> i64 {
     let fill_func = program.functions.iter().find(|f| f.name == "fill").unwrap();
 
     let tree = SupercompilerDriver::new(fill_func)
-        .with_param_refinement("n", Interval { lo: Some(0), hi: Some(3) })
+        .with_param_refinement(
+            "n",
+            Interval {
+                lo: Some(0),
+                hi: Some(3),
+            },
+        )
         .run();
 
     assert!(
@@ -132,7 +167,11 @@ fn main() -> i64 { return outer(); }
 "#;
 
     let program = get_mir(src);
-    let outer_func = program.functions.iter().find(|f| f.name == "outer").unwrap();
+    let outer_func = program
+        .functions
+        .iter()
+        .find(|f| f.name == "outer")
+        .unwrap();
 
     let tree = SupercompilerDriver::new(outer_func)
         .with_program_functions(&program.functions)
@@ -144,7 +183,9 @@ fn main() -> i64 { return outer(); }
         for edge in &node.edges {
             match edge {
                 ProcessEdge::BranchTrue(..) | ProcessEdge::BranchFalse(..) => {
-                    panic!("Found branching edge in outer's process tree: dead branch was not pruned!");
+                    panic!(
+                        "Found branching edge in outer's process tree: dead branch was not pruned!"
+                    );
                 }
                 _ => {}
             }
@@ -152,7 +193,11 @@ fn main() -> i64 { return outer(); }
     }
 
     // Verify return term evaluates to 1000
-    let ret_node = tree.nodes.iter().find(|n| n.return_term.is_some()).expect("Expected return node");
+    let ret_node = tree
+        .nodes
+        .iter()
+        .find(|n| n.return_term.is_some())
+        .expect("Expected return node");
     let ret_term = ret_node.return_term.unwrap();
     if let SymTerm::ConstInt(val, _) = tree.interner.get(ret_term) {
         assert_eq!(*val, 1000, "Expected returned constant 1000, got {}", val);
@@ -170,17 +215,28 @@ fn main() -> i64 { return maybe_big(75); }
 "#;
 
     let program = get_mir(src);
-    let maybe_big_func = program.functions.iter().find(|f| f.name == "maybe_big").unwrap();
+    let maybe_big_func = program
+        .functions
+        .iter()
+        .find(|f| f.name == "maybe_big")
+        .unwrap();
 
     let tree = SupercompilerDriver::new(maybe_big_func)
         .with_param_refinement("x", Interval::exact(75))
         .run();
 
     // Assert the true branch is taken and the false branch is pruned
-    assert!(tree.stats.branches_pruned >= 1, "Expected false branch to be pruned");
+    assert!(
+        tree.stats.branches_pruned >= 1,
+        "Expected false branch to be pruned"
+    );
 
     // Verify return term is ConstInt(150) or a symbolic multiplication term, NOT 75
-    let ret_node = tree.nodes.iter().find(|n| n.return_term.is_some()).expect("Expected return node");
+    let ret_node = tree
+        .nodes
+        .iter()
+        .find(|n| n.return_term.is_some())
+        .expect("Expected return node");
     let ret_term = ret_node.return_term.unwrap();
 
     match tree.interner.get(ret_term) {

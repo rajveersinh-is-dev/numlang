@@ -65,7 +65,11 @@ fn main() -> i64 {
         .iter()
         .find(|e| e.name.starts_with("ClosureTag_"))
         .expect("Must have synthesized ClosureTag enum");
-    assert_eq!(closure_enum.variants.len(), 2, "Must contain 2 closure variants");
+    assert_eq!(
+        closure_enum.variants.len(),
+        2,
+        "Must contain 2 closure variants"
+    );
 
     // DEFUN-02: ClosureAlloc must be eliminated and replaced by EnumVariant
     let mut enum_variant_count = 0;
@@ -75,7 +79,9 @@ fn main() -> i64 {
             for stmt in &block.statements {
                 let Statement::Assign(_, rval) = stmt;
                 match rval {
-                    Rvalue::EnumVariant { enum_name, .. } if enum_name.starts_with("ClosureTag_") => {
+                    Rvalue::EnumVariant { enum_name, .. }
+                        if enum_name.starts_with("ClosureTag_") =>
+                    {
                         enum_variant_count += 1;
                     }
                     Rvalue::ClosureAlloc { .. } => {
@@ -86,17 +92,31 @@ fn main() -> i64 {
             }
         }
     }
-    assert_eq!(closure_alloc_count, 0, "All ClosureAlloc must be eliminated");
-    assert_eq!(enum_variant_count, 2, "Must have lowered to 2 EnumVariant instantiations");
+    assert_eq!(
+        closure_alloc_count, 0,
+        "All ClosureAlloc must be eliminated"
+    );
+    assert_eq!(
+        enum_variant_count, 2,
+        "Must have lowered to 2 EnumVariant instantiations"
+    );
 
     // DEFUN-03: IndirectCall in apply must be lowered into Terminator::Switch
-    let apply_fn = mir.functions.iter().find(|f| f.name == "apply").expect("apply fn found");
+    let apply_fn = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "apply")
+        .expect("apply fn found");
     let mut switch_found = false;
     let mut indirect_found = false;
     for block in &apply_fn.blocks {
         match &block.terminator {
             Terminator::Switch { targets, .. } => {
-                assert_eq!(targets.len(), 2, "Switch must dispatch to 2 closure variants");
+                assert_eq!(
+                    targets.len(),
+                    2,
+                    "Switch must dispatch to 2 closure variants"
+                );
                 switch_found = true;
             }
             Terminator::IndirectCall { .. } => {
@@ -105,8 +125,14 @@ fn main() -> i64 {
             _ => {}
         }
     }
-    assert!(switch_found, "Terminator::Switch must replace indirect call");
-    assert!(!indirect_found, "Terminator::IndirectCall must be eliminated");
+    assert!(
+        switch_found,
+        "Terminator::Switch must replace indirect call"
+    );
+    assert!(
+        !indirect_found,
+        "Terminator::IndirectCall must be eliminated"
+    );
 }
 
 #[test]
@@ -123,7 +149,11 @@ fn main() -> i64 {
 "#;
     let mir = get_mir(src);
 
-    let apply_fn = mir.functions.iter().find(|f| f.name == "apply").expect("apply fn found");
+    let apply_fn = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "apply")
+        .expect("apply fn found");
     let mut payload_projection_found = false;
     for block in &apply_fn.blocks {
         for stmt in &block.statements {

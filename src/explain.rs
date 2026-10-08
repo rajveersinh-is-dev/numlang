@@ -168,10 +168,17 @@ pub fn get_explanation(code: &str) -> Option<&'static ErrorExplanation> {
 
 pub fn print_explanation(code: &str) -> bool {
     if let Some(exp) = get_explanation(code) {
-        println!("================================================================================");
+        println!(
+            "================================================================================"
+        );
         println!("NumLang Error Code: {} ({})", exp.code, exp.title);
-        println!("================================================================================\n");
-        println!("Description:\n  {}\n", exp.description.replace("\n", "\n  "));
+        println!(
+            "================================================================================\n"
+        );
+        println!(
+            "Description:\n  {}\n",
+            exp.description.replace("\n", "\n  ")
+        );
         println!("Erroneous Example:");
         for line in exp.bad_example.lines() {
             println!("  {}", line);
@@ -180,10 +187,15 @@ pub fn print_explanation(code: &str) -> bool {
         for line in exp.good_example.lines() {
             println!("  {}", line);
         }
-        println!("\n================================================================================");
+        println!(
+            "\n================================================================================"
+        );
         true
     } else {
-        eprintln!("Error: unknown error code '{}'. Available error codes: E001 through E020.", code);
+        eprintln!(
+            "Error: unknown error code '{}'. Available error codes: E001 through E020.",
+            code
+        );
         false
     }
 }

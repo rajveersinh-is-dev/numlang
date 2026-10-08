@@ -70,11 +70,7 @@ fn test_cli_emit_ir() {
     let test_dir = std::env::temp_dir().join("numlang_test_cli");
     fs::create_dir_all(&test_dir).unwrap();
     let src_file = test_dir.join("test_ir.nl");
-    fs::write(
-        &src_file,
-        "fn dot(a: f64, b: f64) -> f64 { return a * b; }",
-    )
-    .unwrap();
+    fs::write(&src_file, "fn dot(a: f64, b: f64) -> f64 { return a * b; }").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
         .arg("--emit-ir")
@@ -197,4 +193,3 @@ fn test_compile_and_execute_loop_binary() {
 
     assert_eq!(run_output.status.code(), Some(55));
 }
-

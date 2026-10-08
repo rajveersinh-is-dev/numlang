@@ -30,11 +30,17 @@ fn test_classify_mul_const_power_of_two() {
     assert_eq!(classify_mul_const(32), Some(MulReduction::PowerOfTwo(5)));
     assert_eq!(classify_mul_const(64), Some(MulReduction::PowerOfTwo(6)));
     assert_eq!(classify_mul_const(1024), Some(MulReduction::PowerOfTwo(10)));
-    assert_eq!(classify_mul_const(1 << 20), Some(MulReduction::PowerOfTwo(20)));
+    assert_eq!(
+        classify_mul_const(1 << 20),
+        Some(MulReduction::PowerOfTwo(20))
+    );
 
     assert_eq!(classify_mul_const(-2), Some(MulReduction::NegPowerOfTwo(1)));
     assert_eq!(classify_mul_const(-8), Some(MulReduction::NegPowerOfTwo(3)));
-    assert_eq!(classify_mul_const(-64), Some(MulReduction::NegPowerOfTwo(6)));
+    assert_eq!(
+        classify_mul_const(-64),
+        Some(MulReduction::NegPowerOfTwo(6))
+    );
 }
 
 #[test]
@@ -44,18 +50,48 @@ fn test_classify_mul_const_near_powers_of_two() {
     assert_eq!(classify_mul_const(5), Some(MulReduction::SumOfPowers(2, 0))); // 4 + 1
     assert_eq!(classify_mul_const(6), Some(MulReduction::SumOfPowers(2, 1))); // 4 + 2
     assert_eq!(classify_mul_const(9), Some(MulReduction::SumOfPowers(3, 0))); // 8 + 1
-    assert_eq!(classify_mul_const(10), Some(MulReduction::SumOfPowers(3, 1))); // 8 + 2
-    assert_eq!(classify_mul_const(12), Some(MulReduction::SumOfPowers(3, 2))); // 8 + 4
-    assert_eq!(classify_mul_const(17), Some(MulReduction::SumOfPowers(4, 0))); // 16 + 1
-    assert_eq!(classify_mul_const(24), Some(MulReduction::SumOfPowers(4, 3))); // 16 + 8
-    assert_eq!(classify_mul_const(33), Some(MulReduction::SumOfPowers(5, 0))); // 32 + 1
+    assert_eq!(
+        classify_mul_const(10),
+        Some(MulReduction::SumOfPowers(3, 1))
+    ); // 8 + 2
+    assert_eq!(
+        classify_mul_const(12),
+        Some(MulReduction::SumOfPowers(3, 2))
+    ); // 8 + 4
+    assert_eq!(
+        classify_mul_const(17),
+        Some(MulReduction::SumOfPowers(4, 0))
+    ); // 16 + 1
+    assert_eq!(
+        classify_mul_const(24),
+        Some(MulReduction::SumOfPowers(4, 3))
+    ); // 16 + 8
+    assert_eq!(
+        classify_mul_const(33),
+        Some(MulReduction::SumOfPowers(5, 0))
+    ); // 32 + 1
 
     // 2^a - 2^b
-    assert_eq!(classify_mul_const(7), Some(MulReduction::DiffOfPowers(3, 0))); // 8 - 1
-    assert_eq!(classify_mul_const(14), Some(MulReduction::DiffOfPowers(4, 1))); // 16 - 2
-    assert_eq!(classify_mul_const(15), Some(MulReduction::DiffOfPowers(4, 0))); // 16 - 1
-    assert_eq!(classify_mul_const(31), Some(MulReduction::DiffOfPowers(5, 0))); // 32 - 1
-    assert_eq!(classify_mul_const(63), Some(MulReduction::DiffOfPowers(6, 0))); // 64 - 1
+    assert_eq!(
+        classify_mul_const(7),
+        Some(MulReduction::DiffOfPowers(3, 0))
+    ); // 8 - 1
+    assert_eq!(
+        classify_mul_const(14),
+        Some(MulReduction::DiffOfPowers(4, 1))
+    ); // 16 - 2
+    assert_eq!(
+        classify_mul_const(15),
+        Some(MulReduction::DiffOfPowers(4, 0))
+    ); // 16 - 1
+    assert_eq!(
+        classify_mul_const(31),
+        Some(MulReduction::DiffOfPowers(5, 0))
+    ); // 32 - 1
+    assert_eq!(
+        classify_mul_const(63),
+        Some(MulReduction::DiffOfPowers(6, 0))
+    ); // 64 - 1
 }
 
 #[test]

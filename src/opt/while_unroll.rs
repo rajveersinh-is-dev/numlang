@@ -11,10 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::span::Span;
+use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedLiteral, TypedProgram, TypedStmt};
 use crate::typecheck::types::{wrap_int_by_type, Type};
-use crate::typecheck::typed_ast::{
-    TypedBlock, TypedExpr, TypedLiteral, TypedProgram, TypedStmt,
-};
 
 pub fn optimize_program(program: &mut TypedProgram) {
     // Run up to 4 passes so that unrolling outer loops exposes newly constant inner loops
@@ -60,7 +58,11 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
             }
         }
         TypedExpr::Binary {
-            op, left, right, ty, ..
+            op,
+            left,
+            right,
+            ty,
+            ..
         } => {
             let operand_ty = left.ty();
             let is_unsigned = operand_ty.is_unsigned();
@@ -166,11 +168,13 @@ fn eval_const_expr(expr: &TypedExpr, known_consts: &HashMap<String, i64>) -> Opt
 fn expr_eq(a: &TypedExpr, b: &TypedExpr) -> bool {
     match (a, b) {
         (TypedExpr::Ident { name: n1, .. }, TypedExpr::Ident { name: n2, .. }) => n1 == n2,
-        (TypedExpr::Literal { lit: l1, .. }, TypedExpr::Literal { lit: l2, .. }) => match (l1, l2) {
-            (TypedLiteral::Int(v1, _), TypedLiteral::Int(v2, _)) => v1 == v2,
-            (TypedLiteral::Bool(b1), TypedLiteral::Bool(b2)) => b1 == b2,
-            _ => false,
-        },
+        (TypedExpr::Literal { lit: l1, .. }, TypedExpr::Literal { lit: l2, .. }) => {
+            match (l1, l2) {
+                (TypedLiteral::Int(v1, _), TypedLiteral::Int(v2, _)) => v1 == v2,
+                (TypedLiteral::Bool(b1), TypedLiteral::Bool(b2)) => b1 == b2,
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -178,7 +182,10 @@ fn expr_eq(a: &TypedExpr, b: &TypedExpr) -> bool {
 fn format_expr(expr: &TypedExpr) -> String {
     match expr {
         TypedExpr::Ident { name, .. } => name.clone(),
-        TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => v.to_string(),
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(v, _),
+            ..
+        } => v.to_string(),
         _ => String::new(),
     }
 }
@@ -189,7 +196,13 @@ fn fold_expr(
     known_mod: &HashMap<String, String>,
     known_upper_bounds: &HashMap<String, i64>,
 ) -> TypedExpr {
-    let is_div_or_mod = matches!(expr, TypedExpr::Binary { op: BinaryOp::Div | BinaryOp::Mod, .. });
+    let is_div_or_mod = matches!(
+        expr,
+        TypedExpr::Binary {
+            op: BinaryOp::Div | BinaryOp::Mod,
+            ..
+        }
+    );
     if !is_div_or_mod {
         if let Some(c) = eval_const_expr(expr, known_consts) {
             let ty = expr.ty();
@@ -211,7 +224,12 @@ fn fold_expr(
     }
 
     match expr {
-        TypedExpr::Unary { op, expr: inner, ty, span } => {
+        TypedExpr::Unary {
+            op,
+            expr: inner,
+            ty,
+            span,
+        } => {
             let folded_inner = fold_expr(inner, known_consts, known_mod, known_upper_bounds);
             TypedExpr::Unary {
                 op: *op,
@@ -220,7 +238,13 @@ fn fold_expr(
                 span: *span,
             }
         }
-        TypedExpr::Binary { op, left, right, ty, span } => {
+        TypedExpr::Binary {
+            op,
+            left,
+            right,
+            ty,
+            span,
+        } => {
             let folded_l = fold_expr(left, known_consts, known_mod, known_upper_bounds);
             let folded_r = fold_expr(right, known_consts, known_mod, known_upper_bounds);
 
@@ -234,10 +258,18 @@ fn fold_expr(
                         return folded_l;
                     }
                     if let Some(0) = eval_const_expr(&folded_l, known_consts) {
-                        return TypedExpr::Literal { lit: TypedLiteral::Int(0, ty.clone()), ty: ty.clone(), span: *span };
+                        return TypedExpr::Literal {
+                            lit: TypedLiteral::Int(0, ty.clone()),
+                            ty: ty.clone(),
+                            span: *span,
+                        };
                     }
                     if let Some(0) = eval_const_expr(&folded_r, known_consts) {
-                        return TypedExpr::Literal { lit: TypedLiteral::Int(0, ty.clone()), ty: ty.clone(), span: *span };
+                        return TypedExpr::Literal {
+                            lit: TypedLiteral::Int(0, ty.clone()),
+                            ty: ty.clone(),
+                            span: *span,
+                        };
                     }
                 }
                 BinaryOp::Add => {
@@ -255,7 +287,12 @@ fn fold_expr(
                 }
                 BinaryOp::Mod => {
                     // (x % m) % m  =>  x % m
-                    if let TypedExpr::Binary { op: BinaryOp::Mod, right: inner_r, .. } = &folded_l {
+                    if let TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        right: inner_r,
+                        ..
+                    } = &folded_l
+                    {
                         if expr_eq(inner_r, &folded_r) {
                             return folded_l;
                         }
@@ -289,8 +326,16 @@ fn fold_expr(
                 span: *span,
             }
         }
-        TypedExpr::Call { callee, args, ty, span } => {
-            let folded_args = args.iter().map(|a| fold_expr(a, known_consts, known_mod, known_upper_bounds)).collect();
+        TypedExpr::Call {
+            callee,
+            args,
+            ty,
+            span,
+        } => {
+            let folded_args = args
+                .iter()
+                .map(|a| fold_expr(a, known_consts, known_mod, known_upper_bounds))
+                .collect();
             TypedExpr::Call {
                 callee: callee.clone(),
                 args: folded_args,
@@ -298,7 +343,13 @@ fn fold_expr(
                 span: *span,
             }
         }
-        TypedExpr::Index { target, index, is_safe, ty, span } => {
+        TypedExpr::Index {
+            target,
+            index,
+            is_safe,
+            ty,
+            span,
+        } => {
             let folded_target = fold_expr(target, known_consts, known_mod, known_upper_bounds);
             let folded_idx = fold_expr(index, known_consts, known_mod, known_upper_bounds);
             TypedExpr::Index {
@@ -364,7 +415,9 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
         TypedExpr::FieldAccess { target, .. } => {
             collect_read_vars_expr(target, reads);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_read_vars_expr(scrutinee, reads);
             for arm in arms {
                 collect_read_vars_expr(&arm.body, reads);
@@ -382,10 +435,17 @@ fn collect_read_vars_expr(expr: &TypedExpr, reads: &mut HashSet<String>) {
 fn collect_read_vars(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
     for s in stmts {
         match s {
-            TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } | TypedStmt::Expr(value) => {
+            TypedStmt::Let { value, .. }
+            | TypedStmt::Assign { value, .. }
+            | TypedStmt::Expr(value) => {
                 collect_read_vars_expr(value, reads);
             }
-            TypedStmt::IndexAssign { target, index, value, .. } => {
+            TypedStmt::IndexAssign {
+                target,
+                index,
+                value,
+                ..
+            } => {
                 reads.insert(target.clone());
                 collect_read_vars_expr(index, reads);
                 collect_read_vars_expr(value, reads);
@@ -397,14 +457,21 @@ fn collect_read_vars(stmts: &[TypedStmt], reads: &mut HashSet<String>) {
             TypedStmt::Return(Some(expr), _) => {
                 collect_read_vars_expr(expr, reads);
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 collect_read_vars_expr(condition, reads);
                 collect_read_vars(&then_branch.stmts, reads);
                 if let Some(eb) = else_branch {
                     collect_read_vars(&eb.stmts, reads);
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 collect_read_vars_expr(condition, reads);
                 collect_read_vars(&body.stmts, reads);
             }
@@ -422,7 +489,11 @@ fn has_break_or_return(block: &TypedBlock) -> bool {
     for s in &block.stmts {
         match s {
             TypedStmt::Break(_) | TypedStmt::Return(..) => return true,
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 if has_break_or_return(then_branch) {
                     return true;
                 }
@@ -432,22 +503,24 @@ fn has_break_or_return(block: &TypedBlock) -> bool {
                     }
                 }
             }
-            TypedStmt::While { body, .. }
-                if has_break_or_return(body) => {
-                    return true;
-                }
+            TypedStmt::While { body, .. } if has_break_or_return(body) => {
+                return true;
+            }
             _ => {}
         }
     }
     false
 }
 
-
 fn has_nested_while(block: &TypedBlock) -> bool {
     for s in &block.stmts {
         match s {
             TypedStmt::While { .. } => return true,
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 if has_nested_while(then_branch) {
                     return true;
                 }
@@ -468,7 +541,11 @@ fn count_var_assignments(block: &TypedBlock, var_name: &str) -> usize {
     for s in &block.stmts {
         match s {
             TypedStmt::Assign { name, .. } if name == var_name => count += 1,
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 count += count_var_assignments(then_branch, var_name);
                 if let Some(eb) = else_branch {
                     count += count_var_assignments(eb, var_name);
@@ -495,7 +572,10 @@ fn find_step_op(block: &TypedBlock, var_name: &str) -> Option<StepOp> {
     for s in &block.stmts {
         if let TypedStmt::Assign { name, value, .. } = s {
             if name == var_name {
-                if let TypedExpr::Binary { op, left, right, .. } = value {
+                if let TypedExpr::Binary {
+                    op, left, right, ..
+                } = value
+                {
                     let is_var_l = match &**left {
                         TypedExpr::Ident { name: n, .. } => n == var_name,
                         _ => false,
@@ -505,38 +585,54 @@ fn find_step_op(block: &TypedBlock, var_name: &str) -> Option<StepOp> {
                         _ => false,
                     };
                     let const_r = match &**right {
-                        TypedExpr::Literal { lit: TypedLiteral::Int(c, _), .. } => Some(*c),
+                        TypedExpr::Literal {
+                            lit: TypedLiteral::Int(c, _),
+                            ..
+                        } => Some(*c),
                         _ => None,
                     };
                     let const_l = match &**left {
-                        TypedExpr::Literal { lit: TypedLiteral::Int(c, _), .. } => Some(*c),
+                        TypedExpr::Literal {
+                            lit: TypedLiteral::Int(c, _),
+                            ..
+                        } => Some(*c),
                         _ => None,
                     };
 
                     match op {
                         BinaryOp::Div if is_var_l => {
                             if let Some(c) = const_r {
-                                if c >= 2 { return Some(StepOp::Div(c)); }
+                                if c >= 2 {
+                                    return Some(StepOp::Div(c));
+                                }
                             }
                         }
                         BinaryOp::Shr if is_var_l => {
                             if let Some(c) = const_r {
-                                if c >= 1 { return Some(StepOp::Shr(c)); }
+                                if c >= 1 {
+                                    return Some(StepOp::Shr(c));
+                                }
                             }
                         }
                         BinaryOp::Sub if is_var_l => {
                             if let Some(c) = const_r {
-                                if c >= 1 { return Some(StepOp::Sub(c)); }
+                                if c >= 1 {
+                                    return Some(StepOp::Sub(c));
+                                }
                             }
                         }
                         BinaryOp::Add => {
                             if is_var_l {
                                 if let Some(c) = const_r {
-                                    if c >= 1 { return Some(StepOp::Add(c)); }
+                                    if c >= 1 {
+                                        return Some(StepOp::Add(c));
+                                    }
                                 }
                             } else if is_var_r {
                                 if let Some(c) = const_l {
-                                    if c >= 1 { return Some(StepOp::Add(c)); }
+                                    if c >= 1 {
+                                        return Some(StepOp::Add(c));
+                                    }
                                 }
                             }
                         }
@@ -581,11 +677,9 @@ struct SpecializeCtx<'a> {
     accum_var: Option<&'a str>,
 }
 
-fn specialize_stmts(
-    stmts: &[TypedStmt],
-    ctx: &mut SpecializeCtx<'_>,
-) -> Vec<TypedStmt> {
-    ctx.iter_consts.insert(ctx.var_name.to_string(), ctx.curr_val);
+fn specialize_stmts(stmts: &[TypedStmt], ctx: &mut SpecializeCtx<'_>) -> Vec<TypedStmt> {
+    ctx.iter_consts
+        .insert(ctx.var_name.to_string(), ctx.curr_val);
 
     let mut result = Vec::new();
     for (s_idx, stmt) in stmts.iter().enumerate() {
@@ -616,7 +710,8 @@ fn specialize_stmts(
                         ctx.iter_bounds.remove(m);
                     }
 
-                    let folded_cond = fold_expr(condition, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
+                    let folded_cond =
+                        fold_expr(condition, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
                     let mut then_consts = ctx.iter_consts.clone();
                     let mut then_mod = ctx.iter_mod.clone();
                     let mut then_bounds = ctx.iter_bounds.clone();
@@ -683,7 +778,12 @@ fn specialize_stmts(
                     }
                 }
                 let val_to_fold = if !ctx.is_last_iter && ctx.accum_var == Some(name.as_str()) {
-                    if let TypedExpr::Binary { op: BinaryOp::Mod, left, .. } = value {
+                    if let TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        left,
+                        ..
+                    } = value
+                    {
                         left.as_ref()
                     } else {
                         value
@@ -691,14 +791,19 @@ fn specialize_stmts(
                 } else {
                     value
                 };
-                let folded_val = fold_expr(val_to_fold, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
+                let folded_val =
+                    fold_expr(val_to_fold, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
                 if let Some(c) = eval_const_expr(&folded_val, ctx.iter_consts) {
                     ctx.iter_consts.insert(name.clone(), c);
                 } else {
                     ctx.iter_consts.remove(name);
                 }
                 match &folded_val {
-                    TypedExpr::Binary { op: BinaryOp::Mod, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        right,
+                        ..
+                    } => {
                         let k = format_expr(right);
                         if !k.is_empty() {
                             ctx.iter_mod.insert(name.clone(), k);
@@ -729,7 +834,13 @@ fn specialize_stmts(
                     span: *span,
                 });
             }
-            TypedStmt::Let { name, is_mutable, ty, value, span } => {
+            TypedStmt::Let {
+                name,
+                is_mutable,
+                ty,
+                value,
+                span,
+            } => {
                 let folded_val = fold_expr(value, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
                 if let Some(c) = eval_const_expr(&folded_val, ctx.iter_consts) {
                     ctx.iter_consts.insert(name.clone(), c);
@@ -737,7 +848,11 @@ fn specialize_stmts(
                     ctx.iter_consts.remove(name);
                 }
                 match &folded_val {
-                    TypedExpr::Binary { op: BinaryOp::Mod, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        right,
+                        ..
+                    } => {
                         let k = format_expr(right);
                         if !k.is_empty() {
                             ctx.iter_mod.insert(name.clone(), k);
@@ -770,7 +885,13 @@ fn specialize_stmts(
                     span: *span,
                 });
             }
-            TypedStmt::IndexAssign { target, index, value, is_safe, span } => {
+            TypedStmt::IndexAssign {
+                target,
+                index,
+                value,
+                is_safe,
+                span,
+            } => {
                 let folded_idx = fold_expr(index, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
                 let folded_val = fold_expr(value, ctx.iter_consts, ctx.iter_mod, ctx.iter_bounds);
                 result.push(TypedStmt::IndexAssign {
@@ -802,7 +923,11 @@ fn collect_mutated_vars(block: &TypedBlock, mutated: &mut HashSet<String>) {
             TypedStmt::IndexAssign { target, .. } => {
                 mutated.insert(target.clone());
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 collect_mutated_vars(then_branch, mutated);
                 if let Some(eb) = else_branch {
                     collect_mutated_vars(eb, mutated);
@@ -850,8 +975,10 @@ fn find_accum_mod_var(
                     ..
                 } = &**left
                 {
-                    let is_acc_l = matches!(&**add_l, TypedExpr::Ident { name: n, .. } if n == name);
-                    let is_acc_r = matches!(&**add_r, TypedExpr::Ident { name: n, .. } if n == name);
+                    let is_acc_l =
+                        matches!(&**add_l, TypedExpr::Ident { name: n, .. } if n == name);
+                    let is_acc_r =
+                        matches!(&**add_r, TypedExpr::Ident { name: n, .. } if n == name);
                     if is_acc_l || is_acc_r {
                         let term = if is_acc_l { add_r } else { add_l };
                         let mut term_reads = HashSet::new();
@@ -1008,7 +1135,13 @@ fn optimize_block(
         collect_read_vars(&block.stmts[idx + 1..], &mut live_after);
 
         match stmt {
-            TypedStmt::Let { name, is_mutable, ty, value, span } => {
+            TypedStmt::Let {
+                name,
+                is_mutable,
+                ty,
+                value,
+                span,
+            } => {
                 let folded_val = fold_expr(value, known_consts, known_mod, known_bounds);
                 if let Some(c) = eval_const_expr(&folded_val, known_consts) {
                     known_consts.insert(name.clone(), c);
@@ -1016,7 +1149,11 @@ fn optimize_block(
                     known_consts.remove(name);
                 }
                 match &folded_val {
-                    TypedExpr::Binary { op: BinaryOp::Mod, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        right,
+                        ..
+                    } => {
                         let k = format_expr(right);
                         if !k.is_empty() {
                             known_mod.insert(name.clone(), k);
@@ -1057,7 +1194,11 @@ fn optimize_block(
                     known_consts.remove(name);
                 }
                 match &folded_val {
-                    TypedExpr::Binary { op: BinaryOp::Mod, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Mod,
+                        right,
+                        ..
+                    } => {
                         let k = format_expr(right);
                         if !k.is_empty() {
                             known_mod.insert(name.clone(), k);
@@ -1093,11 +1234,25 @@ fn optimize_block(
                 new_stmts.push(TypedStmt::Expr(folded_e));
             }
             TypedStmt::Return(expr, span) => {
-                let folded_e = expr.as_ref().map(|e| fold_expr(e, known_consts, known_mod, known_bounds));
+                let folded_e = expr
+                    .as_ref()
+                    .map(|e| fold_expr(e, known_consts, known_mod, known_bounds));
                 new_stmts.push(TypedStmt::Return(folded_e, *span));
             }
-            TypedStmt::While { condition, body, span } => {
-                if let Some(unrolled) = try_unroll_while(condition, body, known_consts, known_mod, known_bounds, &live_after, *span) {
+            TypedStmt::While {
+                condition,
+                body,
+                span,
+            } => {
+                if let Some(unrolled) = try_unroll_while(
+                    condition,
+                    body,
+                    known_consts,
+                    known_mod,
+                    known_bounds,
+                    &live_after,
+                    *span,
+                ) {
                     let mut mutated_vars = HashSet::new();
                     collect_mutated_vars(body, &mut mutated_vars);
                     for m in &mutated_vars {
@@ -1132,14 +1287,24 @@ fn optimize_block(
                         .collect();
                     let mut inner_bounds = known_bounds.clone();
                     match condition {
-                        TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
+                        TypedExpr::Binary {
+                            op: BinaryOp::Le,
+                            left,
+                            right,
+                            ..
+                        } => {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if let Some(limit) = eval_const_expr(right, known_consts) {
                                     inner_bounds.insert(name.clone(), limit);
                                 }
                             }
                         }
-                        TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                        TypedExpr::Binary {
+                            op: BinaryOp::Lt,
+                            left,
+                            right,
+                            ..
+                        } => {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if let Some(limit) = eval_const_expr(right, known_consts) {
                                     inner_bounds.insert(name.clone(), limit - 1);
@@ -1151,7 +1316,13 @@ fn optimize_block(
                     let mut body_outer_live = live_after.clone();
                     collect_read_vars_expr(condition, &mut body_outer_live);
                     collect_read_vars(&body_clone.stmts, &mut body_outer_live);
-                    if optimize_block(&mut body_clone, &mut inner_env, &mut inner_mod, &mut inner_bounds, &body_outer_live) {
+                    if optimize_block(
+                        &mut body_clone,
+                        &mut inner_env,
+                        &mut inner_mod,
+                        &mut inner_bounds,
+                        &body_outer_live,
+                    ) {
                         changed = true;
                     }
                     for m in mutated_in_body {
@@ -1190,7 +1361,13 @@ fn optimize_block(
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 let mut then_bounds = known_bounds.clone();
-                if optimize_block(&mut then_clone, &mut then_env, &mut then_mod, &mut then_bounds, &live_after) {
+                if optimize_block(
+                    &mut then_clone,
+                    &mut then_env,
+                    &mut then_mod,
+                    &mut then_bounds,
+                    &live_after,
+                ) {
                     changed = true;
                 }
 
@@ -1207,7 +1384,13 @@ fn optimize_block(
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
                     let mut else_bounds = known_bounds.clone();
-                    if optimize_block(&mut ec, &mut else_env, &mut else_mod, &mut else_bounds, &live_after) {
+                    if optimize_block(
+                        &mut ec,
+                        &mut else_env,
+                        &mut else_mod,
+                        &mut else_bounds,
+                        &live_after,
+                    ) {
                         changed = true;
                     }
                     ec
