@@ -731,14 +731,6 @@ fn is_append_like(func: &MirFunction) -> bool {
         || func.params[0].1 != func.params[1].1
         || func.return_ty != func.params[0].1
     {
-        println!(
-            "is_append_like({}): signature mismatch. params={}, p0={:?}, p1={:?}, ret={:?}",
-            func.name,
-            func.params.len(),
-            func.params.get(0),
-            func.params.get(1),
-            func.return_ty
-        );
         return false;
     }
     let has_switch = func
@@ -754,10 +746,6 @@ fn is_append_like(func: &MirFunction) -> bool {
             }
         })
     });
-    println!(
-        "is_append_like({}): has_switch={}, has_rec={}",
-        func.name, has_switch, has_rec
-    );
     has_switch && has_rec
 }
 

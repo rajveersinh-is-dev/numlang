@@ -1779,7 +1779,7 @@ impl<'a> PathExtractor<'a> {
                                 return subst_bv(&sub_paths[0].return_val, &param_map).simplify();
                             } else {
                                 let mut res = subst_bv(
-                                    &sub_paths
+                                    sub_paths
                                         .last()
                                         .map(|p| &p.return_val)
                                         .unwrap_or(&BvExpr::Const(0, 64)),

@@ -9,7 +9,7 @@ fn check_dir(dir: &Path, bad_strings: &[&str]) -> Vec<String> {
             let path = entry.path();
             if path.is_dir() {
                 violations.extend(check_dir(&path, bad_strings));
-            } else if path.extension().map_or(false, |ext| ext == "rs") {
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let content = fs::read_to_string(&path).unwrap();
                 for (line_no, line) in content.lines().enumerate() {
                     for bad in bad_strings {
