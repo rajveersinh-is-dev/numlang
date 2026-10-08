@@ -428,12 +428,10 @@ fn emit_term_eval(
         SymTerm::ConstInt(..)
         | SymTerm::ConstFloat(..)
         | SymTerm::ConstBool(..)
-        | SymTerm::ConstStr(..) => {
-            return crate::mir::Place {
-                local: "_err".into(),
-                projections: vec![],
-            }
-        }
+        | SymTerm::ConstStr(..) => crate::mir::Place {
+            local: "_err".into(),
+            projections: vec![],
+        },
         SymTerm::Var(p, _) => p.clone(),
         SymTerm::Binary(op, l, r, ty) => {
             let l_place = emit_term_eval(*l, interner, stmts, locals, next_temp_id, phi_remap);
