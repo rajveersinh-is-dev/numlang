@@ -79,7 +79,9 @@ pub enum WindowsLinker {
 pub fn find_windows_linker() -> Option<WindowsLinker> {
     if let Some(lld) = find_rust_lld() {
         Some(WindowsLinker::RustLld(lld))
-    } else { find_msvc_link().map(WindowsLinker::MsvcLink) }
+    } else {
+        find_msvc_link().map(WindowsLinker::MsvcLink)
+    }
 }
 
 pub fn find_windows_sdk_lib_dirs() -> Vec<PathBuf> {
@@ -206,11 +208,9 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     cmd.arg("kernel32.lib");
     cmd.arg("ucrt.lib");
 
-    let output = cmd
-        .output()
-        .map_err(|e| LinkerError::LinkFailed {
-            message: e.to_string(),
-        })?;
+    let output = cmd.output().map_err(|e| LinkerError::LinkFailed {
+        message: e.to_string(),
+    })?;
 
     if let Some(bp) = bench_obj_path {
         let _ = std::fs::remove_file(bp);
@@ -253,11 +253,9 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
         .arg("-lm")
         .arg("-no-pie");
 
-    let output = cmd
-        .output()
-        .map_err(|e| LinkerError::LinkFailed {
-            message: e.to_string(),
-        })?;
+    let output = cmd.output().map_err(|e| LinkerError::LinkFailed {
+        message: e.to_string(),
+    })?;
 
     if let Some(ref bp) = bench_c_path {
         let _ = std::fs::remove_file(bp);

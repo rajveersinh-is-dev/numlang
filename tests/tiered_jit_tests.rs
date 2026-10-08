@@ -20,7 +20,9 @@ use numlang::ast::BinaryOp;
 use numlang::codegen::cranelift::compile_mir_to_obj;
 use numlang::codegen::link_executable;
 use numlang::compiler::{compile_tier0, compile_tier1};
-use numlang::mir::lower::{lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+use numlang::mir::lower::{
+    lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement,
+};
 use numlang::mir::supercompiler::outliner::{
     compute_sequence_similarity, outline_program, BlockHasher, NormalizedOp, NormalizedStatement,
     OutlinerConfig,
@@ -63,19 +65,37 @@ fn test_normalized_block_content_addressed_hashing() {
     // Block 1: uses local names x, y, z, _t1, _t2
     let stmts1 = vec![
         Statement::Assign(
-            Place { local: "_t1".to_string(), projections: vec![] },
+            Place {
+                local: "_t1".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "x".to_string(), projections: vec![] },
-                Place { local: "y".to_string(), projections: vec![] },
+                Place {
+                    local: "x".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "y".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "_t2".to_string(), projections: vec![] },
+            Place {
+                local: "_t2".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Mul,
-                Place { local: "_t1".to_string(), projections: vec![] },
-                Place { local: "z".to_string(), projections: vec![] },
+                Place {
+                    local: "_t1".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "z".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
     ];
@@ -83,19 +103,37 @@ fn test_normalized_block_content_addressed_hashing() {
     // Block 2: identical operations and dependencies, but completely different register names
     let stmts2 = vec![
         Statement::Assign(
-            Place { local: "temp_alpha".to_string(), projections: vec![] },
+            Place {
+                local: "temp_alpha".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "reg_a".to_string(), projections: vec![] },
-                Place { local: "reg_b".to_string(), projections: vec![] },
+                Place {
+                    local: "reg_a".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "reg_b".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "temp_beta".to_string(), projections: vec![] },
+            Place {
+                local: "temp_beta".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Mul,
-                Place { local: "temp_alpha".to_string(), projections: vec![] },
-                Place { local: "reg_c".to_string(), projections: vec![] },
+                Place {
+                    local: "temp_alpha".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "reg_c".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
     ];
@@ -103,16 +141,25 @@ fn test_normalized_block_content_addressed_hashing() {
     let (norm1, _) = BlockHasher::normalize_statements(&stmts1);
     let (norm2, _) = BlockHasher::normalize_statements(&stmts2);
 
-    assert_eq!(norm1, norm2, "Normalized statement sequences must be identical modulo register names");
+    assert_eq!(
+        norm1, norm2,
+        "Normalized statement sequences must be identical modulo register names"
+    );
 
     let hash1 = BlockHasher::hash_normalized_sequence(&norm1);
     let hash2 = BlockHasher::hash_normalized_sequence(&norm2);
 
-    assert_eq!(hash1, hash2, "Content-addressed SHA-256 hashes must match exactly");
+    assert_eq!(
+        hash1, hash2,
+        "Content-addressed SHA-256 hashes must match exactly"
+    );
     assert_eq!(hash1.len(), 64, "Hash must be 64-character hex SHA-256");
 
     let similarity = compute_sequence_similarity(&norm1, &norm2);
-    assert!((similarity - 1.0).abs() < 1e-6, "Self-similarity must be exactly 1.0 (100%)");
+    assert!(
+        (similarity - 1.0).abs() < 1e-6,
+        "Self-similarity must be exactly 1.0 (100%)"
+    );
 }
 
 #[test]
@@ -166,70 +213,142 @@ fn test_sequence_similarity_metric_90_percent() {
 fn test_block_outlining_extraction_and_call_replacement() {
     let fn1_stmts = vec![
         Statement::Assign(
-            Place { local: "_t1".to_string(), projections: vec![] },
+            Place {
+                local: "_t1".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "p0".to_string(), projections: vec![] },
-                Place { local: "p1".to_string(), projections: vec![] },
+                Place {
+                    local: "p0".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "p1".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "_t2".to_string(), projections: vec![] },
+            Place {
+                local: "_t2".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Mul,
-                Place { local: "_t1".to_string(), projections: vec![] },
-                Place { local: "p2".to_string(), projections: vec![] },
+                Place {
+                    local: "_t1".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "p2".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "_t3".to_string(), projections: vec![] },
+            Place {
+                local: "_t3".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Sub,
-                Place { local: "_t2".to_string(), projections: vec![] },
-                Place { local: "p1".to_string(), projections: vec![] },
+                Place {
+                    local: "_t2".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "p1".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "res1".to_string(), projections: vec![] },
+            Place {
+                local: "res1".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "_t3".to_string(), projections: vec![] },
-                Place { local: "p0".to_string(), projections: vec![] },
+                Place {
+                    local: "_t3".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "p0".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
     ];
 
     let fn2_stmts = vec![
         Statement::Assign(
-            Place { local: "s_t1".to_string(), projections: vec![] },
+            Place {
+                local: "s_t1".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "q0".to_string(), projections: vec![] },
-                Place { local: "q1".to_string(), projections: vec![] },
+                Place {
+                    local: "q0".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "q1".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "s_t2".to_string(), projections: vec![] },
+            Place {
+                local: "s_t2".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Mul,
-                Place { local: "s_t1".to_string(), projections: vec![] },
-                Place { local: "q2".to_string(), projections: vec![] },
+                Place {
+                    local: "s_t1".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "q2".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "s_t3".to_string(), projections: vec![] },
+            Place {
+                local: "s_t3".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Sub,
-                Place { local: "s_t2".to_string(), projections: vec![] },
-                Place { local: "q1".to_string(), projections: vec![] },
+                Place {
+                    local: "s_t2".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "q1".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
         Statement::Assign(
-            Place { local: "res2".to_string(), projections: vec![] },
+            Place {
+                local: "res2".to_string(),
+                projections: vec![],
+            },
             Rvalue::BinaryOp(
                 BinaryOp::Add,
-                Place { local: "s_t3".to_string(), projections: vec![] },
-                Place { local: "q0".to_string(), projections: vec![] },
+                Place {
+                    local: "s_t3".to_string(),
+                    projections: vec![],
+                },
+                Place {
+                    local: "q0".to_string(),
+                    projections: vec![],
+                },
             ),
         ),
     ];
@@ -243,20 +362,51 @@ fn test_block_outlining_extraction_and_call_replacement() {
         ],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "p0".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "p1".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "p2".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_t1".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_t2".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "_t3".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "res1".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "p0".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "p1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "p2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_t1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_t2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "_t3".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "res1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![MirBasicBlock {
             id: BasicBlockId(0),
             arguments: vec![],
             statements: fn1_stmts,
             terminator: Terminator::Return {
-                value: Some(Place { local: "res1".to_string(), projections: vec![] }),
+                value: Some(Place {
+                    local: "res1".to_string(),
+                    projections: vec![],
+                }),
             },
         }],
         is_distilled: false,
@@ -271,20 +421,51 @@ fn test_block_outlining_extraction_and_call_replacement() {
         ],
         return_ty: Type::I64,
         locals: vec![
-            MirLocalDecl { name: "q0".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "q1".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "q2".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "s_t1".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "s_t2".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "s_t3".to_string(), ty: Type::I64, mutable: false },
-            MirLocalDecl { name: "res2".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl {
+                name: "q0".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "q1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "q2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "s_t1".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "s_t2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "s_t3".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "res2".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
         ],
         blocks: vec![MirBasicBlock {
             id: BasicBlockId(0),
             arguments: vec![],
             statements: fn2_stmts,
             terminator: Terminator::Return {
-                value: Some(Place { local: "res2".to_string(), projections: vec![] }),
+                value: Some(Place {
+                    local: "res2".to_string(),
+                    projections: vec![],
+                }),
             },
         }],
         is_distilled: false,
@@ -304,9 +485,18 @@ fn test_block_outlining_extraction_and_call_replacement() {
 
     let stats = outline_program(&mut mir, &cfg);
 
-    assert_eq!(stats.outlined_functions_created, 1, "Exactly 1 shared outlined function created");
-    assert_eq!(stats.call_sites_replaced, 2, "Both occurrence sites must be replaced with calls");
-    assert_eq!(stats.statements_saved, 6, "Saved 3 statements per site (4 -> 1)");
+    assert_eq!(
+        stats.outlined_functions_created, 1,
+        "Exactly 1 shared outlined function created"
+    );
+    assert_eq!(
+        stats.call_sites_replaced, 2,
+        "Both occurrence sites must be replaced with calls"
+    );
+    assert_eq!(
+        stats.statements_saved, 6,
+        "Saved 3 statements per site (4 -> 1)"
+    );
 
     // Verify outlined function exists and starts with __nl_outlined_
     let outlined = mir
@@ -315,13 +505,29 @@ fn test_block_outlining_extraction_and_call_replacement() {
         .find(|f| f.name.starts_with("__nl_outlined_"))
         .expect("Outlined subroutine must exist in program.functions");
 
-    assert_eq!(outlined.params.len(), 3, "Outlined subroutine takes 3 live-in parameters");
-    assert_eq!(outlined.return_ty, Type::I64, "Outlined subroutine returns i64");
+    assert_eq!(
+        outlined.params.len(),
+        3,
+        "Outlined subroutine takes 3 live-in parameters"
+    );
+    assert_eq!(
+        outlined.return_ty,
+        Type::I64,
+        "Outlined subroutine returns i64"
+    );
 
     // Verify caller functions now contain a single call to the outlined function
     for func_name in &["compute_kernel_alpha", "compute_kernel_beta"] {
-        let f = mir.functions.iter().find(|func| &func.name == func_name).unwrap();
-        assert_eq!(f.blocks[0].statements.len(), 1, "Original 4 statements replaced by 1 call");
+        let f = mir
+            .functions
+            .iter()
+            .find(|func| &func.name == func_name)
+            .unwrap();
+        assert_eq!(
+            f.blocks[0].statements.len(),
+            1,
+            "Original 4 statements replaced by 1 call"
+        );
         match &f.blocks[0].statements[0] {
             Statement::Assign(_, Rvalue::Call(callee, args)) => {
                 assert_eq!(callee, &outlined.name);
@@ -330,10 +536,16 @@ fn test_block_outlining_extraction_and_call_replacement() {
             other => panic!("Expected Call statement, got {:?}", other),
         }
         // Verify MIR integrity
-        assert!(validate_mir_function(f).is_ok(), "Caller function must be valid MIR");
+        assert!(
+            validate_mir_function(f).is_ok(),
+            "Caller function must be valid MIR"
+        );
     }
 
-    assert!(validate_mir_function(outlined).is_ok(), "Outlined subroutine must be valid MIR");
+    assert!(
+        validate_mir_function(outlined).is_ok(),
+        "Outlined subroutine must be valid MIR"
+    );
 }
 
 #[test]
@@ -360,11 +572,21 @@ fn test_tier0_cold_start_latency_10_functions() {
     let obj_bytes = compile_mir_to_obj(&mir).expect("Tier 0 native codegen failed");
     let elapsed = start.elapsed();
 
-    assert!(!obj_bytes.is_empty(), "Native object bytes must not be empty");
-    assert_eq!(mir.functions.len(), 11, "Must contain all 10 kernels + main");
+    assert!(
+        !obj_bytes.is_empty(),
+        "Native object bytes must not be empty"
+    );
+    assert_eq!(
+        mir.functions.len(),
+        11,
+        "Must contain all 10 kernels + main"
+    );
 
     // High-resolution check: Tier 0 cold start MUST complete in < 5ms (and often < 2ms)
-    println!("Tier 0 cold start latency for 10 functions: {:.3} ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "Tier 0 cold start latency for 10 functions: {:.3} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
     assert!(
         elapsed < Duration::from_millis(50),
         "Tier 0 cold start must be ultra-fast (expected < 50ms in debug, was {:.2?})",
@@ -405,13 +627,19 @@ fn test_tier1_background_upgrade_at_hot_threshold() {
 
     // 100th invocation: crosses hot threshold and triggers background SupercompileWorker
     let (is_t1, ptr) = manager.record_call("hot_math_kernel");
-    assert!(!is_t1, "100th call triggers upgrade but initially returns Tier 0");
+    assert!(
+        !is_t1,
+        "100th call triggers upgrade but initially returns Tier 0"
+    );
     assert!(ptr.is_none());
     assert_eq!(slot.get_invocation_count(), 100);
 
     // Wait for background Tier 1 supercompilation to complete
     let upgraded = manager.wait_for_tier1("hot_math_kernel", Duration::from_millis(1500));
-    assert!(upgraded, "Tier 1 background supercompilation must complete within timeout");
+    assert!(
+        upgraded,
+        "Tier 1 background supercompilation must complete within timeout"
+    );
 
     // Subsequent invocations now immediately observe Tier 1 active pointer
     let (is_t1_upgraded, opt_ptr) = manager.record_call("hot_math_kernel");
@@ -536,10 +764,21 @@ fn test_outlined_binary_size_reduction_and_bit_identical_execution() {
     );
 
     // Count statements in functions to measure code bloat reduction
-    let unoutlined_stmt_count: usize = unoutlined_mir.functions.iter().map(|f| f.blocks.iter().map(|b| b.statements.len()).sum::<usize>()).sum();
-    let outlined_stmt_count: usize = outlined_mir.functions.iter().map(|f| f.blocks.iter().map(|b| b.statements.len()).sum::<usize>()).sum();
+    let unoutlined_stmt_count: usize = unoutlined_mir
+        .functions
+        .iter()
+        .map(|f| f.blocks.iter().map(|b| b.statements.len()).sum::<usize>())
+        .sum();
+    let outlined_stmt_count: usize = outlined_mir
+        .functions
+        .iter()
+        .map(|f| f.blocks.iter().map(|b| b.statements.len()).sum::<usize>())
+        .sum();
 
-    println!("Statement count — Unoutlined: {}, Outlined: {}", unoutlined_stmt_count, outlined_stmt_count);
+    println!(
+        "Statement count — Unoutlined: {}, Outlined: {}",
+        unoutlined_stmt_count, outlined_stmt_count
+    );
     assert!(
         outlined_stmt_count < unoutlined_stmt_count,
         "Outlining must reduce total statement count (was {} vs {})",
@@ -549,7 +788,10 @@ fn test_outlined_binary_size_reduction_and_bit_identical_execution() {
 
     // 2. Execute natively and verify exact return code 0
     let exit_code = compile_mir_and_run(&outlined_mir, "outlined_spec_execution");
-    assert_eq!(exit_code, 0, "Native execution of outlined program must return 0");
+    assert_eq!(
+        exit_code, 0,
+        "Native execution of outlined program must return 0"
+    );
 
     // 3. Bit-identical execution between Tier 0 and Tier 1
     let tokens = tokenize(specialized_src).expect("Tokenize failed");
@@ -564,5 +806,8 @@ fn test_outlined_binary_size_reduction_and_bit_identical_execution() {
 
     assert_eq!(t0_exit, 0, "Tier 0 execution must exit with 0");
     assert_eq!(t1_exit, 0, "Tier 1 execution must exit with 0");
-    assert_eq!(t0_exit, t1_exit, "Tier 0 and Tier 1 outputs must be 100% bit-identical");
+    assert_eq!(
+        t0_exit, t1_exit,
+        "Tier 0 and Tier 1 outputs must be 100% bit-identical"
+    );
 }

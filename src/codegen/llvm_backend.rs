@@ -28,10 +28,9 @@ impl<T> UnwrapOrLlvmError<T> for Option<T> {
     }
 }
 
-
+use crate::mir::lower::MirProgram;
 use std::path::Path;
 use thiserror::Error;
-use crate::mir::lower::MirProgram;
 
 /// LLVM optimization level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,10 +166,7 @@ impl LlvmCompiler {
     }
 
     /// Compile a `MirProgram` to in-memory object bytes.
-    pub fn compile_mir_to_obj_bytes(
-        &mut self,
-        program: &MirProgram,
-    ) -> Result<Vec<u8>, LlvmError> {
+    pub fn compile_mir_to_obj_bytes(&mut self, program: &MirProgram) -> Result<Vec<u8>, LlvmError> {
         use inkwell::{
             module::{Linkage, Module},
             passes::PassManager,
@@ -254,8 +250,8 @@ impl LlvmCompiler {
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         let triple_str = "x86_64-unknown-linux-gnu";
         let triple = TargetTriple::create(triple_str);
-        let target = Target::from_triple(&triple)
-            .map_err(|e| LlvmError::TargetInitError(e.to_string()))?;
+        let target =
+            Target::from_triple(&triple).map_err(|e| LlvmError::TargetInitError(e.to_string()))?;
 
         let opt_llvm = match self.opt_level {
             OptLevel::O0 => OptimizationLevel::None,
@@ -295,21 +291,23 @@ impl LlvmCompiler {
         {
             // ExitProcess from kernel32.lib
             if !func_vals.contains_key("ExitProcess") {
-                let exit_fn_ty = self.context.void_type().fn_type(
-                    &[self.context.i32_type().into()],
-                    false,
-                );
-                let exit_fn = module.add_function("ExitProcess", exit_fn_ty, Some(Linkage::External));
+                let exit_fn_ty = self
+                    .context
+                    .void_type()
+                    .fn_type(&[self.context.i32_type().into()], false);
+                let exit_fn =
+                    module.add_function("ExitProcess", exit_fn_ty, Some(Linkage::External));
                 func_vals.insert("ExitProcess".to_string(), exit_fn);
             }
 
             // GetStdHandle from kernel32.lib
             if !func_vals.contains_key("GetStdHandle") {
-                let gsh_fn_ty = self.context.i64_type().fn_type(
-                    &[self.context.i32_type().into()],
-                    false,
-                );
-                let gsh_fn = module.add_function("GetStdHandle", gsh_fn_ty, Some(Linkage::External));
+                let gsh_fn_ty = self
+                    .context
+                    .i64_type()
+                    .fn_type(&[self.context.i32_type().into()], false);
+                let gsh_fn =
+                    module.add_function("GetStdHandle", gsh_fn_ty, Some(Linkage::External));
                 func_vals.insert("GetStdHandle".to_string(), gsh_fn);
             }
 
@@ -318,10 +316,19 @@ impl LlvmCompiler {
                 let wf_fn_ty = self.context.i32_type().fn_type(
                     &[
                         self.context.i64_type().into(),
-                        self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context
+                            .i8_type()
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
                         self.context.i32_type().into(),
-                        self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
-                        self.context.i64_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context
+                            .i64_type()
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
+                        self.context
+                            .i64_type()
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
                     ],
                     false,
                 );
@@ -334,10 +341,10 @@ impl LlvmCompiler {
         {
             // exit from libc
             if !func_vals.contains_key("exit") {
-                let exit_fn_ty = self.context.void_type().fn_type(
-                    &[self.context.i32_type().into()],
-                    false,
-                );
+                let exit_fn_ty = self
+                    .context
+                    .void_type()
+                    .fn_type(&[self.context.i32_type().into()], false);
                 let exit_fn = module.add_function("exit", exit_fn_ty, Some(Linkage::External));
                 func_vals.insert("exit".to_string(), exit_fn);
             }
@@ -347,7 +354,10 @@ impl LlvmCompiler {
                 let write_fn_ty = self.context.i64_type().fn_type(
                     &[
                         self.context.i32_type().into(),
-                        self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+                        self.context
+                            .i8_type()
+                            .ptr_type(inkwell::AddressSpace::default())
+                            .into(),
                         self.context.i64_type().into(),
                     ],
                     false,
@@ -388,7 +398,9 @@ impl LlvmCompiler {
         let entry_bb = self.context.append_basic_block(entry_fn, "entry");
         builder.position_at_end(entry_bb);
 
-        let call_res = builder.build_direct_call(main_fn, &[], "main_call").unwrap_or_err()?;
+        let call_res = builder
+            .build_direct_call(main_fn, &[], "main_call")
+            .unwrap_or_err()?;
         let exit_code = match call_res.try_as_basic_value().left() {
             Some(val) if val.is_int_value() => {
                 let iv = val.into_int_value();
@@ -396,16 +408,22 @@ impl LlvmCompiler {
                 if width == 32 {
                     iv
                 } else if width > 32 {
-                    builder.build_int_truncate(iv, self.context.i32_type(), "exit_code").unwrap_or_err()?
+                    builder
+                        .build_int_truncate(iv, self.context.i32_type(), "exit_code")
+                        .unwrap_or_err()?
                 } else {
-                    builder.build_int_z_extend(iv, self.context.i32_type(), "exit_code").unwrap_or_err()?
+                    builder
+                        .build_int_z_extend(iv, self.context.i32_type(), "exit_code")
+                        .unwrap_or_err()?
                 }
             }
             _ => self.context.i32_type().const_int(0, false),
         };
 
         if let Some(exit_fn) = module.get_function("ExitProcess") {
-            builder.build_direct_call(exit_fn, &[exit_code.into()], "").unwrap_or_err()?;
+            builder
+                .build_direct_call(exit_fn, &[exit_code.into()], "")
+                .unwrap_or_err()?;
         }
 
         builder.build_return(None).unwrap_or_err()?;
@@ -430,14 +448,22 @@ impl LlvmCompiler {
                 let elem_llvm = self.type_to_llvm_basic(elem_ty, struct_types)?;
                 Ok(elem_llvm.array_type(*len as u32).into())
             }
-            Type::Str => Ok(self.context.i8_type().ptr_type(AddressSpace::default()).into()),
+            Type::Str => Ok(self
+                .context
+                .i8_type()
+                .ptr_type(AddressSpace::default())
+                .into()),
             Type::Struct(name) => {
                 let st = struct_types.get(name).ok_or_else(|| {
                     LlvmError::TypeLoweringError(format!("Undefined struct type '{}'", name))
                 })?;
                 Ok((*st).into())
             }
-            Type::Enum(_) | Type::Ptr(_) => Ok(self.context.i64_type().ptr_type(AddressSpace::default()).into()),
+            Type::Enum(_) | Type::Ptr(_) => Ok(self
+                .context
+                .i64_type()
+                .ptr_type(AddressSpace::default())
+                .into()),
             Type::Void => Err(LlvmError::TypeLoweringError(
                 "Void type cannot be converted to BasicTypeEnum".to_string(),
             )),
@@ -463,7 +489,9 @@ impl LlvmCompiler {
             if func.return_ty == Type::Void {
                 builder.build_return(None).unwrap_or_err()?;
             } else {
-                let zero = self.type_to_llvm_basic(&func.return_ty, struct_types)?.const_zero();
+                let zero = self
+                    .type_to_llvm_basic(&func.return_ty, struct_types)?
+                    .const_zero();
                 builder.build_return(Some(&zero)).unwrap_or_err()?;
             }
             return Ok(());
@@ -475,7 +503,9 @@ impl LlvmCompiler {
 
         let entry_bb = self.context.append_basic_block(fn_val, "entry_allocas");
         for b in &func.blocks {
-            let bb = self.context.append_basic_block(fn_val, &format!("bb{}", b.id.0));
+            let bb = self
+                .context
+                .append_basic_block(fn_val, &format!("bb{}", b.id.0));
             bb_map.insert(b.id.clone(), bb);
         }
 
@@ -506,7 +536,9 @@ impl LlvmCompiler {
 
         // Jump from entry_allocas to the first MIR block
         let first_bb = bb_map.get(&func.blocks[0].id).unwrap_or_err()?;
-        builder.build_unconditional_branch(*first_bb).unwrap_or_err()?;
+        builder
+            .build_unconditional_branch(*first_bb)
+            .unwrap_or_err()?;
 
         // Compile statements and terminator for each block
         for b in &func.blocks {
@@ -520,14 +552,17 @@ impl LlvmCompiler {
             match &b.terminator {
                 Terminator::Branch { target } => {
                     let target_bb = bb_map.get(target).unwrap_or_err()?;
-                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
+                    builder
+                        .build_unconditional_branch(*target_bb)
+                        .unwrap_or_err()?;
                 }
                 Terminator::BranchIf {
                     condition,
                     then_target,
                     else_target,
                 } => {
-                    let cond_val = self.eval_place_val(condition, builder, struct_types, &local_allocas)?;
+                    let cond_val =
+                        self.eval_place_val(condition, builder, struct_types, &local_allocas)?;
                     let cond_int = cond_val.into_int_value();
                     let then_bb = bb_map.get(then_target).unwrap_or_err()?;
                     let else_bb = bb_map.get(else_target).unwrap_or_err()?;
@@ -540,9 +575,13 @@ impl LlvmCompiler {
                     targets,
                     default,
                 } => {
-                    let val = self.eval_place_val(value, builder, struct_types, &local_allocas)?.into_int_value();
+                    let val = self
+                        .eval_place_val(value, builder, struct_types, &local_allocas)?
+                        .into_int_value();
                     let default_bb = *bb_map.get(default).unwrap_or_err()?;
-                    let switch = builder.build_switch(val, default_bb, targets.len() as u32).unwrap_or_err()?;
+                    let switch = builder
+                        .build_switch(val, default_bb, targets.len() as u32)
+                        .unwrap_or_err()?;
                     for (case_val, target_id) in targets {
                         let target_bb = *bb_map.get(target_id).unwrap_or_err()?;
                         let case_const = val.get_type().const_int(*case_val as u64, false);
@@ -551,7 +590,8 @@ impl LlvmCompiler {
                 }
                 Terminator::Return { value } => {
                     if let Some(val_place) = value {
-                        let ret_val = self.eval_place_val(val_place, builder, struct_types, &local_allocas)?;
+                        let ret_val =
+                            self.eval_place_val(val_place, builder, struct_types, &local_allocas)?;
                         builder.build_return(Some(&ret_val)).unwrap_or_err()?;
                     } else {
                         builder.build_return(None).unwrap_or_err()?;
@@ -562,21 +602,33 @@ impl LlvmCompiler {
                 }
                 Terminator::Fork { left, .. } => {
                     let target_bb = bb_map.get(left).unwrap_or_err()?;
-                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
+                    builder
+                        .build_unconditional_branch(*target_bb)
+                        .unwrap_or_err()?;
                 }
                 Terminator::Force { cont, .. } => {
                     let target_bb = bb_map.get(cont).unwrap_or_err()?;
-                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
+                    builder
+                        .build_unconditional_branch(*target_bb)
+                        .unwrap_or_err()?;
                 }
-                Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+                Terminator::TypeGuard {
+                    fast_path,
+                    deopt_stub,
+                    ..
+                } => {
                     let fast_bb = bb_map.get(fast_path).unwrap_or_err()?;
                     let deopt_bb = bb_map.get(deopt_stub).unwrap_or_err()?;
                     let cond_val = context.bool_type().const_int(1, false);
-                    builder.build_conditional_branch(cond_val, *fast_bb, *deopt_bb).unwrap_or_err()?;
+                    builder
+                        .build_conditional_branch(cond_val, *fast_bb, *deopt_bb)
+                        .unwrap_or_err()?;
                 }
                 Terminator::IndirectCall { next, .. } => {
                     let target_bb = bb_map.get(next).unwrap_or_err()?;
-                    builder.build_unconditional_branch(*target_bb).unwrap_or_err()?;
+                    builder
+                        .build_unconditional_branch(*target_bb)
+                        .unwrap_or_err()?;
                 }
             }
         }
@@ -589,22 +641,27 @@ impl LlvmCompiler {
         place: &crate::mir::Place,
         builder: &inkwell::builder::Builder,
         struct_types: &std::collections::HashMap<String, inkwell::types::StructType>,
-        local_allocas: &std::collections::HashMap<String, (inkwell::values::PointerValue, crate::typecheck::types::Type)>,
+        local_allocas: &std::collections::HashMap<
+            String,
+            (inkwell::values::PointerValue, crate::typecheck::types::Type),
+        >,
     ) -> Result<(inkwell::values::PointerValue, crate::typecheck::types::Type), LlvmError> {
         use crate::mir::Projection;
         use crate::typecheck::types::Type;
 
-        let (mut current_ptr, mut current_ty) = local_allocas
-            .get(&place.local)
-            .cloned()
-            .ok_or_else(|| LlvmError::CodegenError(format!("Undefined local place '{}'", place.local)))?;
+        let (mut current_ptr, mut current_ty) =
+            local_allocas.get(&place.local).cloned().ok_or_else(|| {
+                LlvmError::CodegenError(format!("Undefined local place '{}'", place.local))
+            })?;
 
         for proj in &place.projections {
             match proj {
                 Projection::Deref => {
                     // Dereference pointer
                     let elem_llvm_ty = self.type_to_llvm_basic(&current_ty, struct_types)?;
-                    let loaded = builder.build_load(elem_llvm_ty, current_ptr, "deref").unwrap_or_err()?;
+                    let loaded = builder
+                        .build_load(elem_llvm_ty, current_ptr, "deref")
+                        .unwrap_or_err()?;
                     current_ptr = loaded.into_pointer_value();
                 }
                 Projection::Field(field_name) => {
@@ -612,7 +669,9 @@ impl LlvmCompiler {
                         let st = struct_types.get(s_name).unwrap_or_err()?;
                         // Find field index
                         let field_idx = self.find_struct_field_index(s_name, field_name)?;
-                        current_ptr = builder.build_struct_gep(*st, current_ptr, field_idx, field_name).unwrap_or_err()?;
+                        current_ptr = builder
+                            .build_struct_gep(*st, current_ptr, field_idx, field_name)
+                            .unwrap_or_err()?;
                         current_ty = self.find_struct_field_type(s_name, field_name)?;
                     } else {
                         return Err(LlvmError::CodegenError(format!(
@@ -622,7 +681,8 @@ impl LlvmCompiler {
                     }
                 }
                 Projection::Index(idx_place) => {
-                    let idx_val = self.eval_place_val(idx_place, builder, struct_types, local_allocas)?;
+                    let idx_val =
+                        self.eval_place_val(idx_place, builder, struct_types, local_allocas)?;
                     let idx_int = idx_val.into_int_value();
                     let zero = self.context.i32_type().const_zero();
 
@@ -630,7 +690,12 @@ impl LlvmCompiler {
                         let arr_llvm_ty = self.type_to_llvm_basic(&current_ty, struct_types)?;
                         unsafe {
                             current_ptr = builder
-                                .build_gep(arr_llvm_ty, current_ptr, &[zero, idx_int], "arr_idx_gep")
+                                .build_gep(
+                                    arr_llvm_ty,
+                                    current_ptr,
+                                    &[zero, idx_int],
+                                    "arr_idx_gep",
+                                )
                                 .unwrap_or_err()?;
                         }
                         current_ty = *elem_ty.clone();
@@ -670,11 +735,16 @@ impl LlvmCompiler {
         place: &crate::mir::Place,
         builder: &inkwell::builder::Builder,
         struct_types: &std::collections::HashMap<String, inkwell::types::StructType>,
-        local_allocas: &std::collections::HashMap<String, (inkwell::values::PointerValue, crate::typecheck::types::Type)>,
+        local_allocas: &std::collections::HashMap<
+            String,
+            (inkwell::values::PointerValue, crate::typecheck::types::Type),
+        >,
     ) -> Result<inkwell::values::BasicValueEnum, LlvmError> {
         let (ptr, ty) = self.eval_place_ptr(place, builder, struct_types, local_allocas)?;
         let llvm_ty = self.type_to_llvm_basic(&ty, struct_types)?;
-        let loaded = builder.build_load(llvm_ty, ptr, &format!("{}_val", place.local)).unwrap_or_err()?;
+        let loaded = builder
+            .build_load(llvm_ty, ptr, &format!("{}_val", place.local))
+            .unwrap_or_err()?;
         Ok(loaded)
     }
 
@@ -684,7 +754,10 @@ impl LlvmCompiler {
         builder: &inkwell::builder::Builder,
         struct_types: &std::collections::HashMap<String, inkwell::types::StructType>,
         func_vals: &std::collections::HashMap<String, inkwell::values::FunctionValue>,
-        local_allocas: &std::collections::HashMap<String, (inkwell::values::PointerValue, crate::typecheck::types::Type)>,
+        local_allocas: &std::collections::HashMap<
+            String,
+            (inkwell::values::PointerValue, crate::typecheck::types::Type),
+        >,
     ) -> Result<(), LlvmError> {
         use crate::ast::{BinaryOp, UnaryOp};
         use crate::mir::lower::{Rvalue, Statement};
@@ -692,32 +765,44 @@ impl LlvmCompiler {
 
         match stmt {
             Statement::Assign(dest_place, rvalue) => {
-                let (dest_ptr, dest_ty) = self.eval_place_ptr(dest_place, builder, struct_types, local_allocas)?;
+                let (dest_ptr, dest_ty) =
+                    self.eval_place_ptr(dest_place, builder, struct_types, local_allocas)?;
 
                 let value_to_store: Option<inkwell::values::BasicValueEnum> = match rvalue {
-                    Rvalue::Use(src_place) => {
-                        Some(self.eval_place_val(src_place, builder, struct_types, local_allocas)?)
-                    }
+                    Rvalue::Use(src_place) => Some(self.eval_place_val(
+                        src_place,
+                        builder,
+                        struct_types,
+                        local_allocas,
+                    )?),
                     Rvalue::Constant(lit) => match lit {
                         TypedLiteral::Int(v, ty) => {
                             let int_ty = self.type_to_llvm_basic(ty, struct_types)?.into_int_type();
                             Some(int_ty.const_int(*v as u64, ty.is_signed()).into())
                         }
                         TypedLiteral::Float(v, ty) => {
-                            let flt_ty = self.type_to_llvm_basic(ty, struct_types)?.into_float_type();
+                            let flt_ty =
+                                self.type_to_llvm_basic(ty, struct_types)?.into_float_type();
                             Some(flt_ty.const_float(*v).into())
                         }
-                        TypedLiteral::Bool(b) => {
-                            Some(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into())
-                        }
+                        TypedLiteral::Bool(b) => Some(
+                            self.context
+                                .bool_type()
+                                .const_int(if *b { 1 } else { 0 }, false)
+                                .into(),
+                        ),
                         TypedLiteral::Str(s) => {
-                            let global_str = builder.build_global_string_ptr(s, "str_const").unwrap_or_err()?;
+                            let global_str = builder
+                                .build_global_string_ptr(s, "str_const")
+                                .unwrap_or_err()?;
                             Some(global_str.as_basic_value_enum())
                         }
                     },
                     Rvalue::BinaryOp(op, left_p, right_p) => {
-                        let l_val = self.eval_place_val(left_p, builder, struct_types, local_allocas)?;
-                        let r_val = self.eval_place_val(right_p, builder, struct_types, local_allocas)?;
+                        let l_val =
+                            self.eval_place_val(left_p, builder, struct_types, local_allocas)?;
+                        let r_val =
+                            self.eval_place_val(right_p, builder, struct_types, local_allocas)?;
 
                         if l_val.is_int_value() && r_val.is_int_value() {
                             let l = l_val.into_int_value();
@@ -725,45 +810,97 @@ impl LlvmCompiler {
                             let signed = dest_ty.is_signed();
 
                             let res = match op {
-                                BinaryOp::Add => builder.build_int_add(l, r, "add").unwrap_or_err()?,
-                                BinaryOp::Sub => builder.build_int_sub(l, r, "sub").unwrap_or_err()?,
-                                BinaryOp::Mul => builder.build_int_mul(l, r, "mul").unwrap_or_err()?,
+                                BinaryOp::Add => {
+                                    builder.build_int_add(l, r, "add").unwrap_or_err()?
+                                }
+                                BinaryOp::Sub => {
+                                    builder.build_int_sub(l, r, "sub").unwrap_or_err()?
+                                }
+                                BinaryOp::Mul => {
+                                    builder.build_int_mul(l, r, "mul").unwrap_or_err()?
+                                }
                                 BinaryOp::Div => {
                                     if signed {
-                                        builder.build_int_signed_div(l, r, "sdiv").unwrap_or_err()?
+                                        builder
+                                            .build_int_signed_div(l, r, "sdiv")
+                                            .unwrap_or_err()?
                                     } else {
-                                        builder.build_int_unsigned_div(l, r, "udiv").unwrap_or_err()?
+                                        builder
+                                            .build_int_unsigned_div(l, r, "udiv")
+                                            .unwrap_or_err()?
                                     }
                                 }
                                 BinaryOp::Mod => {
                                     if signed {
-                                        builder.build_int_signed_rem(l, r, "srem").unwrap_or_err()?
+                                        builder
+                                            .build_int_signed_rem(l, r, "srem")
+                                            .unwrap_or_err()?
                                     } else {
-                                        builder.build_int_unsigned_rem(l, r, "urem").unwrap_or_err()?
+                                        builder
+                                            .build_int_unsigned_rem(l, r, "urem")
+                                            .unwrap_or_err()?
                                     }
                                 }
-                                BinaryOp::BitAnd => builder.build_int_and(l, r, "and").unwrap_or_err()?,
-                                BinaryOp::BitOr => builder.build_int_or(l, r, "or").unwrap_or_err()?,
-                                BinaryOp::BitXor => builder.build_int_xor(l, r, "xor").unwrap_or_err()?,
-                                BinaryOp::Shl => builder.build_left_shift(l, r, "shl").unwrap_or_err()?,
-                                BinaryOp::Shr => builder.build_right_shift(l, r, signed, "shr").unwrap_or_err()?,
-                                BinaryOp::Eq => builder.build_int_compare(inkwell::IntPredicate::EQ, l, r, "eq").unwrap_or_err()?,
-                                BinaryOp::Ne => builder.build_int_compare(inkwell::IntPredicate::NE, l, r, "ne").unwrap_or_err()?,
+                                BinaryOp::BitAnd => {
+                                    builder.build_int_and(l, r, "and").unwrap_or_err()?
+                                }
+                                BinaryOp::BitOr => {
+                                    builder.build_int_or(l, r, "or").unwrap_or_err()?
+                                }
+                                BinaryOp::BitXor => {
+                                    builder.build_int_xor(l, r, "xor").unwrap_or_err()?
+                                }
+                                BinaryOp::Shl => {
+                                    builder.build_left_shift(l, r, "shl").unwrap_or_err()?
+                                }
+                                BinaryOp::Shr => builder
+                                    .build_right_shift(l, r, signed, "shr")
+                                    .unwrap_or_err()?,
+                                BinaryOp::Eq => builder
+                                    .build_int_compare(inkwell::IntPredicate::EQ, l, r, "eq")
+                                    .unwrap_or_err()?,
+                                BinaryOp::Ne => builder
+                                    .build_int_compare(inkwell::IntPredicate::NE, l, r, "ne")
+                                    .unwrap_or_err()?,
                                 BinaryOp::Lt => {
-                                    let pred = if signed { inkwell::IntPredicate::SLT } else { inkwell::IntPredicate::ULT };
-                                    builder.build_int_compare(pred, l, r, "lt").unwrap_or_err()?
+                                    let pred = if signed {
+                                        inkwell::IntPredicate::SLT
+                                    } else {
+                                        inkwell::IntPredicate::ULT
+                                    };
+                                    builder
+                                        .build_int_compare(pred, l, r, "lt")
+                                        .unwrap_or_err()?
                                 }
                                 BinaryOp::Le => {
-                                    let pred = if signed { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::ULE };
-                                    builder.build_int_compare(pred, l, r, "le").unwrap_or_err()?
+                                    let pred = if signed {
+                                        inkwell::IntPredicate::SLE
+                                    } else {
+                                        inkwell::IntPredicate::ULE
+                                    };
+                                    builder
+                                        .build_int_compare(pred, l, r, "le")
+                                        .unwrap_or_err()?
                                 }
                                 BinaryOp::Gt => {
-                                    let pred = if signed { inkwell::IntPredicate::SGT } else { inkwell::IntPredicate::UGT };
-                                    builder.build_int_compare(pred, l, r, "gt").unwrap_or_err()?
+                                    let pred = if signed {
+                                        inkwell::IntPredicate::SGT
+                                    } else {
+                                        inkwell::IntPredicate::UGT
+                                    };
+                                    builder
+                                        .build_int_compare(pred, l, r, "gt")
+                                        .unwrap_or_err()?
                                 }
                                 BinaryOp::Ge => {
-                                    let pred = if signed { inkwell::IntPredicate::SGE } else { inkwell::IntPredicate::UGE };
-                                    builder.build_int_compare(pred, l, r, "ge").unwrap_or_err()?
+                                    let pred = if signed {
+                                        inkwell::IntPredicate::SGE
+                                    } else {
+                                        inkwell::IntPredicate::UGE
+                                    };
+                                    builder
+                                        .build_int_compare(pred, l, r, "ge")
+                                        .unwrap_or_err()?
                                 }
                                 BinaryOp::Pow => {
                                     // Power operation: inline simple integer exponentiation loop
@@ -776,59 +913,128 @@ impl LlvmCompiler {
                             let r = r_val.into_float_value();
 
                             let res: inkwell::values::BasicValueEnum = match op {
-                                BinaryOp::Add => builder.build_float_add(l, r, "fadd").unwrap_or_err()?.into(),
-                                BinaryOp::Sub => builder.build_float_sub(l, r, "fsub").unwrap_or_err()?.into(),
-                                BinaryOp::Mul => builder.build_float_mul(l, r, "fmul").unwrap_or_err()?.into(),
-                                BinaryOp::Div => builder.build_float_div(l, r, "fdiv").unwrap_or_err()?.into(),
-                                BinaryOp::Mod => builder.build_float_rem(l, r, "frem").unwrap_or_err()?.into(),
-                                BinaryOp::Eq => builder.build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feq").unwrap_or_err()?.into(),
-                                BinaryOp::Ne => builder.build_float_compare(inkwell::FloatPredicate::ONE, l, r, "fne").unwrap_or_err()?.into(),
-                                BinaryOp::Lt => builder.build_float_compare(inkwell::FloatPredicate::OLT, l, r, "flt").unwrap_or_err()?.into(),
-                                BinaryOp::Le => builder.build_float_compare(inkwell::FloatPredicate::OLE, l, r, "fle").unwrap_or_err()?.into(),
-                                BinaryOp::Gt => builder.build_float_compare(inkwell::FloatPredicate::OGT, l, r, "fgt").unwrap_or_err()?.into(),
-                                BinaryOp::Ge => builder.build_float_compare(inkwell::FloatPredicate::OGE, l, r, "fge").unwrap_or_err()?.into(),
-                                _ => return Err(LlvmError::CodegenError(format!("Unsupported float binary op {:?}", op))),
+                                BinaryOp::Add => builder
+                                    .build_float_add(l, r, "fadd")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Sub => builder
+                                    .build_float_sub(l, r, "fsub")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Mul => builder
+                                    .build_float_mul(l, r, "fmul")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Div => builder
+                                    .build_float_div(l, r, "fdiv")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Mod => builder
+                                    .build_float_rem(l, r, "frem")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Eq => builder
+                                    .build_float_compare(inkwell::FloatPredicate::OEQ, l, r, "feq")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Ne => builder
+                                    .build_float_compare(inkwell::FloatPredicate::ONE, l, r, "fne")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Lt => builder
+                                    .build_float_compare(inkwell::FloatPredicate::OLT, l, r, "flt")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Le => builder
+                                    .build_float_compare(inkwell::FloatPredicate::OLE, l, r, "fle")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Gt => builder
+                                    .build_float_compare(inkwell::FloatPredicate::OGT, l, r, "fgt")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                BinaryOp::Ge => builder
+                                    .build_float_compare(inkwell::FloatPredicate::OGE, l, r, "fge")
+                                    .unwrap_or_err()?
+                                    .into(),
+                                _ => {
+                                    return Err(LlvmError::CodegenError(format!(
+                                        "Unsupported float binary op {:?}",
+                                        op
+                                    )))
+                                }
                             };
                             Some(res)
                         } else {
-                            return Err(LlvmError::CodegenError(format!("Mismatched binary op types for {:?}", op)));
+                            return Err(LlvmError::CodegenError(format!(
+                                "Mismatched binary op types for {:?}",
+                                op
+                            )));
                         }
                     }
                     Rvalue::UnaryOp(op, inner_p) => {
-                        let inner_val = self.eval_place_val(inner_p, builder, struct_types, local_allocas)?;
+                        let inner_val =
+                            self.eval_place_val(inner_p, builder, struct_types, local_allocas)?;
                         match op {
                             UnaryOp::Neg => {
                                 if inner_val.is_int_value() {
-                                    Some(builder.build_int_neg(inner_val.into_int_value(), "neg").unwrap_or_err()?.into())
+                                    Some(
+                                        builder
+                                            .build_int_neg(inner_val.into_int_value(), "neg")
+                                            .unwrap_or_err()?
+                                            .into(),
+                                    )
                                 } else if inner_val.is_float_value() {
-                                    Some(builder.build_float_neg(inner_val.into_float_value(), "fneg").unwrap_or_err()?.into())
+                                    Some(
+                                        builder
+                                            .build_float_neg(inner_val.into_float_value(), "fneg")
+                                            .unwrap_or_err()?
+                                            .into(),
+                                    )
                                 } else {
-                                    return Err(LlvmError::CodegenError("Cannot negate non-numeric value".to_string()));
+                                    return Err(LlvmError::CodegenError(
+                                        "Cannot negate non-numeric value".to_string(),
+                                    ));
                                 }
                             }
                             UnaryOp::Not => {
                                 if inner_val.is_int_value() {
-                                    Some(builder.build_not(inner_val.into_int_value(), "not").unwrap_or_err()?.into())
+                                    Some(
+                                        builder
+                                            .build_not(inner_val.into_int_value(), "not")
+                                            .unwrap_or_err()?
+                                            .into(),
+                                    )
                                 } else {
-                                    return Err(LlvmError::CodegenError("Cannot invert non-integer value".to_string()));
+                                    return Err(LlvmError::CodegenError(
+                                        "Cannot invert non-integer value".to_string(),
+                                    ));
                                 }
                             }
                         }
                     }
                     Rvalue::Call(callee, args) => {
                         if callee == "__numlang_fib" && args.len() == 1 {
-                            let n = self.eval_place_val(&args[0], builder, struct_types, local_allocas)?.into_int_value();
+                            let n = self
+                                .eval_place_val(&args[0], builder, struct_types, local_allocas)?
+                                .into_int_value();
                             Some(self.emit_inline_fib(n, builder).into())
                         } else if let Some(&callee_fn) = func_vals.get(callee) {
                             let mut arg_vals = Vec::with_capacity(args.len());
                             for arg in args {
-                                let v = self.eval_place_val(arg, builder, struct_types, local_allocas)?;
+                                let v =
+                                    self.eval_place_val(arg, builder, struct_types, local_allocas)?;
                                 arg_vals.push(v.into());
                             }
-                            let call = builder.build_direct_call(callee_fn, &arg_vals, "call_res").unwrap_or_err()?;
+                            let call = builder
+                                .build_direct_call(callee_fn, &arg_vals, "call_res")
+                                .unwrap_or_err()?;
                             call.try_as_basic_value().left()
                         } else {
-                            return Err(LlvmError::CodegenError(format!("Callee '{}' not found", callee)));
+                            return Err(LlvmError::CodegenError(format!(
+                                "Callee '{}' not found",
+                                callee
+                            )));
                         }
                     }
                     Rvalue::Array(elements) => {
@@ -836,11 +1042,17 @@ impl LlvmCompiler {
                         let arr_llvm_ty = self.type_to_llvm_basic(&dest_ty, struct_types)?;
 
                         for (idx, elem_p) in elements.iter().enumerate() {
-                            let elem_val = self.eval_place_val(elem_p, builder, struct_types, local_allocas)?;
+                            let elem_val =
+                                self.eval_place_val(elem_p, builder, struct_types, local_allocas)?;
                             let idx_const = self.context.i32_type().const_int(idx as u64, false);
                             unsafe {
                                 let elem_ptr = builder
-                                    .build_gep(arr_llvm_ty, dest_ptr, &[zero, idx_const], "init_arr_gep")
+                                    .build_gep(
+                                        arr_llvm_ty,
+                                        dest_ptr,
+                                        &[zero, idx_const],
+                                        "init_arr_gep",
+                                    )
                                     .unwrap_or_err()?;
                                 builder.build_store(elem_ptr, elem_val).unwrap_or_err()?;
                             }
@@ -850,9 +1062,12 @@ impl LlvmCompiler {
                     Rvalue::Struct(s_name, fields) => {
                         let st = struct_types.get(s_name).unwrap_or_err()?;
                         for (field_name, field_p) in fields {
-                            let field_val = self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
+                            let field_val =
+                                self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
                             let field_idx = self.find_struct_field_index(s_name, field_name)?;
-                            let f_ptr = builder.build_struct_gep(*st, dest_ptr, field_idx, field_name).unwrap_or_err()?;
+                            let f_ptr = builder
+                                .build_struct_gep(*st, dest_ptr, field_idx, field_name)
+                                .unwrap_or_err()?;
                             builder.build_store(f_ptr, field_val).unwrap_or_err()?;
                         }
                         None
@@ -860,13 +1075,19 @@ impl LlvmCompiler {
                     Rvalue::Phi(incoming) => {
                         // Handled cleanly: if we encounter an explicit Phi, compute via alloca store/load
                         if let Some((_, first_p)) = incoming.first() {
-                            Some(self.eval_place_val(first_p, builder, struct_types, local_allocas)?)
+                            Some(self.eval_place_val(
+                                first_p,
+                                builder,
+                                struct_types,
+                                local_allocas,
+                            )?)
                         } else {
                             None
                         }
                     }
                     Rvalue::Discriminant(p) => {
-                        let ptr_val = self.eval_place_val(p, builder, struct_types, local_allocas)?;
+                        let ptr_val =
+                            self.eval_place_val(p, builder, struct_types, local_allocas)?;
                         let i64_type = self.context.i64_type();
                         let tag_ptr = builder
                             .build_pointer_cast(
@@ -875,14 +1096,18 @@ impl LlvmCompiler {
                                 "tag_ptr",
                             )
                             .unwrap_or_err()?;
-                        let tag_val = builder.build_load(i64_type, tag_ptr, "tag").unwrap_or_err()?;
+                        let tag_val = builder
+                            .build_load(i64_type, tag_ptr, "tag")
+                            .unwrap_or_err()?;
                         Some(tag_val)
                     }
                     Rvalue::EnumVariant { tag, fields, .. } => {
                         let i64_type = self.context.i64_type();
                         let total_words = 1 + fields.len();
                         let arr_type = i64_type.array_type(total_words as u32);
-                        let slot = builder.build_alloca(arr_type, "enum_slot").unwrap_or_err()?;
+                        let slot = builder
+                            .build_alloca(arr_type, "enum_slot")
+                            .unwrap_or_err()?;
                         let slot_ptr = builder
                             .build_pointer_cast(
                                 slot,
@@ -894,8 +1119,10 @@ impl LlvmCompiler {
                             .build_store(slot_ptr, i64_type.const_int(*tag as u64, false))
                             .unwrap_or_err()?;
                         for (idx, field_p) in fields.iter().enumerate() {
-                            let field_val = self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
-                            let field_offset = self.context.i64_type().const_int((1 + idx) as u64, false);
+                            let field_val =
+                                self.eval_place_val(field_p, builder, struct_types, local_allocas)?;
+                            let field_offset =
+                                self.context.i64_type().const_int((1 + idx) as u64, false);
                             let field_ptr = unsafe {
                                 builder
                                     .build_gep(i64_type, slot_ptr, &[field_offset], "field_ptr")
@@ -931,7 +1158,11 @@ impl LlvmCompiler {
         // let mut a = 0; let mut b = 1; let mut i = 2;
         // while i <= n { let c = a + b; a = b; b = c; i += 1; }
         // return b;
-        let parent_fn = builder.get_insert_block().unwrap_or_err()?.get_parent().unwrap_or_err()?;
+        let parent_fn = builder
+            .get_insert_block()
+            .unwrap_or_err()?
+            .get_parent()
+            .unwrap_or_err()?;
         let loop_bb = self.context.append_basic_block(parent_fn, "fib_loop");
         let done_bb = self.context.append_basic_block(parent_fn, "fib_done");
 
@@ -940,39 +1171,75 @@ impl LlvmCompiler {
         let n_i64 = if n.get_type().get_bit_width() == 64 {
             n
         } else {
-            builder.build_int_z_extend(n, self.context.i64_type(), "n_i64").unwrap_or_err()?
+            builder
+                .build_int_z_extend(n, self.context.i64_type(), "n_i64")
+                .unwrap_or_err()?
         };
 
-        let a_alloca = builder.build_alloca(self.context.i64_type(), "fib_a").unwrap_or_err()?;
-        let b_alloca = builder.build_alloca(self.context.i64_type(), "fib_b").unwrap_or_err()?;
-        let i_alloca = builder.build_alloca(self.context.i64_type(), "fib_i").unwrap_or_err()?;
+        let a_alloca = builder
+            .build_alloca(self.context.i64_type(), "fib_a")
+            .unwrap_or_err()?;
+        let b_alloca = builder
+            .build_alloca(self.context.i64_type(), "fib_b")
+            .unwrap_or_err()?;
+        let i_alloca = builder
+            .build_alloca(self.context.i64_type(), "fib_i")
+            .unwrap_or_err()?;
 
         builder.build_store(a_alloca, zero).unwrap_or_err()?;
         builder.build_store(b_alloca, one).unwrap_or_err()?;
-        builder.build_store(i_alloca, self.context.i64_type().const_int(2, false)).unwrap_or_err()?;
+        builder
+            .build_store(i_alloca, self.context.i64_type().const_int(2, false))
+            .unwrap_or_err()?;
 
-        let is_base = builder.build_int_compare(inkwell::IntPredicate::SLE, n_i64, one, "is_base").unwrap_or_err()?;
-        builder.build_conditional_branch(is_base, done_bb, loop_bb).unwrap_or_err()?;
+        let is_base = builder
+            .build_int_compare(inkwell::IntPredicate::SLE, n_i64, one, "is_base")
+            .unwrap_or_err()?;
+        builder
+            .build_conditional_branch(is_base, done_bb, loop_bb)
+            .unwrap_or_err()?;
 
         // Loop BB
         builder.position_at_end(loop_bb);
-        let cur_a = builder.build_load(self.context.i64_type(), a_alloca, "a").unwrap_or_err()?.into_int_value();
-        let cur_b = builder.build_load(self.context.i64_type(), b_alloca, "b").unwrap_or_err()?.into_int_value();
-        let cur_i = builder.build_load(self.context.i64_type(), i_alloca, "i").unwrap_or_err()?.into_int_value();
+        let cur_a = builder
+            .build_load(self.context.i64_type(), a_alloca, "a")
+            .unwrap_or_err()?
+            .into_int_value();
+        let cur_b = builder
+            .build_load(self.context.i64_type(), b_alloca, "b")
+            .unwrap_or_err()?
+            .into_int_value();
+        let cur_i = builder
+            .build_load(self.context.i64_type(), i_alloca, "i")
+            .unwrap_or_err()?
+            .into_int_value();
 
-        let next_c = builder.build_int_add(cur_a, cur_b, "next_c").unwrap_or_err()?;
+        let next_c = builder
+            .build_int_add(cur_a, cur_b, "next_c")
+            .unwrap_or_err()?;
         builder.build_store(a_alloca, cur_b).unwrap_or_err()?;
         builder.build_store(b_alloca, next_c).unwrap_or_err()?;
-        let next_i = builder.build_int_add(cur_i, one, "next_i").unwrap_or_err()?;
+        let next_i = builder
+            .build_int_add(cur_i, one, "next_i")
+            .unwrap_or_err()?;
         builder.build_store(i_alloca, next_i).unwrap_or_err()?;
 
-        let continue_loop = builder.build_int_compare(inkwell::IntPredicate::SLE, next_i, n_i64, "cont").unwrap_or_err()?;
-        builder.build_conditional_branch(continue_loop, loop_bb, done_bb).unwrap_or_err()?;
+        let continue_loop = builder
+            .build_int_compare(inkwell::IntPredicate::SLE, next_i, n_i64, "cont")
+            .unwrap_or_err()?;
+        builder
+            .build_conditional_branch(continue_loop, loop_bb, done_bb)
+            .unwrap_or_err()?;
 
         // Done BB
         builder.position_at_end(done_bb);
-        let res = builder.build_phi(self.context.i64_type(), "fib_res").unwrap_or_err()?;
-        res.add_incoming(&[(&n_i64, parent_fn.get_first_basic_block().unwrap_or_err()?), (&cur_b, loop_bb)]);
+        let res = builder
+            .build_phi(self.context.i64_type(), "fib_res")
+            .unwrap_or_err()?;
+        res.add_incoming(&[
+            (&n_i64, parent_fn.get_first_basic_block().unwrap_or_err()?),
+            (&cur_b, loop_bb),
+        ]);
 
         res.as_basic_value().into_int_value()
     }
@@ -984,7 +1251,11 @@ impl LlvmCompiler {
         builder: &inkwell::builder::Builder,
     ) -> inkwell::values::IntValue {
         // Exponentiation by squaring
-        let parent_fn = builder.get_insert_block().unwrap_or_err()?.get_parent().unwrap_or_err()?;
+        let parent_fn = builder
+            .get_insert_block()
+            .unwrap_or_err()?
+            .get_parent()
+            .unwrap_or_err()?;
         let loop_bb = self.context.append_basic_block(parent_fn, "pow_loop");
         let done_bb = self.context.append_basic_block(parent_fn, "pow_done");
 
@@ -1000,46 +1271,86 @@ impl LlvmCompiler {
         builder.build_store(base_alloca, base).unwrap_or_err()?;
         builder.build_store(exp_alloca, exp).unwrap_or_err()?;
 
-        builder.build_unconditional_branch(loop_bb).unwrap_or_err()?;
+        builder
+            .build_unconditional_branch(loop_bb)
+            .unwrap_or_err()?;
 
         builder.position_at_end(loop_bb);
-        let cur_exp = builder.build_load(int_ty, exp_alloca, "e").unwrap_or_err()?.into_int_value();
-        let cond = builder.build_int_compare(inkwell::IntPredicate::SGT, cur_exp, zero, "e_gt_0").unwrap_or_err()?;
+        let cur_exp = builder
+            .build_load(int_ty, exp_alloca, "e")
+            .unwrap_or_err()?
+            .into_int_value();
+        let cond = builder
+            .build_int_compare(inkwell::IntPredicate::SGT, cur_exp, zero, "e_gt_0")
+            .unwrap_or_err()?;
 
         let body_bb = self.context.append_basic_block(parent_fn, "pow_body");
-        builder.build_conditional_branch(cond, body_bb, done_bb).unwrap_or_err()?;
+        builder
+            .build_conditional_branch(cond, body_bb, done_bb)
+            .unwrap_or_err()?;
 
         builder.position_at_end(body_bb);
-        let cur_res = builder.build_load(int_ty, res_alloca, "r").unwrap_or_err()?.into_int_value();
-        let cur_b = builder.build_load(int_ty, base_alloca, "b").unwrap_or_err()?.into_int_value();
+        let cur_res = builder
+            .build_load(int_ty, res_alloca, "r")
+            .unwrap_or_err()?
+            .into_int_value();
+        let cur_b = builder
+            .build_load(int_ty, base_alloca, "b")
+            .unwrap_or_err()?
+            .into_int_value();
 
         let is_odd = builder.build_int_and(cur_exp, one, "odd").unwrap_or_err()?;
-        let is_odd_cond = builder.build_int_compare(inkwell::IntPredicate::NE, is_odd, zero, "is_odd").unwrap_or_err()?;
+        let is_odd_cond = builder
+            .build_int_compare(inkwell::IntPredicate::NE, is_odd, zero, "is_odd")
+            .unwrap_or_err()?;
 
         let mul_bb = self.context.append_basic_block(parent_fn, "pow_mul");
         let next_bb = self.context.append_basic_block(parent_fn, "pow_next");
 
-        builder.build_conditional_branch(is_odd_cond, mul_bb, next_bb).unwrap_or_err()?;
+        builder
+            .build_conditional_branch(is_odd_cond, mul_bb, next_bb)
+            .unwrap_or_err()?;
 
         builder.position_at_end(mul_bb);
-        let new_res = builder.build_int_mul(cur_res, cur_b, "new_r").unwrap_or_err()?;
+        let new_res = builder
+            .build_int_mul(cur_res, cur_b, "new_r")
+            .unwrap_or_err()?;
         builder.build_store(res_alloca, new_res).unwrap_or_err()?;
-        builder.build_unconditional_branch(next_bb).unwrap_or_err()?;
+        builder
+            .build_unconditional_branch(next_bb)
+            .unwrap_or_err()?;
 
         builder.position_at_end(next_bb);
-        let next_b = builder.build_int_mul(cur_b, cur_b, "sqr_b").unwrap_or_err()?;
-        let next_e = builder.build_right_shift(cur_exp, one, false, "e_div_2").unwrap_or_err()?;
+        let next_b = builder
+            .build_int_mul(cur_b, cur_b, "sqr_b")
+            .unwrap_or_err()?;
+        let next_e = builder
+            .build_right_shift(cur_exp, one, false, "e_div_2")
+            .unwrap_or_err()?;
         builder.build_store(base_alloca, next_b).unwrap_or_err()?;
         builder.build_store(exp_alloca, next_e).unwrap_or_err()?;
-        builder.build_unconditional_branch(loop_bb).unwrap_or_err()?;
+        builder
+            .build_unconditional_branch(loop_bb)
+            .unwrap_or_err()?;
 
         builder.position_at_end(done_bb);
-        builder.build_load(int_ty, res_alloca, "final_res").unwrap_or_err()?.into_int_value()
+        builder
+            .build_load(int_ty, res_alloca, "final_res")
+            .unwrap_or_err()?
+            .into_int_value()
     }
 
-    fn find_struct_field_index(&self, struct_name: &str, field_name: &str) -> Result<u32, LlvmError> {
+    fn find_struct_field_index(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Result<u32, LlvmError> {
         if let Some(fields) = self.struct_fields.get(struct_name) {
-            if let Some((idx, _)) = fields.iter().enumerate().find(|(_, (f_name, _))| f_name == field_name) {
+            if let Some((idx, _)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, (f_name, _))| f_name == field_name)
+            {
                 return Ok(idx as u32);
             }
         }
@@ -1048,7 +1359,11 @@ impl LlvmCompiler {
         )))
     }
 
-    fn find_struct_field_type(&self, struct_name: &str, field_name: &str) -> Result<crate::typecheck::types::Type, LlvmError> {
+    fn find_struct_field_type(
+        &self,
+        struct_name: &str,
+        field_name: &str,
+    ) -> Result<crate::typecheck::types::Type, LlvmError> {
         if let Some(fields) = self.struct_fields.get(struct_name) {
             if let Some((_, (_, ty))) = fields.iter().find(|(f_name, _)| f_name == field_name) {
                 return Ok(ty.clone());
@@ -1075,13 +1390,18 @@ impl crate::codegen::backend_trait::BackendCompiler for LlvmCompiler {
         "llvm"
     }
 
-    fn compile_to_obj_bytes(&mut self, program: &crate::typecheck::typed_ast::TypedProgram) -> Result<Vec<u8>, String> {
+    fn compile_to_obj_bytes(
+        &mut self,
+        program: &crate::typecheck::typed_ast::TypedProgram,
+    ) -> Result<Vec<u8>, String> {
         let mir = crate::mir::lower::lower_program(program);
-        self.compile_mir_to_obj_bytes(&mir).map_err(|e| e.to_string())
+        self.compile_mir_to_obj_bytes(&mir)
+            .map_err(|e| e.to_string())
     }
 
     fn compile_mir_to_obj_bytes(&mut self, mir: &MirProgram) -> Result<Vec<u8>, String> {
-        self.compile_mir_to_obj_bytes(mir).map_err(|e| e.to_string())
+        self.compile_mir_to_obj_bytes(mir)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1106,7 +1426,10 @@ fn llvm_type_str(ty: &crate::typecheck::types::Type) -> &'static str {
     }
 }
 
-fn get_place_tbaa_tag(place: &crate::mir::Place, tags: &std::collections::HashMap<(String, String), usize>) -> usize {
+fn get_place_tbaa_tag(
+    place: &crate::mir::Place,
+    tags: &std::collections::HashMap<(String, String), usize>,
+) -> usize {
     for proj in &place.projections {
         if let crate::mir::Projection::Field(fname) = proj {
             for ((_, field_name), tag) in tags {
@@ -1123,10 +1446,10 @@ fn get_place_tbaa_tag(place: &crate::mir::Place, tags: &std::collections::HashMa
 /// and co-optimization analysis. Emits rich TBAA metadata trees, noalias
 /// parameter attributes, loop vectorization metadata, and AVX2 vector SIMD sequences.
 pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<String, LlvmError> {
-    use std::fmt::Write;
     use crate::mir::lower::{Rvalue, Statement};
     use crate::mir::Terminator;
     use crate::typecheck::types::Type;
+    use std::fmt::Write;
 
     let mut out = String::new();
 
@@ -1169,7 +1492,8 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
     ];
 
     // Build struct field TBAA nodes
-    let mut struct_tbaa_tags: std::collections::HashMap<(String, String), usize> = std::collections::HashMap::new();
+    let mut struct_tbaa_tags: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
     for s in &program.structs {
         let struct_meta_id = meta_nodes.len();
         let mut struct_desc = format!("!{{ !\"struct_{}\"", s.name);
@@ -1193,7 +1517,10 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
             };
             let offset = offset_idx * 8;
             let tag_id = meta_nodes.len();
-            meta_nodes.push(format!("!{{ !{}, !{}, i64 {} }}", struct_meta_id, ty_node, offset));
+            meta_nodes.push(format!(
+                "!{{ !{}, !{}, i64 {} }}",
+                struct_meta_id, ty_node, offset
+            ));
             struct_tbaa_tags.insert((s.name.clone(), fname.clone()), tag_id);
         }
     }
@@ -1202,7 +1529,10 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
     let loop_meta_id = meta_nodes.len();
     let vec_enable_id = loop_meta_id + 1;
     let unroll_enable_id = loop_meta_id + 2;
-    meta_nodes.push(format!("distinct !{{ !{}, !{}, !{} }}", loop_meta_id, vec_enable_id, unroll_enable_id));
+    meta_nodes.push(format!(
+        "distinct !{{ !{}, !{}, !{} }}",
+        loop_meta_id, vec_enable_id, unroll_enable_id
+    ));
     meta_nodes.push("!{ !\"llvm.loop.vectorize.enable\", i1 1 }".to_string());
     meta_nodes.push("!{ !\"llvm.loop.unroll.enable\", i1 1 }".to_string());
 
@@ -1236,69 +1566,139 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
             for stmt in &block.statements {
                 let Statement::Assign(dest, rval) = stmt;
                 match rval {
-                        Rvalue::Use(src) => {
-                            let tag = get_place_tbaa_tag(src, &struct_tbaa_tags);
-                            let _ = writeln!(out, "  %{} = load i64, ptr %{}, align 8, !tbaa !{}", dest.local, src.local, tag);
+                    Rvalue::Use(src) => {
+                        let tag = get_place_tbaa_tag(src, &struct_tbaa_tags);
+                        let _ = writeln!(
+                            out,
+                            "  %{} = load i64, ptr %{}, align 8, !tbaa !{}",
+                            dest.local, src.local, tag
+                        );
+                    }
+                    Rvalue::Constant(lit) => match lit {
+                        crate::typecheck::typed_ast::TypedLiteral::Int(v, _) => {
+                            let _ = writeln!(
+                                out,
+                                "  store i64 {}, ptr %{}, align 8, !tbaa !1",
+                                v, dest.local
+                            );
                         }
-                        Rvalue::Constant(lit) => {
-                            match lit {
-                                crate::typecheck::typed_ast::TypedLiteral::Int(v, _) => {
-                                    let _ = writeln!(out, "  store i64 {}, ptr %{}, align 8, !tbaa !1", v, dest.local);
-                                }
-                                crate::typecheck::typed_ast::TypedLiteral::Float(v, _) => {
-                                    let _ = writeln!(out, "  store double {:e}, ptr %{}, align 8, !tbaa !2", v, dest.local);
-                                }
-                                crate::typecheck::typed_ast::TypedLiteral::Bool(b) => {
-                                    let _ = writeln!(out, "  store i1 {}, ptr %{}, align 1, !tbaa !1", if *b { 1 } else { 0 }, dest.local);
-                                }
-                                _ => {
-                                    let _ = writeln!(out, "  store i64 0, ptr %{}, align 8, !tbaa !1", dest.local);
-                                }
-                            }
+                        crate::typecheck::typed_ast::TypedLiteral::Float(v, _) => {
+                            let _ = writeln!(
+                                out,
+                                "  store double {:e}, ptr %{}, align 8, !tbaa !2",
+                                v, dest.local
+                            );
                         }
-                        Rvalue::BinaryOp(op, l, r) => {
-                            let op_str = match op {
-                                crate::ast::BinaryOp::Add => "add",
-                                crate::ast::BinaryOp::Sub => "sub",
-                                crate::ast::BinaryOp::Mul => "mul",
-                                crate::ast::BinaryOp::Div => "sdiv",
-                                crate::ast::BinaryOp::Mod => "srem",
-                                _ => "add",
-                            };
-                            let _ = writeln!(out, "  %t_{}_l = load i64, ptr %{}, align 8, !tbaa !1", dest.local, l.local);
-                            let _ = writeln!(out, "  %t_{}_r = load i64, ptr %{}, align 8, !tbaa !1", dest.local, r.local);
-                            let _ = writeln!(out, "  %t_{}_res = {} i64 %t_{}_l, %t_{}_r", dest.local, op_str, dest.local, dest.local);
-                            let _ = writeln!(out, "  store i64 %t_{}_res, ptr %{}, align 8, !tbaa !1", dest.local, dest.local);
-                        }
-                        Rvalue::Call(callee, args) => {
-                            if callee.starts_with("__nway_recurrence_") {
-                                // COOPT-03: Vectorized AVX2 SIMD matrix arithmetic
-                                let _ = writeln!(out, "  ; COOPT-03: 4-wide SIMD AVX2 vector recurrence evaluation");
-                                let _ = writeln!(out, "  %v_a_{} = load <4 x i64>, ptr %{}, align 32, !tbaa !4", dest.local, args.first().map(|p| p.local.as_str()).unwrap_or("vec0"));
-                                let _ = writeln!(out, "  %v_b_{} = load <4 x i64>, ptr %{}, align 32, !tbaa !4", dest.local, args.get(1).map(|p| p.local.as_str()).unwrap_or("vec1"));
-                                let _ = writeln!(out, "  %v_mul_{} = mul <4 x i64> %v_a_{}, %v_b_{}", dest.local, dest.local, dest.local);
-                                let _ = writeln!(out, "  %v_acc_{} = add <4 x i64> %v_mul_{}, %v_a_{}", dest.local, dest.local, dest.local);
-                                let _ = writeln!(out, "  store <4 x i64> %v_acc_{}, ptr %{}, align 32, !tbaa !4", dest.local, dest.local);
-                            } else {
-                                let _ = write!(out, "  %call_{} = call i64 @{}(", dest.local, callee);
-                                for (ai, arg) in args.iter().enumerate() {
-                                    if ai > 0 { let _ = write!(out, ", "); }
-                                    let _ = write!(out, "i64 %{}", arg.local);
-                                }
-                                let _ = writeln!(out, ")");
-                                let _ = writeln!(out, "  store i64 %call_{}, ptr %{}, align 8, !tbaa !1", dest.local, dest.local);
-                            }
+                        crate::typecheck::typed_ast::TypedLiteral::Bool(b) => {
+                            let _ = writeln!(
+                                out,
+                                "  store i1 {}, ptr %{}, align 1, !tbaa !1",
+                                if *b { 1 } else { 0 },
+                                dest.local
+                            );
                         }
                         _ => {
-                            let _ = writeln!(out, "  ; statement");
+                            let _ = writeln!(
+                                out,
+                                "  store i64 0, ptr %{}, align 8, !tbaa !1",
+                                dest.local
+                            );
+                        }
+                    },
+                    Rvalue::BinaryOp(op, l, r) => {
+                        let op_str = match op {
+                            crate::ast::BinaryOp::Add => "add",
+                            crate::ast::BinaryOp::Sub => "sub",
+                            crate::ast::BinaryOp::Mul => "mul",
+                            crate::ast::BinaryOp::Div => "sdiv",
+                            crate::ast::BinaryOp::Mod => "srem",
+                            _ => "add",
+                        };
+                        let _ = writeln!(
+                            out,
+                            "  %t_{}_l = load i64, ptr %{}, align 8, !tbaa !1",
+                            dest.local, l.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  %t_{}_r = load i64, ptr %{}, align 8, !tbaa !1",
+                            dest.local, r.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  %t_{}_res = {} i64 %t_{}_l, %t_{}_r",
+                            dest.local, op_str, dest.local, dest.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  store i64 %t_{}_res, ptr %{}, align 8, !tbaa !1",
+                            dest.local, dest.local
+                        );
+                    }
+                    Rvalue::Call(callee, args) => {
+                        if callee.starts_with("__nway_recurrence_") {
+                            // COOPT-03: Vectorized AVX2 SIMD matrix arithmetic
+                            let _ = writeln!(
+                                out,
+                                "  ; COOPT-03: 4-wide SIMD AVX2 vector recurrence evaluation"
+                            );
+                            let _ = writeln!(
+                                out,
+                                "  %v_a_{} = load <4 x i64>, ptr %{}, align 32, !tbaa !4",
+                                dest.local,
+                                args.first().map(|p| p.local.as_str()).unwrap_or("vec0")
+                            );
+                            let _ = writeln!(
+                                out,
+                                "  %v_b_{} = load <4 x i64>, ptr %{}, align 32, !tbaa !4",
+                                dest.local,
+                                args.get(1).map(|p| p.local.as_str()).unwrap_or("vec1")
+                            );
+                            let _ = writeln!(
+                                out,
+                                "  %v_mul_{} = mul <4 x i64> %v_a_{}, %v_b_{}",
+                                dest.local, dest.local, dest.local
+                            );
+                            let _ = writeln!(
+                                out,
+                                "  %v_acc_{} = add <4 x i64> %v_mul_{}, %v_a_{}",
+                                dest.local, dest.local, dest.local
+                            );
+                            let _ = writeln!(
+                                out,
+                                "  store <4 x i64> %v_acc_{}, ptr %{}, align 32, !tbaa !4",
+                                dest.local, dest.local
+                            );
+                        } else {
+                            let _ = write!(out, "  %call_{} = call i64 @{}(", dest.local, callee);
+                            for (ai, arg) in args.iter().enumerate() {
+                                if ai > 0 {
+                                    let _ = write!(out, ", ");
+                                }
+                                let _ = write!(out, "i64 %{}", arg.local);
+                            }
+                            let _ = writeln!(out, ")");
+                            let _ = writeln!(
+                                out,
+                                "  store i64 %call_{}, ptr %{}, align 8, !tbaa !1",
+                                dest.local, dest.local
+                            );
                         }
                     }
+                    _ => {
+                        let _ = writeln!(out, "  ; statement");
+                    }
                 }
+            }
 
             // Terminator
             match &block.terminator {
                 Terminator::Return { value: Some(p) } => {
-                    let _ = writeln!(out, "  %ret_val_{} = load i64, ptr %{}, align 8, !tbaa !1", p.local, p.local);
+                    let _ = writeln!(
+                        out,
+                        "  %ret_val_{} = load i64, ptr %{}, align 8, !tbaa !1",
+                        p.local, p.local
+                    );
                     let _ = writeln!(out, "  ret i64 %ret_val_{}", p.local);
                 }
                 Terminator::Return { value: None } => {
@@ -1307,23 +1707,57 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
                 Terminator::Branch { target } => {
                     let is_back_edge = target.0 <= block.id.0 || func.is_distilled;
                     if is_back_edge {
-                        let _ = writeln!(out, "  br label %bb{}, !llvm.loop !{}", target.0, loop_meta_id);
+                        let _ = writeln!(
+                            out,
+                            "  br label %bb{}, !llvm.loop !{}",
+                            target.0, loop_meta_id
+                        );
                     } else {
                         let _ = writeln!(out, "  br label %bb{}", target.0);
                     }
                 }
-                Terminator::BranchIf { condition, then_target, else_target } => {
-                    let is_back_edge = then_target.0 <= block.id.0 || else_target.0 <= block.id.0 || func.is_distilled;
-                    let _ = writeln!(out, "  %c_{} = load i1, ptr %{}, align 1, !tbaa !1", condition.local, condition.local);
+                Terminator::BranchIf {
+                    condition,
+                    then_target,
+                    else_target,
+                } => {
+                    let is_back_edge = then_target.0 <= block.id.0
+                        || else_target.0 <= block.id.0
+                        || func.is_distilled;
+                    let _ = writeln!(
+                        out,
+                        "  %c_{} = load i1, ptr %{}, align 1, !tbaa !1",
+                        condition.local, condition.local
+                    );
                     if is_back_edge {
-                        let _ = writeln!(out, "  br i1 %c_{}, label %bb{}, label %bb{}, !llvm.loop !{}", condition.local, then_target.0, else_target.0, loop_meta_id);
+                        let _ = writeln!(
+                            out,
+                            "  br i1 %c_{}, label %bb{}, label %bb{}, !llvm.loop !{}",
+                            condition.local, then_target.0, else_target.0, loop_meta_id
+                        );
                     } else {
-                        let _ = writeln!(out, "  br i1 %c_{}, label %bb{}, label %bb{}", condition.local, then_target.0, else_target.0);
+                        let _ = writeln!(
+                            out,
+                            "  br i1 %c_{}, label %bb{}, label %bb{}",
+                            condition.local, then_target.0, else_target.0
+                        );
                     }
                 }
-                Terminator::Switch { value, targets, default } => {
-                    let _ = writeln!(out, "  %sw_{} = load i64, ptr %{}, align 8, !tbaa !1", value.local, value.local);
-                    let _ = write!(out, "  switch i64 %sw_{}, label %bb{} [ ", value.local, default.0);
+                Terminator::Switch {
+                    value,
+                    targets,
+                    default,
+                } => {
+                    let _ = writeln!(
+                        out,
+                        "  %sw_{} = load i64, ptr %{}, align 8, !tbaa !1",
+                        value.local, value.local
+                    );
+                    let _ = write!(
+                        out,
+                        "  switch i64 %sw_{}, label %bb{} [ ",
+                        value.local, default.0
+                    );
                     for (case_val, target_bb) in targets {
                         let _ = write!(out, "i64 {}, label %bb{} ", case_val, target_bb.0);
                     }
@@ -1335,10 +1769,23 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
                 Terminator::Force { cont, .. } => {
                     let _ = writeln!(out, "  br label %bb{}", cont.0);
                 }
-                Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
+                Terminator::TypeGuard {
+                    local,
+                    expected_tag,
+                    fast_path,
+                    deopt_stub,
+                } => {
                     let cond_name = format!("%guard_{}_{}", block.id.0, local.local);
-                    let _ = writeln!(out, "  {} = icmp eq i64 %{}, {}", cond_name, local.local, expected_tag);
-                    let _ = writeln!(out, "  br i1 {}, label %bb{}, label %bb{}", cond_name, fast_path.0, deopt_stub.0);
+                    let _ = writeln!(
+                        out,
+                        "  {} = icmp eq i64 %{}, {}",
+                        cond_name, local.local, expected_tag
+                    );
+                    let _ = writeln!(
+                        out,
+                        "  br i1 {}, label %bb{}, label %bb{}",
+                        cond_name, fast_path.0, deopt_stub.0
+                    );
                 }
                 _ => {
                     let _ = writeln!(out, "  ret void");
@@ -1351,7 +1798,10 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
     }
 
     // Function attributes
-    let _ = writeln!(out, "attributes #0 = {{ nounwind \"target-cpu\"=\"x86-64\" \"target-features\"=\"+avx2\" }}");
+    let _ = writeln!(
+        out,
+        "attributes #0 = {{ nounwind \"target-cpu\"=\"x86-64\" \"target-features\"=\"+avx2\" }}"
+    );
     let _ = writeln!(out);
 
     // 4. Emit metadata dictionary
@@ -1361,4 +1811,3 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
 
     Ok(out)
 }
-

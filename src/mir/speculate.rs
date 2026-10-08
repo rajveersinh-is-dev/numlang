@@ -4,9 +4,9 @@
 //! computes statistical confidence scores, and inserts speculative `Terminator::TypeGuard`
 //! fast-path branches in residualized MIR when confidence exceeds configurable thresholds.
 
-use std::collections::HashMap;
-use crate::mir::{BasicBlockId, Terminator};
 use crate::mir::lower::{MirBasicBlock, MirFunction, MirProgram};
+use crate::mir::{BasicBlockId, Terminator};
+use std::collections::HashMap;
 
 /// Concrete observed type profile for a local variable or parameter at a specialization site.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -94,7 +94,13 @@ pub fn insert_speculative_type_guards(
     for block in &func.blocks {
         let mut split_occurred = false;
 
-        if let Terminator::IndirectCall { callee, args, dest, next } = &block.terminator {
+        if let Terminator::IndirectCall {
+            callee,
+            args,
+            dest,
+            next,
+        } = &block.terminator
+        {
             // Check if any argument or the callee place has a high-confidence type profile
             let candidate_local = if let Some(prof) = profiles.get(&callee.local) {
                 if prof.confidence >= confidence_threshold {

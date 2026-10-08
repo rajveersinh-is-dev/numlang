@@ -5,9 +5,9 @@ use numlang::ast::BinaryOp;
 use numlang::mir::lower::lower_program;
 use numlang::mir::supercompiler::generalize::solve_recurrence;
 use numlang::mir::supercompiler::state::PathConstraintStore;
+use numlang::mir::supercompiler::supercompile_mir_program;
 use numlang::mir::supercompiler::term::{SymTerm, TermInterner};
 use numlang::mir::supercompiler::whistle::is_embedded;
-use numlang::mir::supercompiler::supercompile_mir_program;
 use numlang::mir::{BasicBlockId, Place};
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -81,7 +81,10 @@ fn test_path_constraint_propagation() {
     let eq_cond = interner.intern_binary(BinaryOp::Eq, x, y, Type::Bool);
     constraints.add_condition(eq_cond, true, &interner);
 
-    assert_eq!(constraints.evaluate_condition(eq_cond, &interner), Some(true));
+    assert_eq!(
+        constraints.evaluate_condition(eq_cond, &interner),
+        Some(true)
+    );
 
     let z_place = Place {
         local: "z".to_string(),

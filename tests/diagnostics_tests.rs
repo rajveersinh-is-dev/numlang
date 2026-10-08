@@ -11,7 +11,11 @@ fn test_all_error_codes_e001_to_e020_have_explanations() {
     for i in 1..=20 {
         let code = format!("E{:03}", i);
         let exp = get_explanation(&code);
-        assert!(exp.is_some(), "Error code {} should have an explanation", code);
+        assert!(
+            exp.is_some(),
+            "Error code {} should have an explanation",
+            code
+        );
         let exp = exp.unwrap();
         assert!(!exp.title.is_empty());
         assert!(!exp.description.is_empty());
@@ -102,7 +106,8 @@ fn test_parse_error_missing_arrow_hint() {
 
 #[test]
 fn test_parser_recovery_multiple_statements() {
-    let source = "fn main() -> i64 {\n    let = 10;\n    let y: i64 = 20;\n    let = 30;\n    return y;\n}";
+    let source =
+        "fn main() -> i64 {\n    let = 10;\n    let y: i64 = 20;\n    let = 30;\n    return y;\n}";
     let tokens = tokenize(source).unwrap();
     let mut parser = numlang::parser::Parser::new(&tokens);
     let _ = parser.parse_program();
@@ -196,10 +201,15 @@ fn test_all_type_error_variants_diagnostics_coverage() {
     for (src, expected_code) in cases {
         let tokens = tokenize(src).expect("tokenization should succeed");
         let program = parse(&tokens).expect("parsing should succeed");
-        let err = typecheck(&program).expect_err(&format!("typecheck should fail for code {}", expected_code));
+        let err = typecheck(&program)
+            .expect_err(&format!("typecheck should fail for code {}", expected_code));
 
         assert_eq!(err.error_code(), expected_code);
-        assert!(!err.span().is_empty(), "Span must be non-zero for code {}", expected_code);
+        assert!(
+            !err.span().is_empty(),
+            "Span must be non-zero for code {}",
+            expected_code
+        );
 
         let diag = CompilerDiagnostic::from_type_error(err, filename, src);
         match &diag {
@@ -211,9 +221,21 @@ fn test_all_type_error_variants_diagnostics_coverage() {
 
         let rendered = render_diagnostic(&diag);
         assert!(!rendered.is_empty());
-        assert!(rendered.contains(filename), "Diagnostic output must contain filename");
-        assert!(rendered.contains("│") || rendered.contains("|"), "Diagnostic output must contain source snippet");
-        assert!(rendered.contains(&format!("[{}]", expected_code)), "Diagnostic must contain error code");
-        assert!(rendered.contains("--explain") && rendered.contains(expected_code), "Diagnostic must contain explain reference");
+        assert!(
+            rendered.contains(filename),
+            "Diagnostic output must contain filename"
+        );
+        assert!(
+            rendered.contains("│") || rendered.contains("|"),
+            "Diagnostic output must contain source snippet"
+        );
+        assert!(
+            rendered.contains(&format!("[{}]", expected_code)),
+            "Diagnostic must contain error code"
+        );
+        assert!(
+            rendered.contains("--explain") && rendered.contains(expected_code),
+            "Diagnostic must contain explain reference"
+        );
     }
 }

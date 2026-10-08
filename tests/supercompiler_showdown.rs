@@ -46,7 +46,10 @@ pub enum RunStatus {
     },
     NotInstalled,
     CompileFailed(String),
-    WrongOutput { actual: i32, expected: i32 },
+    WrongOutput {
+        actual: i32,
+        expected: i32,
+    },
     Crash(i32),
 }
 
@@ -204,11 +207,7 @@ fn compile_rust(src_file: &Path, exe_file: &Path) -> Result<Duration, String> {
     }
 }
 
-fn compile_msvc_c(
-    src_file: &Path,
-    exe_file: &Path,
-    vcvars: &Path,
-) -> Result<Duration, String> {
+fn compile_msvc_c(src_file: &Path, exe_file: &Path, vcvars: &Path) -> Result<Duration, String> {
     let bat_path = exe_file.with_extension("bat");
     let bat_content = format!(
         "@echo off\r\ncall \"{}\" >nul 2>&1\r\ncl /O2 /nologo /Fe:\"%~2\" \"%~1\" >nul 2>&1\r\n",
@@ -261,12 +260,7 @@ fn compile_ghc(src_file: &Path, exe_file: &Path) -> Result<Duration, String> {
     }
 }
 
-fn measure_binary(
-    exe: &Path,
-    expected_exit: i32,
-    warmup: usize,
-    rounds: usize,
-) -> RunStatus {
+fn measure_binary(exe: &Path, expected_exit: i32, warmup: usize, rounds: usize) -> RunStatus {
     // 1. Correctness Gate: Run once and verify exit code
     let check_out = match Command::new(exe).output() {
         Ok(o) => o,
@@ -337,7 +331,10 @@ fn measure_binary(
     let p95 = times[p95_idx];
 
     // Geometric mean
-    let sum_log: f64 = times.iter().map(|d| (d.as_nanos().max(1) as f64).ln()).sum();
+    let sum_log: f64 = times
+        .iter()
+        .map(|d| (d.as_nanos().max(1) as f64).ln())
+        .sum();
     let geomean_ns = (sum_log / (times.len() as f64)).exp() as u64;
     let geomean = Duration::from_nanos(geomean_ns);
 
@@ -380,8 +377,8 @@ fn get_median_ns(status: &RunStatus) -> Option<u64> {
 
 #[test]
 fn test_supercompiler_showdown() {
-    let is_quick = std::env::args().any(|a| a == "quick")
-        || std::env::var("SHOWDOWN_QUICK").is_ok();
+    let is_quick =
+        std::env::args().any(|a| a == "quick") || std::env::var("SHOWDOWN_QUICK").is_ok();
 
     let warmup_rounds = if is_quick { 2 } else { 5 };
     let measure_rounds = if is_quick { 5 } else { 30 };
@@ -396,7 +393,14 @@ fn test_supercompiler_showdown() {
     println!("                      Comprehensive Multi-Compiler Empirical Performance & Deforestation Evaluation");
     println!("========================================================================================================================");
     println!("Configuration:");
-    println!("  Mode             : {}", if is_quick { "QUICK (Smoke Test)" } else { "FULL (Scientific Standard: 30 rounds, 5 warmups)" });
+    println!(
+        "  Mode             : {}",
+        if is_quick {
+            "QUICK (Smoke Test)"
+        } else {
+            "FULL (Scientific Standard: 30 rounds, 5 warmups)"
+        }
+    );
     println!("  Warmup Rounds    : {}", warmup_rounds);
     println!("  Measured Rounds  : {}", measure_rounds);
     println!("\nDetected Toolchains:");
@@ -404,7 +408,10 @@ fn test_supercompiler_showdown() {
         if info.installed {
             println!("  [FOUND]        {:<10} -> {}", name, info.version);
         } else {
-            println!("  [NOT_FOUND]    {:<10} -> NOT_INSTALLED (will skip execution gracefully)", name);
+            println!(
+                "  [NOT_FOUND]    {:<10} -> NOT_INSTALLED (will skip execution gracefully)",
+                name
+            );
         }
     }
     println!("========================================================================================================================\n");
@@ -468,7 +475,6 @@ fn test_supercompiler_showdown() {
             c_rel: "bench/showdown/c/tree_flip.c",
             hs_rel: "bench/showdown/haskell/tree_flip.hs",
         },
-
         // Group 2: Arithmetic Recurrences
         BenchmarkSpec {
             id: "fib_matrix",
@@ -525,7 +531,6 @@ fn test_supercompiler_showdown() {
             c_rel: "bench/showdown/c/hofstadter.c",
             hs_rel: "bench/showdown/haskell/hofstadter.hs",
         },
-
         // Group 3: Higher-Order & Codata
         BenchmarkSpec {
             id: "compose5",
@@ -575,8 +580,8 @@ fn test_supercompiler_showdown() {
 
     let benchmarks: Vec<BenchmarkSpec> = if is_quick {
         vec![
-            all_benchmarks[1].clone(), // append3
-            all_benchmarks[5].clone(), // fib_matrix
+            all_benchmarks[1].clone(),  // append3
+            all_benchmarks[5].clone(),  // fib_matrix
             all_benchmarks[10].clone(), // compose5
         ]
     } else {
@@ -588,7 +593,10 @@ fn test_supercompiler_showdown() {
     let mut total_evaluable = 0;
 
     for spec in &benchmarks {
-        println!("--> Benchmarking [{}] {} ({}) ...", spec.id, spec.name, spec.group);
+        println!(
+            "--> Benchmarking [{}] {} ({}) ...",
+            spec.id, spec.name, spec.group
+        );
 
         let nl_src = root.join(spec.nl_rel);
         let rs_src = root.join(spec.rs_rel);
@@ -598,14 +606,24 @@ fn test_supercompiler_showdown() {
         // 1. NumLang Supercompiled
         let nl_sc_exe = test_dir.join(format!("{}_nl_sc.exe", spec.id));
         let nl_sc_status = match compile_numlang(&nl_src, &nl_sc_exe, true) {
-            Ok(_) => measure_binary(&nl_sc_exe, spec.expected_exit, warmup_rounds, measure_rounds),
+            Ok(_) => measure_binary(
+                &nl_sc_exe,
+                spec.expected_exit,
+                warmup_rounds,
+                measure_rounds,
+            ),
             Err(e) => RunStatus::CompileFailed(e),
         };
 
         // 2. NumLang Baseline
         let nl_base_exe = test_dir.join(format!("{}_nl_base.exe", spec.id));
         let nl_base_status = match compile_numlang(&nl_src, &nl_base_exe, false) {
-            Ok(_) => measure_binary(&nl_base_exe, spec.expected_exit, warmup_rounds, measure_rounds),
+            Ok(_) => measure_binary(
+                &nl_base_exe,
+                spec.expected_exit,
+                warmup_rounds,
+                measure_rounds,
+            ),
             Err(e) => RunStatus::CompileFailed(e),
         };
 
@@ -625,7 +643,9 @@ fn test_supercompiler_showdown() {
             if let Some(ref vcvars) = competitors["MSVC-O2"].path {
                 let c_exe = test_dir.join(format!("{}_c.exe", spec.id));
                 match compile_msvc_c(&c_src, &c_exe, vcvars) {
-                    Ok(_) => measure_binary(&c_exe, spec.expected_exit, warmup_rounds, measure_rounds),
+                    Ok(_) => {
+                        measure_binary(&c_exe, spec.expected_exit, warmup_rounds, measure_rounds)
+                    }
                     Err(e) => RunStatus::CompileFailed(e),
                 }
             } else {
@@ -753,7 +773,11 @@ fn test_supercompiler_showdown() {
 
     println!("\nShowdown Summary:");
     println!("  Total benchmarks evaluated : {}", total_evaluable);
-    println!("  NumLang-SC dominant wins   : {} ({:.1}%)", total_wins_sc, (total_wins_sc as f64) * 100.0 / (total_evaluable.max(1) as f64));
+    println!(
+        "  NumLang-SC dominant wins   : {} ({:.1}%)",
+        total_wins_sc,
+        (total_wins_sc as f64) * 100.0 / (total_evaluable.max(1) as f64)
+    );
 
     // Write CSV Output
     let csv_path = root.join("bench/data/showdown_results.csv");
@@ -773,8 +797,18 @@ fn test_supercompiler_showdown() {
 
         for (sys_name, status) in &systems {
             match status {
-                RunStatus::Success { min, median, p95, geomean, raw_rounds_ns } => {
-                    let raw_str = raw_rounds_ns.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(";");
+                RunStatus::Success {
+                    min,
+                    median,
+                    p95,
+                    geomean,
+                    raw_rounds_ns,
+                } => {
+                    let raw_str = raw_rounds_ns
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(";");
                     csv_lines.push(format!(
                         "{},{},{},{},{},{},{},{},{},SUCCESS,{}",
                         r.spec.id,
@@ -798,13 +832,24 @@ fn test_supercompiler_showdown() {
                 RunStatus::CompileFailed(err) => {
                     csv_lines.push(format!(
                         "{},{},{},{},{},0,0,0,0,COMPILE_FAIL:\"{}\",",
-                        r.spec.id, r.spec.group, r.spec.name, r.spec.expected_exit, sys_name, err.replace('"', "'")
+                        r.spec.id,
+                        r.spec.group,
+                        r.spec.name,
+                        r.spec.expected_exit,
+                        sys_name,
+                        err.replace('"', "'")
                     ));
                 }
                 RunStatus::WrongOutput { actual, expected } => {
                     csv_lines.push(format!(
                         "{},{},{},{},{},0,0,0,0,WRONG_OUTPUT(actual={},expected={}),",
-                        r.spec.id, r.spec.group, r.spec.name, r.spec.expected_exit, sys_name, actual, expected
+                        r.spec.id,
+                        r.spec.group,
+                        r.spec.name,
+                        r.spec.expected_exit,
+                        sys_name,
+                        actual,
+                        expected
                     ));
                 }
                 RunStatus::Crash(c) => {

@@ -21,8 +21,9 @@ fn compile_and_run_distill(src: &str, test_name: &str) -> (i32, String) {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let obj_bytes = compile_supercompiled_to_obj_with_mode(&typed, SupercompileMode::Distill, "size")
-        .expect("Codegen with SupercompileMode::Distill failed");
+    let obj_bytes =
+        compile_supercompiled_to_obj_with_mode(&typed, SupercompileMode::Distill, "size")
+            .expect("Codegen with SupercompileMode::Distill failed");
 
     let test_dir = std::env::temp_dir().join(format!("numlang_distill_test_{}", test_name));
     let _ = fs::create_dir_all(&test_dir);
@@ -84,8 +85,14 @@ fn test_append3_single_pass_zero_intermediate_allocations() {
     let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
 
     // 1. Verify global process tree statistics
-    assert!(stats.knots_tied > 0, "Distillation must tie global knots across procedural scopes");
-    assert!(stats.loops_collapsed > 0, "Distillation must deforest intermediate recursive structures");
+    assert!(
+        stats.knots_tied > 0,
+        "Distillation must tie global knots across procedural scopes"
+    );
+    assert!(
+        stats.loops_collapsed > 0,
+        "Distillation must deforest intermediate recursive structures"
+    );
 
     // 2. Locate append3 function
     let append3_func = mir
@@ -95,7 +102,11 @@ fn test_append3_single_pass_zero_intermediate_allocations() {
         .expect("append3 must exist in distilled MIR program");
 
     // 3. Verify signature: 3 parameters (xs, ys, zs)
-    assert_eq!(append3_func.params.len(), 3, "append3 must take exactly 3 arguments (xs, ys, zs)");
+    assert_eq!(
+        append3_func.params.len(),
+        3,
+        "append3 must take exactly 3 arguments (xs, ys, zs)"
+    );
     assert_eq!(append3_func.params[0].0, "xs");
     assert_eq!(append3_func.params[1].0, "ys");
     assert_eq!(append3_func.params[2].0, "zs");
@@ -138,7 +149,10 @@ fn test_append3_single_pass_zero_intermediate_allocations() {
         }
     }
 
-    assert!(found_recursive_call, "append3 must recurse directly to append3");
+    assert!(
+        found_recursive_call,
+        "append3 must recurse directly to append3"
+    );
     assert!(
         !found_call_to_append_in_cons,
         "Cons branch must NOT call append; intermediate list generation must be deforested"

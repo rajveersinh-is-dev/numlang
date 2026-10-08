@@ -1,9 +1,9 @@
+use numlang::testing::random_program_gen::generate_deep_random_program;
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
-use numlang::testing::random_program_gen::generate_deep_random_program;
 
 fn run_numlang_code(code: &str, supercompile: bool) -> (Option<i32>, String) {
     let id = format!(
@@ -109,7 +109,12 @@ fn run_fuzz_batch(total_cases: u64, report_name: &str) {
             .take(3)
             .map(|(s, ne, se, no, so, p)| format!(
                 "seed={}: norm_exit={:?} sc_exit={:?} norm_out='{}' sc_out='{}'\n---\n{}\n---",
-                s, ne, se, no.trim(), so.trim(), p
+                s,
+                ne,
+                se,
+                no.trim(),
+                so.trim(),
+                p
             ))
             .collect::<Vec<_>>()
             .join("\n")

@@ -21,7 +21,9 @@ pub fn supercompile_mir_functions_work_stealing(
     num_threads: usize,
 ) -> (Vec<MirFunction>, SupercompilerStats) {
     let threads_count = if num_threads == 0 {
-        thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
     } else {
         num_threads
     };
@@ -88,13 +90,13 @@ pub fn supercompile_mir_functions_work_stealing(
                             )
                         }
                         SupercompileMode::Mrsc => {
-                            let mrsc_engine =
-                                super::mrsc::MultiResultEngine::new(&func, &snapshot);
+                            let mrsc_engine = super::mrsc::MultiResultEngine::new(&func, &snapshot);
                             let (best_res, best_tree, _) = match obj.as_str() {
                                 "branch" => mrsc_engine
                                     .explore_and_select(&super::mrsc::MinDynamicBranchObjective),
-                                "pareto" => mrsc_engine
-                                    .explore_and_select(&super::mrsc::ParetoObjective),
+                                "pareto" => {
+                                    mrsc_engine.explore_and_select(&super::mrsc::ParetoObjective)
+                                }
                                 _ => mrsc_engine
                                     .explore_and_select(&super::mrsc::MinCodeSizeObjective),
                             };
@@ -113,11 +115,8 @@ pub fn supercompile_mir_functions_work_stealing(
                                 objective: mrsc_obj,
                                 exhaustive: true,
                             };
-                            let oracle = super::mrsc_oracle::MrscOracleEngine::new(
-                                &func,
-                                &snapshot,
-                                config,
-                            );
+                            let oracle =
+                                super::mrsc_oracle::MrscOracleEngine::new(&func, &snapshot, config);
                             let (_frontier, winner) = oracle.explore_iddfs();
                             (winner.residual, winner.tree.stats.clone())
                         }
@@ -177,7 +176,9 @@ pub fn supercompile_mir_program_parallel(
     num_threads: usize,
 ) -> SupercompilerStats {
     let threads_count = if num_threads == 0 {
-        thread::available_parallelism().map(|n| n.get()).unwrap_or(4)
+        thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
     } else {
         num_threads
     };

@@ -99,24 +99,23 @@ fn test_coopt_03_vectorized_recurrence_matrix_powers() {
     let fib_matrix: [[i64; 2]; 2] = [[1, 1], [1, 0]];
     let pow_10 = mat_pow_2x2(&fib_matrix, 10);
     // Fib(10) is pow_10[0][1] = 55, Fib(11) is pow_10[0][0] = 89
-    assert_eq!(pow_10[0][1], 55, "Fib(10) computed via 2x2 binary exponentiation must be 55");
-    assert_eq!(pow_10[0][0], 89, "Fib(11) computed via 2x2 binary exponentiation must be 89");
+    assert_eq!(
+        pow_10[0][1], 55,
+        "Fib(10) computed via 2x2 binary exponentiation must be 55"
+    );
+    assert_eq!(
+        pow_10[0][0], 89,
+        "Fib(11) computed via 2x2 binary exponentiation must be 89"
+    );
 
     // 2. Verify 4x4 SIMD vector matrix multiplication and exponentiation
-    let identity_4x4: [[i64; 4]; 4] = [
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1],
-    ];
-    let test_m: [[i64; 4]; 4] = [
-        [1, 2, 0, 1],
-        [0, 1, 1, 0],
-        [2, 0, 1, 3],
-        [1, 1, 0, 1],
-    ];
+    let identity_4x4: [[i64; 4]; 4] = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+    let test_m: [[i64; 4]; 4] = [[1, 2, 0, 1], [0, 1, 1, 0], [2, 0, 1, 3], [1, 1, 0, 1]];
     let mul_ident = mat_mul_4x4(&test_m, &identity_4x4);
-    assert_eq!(mul_ident, test_m, "Matrix multiplied by identity must equal itself");
+    assert_eq!(
+        mul_ident, test_m,
+        "Matrix multiplied by identity must equal itself"
+    );
 
     let pow_4 = mat_pow_4x4(&test_m, 4);
     let pow_nxn = mat_pow_nxn(
@@ -150,16 +149,27 @@ fn main() -> i64 {
     // Inject synthetic __nway_recurrence_0 call to verify SIMD vector emission
     if let Some(main_fn) = mir.functions.iter_mut().find(|f| f.name == "main") {
         if let Some(block) = main_fn.blocks.first_mut() {
-            block.statements.push(numlang::mir::lower::Statement::Assign(
-                numlang::mir::Place { local: "simd_dest".to_string(), projections: vec![] },
-                numlang::mir::lower::Rvalue::Call(
-                    "__nway_recurrence_0".to_string(),
-                    vec![
-                        numlang::mir::Place { local: "vec_a".to_string(), projections: vec![] },
-                        numlang::mir::Place { local: "vec_b".to_string(), projections: vec![] },
-                    ],
-                ),
-            ));
+            block
+                .statements
+                .push(numlang::mir::lower::Statement::Assign(
+                    numlang::mir::Place {
+                        local: "simd_dest".to_string(),
+                        projections: vec![],
+                    },
+                    numlang::mir::lower::Rvalue::Call(
+                        "__nway_recurrence_0".to_string(),
+                        vec![
+                            numlang::mir::Place {
+                                local: "vec_a".to_string(),
+                                projections: vec![],
+                            },
+                            numlang::mir::Place {
+                                local: "vec_b".to_string(),
+                                projections: vec![],
+                            },
+                        ],
+                    ),
+                ));
         }
     }
     let llvm_ir = emit_llvm_ir(&mir, OptLevel::O3).expect("LLVM IR emission failed");
@@ -305,7 +315,10 @@ fn test_coopt_05_head_to_head_dominance_matrix() {
     }
     let huge_scalar_duration = t_scalar_start.elapsed();
 
-    assert_eq!(huge_mat[0][1], sa, "Large N recurrence output must match dynamically");
+    assert_eq!(
+        huge_mat[0][1], sa,
+        "Large N recurrence output must match dynamically"
+    );
     assert!(
         huge_numlang_duration < huge_scalar_duration,
         "NumLang O(log N) ({:?}) must be faster than scalar loop ({:?})",

@@ -1,8 +1,10 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::{BasicBlockId, Place, Projection, Terminator};
-use crate::typecheck::typed_ast::{TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt};
+use crate::typecheck::typed_ast::{
+    TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedMatchPattern, TypedProgram, TypedStmt,
+};
 use crate::typecheck::types::Type;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 static CLOSURE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -120,7 +122,10 @@ impl MirBuilder {
             ty,
             mutable: true,
         });
-        Place { local: name, projections: vec![] }
+        Place {
+            local: name,
+            projections: vec![],
+        }
     }
 
     fn push_stmt(&mut self, stmt: Statement) {
@@ -148,14 +153,20 @@ impl MirBuilder {
     }
 
     fn lower_expr(&mut self, expr: &TypedExpr, target_place: Option<Place>) -> Place {
-        let block_id = self.current_block.clone().unwrap_or(crate::mir::BasicBlockId(0));
+        let block_id = self
+            .current_block
+            .clone()
+            .unwrap_or(crate::mir::BasicBlockId(0));
         let ty = expr.ty();
 
         let place = target_place.unwrap_or_else(|| self.new_temp(ty.clone()));
 
         match expr {
             TypedExpr::Literal { lit, .. } => {
-                self.blocks[block_id.0].statements.push(Statement::Assign(place.clone(), Rvalue::Constant(lit.clone())));
+                self.blocks[block_id.0].statements.push(Statement::Assign(
+                    place.clone(),
+                    Rvalue::Constant(lit.clone()),
+                ));
                 place
             }
             TypedExpr::Ident { name, ty, .. } => {
@@ -166,20 +177,33 @@ impl MirBuilder {
                     ));
                     place
                 } else {
-                    let src_place = Place { local: name.clone(), projections: vec![] };
-                    self.blocks[block_id.0].statements.push(Statement::Assign(place.clone(), Rvalue::Use(src_place)));
+                    let src_place = Place {
+                        local: name.clone(),
+                        projections: vec![],
+                    };
+                    self.blocks[block_id.0]
+                        .statements
+                        .push(Statement::Assign(place.clone(), Rvalue::Use(src_place)));
                     place
                 }
             }
             TypedExpr::Unary { op, expr, .. } => {
                 let inner = self.lower_expr(expr, None);
-                self.push_stmt(Statement::Assign(place.clone(), Rvalue::UnaryOp(*op, inner)));
+                self.push_stmt(Statement::Assign(
+                    place.clone(),
+                    Rvalue::UnaryOp(*op, inner),
+                ));
                 place
             }
-            TypedExpr::Binary { op, left, right, .. } => {
+            TypedExpr::Binary {
+                op, left, right, ..
+            } => {
                 let l = self.lower_expr(left, None);
                 let r = self.lower_expr(right, None);
-                self.push_stmt(Statement::Assign(place.clone(), Rvalue::BinaryOp(*op, l, r)));
+                self.push_stmt(Statement::Assign(
+                    place.clone(),
+                    Rvalue::BinaryOp(*op, l, r),
+                ));
                 place
             }
             TypedExpr::Call { callee, args, .. } => {
@@ -187,7 +211,10 @@ impl MirBuilder {
                 for arg in args {
                     arg_places.push(self.lower_expr(arg, None));
                 }
-                self.push_stmt(Statement::Assign(place.clone(), Rvalue::Call(callee.clone(), arg_places)));
+                self.push_stmt(Statement::Assign(
+                    place.clone(),
+                    Rvalue::Call(callee.clone(), arg_places),
+                ));
                 place
             }
             TypedExpr::ArrayLiteral { elements, .. } => {
@@ -211,7 +238,10 @@ impl MirBuilder {
                 for (f_name, f_expr) in fields {
                     field_places.push((f_name.clone(), self.lower_expr(f_expr, None)));
                 }
-                self.push_stmt(Statement::Assign(place.clone(), Rvalue::Struct(name.clone(), field_places)));
+                self.push_stmt(Statement::Assign(
+                    place.clone(),
+                    Rvalue::Struct(name.clone(), field_places),
+                ));
                 place
             }
             TypedExpr::FieldAccess { target, field, .. } => {
@@ -221,9 +251,7 @@ impl MirBuilder {
                 place
             }
             TypedExpr::Match {
-                scrutinee,
-                arms,
-                ..
+                scrutinee, arms, ..
             } => {
                 let scrut_place = self.lower_expr(scrutinee, None);
                 let res_place = place;
@@ -231,7 +259,10 @@ impl MirBuilder {
 
                 let discr_place = if matches!(scrutinee.ty(), Type::Enum(_)) {
                     let d = self.new_temp(Type::I64);
-                    self.push_stmt(Statement::Assign(d.clone(), Rvalue::Discriminant(scrut_place.clone())));
+                    self.push_stmt(Statement::Assign(
+                        d.clone(),
+                        Rvalue::Discriminant(scrut_place.clone()),
+                    ));
                     d
                 } else {
                     scrut_place.clone()
@@ -247,11 +278,7 @@ impl MirBuilder {
 
                     for pat in &arm.patterns {
                         match pat {
-                            TypedMatchPattern::Variant {
-                                tag,
-                                bindings,
-                                ..
-                            } => {
+                            TypedMatchPattern::Variant { tag, bindings, .. } => {
                                 targets.push((*tag as i64, arm_block.clone()));
                                 for (i, (b_name, b_ty)) in bindings.iter().enumerate() {
                                     if b_name != "_" {
@@ -260,8 +287,10 @@ impl MirBuilder {
                                             ty: b_ty.clone(),
                                             mutable: true,
                                         });
-                                        let b_place =
-                                            Place { local: b_name.clone(), projections: vec![] };
+                                        let b_place = Place {
+                                            local: b_name.clone(),
+                                            projections: vec![],
+                                        };
                                         let mut src = scrut_place.clone();
                                         src.projections.push(Projection::Payload(i));
                                         self.blocks[arm_block.0]
@@ -288,8 +317,9 @@ impl MirBuilder {
                     self.lower_expr(&arm.body, Some(res_place.clone()));
                     if let Some(curr) = self.current_block.clone() {
                         if self.blocks[curr.0].terminator == Terminator::Unreachable {
-                            self.blocks[curr.0].terminator =
-                                Terminator::Branch { target: merge_block.clone() };
+                            self.blocks[curr.0].terminator = Terminator::Branch {
+                                target: merge_block.clone(),
+                            };
                         }
                     }
                 }
@@ -331,10 +361,19 @@ impl MirBuilder {
                 ));
                 place
             }
-            TypedExpr::Lambda { params, body, captured, ty, .. } => {
+            TypedExpr::Lambda {
+                params,
+                body,
+                captured,
+                ty,
+                ..
+            } => {
                 let mut captured_places = Vec::new();
                 for (cap_name, _) in captured {
-                    captured_places.push(Place { local: cap_name.clone(), projections: vec![] });
+                    captured_places.push(Place {
+                        local: cap_name.clone(),
+                        projections: vec![],
+                    });
                 }
                 let closure_id = CLOSURE_COUNTER.fetch_add(1, Ordering::SeqCst);
                 let closure_name = format!("closure_stub_{}", closure_id);
@@ -374,11 +413,16 @@ impl MirBuilder {
 
                 let entry = closure_builder.new_block();
                 closure_builder.current_block = Some(entry);
-                let ret_place = Place { local: "_ret".to_string(), projections: vec![] };
+                let ret_place = Place {
+                    local: "_ret".to_string(),
+                    projections: vec![],
+                };
                 let result_place = closure_builder.lower_expr(body, Some(ret_place.clone()));
                 if let Some(curr) = closure_builder.current_block.clone() {
                     if closure_builder.blocks[curr.0].terminator == Terminator::Unreachable {
-                        closure_builder.blocks[curr.0].terminator = Terminator::Return { value: Some(result_place) };
+                        closure_builder.blocks[curr.0].terminator = Terminator::Return {
+                            value: Some(result_place),
+                        };
                     }
                 }
 
@@ -422,18 +466,12 @@ impl MirBuilder {
             }
             TypedExpr::Box { inner, .. } => {
                 let inner_place = self.lower_expr(inner, None);
-                self.push_stmt(Statement::Assign(
-                    place.clone(),
-                    Rvalue::Alloc(inner_place),
-                ));
+                self.push_stmt(Statement::Assign(place.clone(), Rvalue::Alloc(inner_place)));
                 place
             }
             TypedExpr::Deref { inner, .. } => {
                 let inner_place = self.lower_expr(inner, None);
-                self.push_stmt(Statement::Assign(
-                    place.clone(),
-                    Rvalue::Load(inner_place),
-                ));
+                self.push_stmt(Statement::Assign(place.clone(), Rvalue::Load(inner_place)));
                 place
             }
         }
@@ -441,29 +479,57 @@ impl MirBuilder {
 
     fn lower_stmt(&mut self, stmt: &TypedStmt) {
         match stmt {
-            TypedStmt::Let { name, is_mutable, ty, value, .. } => {
+            TypedStmt::Let {
+                name,
+                is_mutable,
+                ty,
+                value,
+                ..
+            } => {
                 self.locals.push(MirLocalDecl {
                     name: name.clone(),
                     ty: ty.clone(),
                     mutable: *is_mutable,
                 });
-                let dest = Place { local: name.clone(), projections: vec![] };
+                let dest = Place {
+                    local: name.clone(),
+                    projections: vec![],
+                };
                 self.lower_expr(value, Some(dest));
             }
             TypedStmt::Assign { name, value, .. } => {
-                let dest = Place { local: name.clone(), projections: vec![] };
+                let dest = Place {
+                    local: name.clone(),
+                    projections: vec![],
+                };
                 self.lower_expr(value, Some(dest));
             }
-            TypedStmt::IndexAssign { target, index, value, .. } => {
+            TypedStmt::IndexAssign {
+                target,
+                index,
+                value,
+                ..
+            } => {
                 let idx = self.lower_expr(index, None);
                 let val = self.lower_expr(value, None);
-                let mut dest = Place { local: target.clone(), projections: vec![] };
+                let mut dest = Place {
+                    local: target.clone(),
+                    projections: vec![],
+                };
                 dest.projections.push(Projection::Index(Box::new(idx)));
                 self.push_stmt(Statement::Assign(dest, Rvalue::Use(val)));
             }
-            TypedStmt::FieldAssign { target, field, value, .. } => {
+            TypedStmt::FieldAssign {
+                target,
+                field,
+                value,
+                ..
+            } => {
                 let val = self.lower_expr(value, None);
-                let mut dest = Place { local: target.clone(), projections: vec![] };
+                let mut dest = Place {
+                    local: target.clone(),
+                    projections: vec![],
+                };
                 dest.projections.push(Projection::Field(field.clone()));
                 self.push_stmt(Statement::Assign(dest, Rvalue::Use(val)));
             }
@@ -474,13 +540,22 @@ impl MirBuilder {
             TypedStmt::Expr(expr) => {
                 self.lower_expr(expr, None);
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 let cond_place = self.lower_expr(condition, None);
                 let then_block = self.new_block();
                 let else_block = self.new_block();
                 let merge_block = self.new_block();
 
-                let else_target = if else_branch.is_some() { else_block.clone() } else { merge_block.clone() };
+                let else_target = if else_branch.is_some() {
+                    else_block.clone()
+                } else {
+                    merge_block.clone()
+                };
 
                 self.set_terminator(Terminator::BranchIf {
                     condition: cond_place,
@@ -491,25 +566,33 @@ impl MirBuilder {
                 self.current_block = Some(then_block);
                 self.lower_block(then_branch);
                 if self.current_terminator() == Terminator::Unreachable {
-                    self.set_terminator(Terminator::Branch { target: merge_block.clone() });
+                    self.set_terminator(Terminator::Branch {
+                        target: merge_block.clone(),
+                    });
                 }
 
                 if let Some(eb) = else_branch {
                     self.current_block = Some(else_block);
                     self.lower_block(eb);
                     if self.current_terminator() == Terminator::Unreachable {
-                        self.set_terminator(Terminator::Branch { target: merge_block.clone() });
+                        self.set_terminator(Terminator::Branch {
+                            target: merge_block.clone(),
+                        });
                     }
                 }
 
                 self.current_block = Some(merge_block);
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 let cond_block = self.new_block();
                 let body_block = self.new_block();
                 let merge_block = self.new_block();
 
-                self.set_terminator(Terminator::Branch { target: cond_block.clone() });
+                self.set_terminator(Terminator::Branch {
+                    target: cond_block.clone(),
+                });
 
                 self.current_block = Some(cond_block.clone());
                 let cond_place = self.lower_expr(condition, None);
@@ -519,7 +602,8 @@ impl MirBuilder {
                     else_target: merge_block.clone(),
                 });
 
-                self.loop_stack.push((cond_block.clone(), merge_block.clone()));
+                self.loop_stack
+                    .push((cond_block.clone(), merge_block.clone()));
                 self.current_block = Some(body_block);
                 self.lower_block(body);
                 if self.current_terminator() == Terminator::Unreachable {
@@ -531,14 +615,18 @@ impl MirBuilder {
             }
             TypedStmt::Break(_) => {
                 if let Some((_, merge_target)) = self.loop_stack.last() {
-                    self.set_terminator(Terminator::Branch { target: merge_target.clone() });
+                    self.set_terminator(Terminator::Branch {
+                        target: merge_target.clone(),
+                    });
                     let unreachable_block = self.new_block();
                     self.current_block = Some(unreachable_block);
                 }
             }
             TypedStmt::Continue(_) => {
                 if let Some((cond_target, _)) = self.loop_stack.last() {
-                    self.set_terminator(Terminator::Branch { target: cond_target.clone() });
+                    self.set_terminator(Terminator::Branch {
+                        target: cond_target.clone(),
+                    });
                     let unreachable_block = self.new_block();
                     self.current_block = Some(unreachable_block);
                 }
@@ -570,7 +658,9 @@ impl MirBuilder {
                 let step_block = self.new_block();
                 let merge_block = self.new_block();
 
-                self.set_terminator(Terminator::Branch { target: cond_block.clone() });
+                self.set_terminator(Terminator::Branch {
+                    target: cond_block.clone(),
+                });
 
                 // Cond block: evaluate var < hi (or <=)
                 self.current_block = Some(cond_block.clone());
@@ -591,13 +681,15 @@ impl MirBuilder {
                 };
 
                 // Body block: continue jumps to step_block, break jumps to merge_block
-                self.loop_stack.push((step_block.clone(), merge_block.clone()));
+                self.loop_stack
+                    .push((step_block.clone(), merge_block.clone()));
                 self.current_block = Some(body_block);
                 self.lower_block(body);
                 if let Some(curr) = self.current_block.clone() {
                     if self.blocks[curr.0].terminator == Terminator::Unreachable {
-                        self.blocks[curr.0].terminator =
-                            Terminator::Branch { target: step_block.clone() };
+                        self.blocks[curr.0].terminator = Terminator::Branch {
+                            target: step_block.clone(),
+                        };
                     }
                 }
                 self.loop_stack.pop();
@@ -614,12 +706,10 @@ impl MirBuilder {
                     inc_place.clone(),
                     Rvalue::BinaryOp(BinaryOp::Add, var_place.clone(), one_place),
                 ));
-                self.blocks[step_block.0].statements.push(Statement::Assign(
-                    var_place,
-                    Rvalue::Use(inc_place),
-                ));
-                self.blocks[step_block.0].terminator =
-                    Terminator::Branch { target: cond_block };
+                self.blocks[step_block.0]
+                    .statements
+                    .push(Statement::Assign(var_place, Rvalue::Use(inc_place)));
+                self.blocks[step_block.0].terminator = Terminator::Branch { target: cond_block };
 
                 self.current_block = Some(merge_block);
             }
@@ -658,7 +748,11 @@ impl MirBuilder {
 
         let mir_fn = MirFunction {
             name: func.name.clone(),
-            params: func.params.iter().map(|p| (p.name.clone(), p.ty.clone())).collect(),
+            params: func
+                .params
+                .iter()
+                .map(|p| (p.name.clone(), p.ty.clone()))
+                .collect(),
             return_ty: func.return_ty.clone(),
             locals: self.locals,
             blocks: self.blocks,

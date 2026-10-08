@@ -30,14 +30,22 @@ fn run_numlang_code(code: &str) -> (Option<i32>, String, String) {
 
 #[test]
 fn test_no_identical_function_bodies_in_minspec() {
-    let content = fs::read_to_string("src/stdlib/minspec.nl")
-        .expect("Failed to read src/stdlib/minspec.nl");
+    let content =
+        fs::read_to_string("src/stdlib/minspec.nl").expect("Failed to read src/stdlib/minspec.nl");
 
     // Extract function bodies for first_futamura, second_futamura_compiler, third_futamura_cogen
-    let fn1_start = content.find("fn first_futamura(").expect("first_futamura not found");
-    let fn2_start = content.find("fn second_futamura_compiler(").expect("second_futamura_compiler not found");
-    let fn3_start = content.find("fn third_futamura_cogen(").expect("third_futamura_cogen not found");
-    let fn_end = content.find("fn verify_soundness(").expect("verify_soundness not found");
+    let fn1_start = content
+        .find("fn first_futamura(")
+        .expect("first_futamura not found");
+    let fn2_start = content
+        .find("fn second_futamura_compiler(")
+        .expect("second_futamura_compiler not found");
+    let fn3_start = content
+        .find("fn third_futamura_cogen(")
+        .expect("third_futamura_cogen not found");
+    let fn_end = content
+        .find("fn verify_soundness(")
+        .expect("verify_soundness not found");
 
     let fn1_text = &content[fn1_start..fn2_start];
     let fn2_text = &content[fn2_start..fn3_start];
@@ -77,8 +85,8 @@ fn test_no_identical_function_bodies_in_minspec() {
 
 #[test]
 fn test_projections_structural_disparity() {
-    let minspec = fs::read_to_string("src/stdlib/minspec.nl")
-        .expect("Failed to read src/stdlib/minspec.nl");
+    let minspec =
+        fs::read_to_string("src/stdlib/minspec.nl").expect("Failed to read src/stdlib/minspec.nl");
 
     let harness = r#"
 fn main() -> i64 {
@@ -112,8 +120,8 @@ fn main() -> i64 {
 
 #[test]
 fn test_cogen_produces_compiler_which_produces_specialized_code() {
-    let minspec = fs::read_to_string("src/stdlib/minspec.nl")
-        .expect("Failed to read src/stdlib/minspec.nl");
+    let minspec =
+        fs::read_to_string("src/stdlib/minspec.nl").expect("Failed to read src/stdlib/minspec.nl");
 
     let harness = r#"
 fn main() -> i64 {
@@ -161,8 +169,8 @@ fn main() -> i64 {
 
 #[test]
 fn test_all_programs_parity_across_projections() {
-    let minspec = fs::read_to_string("src/stdlib/minspec.nl")
-        .expect("Failed to read src/stdlib/minspec.nl");
+    let minspec =
+        fs::read_to_string("src/stdlib/minspec.nl").expect("Failed to read src/stdlib/minspec.nl");
 
     let harness = r#"
 fn main() -> i64 {

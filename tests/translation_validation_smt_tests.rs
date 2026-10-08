@@ -129,7 +129,10 @@ fn test_smt_bitvector_algebra_and_decision_procedure() {
 
     // 8. Direct satisfiability query using check_satisfiability and SmtResult
     let sat_query = BoolFormula::Eq(
-        Box::new(BvExpr::Add(Box::new(x.clone()), Box::new(BvExpr::constant(5, 64)))),
+        Box::new(BvExpr::Add(
+            Box::new(x.clone()),
+            Box::new(BvExpr::constant(5, 64)),
+        )),
         Box::new(BvExpr::constant(15, 64)),
     );
     match check_satisfiability(&sat_query) {
@@ -162,10 +165,7 @@ fn test_smt_uninterpreted_functions_and_congruence() {
     // Violated congruence: (x == y) => (f(x) == f(y) + 1)
     let violated_conclusion = BoolFormula::Eq(
         Box::new(fx),
-        Box::new(BvExpr::Add(
-            Box::new(fy),
-            Box::new(BvExpr::constant(1, 64)),
-        )),
+        Box::new(BvExpr::Add(Box::new(fy), Box::new(BvExpr::constant(1, 64)))),
     );
     let false_prop = BoolFormula::Implies(
         Box::new(BoolFormula::Eq(Box::new(x), Box::new(y))),
@@ -201,15 +201,28 @@ fn test_smt_relational_path_vc_conditional_branches() {
     let orig_mir = get_mir(code_spec);
     let res_mir = get_mir(code_opt);
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "abs_val").unwrap();
-    let res_func = res_mir.functions.iter().find(|f| f.name == "abs_val").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "abs_val")
+        .unwrap();
+    let res_func = res_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "abs_val")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, res_func);
-    let cert = validator.verify().expect("Translation validation must prove branch reorganization");
+    let cert = validator
+        .verify()
+        .expect("Translation validation must prove branch reorganization");
 
     assert!(cert.is_certified);
     assert_eq!(cert.function_name, "abs_val");
-    assert!(cert.smt_queries_proved >= 2, "Must prove simulation across both branch paths");
+    assert!(
+        cert.smt_queries_proved >= 2,
+        "Must prove simulation across both branch paths"
+    );
 }
 
 #[test]
@@ -225,7 +238,11 @@ fn test_smt_mutation_detection_operator_swap() {
     let mut mutated_mir = orig_mir.clone();
 
     // Mutate operator: replace `x + y` with `x - y`
-    let func = mutated_mir.functions.iter_mut().find(|f| f.name == "compute").unwrap();
+    let func = mutated_mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "compute")
+        .unwrap();
     for b in &mut func.blocks {
         for stmt in &mut b.statements {
             let Statement::Assign(_, rval) = stmt;
@@ -237,11 +254,21 @@ fn test_smt_mutation_detection_operator_swap() {
         }
     }
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "compute").unwrap();
-    let mutated_func = mutated_mir.functions.iter().find(|f| f.name == "compute").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "compute")
+        .unwrap();
+    let mutated_func = mutated_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "compute")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, mutated_func);
-    let err = validator.verify().expect_err("SMT validation must reject operator swap");
+    let err = validator
+        .verify()
+        .expect_err("SMT validation must reject operator swap");
 
     assert!(
         matches!(err, ValidationError::OutputMismatch { .. }),
@@ -266,7 +293,11 @@ fn test_smt_mutation_detection_off_by_one_and_branch_boundary() {
     let mut mutated_mir = orig_mir.clone();
 
     // Mutate condition: replace `< 10` with `<= 10`
-    let func = mutated_mir.functions.iter_mut().find(|f| f.name == "threshold").unwrap();
+    let func = mutated_mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "threshold")
+        .unwrap();
     for b in &mut func.blocks {
         for stmt in &mut b.statements {
             let Statement::Assign(_, rval) = stmt;
@@ -278,11 +309,21 @@ fn test_smt_mutation_detection_off_by_one_and_branch_boundary() {
         }
     }
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "threshold").unwrap();
-    let mutated_func = mutated_mir.functions.iter().find(|f| f.name == "threshold").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "threshold")
+        .unwrap();
+    let mutated_func = mutated_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "threshold")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, mutated_func);
-    let err = validator.verify().expect_err("SMT validation must detect boundary condition mutation");
+    let err = validator
+        .verify()
+        .expect_err("SMT validation must detect boundary condition mutation");
 
     assert!(
         matches!(err, ValidationError::OutputMismatch { .. }),
@@ -291,8 +332,11 @@ fn test_smt_mutation_detection_off_by_one_and_branch_boundary() {
     );
     let err_msg = format!("{}", err);
     // Boundary counterexample at x=10
-    assert!(err_msg.contains("10") || err_msg.contains("100") || err_msg.contains("200"),
-        "Error message must reference mismatched outputs or counterexample: {}", err_msg);
+    assert!(
+        err_msg.contains("10") || err_msg.contains("100") || err_msg.contains("200"),
+        "Error message must reference mismatched outputs or counterexample: {}",
+        err_msg
+    );
 }
 
 #[test]
@@ -316,11 +360,21 @@ fn test_smt_loop_unrolling_and_closed_form_equivalence() {
     let orig_mir = get_mir(code_unrolled);
     let res_mir = get_mir(code_closed);
 
-    let orig_func = orig_mir.functions.iter().find(|f| f.name == "scale_triple").unwrap();
-    let res_func = res_mir.functions.iter().find(|f| f.name == "scale_triple").unwrap();
+    let orig_func = orig_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "scale_triple")
+        .unwrap();
+    let res_func = res_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "scale_triple")
+        .unwrap();
 
     let mut validator = TranslationValidator::new(orig_func, res_func);
-    let cert = validator.verify().expect("Unrolled loop must be bit-for-bit equivalent to closed form");
+    let cert = validator
+        .verify()
+        .expect("Unrolled loop must be bit-for-bit equivalent to closed form");
 
     assert!(cert.is_certified);
     assert_eq!(cert.function_name, "scale_triple");
@@ -338,10 +392,22 @@ fn test_smt_smtlib2_export_verification() {
     );
 
     let smt_text = SmtLib2Printer::to_smtlib2(&formula);
-    assert!(smt_text.contains("(set-logic QF_UFBV)"), "Must set QF_UFBV logic");
-    assert!(smt_text.contains("(declare-const x (_ BitVec 64))"), "Must declare x");
-    assert!(smt_text.contains("(declare-const y (_ BitVec 64))"), "Must declare y");
-    assert!(smt_text.contains("(assert (= (bvadd x y) (bvadd y x)))"), "Must assert addition commutativity");
+    assert!(
+        smt_text.contains("(set-logic QF_UFBV)"),
+        "Must set QF_UFBV logic"
+    );
+    assert!(
+        smt_text.contains("(declare-const x (_ BitVec 64))"),
+        "Must declare x"
+    );
+    assert!(
+        smt_text.contains("(declare-const y (_ BitVec 64))"),
+        "Must declare y"
+    );
+    assert!(
+        smt_text.contains("(assert (= (bvadd x y) (bvadd y x)))"),
+        "Must assert addition commutativity"
+    );
     assert!(smt_text.contains("(check-sat)"), "Must request check-sat");
     assert!(smt_text.contains("(get-model)"), "Must request model");
 }
@@ -371,10 +437,21 @@ fn test_smt_cli_verify_equivalence_with_mutations() {
         .output()
         .expect("CLI execution failed");
 
-    assert!(output.status.success(), "CLI run with --verify-equivalence must succeed on valid program: {:?}", output);
+    assert!(
+        output.status.success(),
+        "CLI run with --verify-equivalence must succeed on valid program: {:?}",
+        output
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("translation validation certified"), "Stdout must confirm certification: {}", stdout);
-    assert!(stdout.contains("linear"), "Stdout must mention verified function `linear`");
+    assert!(
+        stdout.contains("translation validation certified"),
+        "Stdout must confirm certification: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("linear"),
+        "Stdout must mention verified function `linear`"
+    );
 
     // 2. Program-wide translation validation on supercompiled program
     let orig_mir = get_mir(valid_code);
@@ -430,11 +507,12 @@ fn test_k_induction_loop_validation() {
     };
 
     let validator = KInductionValidator::new(&loop_candidate);
-    let cert = validator.verify_k_induction(1).expect("k-induction verification must succeed for count_to_10");
+    let cert = validator
+        .verify_k_induction(1)
+        .expect("k-induction verification must succeed for count_to_10");
 
     assert!(cert.base_case_proved);
     assert!(cert.inductive_step_proved);
     assert!(cert.postcondition_proved);
     assert_eq!(cert.k_depth, 1);
 }
-

@@ -5,11 +5,11 @@
 //! sequences modulo register names, hashes operations using SHA-256, and extracts
 //! duplicated instruction sequences into shared outlined subroutines.
 
-use std::collections::{HashMap, HashSet};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 
-use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::Type;
 
 /// Configuration for basic block outlining pass.
@@ -87,7 +87,9 @@ pub struct BlockHasher;
 
 impl BlockHasher {
     /// Normalizes a slice of MIR statements into canonical register indices (%0, %1, ...).
-    pub fn normalize_statements(stmts: &[Statement]) -> (Vec<NormalizedStatement>, HashMap<String, usize>) {
+    pub fn normalize_statements(
+        stmts: &[Statement],
+    ) -> (Vec<NormalizedStatement>, HashMap<String, usize>) {
         let mut local_map: HashMap<String, usize> = HashMap::new();
         let mut next_id = 0usize;
 
@@ -118,7 +120,9 @@ impl BlockHasher {
                     let dest_reg = get_reg(&dest.local, &mut local_map);
 
                     let op = match rval {
-                        Rvalue::BinaryOp(bin_op, _, _) => NormalizedOp::Binary(format!("{:?}", bin_op)),
+                        Rvalue::BinaryOp(bin_op, _, _) => {
+                            NormalizedOp::Binary(format!("{:?}", bin_op))
+                        }
                         Rvalue::UnaryOp(un_op, _) => NormalizedOp::Unary(format!("{:?}", un_op)),
                         Rvalue::Constant(lit) => match lit {
                             crate::typecheck::typed_ast::TypedLiteral::Int(i, _) => {
@@ -137,7 +141,9 @@ impl BlockHasher {
                         Rvalue::Use(_) => NormalizedOp::Use,
                         Rvalue::Call(callee, _) => NormalizedOp::Call(callee.clone()),
                         Rvalue::Array(elems) => NormalizedOp::Array(elems.len()),
-                        Rvalue::Struct(name, fields) => NormalizedOp::Struct(name.clone(), fields.len()),
+                        Rvalue::Struct(name, fields) => {
+                            NormalizedOp::Struct(name.clone(), fields.len())
+                        }
                         Rvalue::Load(_) => NormalizedOp::Load,
                         Rvalue::Alloc(_) => NormalizedOp::Alloc,
                         Rvalue::FnPtr(name) => NormalizedOp::FnPtr(name.clone()),
@@ -282,9 +288,15 @@ fn get_rvalue_reads(rval: &Rvalue) -> Vec<String> {
         Rvalue::Constant(_) | Rvalue::FnPtr(_) => vec![],
         Rvalue::Call(_, args) => args.iter().flat_map(get_place_reads).collect(),
         Rvalue::Array(elems) => elems.iter().flat_map(get_place_reads).collect(),
-        Rvalue::Struct(_, fields) => fields.iter().flat_map(|(_, p)| get_place_reads(p)).collect(),
+        Rvalue::Struct(_, fields) => fields
+            .iter()
+            .flat_map(|(_, p)| get_place_reads(p))
+            .collect(),
         Rvalue::EnumVariant { fields, .. } => fields.iter().flat_map(get_place_reads).collect(),
-        Rvalue::Phi(branches) => branches.iter().flat_map(|(_, p)| get_place_reads(p)).collect(),
+        Rvalue::Phi(branches) => branches
+            .iter()
+            .flat_map(|(_, p)| get_place_reads(p))
+            .collect(),
         Rvalue::ClosureAlloc { captured, .. } => {
             captured.iter().flat_map(get_place_reads).collect()
         }
@@ -573,8 +585,16 @@ pub fn outline_program(mir: &mut MirProgram, config: &OutlinerConfig) -> Outline
         // Step 4: Replace all occurrence sites with call to the outlined subroutine
         for &idx in &indices {
             let cand = &candidates[idx];
-            if let Some(target_func) = mir.functions.iter_mut().find(|f| f.name == cand.original_fn) {
-                if let Some(target_block) = target_func.blocks.iter_mut().find(|b| b.id == cand.block_id) {
+            if let Some(target_func) = mir
+                .functions
+                .iter_mut()
+                .find(|f| f.name == cand.original_fn)
+            {
+                if let Some(target_block) = target_func
+                    .blocks
+                    .iter_mut()
+                    .find(|b| b.id == cand.block_id)
+                {
                     let call_args: Vec<Place> = cand
                         .live_in
                         .iter()

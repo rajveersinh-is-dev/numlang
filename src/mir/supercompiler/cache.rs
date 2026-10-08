@@ -1,8 +1,8 @@
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-use sha2::{Digest, Sha256};
 
 use crate::mir::lower::MirFunction;
 
@@ -93,7 +93,10 @@ impl SpecializationCache {
     /// Return the cache file path for a given key (SHA-256 of key JSON → hex filename).
     pub fn key_to_path(&self, key: &CacheKey) -> PathBuf {
         let key_json = serde_json::to_string(key).unwrap_or_else(|_| {
-            format!("{}:{}:{}", key.function_name, key.function_source_hash, key.argument_fingerprint)
+            format!(
+                "{}:{}:{}",
+                key.function_name, key.function_source_hash, key.argument_fingerprint
+            )
         });
         let hex = sha256_str(&key_json);
         let prefix = &hex[0..2];
@@ -129,7 +132,9 @@ impl SpecializationCache {
                 }
             }
 
-            graph.callers_to_callees.insert(caller.to_string(), callees_vec);
+            graph
+                .callers_to_callees
+                .insert(caller.to_string(), callees_vec);
         }
     }
 
@@ -170,8 +175,7 @@ impl SpecializationCache {
     pub fn save_dependency_graph(&self) -> std::io::Result<()> {
         let path = self.cache_dir.join("deps.json");
         if let Ok(graph) = self.dep_graph.read() {
-            let json = serde_json::to_string_pretty(&*graph)
-                .map_err(std::io::Error::other)?;
+            let json = serde_json::to_string_pretty(&*graph).map_err(std::io::Error::other)?;
             fs::write(path, json)?;
         }
         Ok(())
@@ -238,8 +242,7 @@ impl SpecializationCache {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(entry)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(entry).map_err(std::io::Error::other)?;
         fs::write(&path, json)?;
 
         // Populate L1 cache

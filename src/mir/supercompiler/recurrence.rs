@@ -22,12 +22,20 @@ pub struct NWayLinearSystem {
 pub fn mat_mul_2x2(a: &[[i64; 2]; 2], b: &[[i64; 2]; 2]) -> [[i64; 2]; 2] {
     [
         [
-            a[0][0].wrapping_mul(b[0][0]).wrapping_add(a[0][1].wrapping_mul(b[1][0])),
-            a[0][0].wrapping_mul(b[0][1]).wrapping_add(a[0][1].wrapping_mul(b[1][1])),
+            a[0][0]
+                .wrapping_mul(b[0][0])
+                .wrapping_add(a[0][1].wrapping_mul(b[1][0])),
+            a[0][0]
+                .wrapping_mul(b[0][1])
+                .wrapping_add(a[0][1].wrapping_mul(b[1][1])),
         ],
         [
-            a[1][0].wrapping_mul(b[0][0]).wrapping_add(a[1][1].wrapping_mul(b[1][0])),
-            a[1][0].wrapping_mul(b[0][1]).wrapping_add(a[1][1].wrapping_mul(b[1][1])),
+            a[1][0]
+                .wrapping_mul(b[0][0])
+                .wrapping_add(a[1][1].wrapping_mul(b[1][0])),
+            a[1][0]
+                .wrapping_mul(b[0][1])
+                .wrapping_add(a[1][1].wrapping_mul(b[1][1])),
         ],
     ]
 }
@@ -327,13 +335,16 @@ fn det_bareiss(matrix: &[Vec<i128>]) -> Option<i128> {
 
     for k in 0..(n - 1) {
         if m[k][k] == 0 {
-            let swap_row = m.iter().enumerate().skip(k + 1).find_map(|(r, row)| {
-                if row[k] != 0 {
-                    Some(r)
-                } else {
-                    None
-                }
-            });
+            let swap_row =
+                m.iter().enumerate().skip(k + 1).find_map(
+                    |(r, row)| {
+                        if row[k] != 0 {
+                            Some(r)
+                        } else {
+                            None
+                        }
+                    },
+                );
             if let Some(r) = swap_row {
                 m.swap(k, r);
                 sign = -sign;
@@ -696,10 +707,7 @@ pub fn solve_nway_recurrence(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NonlinearRecurrence {
     /// Exponential power: x_k = init * base^k (base is loop-invariant)
-    ExponentialPower {
-        init: SymTermId,
-        base: SymTermId,
-    },
+    ExponentialPower { init: SymTermId, base: SymTermId },
     /// Geometric series: S_k = init + c * (ratio^k - 1) / (ratio - 1)
     GeometricSeries {
         init: SymTermId,
@@ -722,9 +730,7 @@ pub enum NonlinearRecurrence {
         d: i64,
     },
     /// Quadratic recurrence: T_k = T_{k-1}^2 with T_0 = b => T_k = b^(2^k)
-    PowerTower {
-        init: SymTermId,
-    },
+    PowerTower { init: SymTermId },
 }
 
 /// Solves a detected NonlinearRecurrence into a closed-form SymTermId in terms of num_iters.
@@ -790,7 +796,8 @@ pub fn solve_nonlinear_recurrence(
                 _ => None,
             };
 
-            if let (Some(n), Some(r), Some(c), Some(v)) = (iter_val, ratio_val, coeff_val, init_val) {
+            if let (Some(n), Some(r), Some(c), Some(v)) = (iter_val, ratio_val, coeff_val, init_val)
+            {
                 if n >= 0 {
                     if r == 1 {
                         return interner.intern_int(v.wrapping_add(c.wrapping_mul(n)));
@@ -838,7 +845,8 @@ pub fn solve_nonlinear_recurrence(
                 if n >= 0 {
                     let mut total = v;
                     for k in 0..n {
-                        let term = a.wrapping_mul(k.wrapping_mul(k))
+                        let term = a
+                            .wrapping_mul(k.wrapping_mul(k))
                             .wrapping_add(b.wrapping_mul(k))
                             .wrapping_add(*c);
                         total = total.wrapping_add(term);
@@ -865,7 +873,8 @@ pub fn solve_nonlinear_recurrence(
             // b * n(n-1) / 2
             if *b != 0 {
                 let b_term = interner.intern_int(*b);
-                let n_times_n1 = interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
+                let n_times_n1 =
+                    interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
                 let tri = interner.intern_binary(BinaryOp::Div, n_times_n1, two, Type::I64);
                 let b_tri = interner.intern_binary(BinaryOp::Mul, b_term, tri, Type::I64);
                 res = interner.intern_binary(BinaryOp::Add, res, b_tri, Type::I64);
@@ -876,8 +885,10 @@ pub fn solve_nonlinear_recurrence(
                 let a_term = interner.intern_int(*a);
                 let two_n = interner.intern_binary(BinaryOp::Mul, two, num_iters, Type::I64);
                 let two_n_minus_1 = interner.intern_binary(BinaryOp::Sub, two_n, one, Type::I64);
-                let n_times_n1 = interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
-                let pyr_num = interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
+                let n_times_n1 =
+                    interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
+                let pyr_num =
+                    interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
                 let pyr = interner.intern_binary(BinaryOp::Div, pyr_num, six, Type::I64);
                 let a_pyr = interner.intern_binary(BinaryOp::Mul, a_term, pyr, Type::I64);
                 res = interner.intern_binary(BinaryOp::Add, res, a_pyr, Type::I64);
@@ -902,7 +913,8 @@ pub fn solve_nonlinear_recurrence(
                     for k in 0..n {
                         let k2 = k.wrapping_mul(k);
                         let k3 = k2.wrapping_mul(k);
-                        let term = a.wrapping_mul(k3)
+                        let term = a
+                            .wrapping_mul(k3)
                             .wrapping_add(b.wrapping_mul(k2))
                             .wrapping_add(c.wrapping_mul(k))
                             .wrapping_add(*d);
@@ -938,7 +950,8 @@ pub fn solve_nonlinear_recurrence(
                 let b_term = interner.intern_int(*b);
                 let two_n = interner.intern_binary(BinaryOp::Mul, two, num_iters, Type::I64);
                 let two_n_minus_1 = interner.intern_binary(BinaryOp::Sub, two_n, one, Type::I64);
-                let pyr_num = interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
+                let pyr_num =
+                    interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
                 let pyr = interner.intern_binary(BinaryOp::Div, pyr_num, six, Type::I64);
                 let b_pyr = interner.intern_binary(BinaryOp::Mul, b_term, pyr, Type::I64);
                 res = interner.intern_binary(BinaryOp::Add, res, b_pyr, Type::I64);
@@ -1509,7 +1522,9 @@ pub fn solve_cross_function_cycle(
     let (iv_idx, step) = iv_candidate?;
     let iv_actual = call_args[iv_idx];
 
-    let acc_indices: Vec<usize> = (0..dummy_root_vars.len()).filter(|&i| i != iv_idx).collect();
+    let acc_indices: Vec<usize> = (0..dummy_root_vars.len())
+        .filter(|&i| i != iv_idx)
+        .collect();
 
     // 2. Case A: Zero-accumulator periodic parity recurrence (e.g. even/odd)
     if acc_indices.is_empty() {

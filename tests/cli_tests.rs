@@ -98,7 +98,9 @@ fn test_cli_type_error_diagnostic() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("type_error") || stderr.contains("Type error"));
-    assert!(stderr.contains("mismatched operand types") || stderr.contains("left is f64, right is i64"));
+    assert!(
+        stderr.contains("mismatched operand types") || stderr.contains("left is f64, right is i64")
+    );
 }
 
 #[test]
@@ -106,11 +108,7 @@ fn test_cli_emit_typed_ast() {
     let test_dir = std::env::temp_dir().join("numlang_test_cli");
     fs::create_dir_all(&test_dir).unwrap();
     let src_file = test_dir.join("typed_ast.nl");
-    fs::write(
-        &src_file,
-        "fn square(n: i64) -> i64 { return n * n; }",
-    )
-    .unwrap();
+    fs::write(&src_file, "fn square(n: i64) -> i64 { return n * n; }").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
         .arg("--emit-typed-ast")
@@ -123,4 +121,3 @@ fn test_cli_emit_typed_ast() {
     assert!(stdout.contains("TypedProgram"));
     assert!(stdout.contains("return_ty: I64"));
 }
-

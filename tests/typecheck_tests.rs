@@ -138,7 +138,12 @@ fn test_function_arity_mismatch() {
     let res = typecheck(&ast);
 
     match res {
-        Err(TypeError::ArityMismatch { name, expected, found, .. }) => {
+        Err(TypeError::ArityMismatch {
+            name,
+            expected,
+            found,
+            ..
+        }) => {
             assert_eq!(name, "calc");
             assert_eq!(expected, 2);
             assert_eq!(found, 1);
@@ -160,7 +165,9 @@ fn test_function_return_mismatch() {
     let res = typecheck(&ast);
 
     match res {
-        Err(TypeError::InvalidReturn { expected, found, .. }) => {
+        Err(TypeError::InvalidReturn {
+            expected, found, ..
+        }) => {
             assert_eq!(expected, Type::I64);
             assert_eq!(found, Type::F64);
         }

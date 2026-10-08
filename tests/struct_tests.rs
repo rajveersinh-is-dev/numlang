@@ -208,5 +208,9 @@ fn main() -> i64 {
 "#;
     let (exit_code, _stdout, stderr) = run_numlang_code(no_such_field);
     assert_ne!(exit_code, Some(0));
-    assert!(stderr.contains("No field") || stderr.contains("z") || stderr.contains("Cannot access field"));
+    assert!(
+        stderr.contains("No field")
+            || stderr.contains("z")
+            || stderr.contains("Cannot access field")
+    );
 }

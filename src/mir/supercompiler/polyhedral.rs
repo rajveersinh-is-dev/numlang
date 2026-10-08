@@ -181,13 +181,11 @@ impl IterationDomain {
         exit: BasicBlockId,
     ) -> Self {
         // i >= lower => i - lower >= 0
-        let ineq_lower = Inequality::ge_zero(
-            AffineExpr::variable(var).sub(&AffineExpr::constant(lower)),
-        );
+        let ineq_lower =
+            Inequality::ge_zero(AffineExpr::variable(var).sub(&AffineExpr::constant(lower)));
         // i < upper => (upper - 1) - i >= 0
-        let ineq_upper = Inequality::ge_zero(
-            AffineExpr::constant(upper - 1).sub(&AffineExpr::variable(var)),
-        );
+        let ineq_upper =
+            Inequality::ge_zero(AffineExpr::constant(upper - 1).sub(&AffineExpr::variable(var)));
 
         IterationDomain {
             loop_var: var.to_string(),
@@ -311,18 +309,24 @@ fn extract_affine_expr(
                     extract_affine_expr(src, block_stmts, prev_blocks, aliases, depth + 1)
                 }
                 Rvalue::BinaryOp(BinaryOp::Add, l, r) => {
-                    let l_aff = extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
-                    let r_aff = extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
+                    let l_aff =
+                        extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
+                    let r_aff =
+                        extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
                     l_aff.add(&r_aff)
                 }
                 Rvalue::BinaryOp(BinaryOp::Sub, l, r) => {
-                    let l_aff = extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
-                    let r_aff = extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
+                    let l_aff =
+                        extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
+                    let r_aff =
+                        extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
                     l_aff.sub(&r_aff)
                 }
                 Rvalue::BinaryOp(BinaryOp::Mul, l, r) => {
-                    let l_aff = extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
-                    let r_aff = extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
+                    let l_aff =
+                        extract_affine_expr(l, block_stmts, prev_blocks, aliases, depth + 1);
+                    let r_aff =
+                        extract_affine_expr(r, block_stmts, prev_blocks, aliases, depth + 1);
                     if let Some(c) = l_aff.as_constant() {
                         r_aff.mul_const(c)
                     } else if let Some(c) = r_aff.as_constant() {
@@ -347,18 +351,24 @@ fn extract_affine_expr(
                         extract_affine_expr(src, &b.statements, prev_blocks, aliases, depth + 1)
                     }
                     Rvalue::BinaryOp(BinaryOp::Add, l, r) => {
-                        let l_aff = extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
-                        let r_aff = extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
+                        let l_aff =
+                            extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
+                        let r_aff =
+                            extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
                         l_aff.add(&r_aff)
                     }
                     Rvalue::BinaryOp(BinaryOp::Sub, l, r) => {
-                        let l_aff = extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
-                        let r_aff = extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
+                        let l_aff =
+                            extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
+                        let r_aff =
+                            extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
                         l_aff.sub(&r_aff)
                     }
                     Rvalue::BinaryOp(BinaryOp::Mul, l, r) => {
-                        let l_aff = extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
-                        let r_aff = extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
+                        let l_aff =
+                            extract_affine_expr(l, &b.statements, prev_blocks, aliases, depth + 1);
+                        let r_aff =
+                            extract_affine_expr(r, &b.statements, prev_blocks, aliases, depth + 1);
                         if let Some(c) = l_aff.as_constant() {
                             r_aff.mul_const(c)
                         } else if let Some(c) = r_aff.as_constant() {
@@ -394,9 +404,9 @@ fn extract_iteration_domains(
             let body_block = then_target.clone();
             let exit_block = else_target.clone();
 
-            let has_back_edge = func.blocks.iter().any(|b| {
-                matches!(&b.terminator, Terminator::Branch { target } if target == &header.id)
-            });
+            let has_back_edge = func.blocks.iter().any(
+                |b| matches!(&b.terminator, Terminator::Branch { target } if target == &header.id),
+            );
 
             if !has_back_edge {
                 continue;
@@ -426,7 +436,13 @@ fn extract_iteration_domains(
             let prev_blocks = &func.blocks[..header_idx];
             let r_aff = extract_affine_expr(&r_place, &header.statements, prev_blocks, aliases, 0);
             let upper_bound = match r_aff.as_constant() {
-                Some(c) => if op == BinaryOp::Le { c + 1 } else { c },
+                Some(c) => {
+                    if op == BinaryOp::Le {
+                        c + 1
+                    } else {
+                        c
+                    }
+                }
                 None => 4, // Default fallback bounded stencil size
             };
 
@@ -476,7 +492,8 @@ fn extract_array_accesses(
             for proj in &dest.projections {
                 if let Projection::Index(idx_box) = proj {
                     let arr_name = resolve_alias(&dest.local, aliases).to_string();
-                    let aff = extract_affine_expr(idx_box, &block.statements, prev_blocks, aliases, 0);
+                    let aff =
+                        extract_affine_expr(idx_box, &block.statements, prev_blocks, aliases, 0);
                     accesses.push(ArrayAccess {
                         array_name: arr_name,
                         is_write: true,
@@ -496,7 +513,13 @@ fn extract_array_accesses(
                     for proj in &p.projections {
                         if let Projection::Index(idx_box) = proj {
                             let arr_name = resolve_alias(&p.local, aliases).to_string();
-                            let aff = extract_affine_expr(idx_box, &block.statements, prev_blocks, aliases, 0);
+                            let aff = extract_affine_expr(
+                                idx_box,
+                                &block.statements,
+                                prev_blocks,
+                                aliases,
+                                0,
+                            );
                             accesses.push(ArrayAccess {
                                 array_name: arr_name,
                                 is_write: false,
@@ -515,7 +538,13 @@ fn extract_array_accesses(
                         for proj in &p.projections {
                             if let Projection::Index(idx_box) = proj {
                                 let arr_name = resolve_alias(&p.local, aliases).to_string();
-                                let aff = extract_affine_expr(idx_box, &block.statements, prev_blocks, aliases, 0);
+                                let aff = extract_affine_expr(
+                                    idx_box,
+                                    &block.statements,
+                                    prev_blocks,
+                                    aliases,
+                                    0,
+                                );
                                 accesses.push(ArrayAccess {
                                     array_name: arr_name,
                                     is_write: false,
@@ -558,9 +587,15 @@ fn find_fusible_pipelines(
         }
 
         if acc.is_write {
-            writes_by_arr.entry(acc.array_name.clone()).or_default().push(acc);
+            writes_by_arr
+                .entry(acc.array_name.clone())
+                .or_default()
+                .push(acc);
         } else {
-            reads_by_arr.entry(acc.array_name.clone()).or_default().push(acc);
+            reads_by_arr
+                .entry(acc.array_name.clone())
+                .or_default()
+                .push(acc);
         }
     }
 
@@ -573,12 +608,19 @@ fn find_fusible_pipelines(
                     let cons_dom = domains.iter().find(|d| d.body_block == rd.block_id);
 
                     if let (Some(p_dom), Some(c_dom)) = (prod_dom, cons_dom) {
-                        let all_reads_in_consumer = reads.iter().all(|r| r.block_id == c_dom.body_block);
-                        let all_writes_in_producer = writes.iter().all(|w| w.block_id == p_dom.body_block);
-                        if all_reads_in_consumer && all_writes_in_producer && p_dom.is_compatible(c_dom) {
+                        let all_reads_in_consumer =
+                            reads.iter().all(|r| r.block_id == c_dom.body_block);
+                        let all_writes_in_producer =
+                            writes.iter().all(|w| w.block_id == p_dom.body_block);
+                        if all_reads_in_consumer
+                            && all_writes_in_producer
+                            && p_dom.is_compatible(c_dom)
+                        {
                             // Compute dependence distance: d = index_cons - index_prod
-                            let p_aff_norm = wr.index_expr.sub(&AffineExpr::variable(&p_dom.loop_var));
-                            let c_aff_norm = rd.index_expr.sub(&AffineExpr::variable(&c_dom.loop_var));
+                            let p_aff_norm =
+                                wr.index_expr.sub(&AffineExpr::variable(&p_dom.loop_var));
+                            let c_aff_norm =
+                                rd.index_expr.sub(&AffineExpr::variable(&c_dom.loop_var));
 
                             if let Some(dist) = c_aff_norm.offset_from(&p_aff_norm) {
                                 let dep = DependenceDistance::new(dist);
@@ -629,7 +671,10 @@ fn fuse_and_contract_buffer(
     for stmt in &func.blocks[prod_body_idx].statements {
         let Statement::Assign(dest, rval) = stmt;
         if resolve_alias(&dest.local, aliases) == arr
-            && dest.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+            && dest
+                .projections
+                .iter()
+                .any(|p| matches!(p, Projection::Index(_)))
         {
             if let Rvalue::Use(p) = rval {
                 written_val_place = Some(p.clone());
@@ -676,7 +721,9 @@ fn fuse_and_contract_buffer(
             match &mut new_rval {
                 Rvalue::Use(p) => {
                     if resolve_alias(&p.local, aliases) == arr
-                        && p.projections.iter().any(|proj| matches!(proj, Projection::Index(_)))
+                        && p.projections
+                            .iter()
+                            .any(|proj| matches!(proj, Projection::Index(_)))
                     {
                         *p = remapped_val.clone();
                     }
@@ -684,7 +731,9 @@ fn fuse_and_contract_buffer(
                 Rvalue::BinaryOp(_, p1, p2) => {
                     for p in [p1, p2] {
                         if resolve_alias(&p.local, aliases) == arr
-                            && p.projections.iter().any(|proj| matches!(proj, Projection::Index(_)))
+                            && p.projections
+                                .iter()
+                                .any(|proj| matches!(proj, Projection::Index(_)))
                         {
                             *p = remapped_val.clone();
                         }
@@ -989,7 +1038,11 @@ fn tile_loop_nest(
     // 4. Vectorization / parallel fork emission for innermost tile dimension
     if config.vectorize_innermost {
         if let Some(innermost) = nest.last() {
-            if let Some(body_idx) = func.blocks.iter().position(|b| b.id == innermost.body_block) {
+            if let Some(body_idx) = func
+                .blocks
+                .iter()
+                .position(|b| b.id == innermost.body_block)
+            {
                 let left_id = BasicBlockId(func.blocks.len() + 100);
                 let right_id = BasicBlockId(func.blocks.len() + 101);
                 let join_id = BasicBlockId(func.blocks.len() + 102);
@@ -1001,14 +1054,18 @@ fn tile_loop_nest(
                     id: left_id.clone(),
                     arguments: Vec::new(),
                     statements: half_stmts.clone(),
-                    terminator: Terminator::Branch { target: join_id.clone() },
+                    terminator: Terminator::Branch {
+                        target: join_id.clone(),
+                    },
                 });
 
                 func.blocks.push(MirBasicBlock {
                     id: right_id.clone(),
                     arguments: Vec::new(),
                     statements: half_stmts,
-                    terminator: Terminator::Branch { target: join_id.clone() },
+                    terminator: Terminator::Branch {
+                        target: join_id.clone(),
+                    },
                 });
 
                 func.blocks.push(MirBasicBlock {
@@ -1037,7 +1094,8 @@ fn contract_intermediate_buffers_in_nest(
     nest: &[IterationDomain],
     aliases: &HashMap<String, String>,
 ) -> usize {
-    let nest_body_blocks: HashSet<BasicBlockId> = nest.iter().map(|d| d.body_block.clone()).collect();
+    let nest_body_blocks: HashSet<BasicBlockId> =
+        nest.iter().map(|d| d.body_block.clone()).collect();
     let mut candidates = HashSet::new();
 
     // Find array writes inside the nest
@@ -1045,7 +1103,11 @@ fn contract_intermediate_buffers_in_nest(
         if nest_body_blocks.contains(&b.id) {
             for stmt in &b.statements {
                 let Statement::Assign(dest, _) = stmt;
-                if dest.projections.iter().any(|p| matches!(p, Projection::Index(_))) {
+                if dest
+                    .projections
+                    .iter()
+                    .any(|p| matches!(p, Projection::Index(_)))
+                {
                     let arr_name = resolve_alias(&dest.local, aliases);
                     let is_param = func.params.iter().any(|(p, _)| p == arr_name);
                     if !is_param {

@@ -550,8 +550,13 @@ fn compile_program_to_obj_bytes(
         .parse()
         .map_err(|e: String| miette::miette!("{}", e))?;
 
-    let opt_cache = if (supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic) && !no_cache {
-        Some(numlang::mir::supercompiler::SpecializationCache::open(cache_dir))
+    let opt_cache = if (supercompile
+        || mode != numlang::mir::supercompiler::SupercompileMode::Classic)
+        && !no_cache
+    {
+        Some(numlang::mir::supercompiler::SpecializationCache::open(
+            cache_dir,
+        ))
     } else {
         None
     };
@@ -994,9 +999,13 @@ fn real_main() -> Result<()> {
     }
 
     if cli.futamura2 {
-        let out_target = cli
-            .futamura2_out
-            .unwrap_or_else(|| PathBuf::from("target/release").join(if cfg!(windows) { "minspec_cogen.exe" } else { "minspec_cogen" }));
+        let out_target = cli.futamura2_out.unwrap_or_else(|| {
+            PathBuf::from("target/release").join(if cfg!(windows) {
+                "minspec_cogen.exe"
+            } else {
+                "minspec_cogen"
+            })
+        });
         match numlang::mir::supercompiler::futamura2::build_minspec_cogen_binary(&out_target) {
             Ok(path) => {
                 println!(
@@ -1105,7 +1114,9 @@ fn real_main() -> Result<()> {
     if cli.emit_supercompiled_mir {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
         let opt_cache = if !cli.no_cache {
-            Some(numlang::mir::supercompiler::SpecializationCache::open(&cli.cache_dir))
+            Some(numlang::mir::supercompiler::SpecializationCache::open(
+                &cli.cache_dir,
+            ))
         } else {
             None
         };
@@ -1178,7 +1189,9 @@ fn real_main() -> Result<()> {
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
         let opt_cache = if !cli.no_cache {
-            Some(numlang::mir::supercompiler::SpecializationCache::open(&cli.cache_dir))
+            Some(numlang::mir::supercompiler::SpecializationCache::open(
+                &cli.cache_dir,
+            ))
         } else {
             None
         };

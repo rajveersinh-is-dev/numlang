@@ -24,7 +24,10 @@ fn find_vcvars64() -> Option<PathBuf> {
 }
 
 fn wrap_rust(src: &str) -> String {
-    let s = src.replace("fn main() {", "fn main() {\n    let _bench_t0 = std::time::Instant::now();");
+    let s = src.replace(
+        "fn main() {",
+        "fn main() {\n    let _bench_t0 = std::time::Instant::now();",
+    );
     let s = s.replace("std::process::exit(", "__bench_exit(&_bench_t0, ");
     let helper = r#"
 fn __bench_exit(t0: &std::time::Instant, code: i32) -> ! {
@@ -160,7 +163,12 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     fs::write(&bat_path, bat_content).ok()?;
 
     let output = Command::new("cmd.exe")
-        .args(["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
+        .args([
+            "/c",
+            bat_path.to_str()?,
+            src_file.to_str()?,
+            exe_file.to_str()?,
+        ])
         .output()
         .ok()?;
 
@@ -227,7 +235,14 @@ fn benchmark_cmd(
 
     let passed = last_code == expected_exit;
 
-    (min_compute, avg_compute, min_wall, avg_wall, last_code, passed)
+    (
+        min_compute,
+        avg_compute,
+        min_wall,
+        avg_wall,
+        last_code,
+        passed,
+    )
 }
 
 struct BenchmarkWorkload {
@@ -300,7 +315,6 @@ res = fib(35)
 sys.exit(res % 256)
 "#,
         },
-
         // 2. Math Loop Accumulator
         BenchmarkWorkload {
             name: "Math Loop Accumulator (10M iters)",
@@ -377,7 +391,6 @@ for i in range(10000000):
 sys.exit(acc % 256)
 "#,
         },
-
         // 3. Hardware SIMD Vector Dot
         BenchmarkWorkload {
             name: "Hardware SIMD Vector Dot (10M iters)",
@@ -472,7 +485,6 @@ for _ in range(10000000):
 sys.exit(acc % 256)
 "#,
         },
-
         // 4. Dense Matrix-Vector Multiplication
         BenchmarkWorkload {
             name: "Matrix-Vector Multiplication (5M iters)",
@@ -595,7 +607,6 @@ for _ in range(5000000):
 sys.exit(acc % 256)
 "#,
         },
-
         // 5. Collatz Hailstone Trajectory
         BenchmarkWorkload {
             name: "Collatz Hailstone (100k seeds)",
@@ -698,7 +709,6 @@ for n in range(1, 100001):
 sys.exit(total % 256)
 "#,
         },
-
         // 6. Prime Counting by Trial Division
         BenchmarkWorkload {
             name: "Prime Counting (400k limit)",
@@ -810,7 +820,6 @@ for n in range(2, 400001):
 sys.exit(count % 256)
 "#,
         },
-
         // 7. Horner's Polynomial Evaluation
         BenchmarkWorkload {
             name: "Horner Polynomial Eval (10M iters)",
@@ -929,7 +938,6 @@ for i in range(10000000):
 sys.exit(acc % 256)
 "#,
         },
-
         // 8. Takeuchi Ternary Recursion
         BenchmarkWorkload {
             name: "Takeuchi Recursion (tak 27, 18, 9)",
@@ -990,7 +998,6 @@ def tak(x, y, z):
 sys.exit(tak(27, 18, 9))
 "#,
         },
-
         // 9. Numerical Quadrature Pi Riemann Sum
         BenchmarkWorkload {
             name: "Numerical Quadrature Pi (50M iters)",
@@ -1071,7 +1078,6 @@ for i in range(iters):
 sys.exit(total % 256)
 "#,
         },
-
         // 10. Ackermann Hyper-Recurrence
         BenchmarkWorkload {
             name: "Ackermann Recurrence (ack 3, 8)",
@@ -1148,7 +1154,6 @@ res = ack(3, 8)
 sys.exit(res % 256)
 "#,
         },
-
         // 11. N-Queens Backtracking Problem
         BenchmarkWorkload {
             name: "N-Queens Backtracking (nqueens 12)",
@@ -1408,7 +1413,6 @@ ans = solve_nqueens(12)
 sys.exit(ans % 256)
 "#,
         },
-
         // 12. Mandelbrot Complex Dynamics Grid
         BenchmarkWorkload {
             name: "Mandelbrot Grid (500x500x100)",
@@ -1610,7 +1614,6 @@ res = mandelbrot(500, 500, 100)
 sys.exit(res % 256)
 "#,
         },
-
         // 13. Modular Exponentiation Accumulator
         BenchmarkWorkload {
             name: "Modular Exponentiation (5M iters)",
@@ -1759,7 +1762,6 @@ for i in range(1, 5000001):
 sys.exit(acc % 256)
 "#,
         },
-
         // 14. Monte Carlo Stochastic Geometry Simulation
         BenchmarkWorkload {
             name: "Monte Carlo Simulation (5M iters)",
@@ -1876,7 +1878,6 @@ res = monte_carlo_pi(5000000)
 sys.exit(res % 256)
 "#,
         },
-
         // 15. Binary Search Kernel
         BenchmarkWorkload {
             name: "Binary Search Kernel (2M iters)",
@@ -2041,7 +2042,6 @@ res = bsearch_kernel(2000000)
 sys.exit(res % 256)
 "#,
         },
-
         // 16. Rule 110 Cellular Automaton
         BenchmarkWorkload {
             name: "Rule 110 Automaton (50K steps)",
@@ -2148,7 +2148,6 @@ res = rule110_steps(50000)
 sys.exit(res % 256)
 "#,
         },
-
         // 17. Fast 4x4 Matrix Exponentiation
         BenchmarkWorkload {
             name: "Matrix Exponentiation (1M power)",
@@ -2385,7 +2384,6 @@ res = mat4_pow(1000000)
 sys.exit(res % 256)
 "#,
         },
-
         // 18. Binary GCD Stein's Algorithm
         BenchmarkWorkload {
             name: "Binary GCD Stein (5M pairs)",
@@ -2611,7 +2609,6 @@ res = stein_gcd_bench(5000000)
 sys.exit(res % 256)
 "#,
         },
-
         // 19. 8-Point Discrete Cosine Transform
         BenchmarkWorkload {
             name: "Discrete Cosine Transform (2M iters)",
@@ -2736,7 +2733,6 @@ res = dct_bench(2000000)
 sys.exit(res % 256)
 "#,
         },
-
         // 20. Integer Square Root Newton-Raphson
         BenchmarkWorkload {
             name: "Newton Integer Sqrt (5M iters)",
@@ -3924,71 +3920,160 @@ sys.exit(((res % 256) + 256) % 256)
     println!("\n==================================================================================================================================");
     println!("                                   NUMLANG MULTI-LANGUAGE COMPARATIVE BENCHMARK SUITE                                            ");
     println!("==================================================================================================================================");
-    println!("{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}", "Benchmark", "Language", "Compute Min", "Compute Avg", "Wall Time", "vs numlang", "Status");
+    println!(
+        "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
+        "Benchmark", "Language", "Compute Min", "Compute Avg", "Wall Time", "vs numlang", "Status"
+    );
     println!("----------------------------------------------------------------------------------------------------------------------------------");
 
     for w in workloads {
-        let slug = w.name.to_lowercase().replace(' ', "_").replace(['(', ')', ','], "");
+        let slug = w
+            .name
+            .to_lowercase()
+            .replace(' ', "_")
+            .replace(['(', ')', ','], "");
 
         // 1. numlang
         let nl_exe = compile_numlang(w.nl_code, &test_dir, &slug);
-        let (nl_comp_min, nl_comp_avg, nl_wall_min, _nl_wall_avg, nl_out, nl_pass) = benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+        let (nl_comp_min, nl_comp_avg, nl_wall_min, _nl_wall_avg, nl_out, nl_pass) =
+            benchmark_cmd(nl_exe.to_str().unwrap(), &[], w.expected_exit, 3);
         let nl_min_nanos = nl_comp_min.as_nanos().max(1) as f64;
         println!(
             "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
-            w.name, "numlang", fmt_duration(nl_comp_min), fmt_duration(nl_comp_avg), fmt_duration(nl_wall_min), "1.00x", if nl_pass { "PASS" } else { "FAIL" }
+            w.name,
+            "numlang",
+            fmt_duration(nl_comp_min),
+            fmt_duration(nl_comp_avg),
+            fmt_duration(nl_wall_min),
+            "1.00x",
+            if nl_pass { "PASS" } else { "FAIL" }
         );
-        assert!(nl_pass, "numlang benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, nl_out);
+        assert!(
+            nl_pass,
+            "numlang benchmark failed on '{}': expected {}, got {}",
+            w.name, w.expected_exit, nl_out
+        );
 
         // 2. Rust
         let mut rs_comp_val = Duration::ZERO;
         if let Some(rs_exe) = compile_rust(w.rs_code, &test_dir, &slug) {
-            let (rs_comp_min, rs_comp_avg, rs_wall_min, _rs_wall_avg, rs_out, rs_pass) = benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            let (rs_comp_min, rs_comp_avg, rs_wall_min, _rs_wall_avg, rs_out, rs_pass) =
+                benchmark_cmd(rs_exe.to_str().unwrap(), &[], w.expected_exit, 3);
             rs_comp_val = rs_comp_min;
             let speedup = rs_comp_min.as_nanos() as f64 / nl_min_nanos;
             println!(
                 "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
-                "", "Rust (-O)", fmt_duration(rs_comp_min), fmt_duration(rs_comp_avg), fmt_duration(rs_wall_min), fmt_speedup(speedup), if rs_pass { "PASS" } else { "FAIL" }
+                "",
+                "Rust (-O)",
+                fmt_duration(rs_comp_min),
+                fmt_duration(rs_comp_avg),
+                fmt_duration(rs_wall_min),
+                fmt_speedup(speedup),
+                if rs_pass { "PASS" } else { "FAIL" }
             );
-            assert!(rs_pass, "Rust benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, rs_out);
+            assert!(
+                rs_pass,
+                "Rust benchmark failed on '{}': expected {}, got {}",
+                w.name, w.expected_exit, rs_out
+            );
         }
 
         // 3. C
         if let Some(c_exe) = compile_c(w.c_code, &test_dir, &slug) {
-            let (c_comp_min, c_comp_avg, c_wall_min, _c_wall_avg, c_out, c_pass) = benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
+            let (c_comp_min, c_comp_avg, c_wall_min, _c_wall_avg, c_out, c_pass) =
+                benchmark_cmd(c_exe.to_str().unwrap(), &[], w.expected_exit, 3);
             let speedup = c_comp_min.as_nanos() as f64 / nl_min_nanos;
             println!(
                 "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
-                "", "C (/O2)", fmt_duration(c_comp_min), fmt_duration(c_comp_avg), fmt_duration(c_wall_min), fmt_speedup(speedup), if c_pass { "PASS" } else { "FAIL" }
+                "",
+                "C (/O2)",
+                fmt_duration(c_comp_min),
+                fmt_duration(c_comp_avg),
+                fmt_duration(c_wall_min),
+                fmt_speedup(speedup),
+                if c_pass { "PASS" } else { "FAIL" }
             );
-            assert!(c_pass, "C benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, c_out);
+            assert!(
+                c_pass,
+                "C benchmark failed on '{}': expected {}, got {}",
+                w.name, w.expected_exit, c_out
+            );
         }
 
         // 4. Node.js (V8)
         let js_file = test_dir.join(format!("{}.js", slug));
         fs::write(&js_file, wrap_node(w.node_code)).unwrap();
-        let (node_comp_min, node_comp_avg, node_wall_min, _node_wall_avg, node_out, node_pass) = benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
+        let (node_comp_min, node_comp_avg, node_wall_min, _node_wall_avg, node_out, node_pass) =
+            benchmark_cmd("node", &[js_file.to_str().unwrap()], w.expected_exit, 3);
         let speedup = node_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(
             "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
-            "", "Node.js (V8)", fmt_duration(node_comp_min), fmt_duration(node_comp_avg), fmt_duration(node_wall_min), fmt_speedup(speedup), if node_pass { "PASS" } else { "FAIL" }
+            "",
+            "Node.js (V8)",
+            fmt_duration(node_comp_min),
+            fmt_duration(node_comp_avg),
+            fmt_duration(node_wall_min),
+            fmt_speedup(speedup),
+            if node_pass { "PASS" } else { "FAIL" }
         );
-        assert!(node_pass, "Node benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, node_out);
+        assert!(
+            node_pass,
+            "Node benchmark failed on '{}': expected {}, got {}",
+            w.name, w.expected_exit, node_out
+        );
 
         // 5. Python 3
         let py_file = test_dir.join(format!("{}.py", slug));
         fs::write(&py_file, wrap_py(w.py_code)).unwrap();
-        let py_iters = if w.name.contains("50M") || w.name.contains("Collatz") || w.name.contains("Prime") || w.name.contains("Ackermann") || w.name.contains("N-Queens") || w.name.contains("Mandelbrot") || w.name.contains("Modular") || w.name.contains("Monte Carlo") || w.name.contains("Binary Search") || w.name.contains("Rule 110") || w.name.contains("Matrix") || w.name.contains("Binary GCD") || w.name.contains("Cosine") || w.name.contains("Integer Sqrt") || w.name.contains("16-point FFT") || w.name.contains("Transcendental") || w.name.contains("Complex") || w.name.contains("Linear System") { 1 } else { 2 };
-        let (py_comp_min, py_comp_avg, py_wall_min, _py_wall_avg, py_out, py_pass) = benchmark_cmd("python", &[py_file.to_str().unwrap()], w.expected_exit, py_iters);
+        let py_iters = if w.name.contains("50M")
+            || w.name.contains("Collatz")
+            || w.name.contains("Prime")
+            || w.name.contains("Ackermann")
+            || w.name.contains("N-Queens")
+            || w.name.contains("Mandelbrot")
+            || w.name.contains("Modular")
+            || w.name.contains("Monte Carlo")
+            || w.name.contains("Binary Search")
+            || w.name.contains("Rule 110")
+            || w.name.contains("Matrix")
+            || w.name.contains("Binary GCD")
+            || w.name.contains("Cosine")
+            || w.name.contains("Integer Sqrt")
+            || w.name.contains("16-point FFT")
+            || w.name.contains("Transcendental")
+            || w.name.contains("Complex")
+            || w.name.contains("Linear System")
+        {
+            1
+        } else {
+            2
+        };
+        let (py_comp_min, py_comp_avg, py_wall_min, _py_wall_avg, py_out, py_pass) = benchmark_cmd(
+            "python",
+            &[py_file.to_str().unwrap()],
+            w.expected_exit,
+            py_iters,
+        );
         let speedup = py_comp_min.as_nanos() as f64 / nl_min_nanos;
         println!(
             "{:<36} | {:<12} | {:>11} | {:>11} | {:>10} | {:>12} | {:<6}",
-            "", "Python 3.14", fmt_duration(py_comp_min), fmt_duration(py_comp_avg), fmt_duration(py_wall_min), fmt_speedup(speedup), if py_pass { "PASS" } else { "FAIL" }
+            "",
+            "Python 3.14",
+            fmt_duration(py_comp_min),
+            fmt_duration(py_comp_avg),
+            fmt_duration(py_wall_min),
+            fmt_speedup(speedup),
+            if py_pass { "PASS" } else { "FAIL" }
         );
-        assert!(py_pass, "Python benchmark failed on '{}': expected {}, got {}", w.name, w.expected_exit, py_out);
+        assert!(
+            py_pass,
+            "Python benchmark failed on '{}': expected {}, got {}",
+            w.name, w.expected_exit, py_out
+        );
 
         if rs_comp_val.as_nanos() > 0 {
-            println!("  [+] In-Process Compute Advantage vs Rust: >{} speedup ({} vs {})",
+            println!(
+                "  [+] In-Process Compute Advantage vs Rust: >{} speedup ({} vs {})",
                 fmt_speedup(rs_comp_val.as_nanos() as f64 / nl_min_nanos),
                 fmt_duration(rs_comp_val),
                 fmt_duration(nl_comp_min)

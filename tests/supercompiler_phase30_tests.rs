@@ -37,7 +37,11 @@ fn main() -> i64 {
 }
 "#;
     let mir = get_mir(src);
-    let fib_func = mir.functions.iter().find(|f| f.name == "coupled_recurrence").unwrap();
+    let fib_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "coupled_recurrence")
+        .unwrap();
     let driver = SupercompilerDriver::new(fib_func);
     let tree = driver.run();
 
@@ -204,11 +208,7 @@ fn main() -> i64 {
 
     // In MRSC mode, a recursive program with knots is now allowed to residualize
     let mut mrsc_mir = get_mir(src);
-    let stats = supercompile_mir_program_with_mode(
-        &mut mrsc_mir,
-        SupercompileMode::Mrsc,
-        "size",
-    );
+    let stats = supercompile_mir_program_with_mode(&mut mrsc_mir, SupercompileMode::Mrsc, "size");
     // Program successfully processed without panics or invalid bailouts
     assert!(stats.nodes_explored >= 1);
 }

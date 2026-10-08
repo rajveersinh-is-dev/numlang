@@ -18,34 +18,19 @@ pub enum TypeError {
     },
 
     #[error("Undeclared variable '{name}'")]
-    UndeclaredVariable {
-        name: String,
-        span: Span,
-    },
+    UndeclaredVariable { name: String, span: Span },
 
     #[error("Undeclared function '{name}'")]
-    UndeclaredFunction {
-        name: String,
-        span: Span,
-    },
+    UndeclaredFunction { name: String, span: Span },
 
     #[error("Cannot mutate immutable variable '{name}'")]
-    CannotMutateImmutable {
-        name: String,
-        span: Span,
-    },
+    CannotMutateImmutable { name: String, span: Span },
 
     #[error("Identifier '{name}' is already declared in this scope")]
-    DuplicateDeclaration {
-        name: String,
-        span: Span,
-    },
+    DuplicateDeclaration { name: String, span: Span },
 
     #[error("Condition must evaluate to bool, found {found}")]
-    InvalidConditionType {
-        found: Type,
-        span: Span,
-    },
+    InvalidConditionType { found: Type, span: Span },
 
     #[error("Invalid binary operands for '{op:?}': left is {left}, right is {right}")]
     InvalidBinaryOperands {
@@ -71,10 +56,7 @@ pub enum TypeError {
     },
 
     #[error("Unknown type '{name}'")]
-    UnknownType {
-        name: String,
-        span: Span,
-    },
+    UnknownType { name: String, span: Span },
 
     #[error("Function return type mismatch: expected {expected}, found {found}")]
     InvalidReturn {
@@ -84,28 +66,16 @@ pub enum TypeError {
     },
 
     #[error("Cannot index non-array type '{found}'")]
-    CannotIndexNonArray {
-        found: Type,
-        span: Span,
-    },
+    CannotIndexNonArray { found: Type, span: Span },
 
     #[error("Array index must be an integer, found '{found}'")]
-    InvalidIndexType {
-        found: Type,
-        span: Span,
-    },
+    InvalidIndexType { found: Type, span: Span },
 
     #[error("Array literal cannot be empty")]
-    EmptyArrayLiteral {
-        span: Span,
-    },
+    EmptyArrayLiteral { span: Span },
 
     #[error("Array index {index} out of bounds for array of length {len}")]
-    IndexOutOfBounds {
-        index: i64,
-        len: usize,
-        span: Span,
-    },
+    IndexOutOfBounds { index: i64, len: usize, span: Span },
 
     #[error("Array element type mismatch: expected {expected}, found {found}")]
     ArrayElementMismatch {
@@ -135,10 +105,7 @@ pub enum TypeError {
     },
 
     #[error("Cannot access field on non-struct type '{found}'")]
-    CannotAccessFieldNonStruct {
-        found: Type,
-        span: Span,
-    },
+    CannotAccessFieldNonStruct { found: Type, span: Span },
 
     #[error("Non-exhaustive match: missing wildcard '_' or uncovered cases")]
     NonExhaustiveMatch { span: Span },
@@ -154,10 +121,7 @@ pub enum TypeError {
     },
 
     #[error("Cannot match variant pattern on non-enum type '{found}'")]
-    CannotMatchNonEnum {
-        found: Type,
-        span: Span,
-    },
+    CannotMatchNonEnum { found: Type, span: Span },
 
     #[error("Variant '{enum_name}::{variant_name}' expected {expected} payload arguments, found {found}")]
     PayloadArityMismatch {
@@ -169,10 +133,7 @@ pub enum TypeError {
     },
 
     #[error("Type '{ty}' is not callable")]
-    NotCallable {
-        ty: Type,
-        span: Span,
-    },
+    NotCallable { ty: Type, span: Span },
 }
 
 impl TypeError {
@@ -231,8 +192,7 @@ impl TypeError {
             TypeError::NoSuchField { .. }
             | TypeError::MissingField { .. }
             | TypeError::CannotAccessFieldNonStruct { .. } => "E019",
-            TypeError::NonExhaustiveMatch { .. }
-            | TypeError::EmptyMatch { .. } => "E020",
+            TypeError::NonExhaustiveMatch { .. } | TypeError::EmptyMatch { .. } => "E020",
             TypeError::NoSuchVariant { .. }
             | TypeError::CannotMatchNonEnum { .. }
             | TypeError::PayloadArityMismatch { .. } => "E021",
@@ -313,32 +273,45 @@ impl TypeChecker {
             Type::Struct(sname) => {
                 if self.current_type_params.contains(&sname) {
                     Ok(Type::Param(sname))
-                } else if known_enums.iter().any(|en| en.name == sname) || self.enum_infos.contains_key(&sname) {
+                } else if known_enums.iter().any(|en| en.name == sname)
+                    || self.enum_infos.contains_key(&sname)
+                {
                     Ok(Type::Enum(sname))
-                } else if known_structs.iter().any(|st| st.name == sname) || self.struct_infos.contains_key(&sname) {
+                } else if known_structs.iter().any(|st| st.name == sname)
+                    || self.struct_infos.contains_key(&sname)
+                {
                     Ok(Type::Struct(sname))
                 } else {
                     Err(TypeError::UnknownType { name: sname, span })
                 }
             }
             Type::Array(elem, len) => {
-                let resolved_elem = self.resolve_parsed_type_in_struct(*elem, known_structs, known_enums, span)?;
+                let resolved_elem =
+                    self.resolve_parsed_type_in_struct(*elem, known_structs, known_enums, span)?;
                 Ok(Type::Array(Box::new(resolved_elem), len))
             }
             Type::Box(inner) => {
-                let resolved_inner = self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
+                let resolved_inner =
+                    self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
                 Ok(Type::Box(Box::new(resolved_inner)))
             }
             Type::Ptr(inner) => {
-                let resolved_inner = self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
+                let resolved_inner =
+                    self.resolve_parsed_type_in_struct(*inner, known_structs, known_enums, span)?;
                 Ok(Type::Ptr(Box::new(resolved_inner)))
             }
             Type::Fn(args, ret) => {
                 let mut resolved_args = Vec::new();
                 for a in args {
-                    resolved_args.push(self.resolve_parsed_type_in_struct(a, known_structs, known_enums, span)?);
+                    resolved_args.push(self.resolve_parsed_type_in_struct(
+                        a,
+                        known_structs,
+                        known_enums,
+                        span,
+                    )?);
                 }
-                let resolved_ret = self.resolve_parsed_type_in_struct(*ret, known_structs, known_enums, span)?;
+                let resolved_ret =
+                    self.resolve_parsed_type_in_struct(*ret, known_structs, known_enums, span)?;
                 Ok(Type::Fn(resolved_args, Box::new(resolved_ret)))
             }
             other => Ok(other),
@@ -452,23 +425,29 @@ impl TypeChecker {
                 }
                 field_indices.insert(f_name.clone(), idx);
 
-                let f_ty = self.resolve_type_in_struct(f_ty_str, &program.structs, &program.enums, s.span)?;
+                let f_ty = self.resolve_type_in_struct(
+                    f_ty_str,
+                    &program.structs,
+                    &program.enums,
+                    s.span,
+                )?;
 
                 let f_size = match &f_ty {
-                    Type::Struct(dep) => {
-                        self.struct_infos.get(dep).map_or(8, |i| i.total_size)
-                    }
-                    Type::Enum(dep) => {
-                        self.enum_infos.get(dep).map_or(8, |i| 8 + i.max_payload_size)
-                    }
+                    Type::Struct(dep) => self.struct_infos.get(dep).map_or(8, |i| i.total_size),
+                    Type::Enum(dep) => self
+                        .enum_infos
+                        .get(dep)
+                        .map_or(8, |i| 8 + i.max_payload_size),
                     Type::Array(elem, len) => {
                         let elem_size = match &**elem {
-                            Type::Struct(dep) => {
-                                self.struct_infos.get(dep).map_or(8, |i| i.total_size as usize)
-                            }
-                            Type::Enum(dep) => {
-                                self.enum_infos.get(dep).map_or(8, |i| (8 + i.max_payload_size) as usize)
-                            }
+                            Type::Struct(dep) => self
+                                .struct_infos
+                                .get(dep)
+                                .map_or(8, |i| i.total_size as usize),
+                            Type::Enum(dep) => self
+                                .enum_infos
+                                .get(dep)
+                                .map_or(8, |i| (8 + i.max_payload_size) as usize),
                             _ => elem.size_bytes(),
                         };
                         (elem_size * len) as u32
@@ -527,9 +506,10 @@ impl TypeChecker {
                         Type::Struct(sname) => {
                             self.struct_infos.get(sname).map_or(8, |i| i.total_size)
                         }
-                        Type::Enum(ename) => {
-                            self.enum_infos.get(ename).map_or(8, |i| 8 + i.max_payload_size)
-                        }
+                        Type::Enum(ename) => self
+                            .enum_infos
+                            .get(ename)
+                            .map_or(8, |i| 8 + i.max_payload_size),
                         _ => p_ty.size_bytes() as u32,
                     };
                     variant_payload_size += p_size;
@@ -887,16 +867,22 @@ impl TypeChecker {
                     }
                 };
 
-                let info = self.struct_infos.get(&sname).cloned().ok_or_else(|| TypeError::UnknownType {
-                    name: sname.clone(),
-                    span: *span,
+                let info = self.struct_infos.get(&sname).cloned().ok_or_else(|| {
+                    TypeError::UnknownType {
+                        name: sname.clone(),
+                        span: *span,
+                    }
                 })?;
 
-                let (_, f_ty) = info.fields.iter().find(|(n, _)| n == field).ok_or_else(|| TypeError::NoSuchField {
-                    name: sname.clone(),
-                    field: field.clone(),
-                    span: *span,
-                })?;
+                let (_, f_ty) = info
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .ok_or_else(|| TypeError::NoSuchField {
+                        name: sname.clone(),
+                        field: field.clone(),
+                        span: *span,
+                    })?;
 
                 let typed_val = self.check_expr(value, Some(f_ty.clone()))?;
                 if typed_val.ty() != *f_ty {
@@ -919,7 +905,10 @@ impl TypeChecker {
                 Some(expr) => {
                     let typed_expr =
                         self.check_expr(expr, Some(self.current_fn_return_ty.clone()))?;
-                    if !typed_expr.ty().is_compatible_with(&self.current_fn_return_ty) {
+                    if !typed_expr
+                        .ty()
+                        .is_compatible_with(&self.current_fn_return_ty)
+                    {
                         return Err(TypeError::InvalidReturn {
                             expected: self.current_fn_return_ty.clone(),
                             found: typed_expr.ty(),
@@ -1117,15 +1106,29 @@ impl TypeChecker {
                 }
 
                 let loop_bound = match condition {
-                    Expr::Binary { op: BinaryOp::Lt, left, right, .. } => {
-                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) = (&**left, &**right) {
+                    Expr::Binary {
+                        op: BinaryOp::Lt,
+                        left,
+                        right,
+                        ..
+                    } => {
+                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) =
+                            (&**left, &**right)
+                        {
                             Some((name.clone(), *n))
                         } else {
                             None
                         }
                     }
-                    Expr::Binary { op: BinaryOp::Le, left, right, .. } => {
-                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) = (&**left, &**right) {
+                    Expr::Binary {
+                        op: BinaryOp::Le,
+                        left,
+                        right,
+                        ..
+                    } => {
+                        if let (Expr::Ident(name, _), Expr::Literal(Literal::Int(n), _)) =
+                            (&**left, &**right)
+                        {
                             Some((name.clone(), *n + 1))
                         } else {
                             None
@@ -1362,7 +1365,9 @@ impl TypeChecker {
                 let rty = typed_right.ty();
 
                 // 1. Array-Array elementwise operations
-                if let (Type::Array(ref elem_l, len_l), Type::Array(ref elem_r, len_r)) = (&lty, &rty) {
+                if let (Type::Array(ref elem_l, len_l), Type::Array(ref elem_r, len_r)) =
+                    (&lty, &rty)
+                {
                     if elem_l != elem_r || len_l != len_r || !elem_l.is_numeric() {
                         return Err(TypeError::InvalidBinaryOperands {
                             op: *op,
@@ -1434,15 +1439,14 @@ impl TypeChecker {
 
                 // 3. Scalar * Array
                 if let Type::Array(ref elem_r, _) = rty {
-                    if **elem_r == lty && lty.is_numeric()
-                        && *op == BinaryOp::Mul {
-                            return Ok(TypedExpr::Call {
-                                callee: "vec_scale".to_string(),
-                                args: vec![typed_right, typed_left],
-                                ty: rty,
-                                span: *span,
-                            });
-                        }
+                    if **elem_r == lty && lty.is_numeric() && *op == BinaryOp::Mul {
+                        return Ok(TypedExpr::Call {
+                            callee: "vec_scale".to_string(),
+                            args: vec![typed_right, typed_left],
+                            ty: rty,
+                            span: *span,
+                        });
+                    }
                 }
 
                 if lty != rty {
@@ -1556,7 +1560,11 @@ impl TypeChecker {
                 })
             }
 
-            Expr::Index { target, index, span } => {
+            Expr::Index {
+                target,
+                index,
+                span,
+            } => {
                 let typed_target = self.check_expr(target, None)?;
                 let target_ty = typed_target.ty();
                 let (elem_ty, len) = match &target_ty {
@@ -2353,11 +2361,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         let (elem_ty_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_ty_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if elem_ty_a != elem_ty_b || len_a != len_b {
                             return Err(TypeError::TypeMismatch {
@@ -2386,7 +2404,12 @@ impl TypeChecker {
                         let v = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match v.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: v.ty(), span: v.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: v.ty(),
+                                    span: v.span(),
+                                })
+                            }
                         };
                         let s = self.check_expr(&args[1], Some(elem_ty.clone()))?;
                         if s.ty() != elem_ty {
@@ -2416,7 +2439,12 @@ impl TypeChecker {
                         let v = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match v.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: v.ty(), span: v.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: v.ty(),
+                                    span: v.span(),
+                                })
+                            }
                         };
                         let s = self.check_expr(&args[1], Some(elem_ty.clone()))?;
                         if s.ty() != elem_ty {
@@ -2446,7 +2474,12 @@ impl TypeChecker {
                         let v = self.check_expr(&args[0], None)?;
                         let (elem_ty, _) = match v.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: v.ty(), span: v.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: v.ty(),
+                                    span: v.span(),
+                                })
+                            }
                         };
                         if !elem_ty.is_numeric() {
                             return Err(TypeError::TypeMismatch {
@@ -2475,11 +2508,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         let (elem_ty_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_ty_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if elem_ty_a != elem_ty_b || len_a != 3 || len_b != 3 {
                             return Err(TypeError::TypeMismatch {
@@ -2509,11 +2552,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         let (elem_ty_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_ty_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if elem_ty_a != elem_ty_b || len_a != 16 || len_b != 16 {
                             return Err(TypeError::TypeMismatch {
@@ -2542,7 +2595,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 4 {
                             return Err(TypeError::TypeMismatch {
@@ -2571,7 +2629,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 9 {
                             return Err(TypeError::TypeMismatch {
@@ -2600,7 +2663,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 16 {
                             return Err(TypeError::TypeMismatch {
@@ -2629,7 +2697,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 4 {
                             return Err(TypeError::TypeMismatch {
@@ -2657,7 +2730,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 9 {
                             return Err(TypeError::TypeMismatch {
@@ -2685,7 +2763,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 16 {
                             return Err(TypeError::TypeMismatch {
@@ -2713,7 +2796,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 4 {
                             return Err(TypeError::TypeMismatch {
@@ -2741,7 +2829,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 9 {
                             return Err(TypeError::TypeMismatch {
@@ -2769,7 +2862,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 16 {
                             return Err(TypeError::TypeMismatch {
@@ -2797,7 +2895,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 4 || !elem_ty.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2826,7 +2929,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 9 || !elem_ty.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2855,7 +2963,12 @@ impl TypeChecker {
                         let a = self.check_expr(&args[0], None)?;
                         let (elem_ty, len) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         if len != 16 || !elem_ty.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2885,11 +2998,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], None)?;
                         let (elem_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if len_a != 4 || len_b != 2 || elem_a != elem_b || !elem_a.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2919,11 +3042,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], None)?;
                         let (elem_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if len_a != 9 || len_b != 3 || elem_a != elem_b || !elem_a.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2953,11 +3086,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], None)?;
                         let (elem_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if len_a != 16 || len_b != 4 || elem_a != elem_b || !elem_a.is_float() {
                             return Err(TypeError::TypeMismatch {
@@ -2987,11 +3130,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         let (elem_ty_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_ty_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if elem_ty_a != elem_ty_b || len_a != 4 || len_b != 4 {
                             return Err(TypeError::TypeMismatch {
@@ -3021,11 +3174,21 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         let (elem_ty_a, len_a) = match a.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: a.ty(), span: a.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         };
                         let (elem_ty_b, len_b) = match b.ty() {
                             Type::Array(elem, len) => (*elem, len),
-                            _ => return Err(TypeError::CannotIndexNonArray { found: b.ty(), span: b.span() }),
+                            _ => {
+                                return Err(TypeError::CannotIndexNonArray {
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         };
                         if elem_ty_a != elem_ty_b || len_a != 9 || len_b != 9 {
                             return Err(TypeError::TypeMismatch {
@@ -3130,11 +3293,13 @@ impl TypeChecker {
                         let z = self.check_expr(&args[0], None)?;
                         match z.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 2 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 2),
-                                found: z.ty(),
-                                span: z.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 2),
+                                    found: z.ty(),
+                                    span: z.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: callee.clone(),
@@ -3156,19 +3321,23 @@ impl TypeChecker {
                         let b = self.check_expr(&args[1], Some(a.ty()))?;
                         match a.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 2 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 2),
-                                found: a.ty(),
-                                span: a.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 2),
+                                    found: a.ty(),
+                                    span: a.span(),
+                                })
+                            }
                         }
                         match b.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 2 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 2),
-                                found: b.ty(),
-                                span: b.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 2),
+                                    found: b.ty(),
+                                    span: b.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: callee.clone(),
@@ -3189,11 +3358,13 @@ impl TypeChecker {
                         let z = self.check_expr(&args[0], None)?;
                         match z.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 2 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 2),
-                                found: z.ty(),
-                                span: z.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 2),
+                                    found: z.ty(),
+                                    span: z.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: callee.clone(),
@@ -3215,19 +3386,23 @@ impl TypeChecker {
                         let im = self.check_expr(&args[1], None)?;
                         match re.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 8 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 8),
-                                found: re.ty(),
-                                span: re.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 8),
+                                    found: re.ty(),
+                                    span: re.span(),
+                                })
+                            }
                         }
                         match im.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 8 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 8),
-                                found: im.ty(),
-                                span: im.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 8),
+                                    found: im.ty(),
+                                    span: im.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: "fft8".to_string(),
@@ -3249,19 +3424,23 @@ impl TypeChecker {
                         let im = self.check_expr(&args[1], None)?;
                         match re.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 8 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 8),
-                                found: re.ty(),
-                                span: re.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 8),
+                                    found: re.ty(),
+                                    span: re.span(),
+                                })
+                            }
                         }
                         match im.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 8 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 8),
-                                found: im.ty(),
-                                span: im.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 8),
+                                    found: im.ty(),
+                                    span: im.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: callee.clone(),
@@ -3283,19 +3462,23 @@ impl TypeChecker {
                         let im = self.check_expr(&args[1], None)?;
                         match re.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 16 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 16),
-                                found: re.ty(),
-                                span: re.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 16),
+                                    found: re.ty(),
+                                    span: re.span(),
+                                })
+                            }
                         }
                         match im.ty() {
                             Type::Array(ref elem, len) if **elem == Type::F64 && len == 16 => {}
-                            _ => return Err(TypeError::TypeMismatch {
-                                expected: Type::Array(Box::new(Type::F64), 16),
-                                found: im.ty(),
-                                span: im.span(),
-                            }),
+                            _ => {
+                                return Err(TypeError::TypeMismatch {
+                                    expected: Type::Array(Box::new(Type::F64), 16),
+                                    found: im.ty(),
+                                    span: im.span(),
+                                })
+                            }
                         }
                         return Ok(TypedExpr::Call {
                             callee: callee.clone(),
@@ -3473,10 +3656,16 @@ impl TypeChecker {
                     let mut subst = HashMap::new();
                     for (arg, param_ty) in args.iter().zip(&sig.param_types) {
                         let typed_arg = self.check_expr(arg, None)?;
-                        crate::opt::monomorphize::unify_types(param_ty, &typed_arg.ty(), &mut subst, *span)?;
+                        crate::opt::monomorphize::unify_types(
+                            param_ty,
+                            &typed_arg.ty(),
+                            &mut subst,
+                            *span,
+                        )?;
                         typed_args.push(typed_arg);
                     }
-                    let return_ty = crate::opt::monomorphize::substitute_type(&sig.return_ty, &subst);
+                    let return_ty =
+                        crate::opt::monomorphize::substitute_type(&sig.return_ty, &subst);
                     return Ok(TypedExpr::Call {
                         callee: callee.clone(),
                         args: typed_args,
@@ -3570,7 +3759,11 @@ impl TypeChecker {
                 })
             }
 
-            Expr::FieldAccess { target, field, span } => {
+            Expr::FieldAccess {
+                target,
+                field,
+                span,
+            } => {
                 let typed_target = self.check_expr(target, None)?;
                 let sname = match typed_target.ty() {
                     Type::Struct(s) => s,
@@ -3592,11 +3785,15 @@ impl TypeChecker {
                     }
                 };
 
-                let (_, f_ty) = info.fields.iter().find(|(n, _)| n == field).ok_or_else(|| TypeError::NoSuchField {
-                    name: sname.clone(),
-                    field: field.clone(),
-                    span: *span,
-                })?;
+                let (_, f_ty) = info
+                    .fields
+                    .iter()
+                    .find(|(n, _)| n == field)
+                    .ok_or_else(|| TypeError::NoSuchField {
+                        name: sname.clone(),
+                        field: field.clone(),
+                        span: *span,
+                    })?;
 
                 Ok(TypedExpr::FieldAccess {
                     target: Box::new(typed_target),
@@ -3606,14 +3803,21 @@ impl TypeChecker {
                 })
             }
 
-            Expr::Match { scrutinee, arms, span } => {
+            Expr::Match {
+                scrutinee,
+                arms,
+                span,
+            } => {
                 if arms.is_empty() {
                     return Err(TypeError::EmptyMatch { span: *span });
                 }
                 let typed_scrutinee = self.check_expr(scrutinee, None)?;
                 let scrutinee_ty = typed_scrutinee.ty();
 
-                if !scrutinee_ty.is_integer() && scrutinee_ty != Type::Bool && !scrutinee_ty.is_enum() {
+                if !scrutinee_ty.is_integer()
+                    && scrutinee_ty != Type::Bool
+                    && !scrutinee_ty.is_enum()
+                {
                     return Err(TypeError::TypeMismatch {
                         expected: Type::I64,
                         found: scrutinee_ty,
@@ -3662,15 +3866,21 @@ impl TypeChecker {
                                         });
                                     }
                                 }
-                                let enum_info = self.enum_infos.get(&s_enum_name).cloned().ok_or_else(|| TypeError::UnknownType {
-                                    name: s_enum_name.clone(),
-                                    span: *pat_span,
-                                })?;
-                                let &var_idx = enum_info.variant_indices.get(variant_name).ok_or_else(|| TypeError::NoSuchVariant {
-                                    enum_name: s_enum_name.clone(),
-                                    variant_name: variant_name.clone(),
-                                    span: *pat_span,
-                                })?;
+                                let enum_info =
+                                    self.enum_infos.get(&s_enum_name).cloned().ok_or_else(
+                                        || TypeError::UnknownType {
+                                            name: s_enum_name.clone(),
+                                            span: *pat_span,
+                                        },
+                                    )?;
+                                let &var_idx = enum_info
+                                    .variant_indices
+                                    .get(variant_name)
+                                    .ok_or_else(|| TypeError::NoSuchVariant {
+                                        enum_name: s_enum_name.clone(),
+                                        variant_name: variant_name.clone(),
+                                        span: *pat_span,
+                                    })?;
                                 let var_info = &enum_info.variants[var_idx];
                                 if bindings.len() != var_info.payload.len() {
                                     return Err(TypeError::PayloadArityMismatch {
@@ -3697,53 +3907,56 @@ impl TypeChecker {
                                     span: *pat_span,
                                 });
                             }
-                            MatchPattern::Literal(lit) => {
-                                match lit {
-                                    Literal::Int(n) => {
-                                        if !scrutinee_ty.is_integer() {
-                                            return Err(TypeError::TypeMismatch {
-                                                expected: scrutinee_ty.clone(),
-                                                found: Type::I64,
-                                                span: arm.span,
-                                            });
-                                        }
-                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Int(*n, scrutinee_ty.clone())));
-                                    }
-                                    Literal::TypedInt(n, s) => {
-                                        let lit_ty = Type::from_name(s).unwrap_or(Type::I64);
-                                        if lit_ty != scrutinee_ty {
-                                            return Err(TypeError::TypeMismatch {
-                                                expected: scrutinee_ty.clone(),
-                                                found: lit_ty,
-                                                span: arm.span,
-                                            });
-                                        }
-                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Int(*n, scrutinee_ty.clone())));
-                                    }
-                                    Literal::Bool(b) => {
-                                        if scrutinee_ty != Type::Bool {
-                                            return Err(TypeError::TypeMismatch {
-                                                expected: scrutinee_ty.clone(),
-                                                found: Type::Bool,
-                                                span: arm.span,
-                                            });
-                                        }
-                                        if *b {
-                                            seen_bool_true = true;
-                                        } else {
-                                            seen_bool_false = true;
-                                        }
-                                        typed_patterns.push(TypedMatchPattern::Literal(TypedLiteral::Bool(*b)));
-                                    }
-                                    _ => {
+                            MatchPattern::Literal(lit) => match lit {
+                                Literal::Int(n) => {
+                                    if !scrutinee_ty.is_integer() {
                                         return Err(TypeError::TypeMismatch {
                                             expected: scrutinee_ty.clone(),
-                                            found: Type::Str,
+                                            found: Type::I64,
                                             span: arm.span,
                                         });
                                     }
+                                    typed_patterns.push(TypedMatchPattern::Literal(
+                                        TypedLiteral::Int(*n, scrutinee_ty.clone()),
+                                    ));
                                 }
-                            }
+                                Literal::TypedInt(n, s) => {
+                                    let lit_ty = Type::from_name(s).unwrap_or(Type::I64);
+                                    if lit_ty != scrutinee_ty {
+                                        return Err(TypeError::TypeMismatch {
+                                            expected: scrutinee_ty.clone(),
+                                            found: lit_ty,
+                                            span: arm.span,
+                                        });
+                                    }
+                                    typed_patterns.push(TypedMatchPattern::Literal(
+                                        TypedLiteral::Int(*n, scrutinee_ty.clone()),
+                                    ));
+                                }
+                                Literal::Bool(b) => {
+                                    if scrutinee_ty != Type::Bool {
+                                        return Err(TypeError::TypeMismatch {
+                                            expected: scrutinee_ty.clone(),
+                                            found: Type::Bool,
+                                            span: arm.span,
+                                        });
+                                    }
+                                    if *b {
+                                        seen_bool_true = true;
+                                    } else {
+                                        seen_bool_false = true;
+                                    }
+                                    typed_patterns
+                                        .push(TypedMatchPattern::Literal(TypedLiteral::Bool(*b)));
+                                }
+                                _ => {
+                                    return Err(TypeError::TypeMismatch {
+                                        expected: scrutinee_ty.clone(),
+                                        found: Type::Str,
+                                        span: arm.span,
+                                    });
+                                }
+                            },
                         }
                     }
 
@@ -3791,9 +4004,10 @@ impl TypeChecker {
                 let is_exhaustive = has_wildcard
                     || (scrutinee_ty == Type::Bool && seen_bool_true && seen_bool_false)
                     || match &scrutinee_ty {
-                        Type::Enum(en) => {
-                            self.enum_infos.get(en).is_some_and(|info| seen_variants.len() == info.variants.len())
-                        }
+                        Type::Enum(en) => self
+                            .enum_infos
+                            .get(en)
+                            .is_some_and(|info| seen_variants.len() == info.variants.len()),
                         _ => false,
                     };
                 if !is_exhaustive {
@@ -3845,15 +4059,21 @@ impl TypeChecker {
                     });
                 };
 
-                let enum_info = self.enum_infos.get(&en).cloned().ok_or_else(|| TypeError::UnknownType {
-                    name: en.clone(),
-                    span: *span,
-                })?;
+                let enum_info =
+                    self.enum_infos
+                        .get(&en)
+                        .cloned()
+                        .ok_or_else(|| TypeError::UnknownType {
+                            name: en.clone(),
+                            span: *span,
+                        })?;
 
-                let &var_idx = enum_info.variant_indices.get(variant_name).ok_or_else(|| TypeError::NoSuchVariant {
-                    enum_name: en.clone(),
-                    variant_name: variant_name.clone(),
-                    span: *span,
+                let &var_idx = enum_info.variant_indices.get(variant_name).ok_or_else(|| {
+                    TypeError::NoSuchVariant {
+                        enum_name: en.clone(),
+                        variant_name: variant_name.clone(),
+                        span: *span,
+                    }
                 })?;
 
                 let var_info = &enum_info.variants[var_idx];
@@ -3897,11 +4117,12 @@ impl TypeChecker {
                 span,
             } => {
                 // If expected_hint gives us (param_types, ret_hint)
-                let (hint_param_tys, hint_ret_ty): (Option<Vec<Type>>, Option<Type>) = match &expected_hint {
-                    Some(Type::Fn(pts, ret)) => (Some(pts.clone()), Some((**ret).clone())),
-                    Some(Type::Closure(c)) => (Some(c.params.clone()), Some((*c.ret).clone())),
-                    _ => (None, None),
-                };
+                let (hint_param_tys, hint_ret_ty): (Option<Vec<Type>>, Option<Type>) =
+                    match &expected_hint {
+                        Some(Type::Fn(pts, ret)) => (Some(pts.clone()), Some((**ret).clone())),
+                        Some(Type::Closure(c)) => (Some(c.params.clone()), Some((*c.ret).clone())),
+                        _ => (None, None),
+                    };
 
                 let mut resolved_params = Vec::new();
                 for (i, p_name) in params.iter().enumerate() {
@@ -4037,7 +4258,9 @@ fn collect_free_variables(expr: &Expr, free: &mut Vec<String>) {
         Expr::FieldAccess { target, .. } => {
             collect_free_variables(target, free);
         }
-        Expr::Match { scrutinee, arms, .. } => {
+        Expr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_free_variables(scrutinee, free);
             for arm in arms {
                 collect_free_variables(&arm.body, free);

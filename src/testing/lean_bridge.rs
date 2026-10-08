@@ -154,10 +154,8 @@ fn terminator_to_json(term: &Terminator) -> serde_json::Value {
             targets,
             default,
         } => {
-            let targets_json: Vec<serde_json::Value> = targets
-                .iter()
-                .map(|(k, tgt)| json!([*k, tgt.0]))
-                .collect();
+            let targets_json: Vec<serde_json::Value> =
+                targets.iter().map(|(k, tgt)| json!([*k, tgt.0])).collect();
             json!({
                 "switch": {
                     "var": value.local.clone(),
@@ -212,7 +210,8 @@ fn function_to_json(func: &MirFunction) -> serde_json::Value {
 }
 
 pub fn mir_to_json(program: &MirProgram) -> serde_json::Value {
-    let functions: Vec<serde_json::Value> = program.functions.iter().map(function_to_json).collect();
+    let functions: Vec<serde_json::Value> =
+        program.functions.iter().map(function_to_json).collect();
     json!({
         "functions": functions
     })
@@ -222,12 +221,15 @@ pub fn mir_to_json(program: &MirProgram) -> serde_json::Value {
 pub fn eval_with_lean_model(mir: &MirProgram) -> Result<i64, String> {
     let exe = get_lean_eval_exe();
     if !exe.exists() {
-        return Err(format!("lean_eval executable not found at {}", exe.display()));
+        return Err(format!(
+            "lean_eval executable not found at {}",
+            exe.display()
+        ));
     }
 
     let payload = mir_to_json(mir);
-    let payload_str = serde_json::to_string(&payload)
-        .map_err(|e| format!("Serialization error: {}", e))?;
+    let payload_str =
+        serde_json::to_string(&payload).map_err(|e| format!("Serialization error: {}", e))?;
 
     let mut child = Command::new(&exe)
         .stdin(Stdio::piped())
@@ -262,7 +264,10 @@ pub fn eval_with_lean_model(mir: &MirProgram) -> Result<i64, String> {
         }
         Some("diverged") => Err("Diverged in Lean model".to_string()),
         Some("error") => {
-            let msg = resp.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+            let msg = resp
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
             Err(format!("Lean model error: {}", msg))
         }
         _ => Err(format!("Unexpected lean_eval response: {}", out_str)),
@@ -272,10 +277,10 @@ pub fn eval_with_lean_model(mir: &MirProgram) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mir::lower::lower_program;
     use crate::parser::parse;
     use crate::token::tokenize;
     use crate::typecheck::typecheck;
-    use crate::mir::lower::lower_program;
 
     #[test]
     fn test_lean_bridge_simple_eval() {
@@ -323,9 +328,15 @@ fn main() -> i64 {
                 Err(e) => panic!("Lean failed on seed {}: {}", seed, e),
             };
 
-            eprintln!("Seed {}: Oracle = {}, Lean = {}\nSource:\n{}", seed, oracle_res, lean_res, src);
-            assert_eq!(oracle_res, lean_res, "Divergence between Oracle and Lean on seed {}", seed);
+            eprintln!(
+                "Seed {}: Oracle = {}, Lean = {}\nSource:\n{}",
+                seed, oracle_res, lean_res, src
+            );
+            assert_eq!(
+                oracle_res, lean_res,
+                "Divergence between Oracle and Lean on seed {}",
+                seed
+            );
         }
     }
 }
-

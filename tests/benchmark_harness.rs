@@ -88,7 +88,12 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     fs::write(&bat_path, bat_content).ok()?;
 
     let output = Command::new("cmd.exe")
-        .args(["/c", bat_path.to_str()?, src_file.to_str()?, exe_file.to_str()?])
+        .args([
+            "/c",
+            bat_path.to_str()?,
+            src_file.to_str()?,
+            exe_file.to_str()?,
+        ])
         .output()
         .ok()?;
 
@@ -104,7 +109,11 @@ fn compile_c(src: &str, test_dir: &Path, name: &str) -> Option<PathBuf> {
     }
 }
 
-fn benchmark_exe(exe: &Path, expected_exit: i32, iterations: usize) -> (Duration, Duration, i32, bool) {
+fn benchmark_exe(
+    exe: &Path,
+    expected_exit: i32,
+    iterations: usize,
+) -> (Duration, Duration, i32, bool) {
     // Warmup
     let _ = Command::new(exe).output();
 
@@ -113,7 +122,9 @@ fn benchmark_exe(exe: &Path, expected_exit: i32, iterations: usize) -> (Duration
 
     for _ in 0..iterations {
         let start = Instant::now();
-        let out = Command::new(exe).output().expect("Failed to run benchmark binary");
+        let out = Command::new(exe)
+            .output()
+            .expect("Failed to run benchmark binary");
         let elapsed = start.elapsed();
         times.push(elapsed);
         last_code = out.status.code().unwrap_or(-1);
@@ -179,10 +190,10 @@ fn expected_matvec(iters: i64) -> i32 {
     let mut acc = 0i64;
     let mut i = 0i64;
     while i < iters {
-        let y0 = r0[0]*v[0] + r0[1]*v[1] + r0[2]*v[2] + r0[3]*v[3];
-        let y1 = r1[0]*v[0] + r1[1]*v[1] + r1[2]*v[2] + r1[3]*v[3];
-        let y2 = r2[0]*v[0] + r2[1]*v[1] + r2[2]*v[2] + r2[3]*v[3];
-        let y3 = r3[0]*v[0] + r3[1]*v[1] + r3[2]*v[2] + r3[3]*v[3];
+        let y0 = r0[0] * v[0] + r0[1] * v[1] + r0[2] * v[2] + r0[3] * v[3];
+        let y1 = r1[0] * v[0] + r1[1] * v[1] + r1[2] * v[2] + r1[3] * v[3];
+        let y2 = r2[0] * v[0] + r2[1] * v[1] + r2[2] * v[2] + r2[3] * v[3];
+        let y3 = r3[0] * v[0] + r3[1] * v[1] + r3[2] * v[2] + r3[3] * v[3];
 
         acc = (acc + y0 + y1 + y2 + y3) % 1000000007;
         v[0] = (v[0] + 1) % 50;
@@ -195,9 +206,7 @@ fn expected_matvec(iters: i64) -> i32 {
 fn test_comparative_benchmarks() {
     let id = BENCH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tid = std::thread::current().id();
-    let test_dir = std::env::temp_dir().join(format!(
-        "nl_bench_{:?}_{}", tid, id
-    ));
+    let test_dir = std::env::temp_dir().join(format!("nl_bench_{:?}_{}", tid, id));
     fs::create_dir_all(&test_dir).expect("Failed to create bench test_dir");
 
     let benchmarks = vec![
@@ -449,29 +458,51 @@ int main() {
     println!("\n==========================================================================================");
     println!("                           NUMLANG COMPARATIVE BENCHMARK SUITE                            ");
     println!("==========================================================================================");
-    println!("{:<42} | {:<8} | {:<12} | {:<12} | {:<6}", "Benchmark", "Language", "Min Time", "Avg Time", "Status");
+    println!(
+        "{:<42} | {:<8} | {:<12} | {:<12} | {:<6}",
+        "Benchmark", "Language", "Min Time", "Avg Time", "Status"
+    );
     println!("------------------------------------------------------------------------------------------");
 
     for (name, expected_code, nl_code, rs_code, c_code) in benchmarks {
-        let slug = name.to_lowercase().replace(' ', "_").replace(['(', ')'], "");
+        let slug = name
+            .to_lowercase()
+            .replace(' ', "_")
+            .replace(['(', ')'], "");
 
         // 1. Compile & Benchmark numlang
         let nl_exe = compile_numlang(nl_code, &test_dir, &slug);
         let (nl_min, nl_avg, nl_code_out, nl_pass) = benchmark_exe(&nl_exe, expected_code, 5);
         println!(
             "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
-            name, "numlang", nl_min, nl_avg, if nl_pass { "PASS" } else { "FAIL" }
+            name,
+            "numlang",
+            nl_min,
+            nl_avg,
+            if nl_pass { "PASS" } else { "FAIL" }
         );
-        assert!(nl_pass, "numlang benchmark failed on '{}': expected exit {}, got {}", name, expected_code, nl_code_out);
+        assert!(
+            nl_pass,
+            "numlang benchmark failed on '{}': expected exit {}, got {}",
+            name, expected_code, nl_code_out
+        );
 
         // 2. Compile & Benchmark Rust
         if let Some(rs_exe) = compile_rust(rs_code, &test_dir, &slug) {
             let (rs_min, rs_avg, rs_code_out, rs_pass) = benchmark_exe(&rs_exe, expected_code, 5);
             println!(
                 "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
-                "", "Rust -O", rs_min, rs_avg, if rs_pass { "PASS" } else { "FAIL" }
+                "",
+                "Rust -O",
+                rs_min,
+                rs_avg,
+                if rs_pass { "PASS" } else { "FAIL" }
             );
-            assert!(rs_pass, "Rust benchmark failed on '{}': expected exit {}, got {}", name, expected_code, rs_code_out);
+            assert!(
+                rs_pass,
+                "Rust benchmark failed on '{}': expected exit {}, got {}",
+                name, expected_code, rs_code_out
+            );
         }
 
         // 3. Compile & Benchmark C
@@ -479,9 +510,17 @@ int main() {
             let (c_min, c_avg, c_code_out, c_pass) = benchmark_exe(&c_exe, expected_code, 5);
             println!(
                 "{:<42} | {:<8} | {:>10.2?} | {:>10.2?} | {:<6}",
-                "", "C (/O2)", c_min, c_avg, if c_pass { "PASS" } else { "FAIL" }
+                "",
+                "C (/O2)",
+                c_min,
+                c_avg,
+                if c_pass { "PASS" } else { "FAIL" }
             );
-            assert!(c_pass, "C benchmark failed on '{}': expected exit {}, got {}", name, expected_code, c_code_out);
+            assert!(
+                c_pass,
+                "C benchmark failed on '{}': expected exit {}, got {}",
+                name, expected_code, c_code_out
+            );
         }
 
         println!("------------------------------------------------------------------------------------------");

@@ -301,7 +301,11 @@ impl TypedBlock {
         let mut i = 0;
         while i < self.stmts.len() {
             match &mut self.stmts[i] {
-                TypedStmt::If { then_branch, else_branch, .. } => {
+                TypedStmt::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
                     then_branch.desugar_for_loops();
                     if let Some(eb) = else_branch {
                         eb.desugar_for_loops();
@@ -314,7 +318,15 @@ impl TypedBlock {
                 }
                 TypedStmt::For { .. } => {
                     let stmt = self.stmts.remove(i);
-                    if let TypedStmt::For { var, lo, hi, inclusive, mut body, span } = stmt {
+                    if let TypedStmt::For {
+                        var,
+                        lo,
+                        hi,
+                        inclusive,
+                        mut body,
+                        span,
+                    } = stmt
+                    {
                         body.desugar_for_loops();
                         let var_ty = lo.ty();
 
@@ -324,8 +336,16 @@ impl TypedBlock {
                             name: var.clone(),
                             value: TypedExpr::Binary {
                                 op: BinaryOp::Add,
-                                left: Box::new(TypedExpr::Ident { name: var.clone(), ty: var_ty.clone(), span }),
-                                right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, var_ty.clone()), ty: var_ty.clone(), span }),
+                                left: Box::new(TypedExpr::Ident {
+                                    name: var.clone(),
+                                    ty: var_ty.clone(),
+                                    span,
+                                }),
+                                right: Box::new(TypedExpr::Literal {
+                                    lit: TypedLiteral::Int(1, var_ty.clone()),
+                                    ty: var_ty.clone(),
+                                    span,
+                                }),
                                 ty: var_ty.clone(),
                                 span,
                             },
@@ -340,10 +360,18 @@ impl TypedBlock {
                             span,
                         };
 
-                        let cond_op = if inclusive { BinaryOp::Le } else { BinaryOp::Lt };
+                        let cond_op = if inclusive {
+                            BinaryOp::Le
+                        } else {
+                            BinaryOp::Lt
+                        };
                         let cond = TypedExpr::Binary {
                             op: cond_op,
-                            left: Box::new(TypedExpr::Ident { name: var, ty: var_ty, span }),
+                            left: Box::new(TypedExpr::Ident {
+                                name: var,
+                                ty: var_ty,
+                                span,
+                            }),
                             right: Box::new(hi),
                             ty: Type::Bool,
                             span,
@@ -377,8 +405,16 @@ fn patch_continue_in_body(stmts: &mut Vec<TypedStmt>, var: &str, var_ty: &Type, 
                     name: var.to_string(),
                     value: TypedExpr::Binary {
                         op: BinaryOp::Add,
-                        left: Box::new(TypedExpr::Ident { name: var.to_string(), ty: var_ty.clone(), span }),
-                        right: Box::new(TypedExpr::Literal { lit: TypedLiteral::Int(1, var_ty.clone()), ty: var_ty.clone(), span }),
+                        left: Box::new(TypedExpr::Ident {
+                            name: var.to_string(),
+                            ty: var_ty.clone(),
+                            span,
+                        }),
+                        right: Box::new(TypedExpr::Literal {
+                            lit: TypedLiteral::Int(1, var_ty.clone()),
+                            ty: var_ty.clone(),
+                            span,
+                        }),
                         ty: var_ty.clone(),
                         span,
                     },
@@ -387,7 +423,11 @@ fn patch_continue_in_body(stmts: &mut Vec<TypedStmt>, var: &str, var_ty: &Type, 
                 stmts.insert(i, inc_stmt);
                 i += 2;
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 patch_continue_in_body(&mut then_branch.stmts, var, var_ty, span);
                 if let Some(eb) = else_branch {
                     patch_continue_in_body(&mut eb.stmts, var, var_ty, span);

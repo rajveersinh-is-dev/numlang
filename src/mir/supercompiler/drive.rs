@@ -1,11 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use crate::ast::{BinaryOp, UnaryOp};
 use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
 use super::state::{Interval, SymbolicState};
 use super::term::{SymTerm, SymTermId, TermInterner};
 use super::whistle::{is_instance_of, state_embeds};
+use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::dominance::detect_loops;
 use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
 use crate::mir::memory_ssa::MemoryVersionId;
@@ -218,7 +218,8 @@ impl<'a> SupercompilerDriver<'a> {
         let (preds, succs) = compute_cfg(&func.blocks);
         let all_block_ids: Vec<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
         let entry = func.blocks[0].id.clone();
-        let dom = crate::mir::dominance::compute_dominance(entry.clone(), &preds, &succs, &all_block_ids);
+        let dom =
+            crate::mir::dominance::compute_dominance(entry.clone(), &preds, &succs, &all_block_ids);
         let loop_info = detect_loops(entry, &preds, &succs, &all_block_ids, &dom);
 
         let mut active_places = Vec::new();
@@ -286,10 +287,7 @@ impl<'a> SupercompilerDriver<'a> {
     }
 
     pub fn with_program_functions(mut self, funcs: &'a [MirFunction]) -> Self {
-        self.program_funcs = funcs
-            .iter()
-            .map(|f| (f.name.clone(), f))
-            .collect();
+        self.program_funcs = funcs.iter().map(|f| (f.name.clone(), f)).collect();
         self
     }
 
@@ -391,7 +389,11 @@ impl<'a> SupercompilerDriver<'a> {
         id
     }
 
-    fn alloc_child_node(&mut self, parent_id: ProcessNodeId, state: SymbolicState) -> ProcessNodeId {
+    fn alloc_child_node(
+        &mut self,
+        parent_id: ProcessNodeId,
+        state: SymbolicState,
+    ) -> ProcessNodeId {
         let id = ProcessNodeId(self.next_node_id);
         self.next_node_id += 1;
         self.nodes.push(ProcessNode {
@@ -488,29 +490,30 @@ impl<'a> SupercompilerDriver<'a> {
                 then_target,
                 else_target,
             } => {
-                let cond_term = working_state.get_value(condition).unwrap_or_else(|| {
-                    self.interner.intern_var(condition.clone(), Type::Bool)
-                });
+                let cond_term = working_state
+                    .get_value(condition)
+                    .unwrap_or_else(|| self.interner.intern_var(condition.clone(), Type::Bool));
 
                 let cond_root = working_state.path_constraints.find_leader(cond_term);
 
                 // Check interval-based condition evaluation
                 let mut is_bce_elim = false;
-                let interval_eval = if let SymTerm::Binary(op, left, right, _) = self.interner.get(cond_root) {
-                    let l_iv = self.get_term_interval(*left, &working_state);
-                    let r_iv = self.get_term_interval(*right, &working_state);
-                    let res = evaluate_comparison_intervals(*op, &l_iv, &r_iv);
-                    if res == Some(true) {
-                        if let (Some(_), BinaryOp::Lt | BinaryOp::Le) = (r_iv.lo, op) {
-                            if r_iv.lo == r_iv.hi && l_iv.definitely_nonneg() {
-                                is_bce_elim = true;
+                let interval_eval =
+                    if let SymTerm::Binary(op, left, right, _) = self.interner.get(cond_root) {
+                        let l_iv = self.get_term_interval(*left, &working_state);
+                        let r_iv = self.get_term_interval(*right, &working_state);
+                        let res = evaluate_comparison_intervals(*op, &l_iv, &r_iv);
+                        if res == Some(true) {
+                            if let (Some(_), BinaryOp::Lt | BinaryOp::Le) = (r_iv.lo, op) {
+                                if r_iv.lo == r_iv.hi && l_iv.definitely_nonneg() {
+                                    is_bce_elim = true;
+                                }
                             }
                         }
-                    }
-                    res
-                } else {
-                    None
-                };
+                        res
+                    } else {
+                        None
+                    };
 
                 // Positive constraint evaluation combined with refinement interval check
                 let evaluated = working_state
@@ -526,8 +529,15 @@ impl<'a> SupercompilerDriver<'a> {
                         }
                         let mut next_state = working_state;
                         next_state.block = then_target.clone();
-                        next_state.path_constraints.add_condition(cond_term, true, &self.interner);
-                        narrow_condition_intervals(cond_term, true, &mut next_state, &self.interner);
+                        next_state
+                            .path_constraints
+                            .add_condition(cond_term, true, &self.interner);
+                        narrow_condition_intervals(
+                            cond_term,
+                            true,
+                            &mut next_state,
+                            &self.interner,
+                        );
                         work_queue.push_back(DriveTask::HandleTransition {
                             from_id: node_id,
                             next_state: Box::new(next_state),
@@ -538,8 +548,15 @@ impl<'a> SupercompilerDriver<'a> {
                         self.stats.branches_pruned += 1;
                         let mut next_state = working_state;
                         next_state.block = else_target.clone();
-                        next_state.path_constraints.add_condition(cond_term, false, &self.interner);
-                        narrow_condition_intervals(cond_term, false, &mut next_state, &self.interner);
+                        next_state
+                            .path_constraints
+                            .add_condition(cond_term, false, &self.interner);
+                        narrow_condition_intervals(
+                            cond_term,
+                            false,
+                            &mut next_state,
+                            &self.interner,
+                        );
                         work_queue.push_back(DriveTask::HandleTransition {
                             from_id: node_id,
                             next_state: Box::new(next_state),
@@ -552,14 +569,24 @@ impl<'a> SupercompilerDriver<'a> {
                         then_state
                             .path_constraints
                             .add_condition(cond_term, true, &self.interner);
-                        narrow_condition_intervals(cond_term, true, &mut then_state, &self.interner);
+                        narrow_condition_intervals(
+                            cond_term,
+                            true,
+                            &mut then_state,
+                            &self.interner,
+                        );
 
                         let mut else_state = working_state;
                         else_state.block = else_target.clone();
                         else_state
                             .path_constraints
                             .add_condition(cond_term, false, &self.interner);
-                        narrow_condition_intervals(cond_term, false, &mut else_state, &self.interner);
+                        narrow_condition_intervals(
+                            cond_term,
+                            false,
+                            &mut else_state,
+                            &self.interner,
+                        );
 
                         // Dead-branch pruning if an interval becomes empty
                         let then_dead = then_state.refinements.values().any(|iv| iv.is_empty());
@@ -591,7 +618,9 @@ impl<'a> SupercompilerDriver<'a> {
                         if self.nodes.len() >= self.config.max_inline_nodes {
                             let ancestors = self.reconstruct_ancestors(node_id);
                             for &anc_id in ancestors.iter().rev() {
-                                if self.nodes[anc_id.0].state.block == self.nodes[node_id.0].state.block {
+                                if self.nodes[anc_id.0].state.block
+                                    == self.nodes[node_id.0].state.block
+                                {
                                     self.stats.knots_tied += 1;
                                     self.nodes[node_id.0].edges.push(ProcessEdge::Knot(anc_id));
                                     return;
@@ -681,7 +710,9 @@ impl<'a> SupercompilerDriver<'a> {
 
                         for (j, &other_val) in all_case_vals.iter().enumerate() {
                             if j != i {
-                                arm_state.path_constraints.add_not_equal_int(val_term, other_val);
+                                arm_state
+                                    .path_constraints
+                                    .add_not_equal_int(val_term, other_val);
                             }
                         }
 
@@ -715,7 +746,12 @@ impl<'a> SupercompilerDriver<'a> {
                     }
                 }
             }
-            Terminator::IndirectCall { next, dest, callee, args } => {
+            Terminator::IndirectCall {
+                next,
+                dest,
+                callee,
+                args,
+            } => {
                 let callee_res = self.resolve_place(callee, &working_state);
                 let callee_term = working_state.get_value(&callee_res);
 
@@ -737,18 +773,14 @@ impl<'a> SupercompilerDriver<'a> {
                         self.interner.get(callee_term_id).clone()
                     {
                         // Try to inline through the closure
-                        let inlined = if let Some(callee_func) = self
-                            .program_funcs
-                            .get(&fn_name)
-                            .copied()
-                            .or_else(|| {
+                        let inlined = if let Some(callee_func) =
+                            self.program_funcs.get(&fn_name).copied().or_else(|| {
                                 self.resolve_closure_function(
                                     &fn_name,
                                     captured_terms.len(),
                                     arg_terms.len(),
                                 )
-                            })
-                        {
+                            }) {
                             let depth_ok = self.call_stack.len() < self.config.max_inline_depth;
                             let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
                             if depth_ok && budget_ok {
@@ -774,7 +806,9 @@ impl<'a> SupercompilerDriver<'a> {
 
                 next_state.set_value(dest.clone(), result_term);
                 let next_node = self.alloc_child_node(node_id, next_state);
-                self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
+                self.nodes[node_id.0]
+                    .edges
+                    .push(ProcessEdge::Step(next_node));
                 work_queue.push_back(DriveTask::ProcessNode {
                     node_id: next_node,
                     depth: depth + 1,
@@ -789,26 +823,46 @@ impl<'a> SupercompilerDriver<'a> {
                     depth,
                 });
             }
-            Terminator::Force { thunk, result, cont } => {
-                let thunk_place = Place { local: thunk.clone(), projections: vec![] };
+            Terminator::Force {
+                thunk,
+                result,
+                cont,
+            } => {
+                let thunk_place = Place {
+                    local: thunk.clone(),
+                    projections: vec![],
+                };
                 let thunk_res = self.resolve_place(&thunk_place, &working_state);
                 let thunk_term = working_state.get_value(&thunk_res);
 
                 let mut next_state = working_state;
                 next_state.block = cont.clone();
 
-                let result_place = Place { local: result.clone(), projections: vec![] };
+                let result_place = Place {
+                    local: result.clone(),
+                    projections: vec![],
+                };
                 let result_ty = self.get_dest_type(&result_place);
 
                 let forced_term = if let Some(thunk_term_id) = thunk_term {
                     let root_id = next_state.path_constraints.find_leader(thunk_term_id);
-                    if let SymTerm::Thunk(body_name, env_terms, _) = self.interner.get(root_id).clone() {
+                    if let SymTerm::Thunk(body_name, env_terms, _) =
+                        self.interner.get(root_id).clone()
+                    {
                         let body_func = self
                             .program_funcs
                             .get(&body_name)
                             .copied()
-                            .or_else(|| if self.func.name == body_name { Some(self.func) } else { None })
-                            .or_else(|| self.resolve_closure_function(&body_name, env_terms.len(), 0));
+                            .or_else(|| {
+                                if self.func.name == body_name {
+                                    Some(self.func)
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                self.resolve_closure_function(&body_name, env_terms.len(), 0)
+                            });
 
                         if let Some(callee_func) = body_func {
                             let depth_ok = self.call_stack.len() < self.config.max_inline_depth;
@@ -833,16 +887,24 @@ impl<'a> SupercompilerDriver<'a> {
                     None
                 };
 
-                let final_result = forced_term.unwrap_or_else(|| self.interner.intern_var(result_place.clone(), result_ty));
+                let final_result = forced_term
+                    .unwrap_or_else(|| self.interner.intern_var(result_place.clone(), result_ty));
                 next_state.set_value(result_place, final_result);
                 let next_node = self.alloc_child_node(node_id, next_state);
-                self.nodes[node_id.0].edges.push(ProcessEdge::Step(next_node));
+                self.nodes[node_id.0]
+                    .edges
+                    .push(ProcessEdge::Step(next_node));
                 work_queue.push_back(DriveTask::ProcessNode {
                     node_id: next_node,
                     depth: depth + 1,
                 });
             }
-            Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
+            Terminator::TypeGuard {
+                local,
+                expected_tag,
+                fast_path,
+                deopt_stub,
+            } => {
                 let local_res = self.resolve_place(local, &working_state);
                 let local_term = working_state
                     .get_value(&local_res)
@@ -873,22 +935,27 @@ impl<'a> SupercompilerDriver<'a> {
                     let mut fast_state = working_state.clone();
                     fast_state.block = fast_path.clone();
                     let tag_term = self.interner.intern_int(*expected_tag);
-                    let cond_eq = self.interner.intern_binary(
-                        BinaryOp::Eq,
-                        local_term,
-                        tag_term,
-                        Type::Bool,
-                    );
-                    fast_state.path_constraints.add_condition(cond_eq, true, &self.interner);
+                    let cond_eq =
+                        self.interner
+                            .intern_binary(BinaryOp::Eq, local_term, tag_term, Type::Bool);
+                    fast_state
+                        .path_constraints
+                        .add_condition(cond_eq, true, &self.interner);
 
                     let mut deopt_state = working_state;
                     deopt_state.block = deopt_stub.clone();
-                    deopt_state.path_constraints.add_condition(cond_eq, false, &self.interner);
+                    deopt_state
+                        .path_constraints
+                        .add_condition(cond_eq, false, &self.interner);
 
                     let fast_node = self.alloc_child_node(node_id, fast_state);
                     let deopt_node = self.alloc_child_node(node_id, deopt_state);
-                    self.nodes[node_id.0].edges.push(ProcessEdge::BranchTrue(fast_node, cond_eq));
-                    self.nodes[node_id.0].edges.push(ProcessEdge::BranchFalse(deopt_node, cond_eq));
+                    self.nodes[node_id.0]
+                        .edges
+                        .push(ProcessEdge::BranchTrue(fast_node, cond_eq));
+                    self.nodes[node_id.0]
+                        .edges
+                        .push(ProcessEdge::BranchFalse(deopt_node, cond_eq));
 
                     work_queue.push_back(DriveTask::ProcessNode {
                         node_id: deopt_node,
@@ -907,7 +974,10 @@ impl<'a> SupercompilerDriver<'a> {
     fn resolve_place(&self, p: &Place, state: &SymbolicState) -> Place {
         let mut curr_place = p.clone();
         for _ in 0..10 {
-            if let Some(&base_term_id) = state.env.get(&Place { local: curr_place.local.clone(), projections: vec![] }) {
+            if let Some(&base_term_id) = state.env.get(&Place {
+                local: curr_place.local.clone(),
+                projections: vec![],
+            }) {
                 let root_id = state.path_constraints.find_leader(base_term_id);
                 if let SymTerm::Var(base_place, _) = self.interner.get(root_id) {
                     if base_place.local != curr_place.local || !base_place.projections.is_empty() {
@@ -987,7 +1057,8 @@ impl<'a> SupercompilerDriver<'a> {
         let term = match rval {
             Rvalue::Use(p) => {
                 let resolved_p = self.resolve_place(p, state);
-                let val_term = if let Some(Projection::Payload(i)) = resolved_p.projections.first() {
+                let val_term = if let Some(Projection::Payload(i)) = resolved_p.projections.first()
+                {
                     let base_place = Place {
                         local: resolved_p.local.clone(),
                         projections: vec![],
@@ -999,22 +1070,26 @@ impl<'a> SupercompilerDriver<'a> {
                                 f_term
                             } else {
                                 state.get_value(&resolved_p).unwrap_or_else(|| {
-                                    self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
+                                    self.interner
+                                        .intern_var(resolved_p.clone(), dest_ty.clone())
                                 })
                             }
                         } else {
                             state.get_value(&resolved_p).unwrap_or_else(|| {
-                                self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
+                                self.interner
+                                    .intern_var(resolved_p.clone(), dest_ty.clone())
                             })
                         }
                     } else {
                         state.get_value(&resolved_p).unwrap_or_else(|| {
-                            self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
+                            self.interner
+                                .intern_var(resolved_p.clone(), dest_ty.clone())
                         })
                     }
                 } else {
                     state.get_value(&resolved_p).unwrap_or_else(|| {
-                        self.interner.intern_var(resolved_p.clone(), dest_ty.clone())
+                        self.interner
+                            .intern_var(resolved_p.clone(), dest_ty.clone())
                     })
                 };
                 let p_iv = self.get_term_interval(val_term, state);
@@ -1175,7 +1250,8 @@ impl<'a> SupercompilerDriver<'a> {
                 let mut cycle_res = None;
                 if let Some(cycle_start) = self.call_stack.iter().position(|s| s == callee) {
                     let cycle = self.call_stack[cycle_start..].to_vec();
-                    if let Some(closed_term) = self.try_solve_call_cycle(&cycle, callee, &arg_terms) {
+                    if let Some(closed_term) = self.try_solve_call_cycle(&cycle, callee, &arg_terms)
+                    {
                         self.stats.loops_collapsed += 1;
                         cycle_res = Some(closed_term);
                     }
@@ -1191,11 +1267,12 @@ impl<'a> SupercompilerDriver<'a> {
                             .values()
                             .any(|loop_blocks| loop_blocks.contains(&state.block));
 
-                        let loop_invariance_ok = if in_loop_body && !self.config.inline_loop_body_calls {
-                            self.all_args_loop_invariant(&arg_terms, &state.block)
-                        } else {
-                            true
-                        };
+                        let loop_invariance_ok =
+                            if in_loop_body && !self.config.inline_loop_body_calls {
+                                self.all_args_loop_invariant(&arg_terms, &state.block)
+                            } else {
+                                true
+                            };
 
                         let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
                         let depth_ok = self.call_stack.len() < self.config.max_inline_depth
@@ -1205,7 +1282,11 @@ impl<'a> SupercompilerDriver<'a> {
 
                         if loop_invariance_ok && depth_ok && budget_ok && not_recursive {
                             if let Some(callee_func) = self.program_funcs.get(callee).copied() {
-                                inlined_res = self.try_drive_interprocedural_call(callee_func, &arg_terms, state);
+                                inlined_res = self.try_drive_interprocedural_call(
+                                    callee_func,
+                                    &arg_terms,
+                                    state,
+                                );
                                 if inlined_res.is_some() {
                                     self.stats.calls_inlined += 1;
                                 }
@@ -1214,7 +1295,8 @@ impl<'a> SupercompilerDriver<'a> {
                     }
 
                     inlined_res.unwrap_or_else(|| {
-                        self.interner.intern_call(callee.clone(), arg_terms, dest_ty.clone())
+                        self.interner
+                            .intern_call(callee.clone(), arg_terms, dest_ty.clone())
                     })
                 }
             }
@@ -1240,12 +1322,15 @@ impl<'a> SupercompilerDriver<'a> {
             }
             Rvalue::Load(ptr_place) => {
                 let ptr_res = self.resolve_place(ptr_place, state);
-                let ptr_term = state
-                    .get_value(&ptr_res)
-                    .unwrap_or_else(|| self.interner.intern_var(ptr_res, Type::Ptr(Box::new(dest_ty.clone()))));
-                state.symbolic_heap.get(&ptr_term).copied().unwrap_or_else(|| {
-                    self.interner.intern_deref(ptr_term, dest_ty.clone())
-                })
+                let ptr_term = state.get_value(&ptr_res).unwrap_or_else(|| {
+                    self.interner
+                        .intern_var(ptr_res, Type::Ptr(Box::new(dest_ty.clone())))
+                });
+                state
+                    .symbolic_heap
+                    .get(&ptr_term)
+                    .copied()
+                    .unwrap_or_else(|| self.interner.intern_deref(ptr_term, dest_ty.clone()))
             }
             Rvalue::ClosureAlloc { fn_name, captured } => {
                 let captured_terms: Vec<SymTermId> = captured
@@ -1257,16 +1342,21 @@ impl<'a> SupercompilerDriver<'a> {
                             .unwrap_or_else(|| self.interner.intern_var(p_res, Type::I64))
                     })
                     .collect();
-                self.interner.intern_closure_val(fn_name.clone(), captured_terms, dest_ty)
+                self.interner
+                    .intern_closure_val(fn_name.clone(), captured_terms, dest_ty)
             }
             Rvalue::FnPtr(fn_name) => {
-                self.interner.intern_closure_val(fn_name.clone(), vec![], dest_ty)
+                self.interner
+                    .intern_closure_val(fn_name.clone(), vec![], dest_ty)
             }
             Rvalue::Thunk { body, env } => {
                 let env_terms: Vec<SymTermId> = env
                     .iter()
                     .map(|name| {
-                        let p = Place { local: name.clone(), projections: vec![] };
+                        let p = Place {
+                            local: name.clone(),
+                            projections: vec![],
+                        };
                         let p_res = self.resolve_place(&p, state);
                         state
                             .get_value(&p_res)
@@ -1337,7 +1427,9 @@ impl<'a> SupercompilerDriver<'a> {
             }
             if let Some(&first_anc) = ancestor_stack.first() {
                 self.stats.knots_tied += 1;
-                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(first_anc));
+                self.nodes[from_id.0]
+                    .edges
+                    .push(ProcessEdge::Knot(first_anc));
                 return;
             }
         }
@@ -1350,22 +1442,34 @@ impl<'a> SupercompilerDriver<'a> {
                 .filter(|&&anc_id| self.nodes[anc_id.0].state.block == next_state.block)
                 .count();
 
-            let has_internal_branch = self.natural_loops.get(&next_state.block).is_some_and(|blocks| {
-                blocks.iter().any(|b_id| {
-                    *b_id != next_state.block
-                        && self.block_map.get(b_id).is_some_and(|b| {
-                            match &b.terminator {
-                                Terminator::BranchIf { then_target, else_target, .. } => {
-                                    blocks.contains(then_target) && blocks.contains(else_target)
-                                }
-                                Terminator::Switch { targets, default, .. } => {
-                                    targets.iter().all(|(_, t)| blocks.contains(t)) && blocks.contains(default)
-                                }
-                                _ => false,
-                            }
+            let has_internal_branch =
+                self.natural_loops
+                    .get(&next_state.block)
+                    .is_some_and(|blocks| {
+                        blocks.iter().any(|b_id| {
+                            *b_id != next_state.block
+                                && self
+                                    .block_map
+                                    .get(b_id)
+                                    .is_some_and(|b| match &b.terminator {
+                                        Terminator::BranchIf {
+                                            then_target,
+                                            else_target,
+                                            ..
+                                        } => {
+                                            blocks.contains(then_target)
+                                                && blocks.contains(else_target)
+                                        }
+                                        Terminator::Switch {
+                                            targets, default, ..
+                                        } => {
+                                            targets.iter().all(|(_, t)| blocks.contains(t))
+                                                && blocks.contains(default)
+                                        }
+                                        _ => false,
+                                    })
                         })
-                })
-            });
+                    });
 
             if header_visits >= 3 || (header_visits >= 1 && has_internal_branch) {
                 if let Some(&first_anc_id) = ancestor_stack
@@ -1377,7 +1481,9 @@ impl<'a> SupercompilerDriver<'a> {
                         RecurrenceResult::Solved(solved_state) => {
                             self.stats.loops_collapsed += 1;
                             let next_node = self.alloc_child_node(from_id, *solved_state);
-                            self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
+                            self.nodes[from_id.0]
+                                .edges
+                                .push(ProcessEdge::Step(next_node));
                             work_queue.push_back(DriveTask::ProcessNode {
                                 node_id: next_node,
                                 depth: depth + 1,
@@ -1403,7 +1509,9 @@ impl<'a> SupercompilerDriver<'a> {
                             let mut gen_state = anc_state.clone();
                             let mut next_var_id = self.interner.len();
                             for place in &self.active_places {
-                                if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                if let (Some(t_anc), Some(t_curr)) =
+                                    (anc_state.get_value(place), next_state.get_value(place))
+                                {
                                     if t_anc != t_curr {
                                         let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
                                             t_anc,
@@ -1416,9 +1524,13 @@ impl<'a> SupercompilerDriver<'a> {
                                 }
                             }
                             let gen_node_id = self.alloc_child_node(from_id, gen_state);
-                            self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(first_anc_id));
+                            self.nodes[gen_node_id.0]
+                                .edges
+                                .push(ProcessEdge::Step(first_anc_id));
                             self.stats.knots_tied += 1;
-                            self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                            self.nodes[from_id.0]
+                                .edges
+                                .push(ProcessEdge::Knot(gen_node_id));
                             self.witness.firings.push(WhistleFiring {
                                 from_id,
                                 ancestor_id: gen_node_id,
@@ -1445,7 +1557,9 @@ impl<'a> SupercompilerDriver<'a> {
                                 let mut gen_state = anc_state.clone();
                                 let mut next_var_id = self.interner.len();
                                 for place in &self.active_places {
-                                    if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                                    if let (Some(t_anc), Some(t_curr)) =
+                                        (anc_state.get_value(place), next_state.get_value(place))
+                                    {
                                         if t_anc != t_curr {
                                             let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
                                                 t_anc,
@@ -1458,9 +1572,13 @@ impl<'a> SupercompilerDriver<'a> {
                                     }
                                 }
                                 let gen_node_id = self.alloc_child_node(from_id, gen_state);
-                                self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(first_anc_id));
+                                self.nodes[gen_node_id.0]
+                                    .edges
+                                    .push(ProcessEdge::Step(first_anc_id));
                                 self.stats.knots_tied += 1;
-                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                                self.nodes[from_id.0]
+                                    .edges
+                                    .push(ProcessEdge::Knot(gen_node_id));
                                 self.witness.firings.push(WhistleFiring {
                                     from_id,
                                     ancestor_id: gen_node_id,
@@ -1483,7 +1601,9 @@ impl<'a> SupercompilerDriver<'a> {
                     {
                         self.stats.loops_collapsed += 1;
                         let next_node = self.alloc_child_node(from_id, *solved_state);
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
+                        self.nodes[from_id.0]
+                            .edges
+                            .push(ProcessEdge::Step(next_node));
                         work_queue.push_back(DriveTask::ProcessNode {
                             node_id: next_node,
                             depth: depth + 1,
@@ -1507,7 +1627,9 @@ impl<'a> SupercompilerDriver<'a> {
                         let mut gen_state = anc_state.clone();
                         let mut next_var_id = self.interner.len();
                         for place in &self.active_places {
-                            if let (Some(t_anc), Some(t_curr)) = (anc_state.get_value(place), next_state.get_value(place)) {
+                            if let (Some(t_anc), Some(t_curr)) =
+                                (anc_state.get_value(place), next_state.get_value(place))
+                            {
                                 if t_anc != t_curr {
                                     let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
                                         t_anc,
@@ -1520,9 +1642,13 @@ impl<'a> SupercompilerDriver<'a> {
                             }
                         }
                         let gen_node_id = self.alloc_child_node(from_id, gen_state);
-                        self.nodes[gen_node_id.0].edges.push(ProcessEdge::Step(anc_id));
+                        self.nodes[gen_node_id.0]
+                            .edges
+                            .push(ProcessEdge::Step(anc_id));
                         self.stats.knots_tied += 1;
-                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(gen_node_id));
+                        self.nodes[from_id.0]
+                            .edges
+                            .push(ProcessEdge::Knot(gen_node_id));
                         self.witness.firings.push(WhistleFiring {
                             from_id,
                             ancestor_id: gen_node_id,
@@ -1536,7 +1662,9 @@ impl<'a> SupercompilerDriver<'a> {
 
         // 3. Normal transition
         let next_node = self.alloc_child_node(from_id, next_state);
-        self.nodes[from_id.0].edges.push(ProcessEdge::Step(next_node));
+        self.nodes[from_id.0]
+            .edges
+            .push(ProcessEdge::Step(next_node));
         work_queue.push_back(DriveTask::ProcessNode {
             node_id: next_node,
             depth: depth + 1,
@@ -1555,7 +1683,9 @@ impl<'a> SupercompilerDriver<'a> {
                 if let Some(b) = self.block_map.get(b_id) {
                     b.statements.iter().any(|stmt| {
                         let Statement::Assign(dest, _) = stmt;
-                        dest.projections.iter().any(|p| matches!(p, Projection::Index(_)))
+                        dest.projections
+                            .iter()
+                            .any(|p| matches!(p, Projection::Index(_)))
                     })
                 } else {
                     false
@@ -1596,14 +1726,22 @@ impl<'a> SupercompilerDriver<'a> {
                             }
 
                             let mut const_val = None;
-                            if let Some(concrete_t) = curr.get_value(&real_r).or_else(|| curr.get_value(r)) {
+                            if let Some(concrete_t) =
+                                curr.get_value(&real_r).or_else(|| curr.get_value(r))
+                            {
                                 if let SymTerm::ConstInt(v, _) = self.interner.get(concrete_t) {
                                     const_val = Some(*v);
                                 }
                             }
                             if const_val.is_none() {
                                 for stmt2 in &block.statements {
-                                    if let Statement::Assign(d, Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt2 {
+                                    if let Statement::Assign(
+                                        d,
+                                        Rvalue::Constant(
+                                            crate::typecheck::typed_ast::TypedLiteral::Int(v, _),
+                                        ),
+                                    ) = stmt2
+                                    {
                                         if d.local == r.local || d.local == real_r.local {
                                             const_val = Some(*v);
                                             break;
@@ -1614,7 +1752,16 @@ impl<'a> SupercompilerDriver<'a> {
                             if const_val.is_none() {
                                 for b in self.block_map.values() {
                                     for stmt2 in &b.statements {
-                                        if let Statement::Assign(d, Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt2 {
+                                        if let Statement::Assign(
+                                            d,
+                                            Rvalue::Constant(
+                                                crate::typecheck::typed_ast::TypedLiteral::Int(
+                                                    v,
+                                                    _,
+                                                ),
+                                            ),
+                                        ) = stmt2
+                                        {
                                             if d.local == r.local || d.local == real_r.local {
                                                 const_val = Some(*v);
                                                 break;
@@ -1627,13 +1774,17 @@ impl<'a> SupercompilerDriver<'a> {
                                 }
                             }
 
-                            let iv_initial = anc.get_value(&real_l).or_else(|| anc.get_value(l)).and_then(|t| {
-                                if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
-                                    Some(*v)
-                                } else {
-                                    None
-                                }
-                            }).unwrap_or(0);
+                            let iv_initial = anc
+                                .get_value(&real_l)
+                                .or_else(|| anc.get_value(l))
+                                .and_then(|t| {
+                                    if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
+                                        Some(*v)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
 
                             if let Some(mut v) = const_val {
                                 if *op == BinaryOp::Le {
@@ -1645,14 +1796,26 @@ impl<'a> SupercompilerDriver<'a> {
                                 let mut r_term = curr
                                     .get_value(&real_r)
                                     .or_else(|| curr.get_value(r))
-                                    .unwrap_or_else(|| self.interner.intern_var(real_r.clone(), Type::I64));
+                                    .unwrap_or_else(|| {
+                                        self.interner.intern_var(real_r.clone(), Type::I64)
+                                    });
                                 let offset = if *op == BinaryOp::Le { 1 } else { 0 } - iv_initial;
                                 if offset > 0 {
                                     let off_term = self.interner.intern_int(offset);
-                                    r_term = self.interner.intern_binary(BinaryOp::Add, r_term, off_term, Type::I64);
+                                    r_term = self.interner.intern_binary(
+                                        BinaryOp::Add,
+                                        r_term,
+                                        off_term,
+                                        Type::I64,
+                                    );
                                 } else if offset < 0 {
                                     let off_term = self.interner.intern_int(-offset);
-                                    r_term = self.interner.intern_binary(BinaryOp::Sub, r_term, off_term, Type::I64);
+                                    r_term = self.interner.intern_binary(
+                                        BinaryOp::Sub,
+                                        r_term,
+                                        off_term,
+                                        Type::I64,
+                                    );
                                 }
                                 bound_term = Some(r_term);
                             }
@@ -1679,7 +1842,8 @@ impl<'a> SupercompilerDriver<'a> {
                     if let SymTerm::ConstInt(iv_init_val, _) = self.interner.get(init_t) {
                         if *iv_init_val != 0 {
                             let init_term = self.interner.intern_int(*iv_init_val);
-                            self.interner.intern_binary(BinaryOp::Add, init_term, n_term, Type::I64)
+                            self.interner
+                                .intern_binary(BinaryOp::Add, init_term, n_term, Type::I64)
                         } else {
                             n_term
                         }
@@ -1731,12 +1895,12 @@ impl<'a> SupercompilerDriver<'a> {
                     this_solved = true;
                     solved_places.insert(place.local.clone());
                 }
-            } else if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
+            } else if let (Some(t_anc), Some(t_curr)) =
+                (anc.get_value(place), curr.get_value(place))
+            {
                 if t_anc != t_curr {
-                    if let (
-                        SymTerm::ConstInt(v0, _),
-                        SymTerm::ConstInt(v1, _),
-                    ) = (self.interner.get(t_anc), self.interner.get(t_curr))
+                    if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
+                        (self.interner.get(t_anc), self.interner.get(t_curr))
                     {
                         let step = v1 - v0;
                         if step != 0 {
@@ -1767,9 +1931,16 @@ impl<'a> SupercompilerDriver<'a> {
 
         let mut nway_solved = false;
         if unsolved_places.len() >= 3 {
-            let trajectories: Vec<Vec<i64>> = unsolved_places.iter().map(|(_, h)| h.clone()).collect();
-            if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&trajectories) {
-                let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+            let trajectories: Vec<Vec<i64>> =
+                unsolved_places.iter().map(|(_, h)| h.clone()).collect();
+            if let Some(sys) =
+                crate::mir::supercompiler::recurrence::detect_nway_linear_system(&trajectories)
+            {
+                let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(
+                    &sys,
+                    n_term,
+                    &mut self.interner,
+                );
                 for (idx, (ref p, _)) in unsolved_places.iter().enumerate() {
                     solved_state.set_value(p.clone(), terms[idx]);
                     solved_places.insert(p.local.clone());
@@ -1779,9 +1950,21 @@ impl<'a> SupercompilerDriver<'a> {
             } else if unsolved_places.len() <= 8 {
                 'subset_search: for sz in (3..unsolved_places.len()).rev() {
                     for combo in get_combinations(unsolved_places.len(), sz) {
-                        let sub_trajectories: Vec<Vec<i64>> = combo.iter().map(|&idx| unsolved_places[idx].1.clone()).collect();
-                        if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&sub_trajectories) {
-                            let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+                        let sub_trajectories: Vec<Vec<i64>> = combo
+                            .iter()
+                            .map(|&idx| unsolved_places[idx].1.clone())
+                            .collect();
+                        if let Some(sys) =
+                            crate::mir::supercompiler::recurrence::detect_nway_linear_system(
+                                &sub_trajectories,
+                            )
+                        {
+                            let terms =
+                                crate::mir::supercompiler::recurrence::solve_nway_recurrence(
+                                    &sys,
+                                    n_term,
+                                    &mut self.interner,
+                                );
                             for (t_idx, &u_idx) in combo.iter().enumerate() {
                                 let (ref p, _) = unsolved_places[u_idx];
                                 solved_state.set_value(p.clone(), terms[t_idx]);
@@ -1802,20 +1985,26 @@ impl<'a> SupercompilerDriver<'a> {
                 for j in (i + 1)..n {
                     let (ref p_a, ref hist_a) = unsolved_places[i];
                     let (ref p_b, ref hist_b) = unsolved_places[j];
-                    if let Some((term_a, term_b)) = solve_coupled_2var_recurrence(
-                        hist_a,
-                        hist_b,
-                        n_term,
-                        &mut self.interner,
-                    ) {
+                    if let Some((term_a, term_b)) =
+                        solve_coupled_2var_recurrence(hist_a, hist_b, n_term, &mut self.interner)
+                    {
                         solved_state.set_value(p_a.clone(), term_a);
                         solved_state.set_value(p_b.clone(), term_b);
                         solved_places.insert(p_a.local.clone());
                         solved_places.insert(p_b.local.clone());
                         any_solved = true;
                         break;
-                    } else if let Some(sys) = crate::mir::supercompiler::recurrence::detect_nway_linear_system(&[hist_a.clone(), hist_b.clone()]) {
-                        let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut self.interner);
+                    } else if let Some(sys) =
+                        crate::mir::supercompiler::recurrence::detect_nway_linear_system(&[
+                            hist_a.clone(),
+                            hist_b.clone(),
+                        ])
+                    {
+                        let terms = crate::mir::supercompiler::recurrence::solve_nway_recurrence(
+                            &sys,
+                            n_term,
+                            &mut self.interner,
+                        );
                         solved_state.set_value(p_a.clone(), terms[0]);
                         solved_state.set_value(p_b.clone(), terms[1]);
                         solved_places.insert(p_a.local.clone());
@@ -1836,7 +2025,9 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
-        let all_mutating_solved = mutating_places.iter().all(|local| solved_places.contains(*local));
+        let all_mutating_solved = mutating_places
+            .iter()
+            .all(|local| solved_places.contains(*local));
 
         if any_solved && all_mutating_solved {
             RecurrenceResult::Solved(Box::new(solved_state))
@@ -1868,13 +2059,17 @@ impl<'a> SupercompilerDriver<'a> {
             if *b_id != curr.block {
                 if let Some(b) = self.block_map.get(b_id) {
                     match &b.terminator {
-                        Terminator::BranchIf { then_target, else_target, .. }
-                            if blocks.contains(then_target) && blocks.contains(else_target) =>
-                        {
+                        Terminator::BranchIf {
+                            then_target,
+                            else_target,
+                            ..
+                        } if blocks.contains(then_target) && blocks.contains(else_target) => {
                             return AccumulatorLoopResult::BranchingBody;
                         }
-                        Terminator::Switch { targets, default, .. }
-                            if targets.iter().all(|(_, t)| blocks.contains(t)) && blocks.contains(default) =>
+                        Terminator::Switch {
+                            targets, default, ..
+                        } if targets.iter().all(|(_, t)| blocks.contains(t))
+                            && blocks.contains(default) =>
                         {
                             return AccumulatorLoopResult::BranchingBody;
                         }
@@ -1982,7 +2177,11 @@ impl<'a> SupercompilerDriver<'a> {
             curr_b_opt = next_b;
         }
         if body_order.is_empty() {
-            body_order = blocks.iter().filter(|b| **b != curr.block).cloned().collect();
+            body_order = blocks
+                .iter()
+                .filter(|b| **b != curr.block)
+                .cloned()
+                .collect();
         }
 
         let initial_iv = if let Some(t) = base_state.get_value(&iv) {
@@ -2003,24 +2202,31 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
         }
-        let iv_step = if let (Some(t_anc), Some(t_curr)) = (base_state.get_value(&iv), curr.get_value(&iv)) {
-            if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
-                (self.interner.get(t_anc), self.interner.get(t_curr))
-            {
-                let s = v1 - v0;
-                if s != 0 { s } else { 1 }
+        let iv_step =
+            if let (Some(t_anc), Some(t_curr)) = (base_state.get_value(&iv), curr.get_value(&iv)) {
+                if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
+                    (self.interner.get(t_anc), self.interner.get(t_curr))
+                {
+                    let s = v1 - v0;
+                    if s != 0 {
+                        s
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                }
             } else {
                 1
-            }
-        } else {
-            1
-        };
+            };
 
         let mut histories: HashMap<String, Vec<i64>> = HashMap::new();
         for cand in &mutating_candidates {
             histories.insert(cand.local.clone(), Vec::with_capacity(9));
             if let Some(&init_val) = env.get(&cand.local) {
-                if let Some(h) = histories.get_mut(&cand.local) { h.push(init_val); }
+                if let Some(h) = histories.get_mut(&cand.local) {
+                    h.push(init_val);
+                }
             }
         }
 
@@ -2033,16 +2239,33 @@ impl<'a> SupercompilerDriver<'a> {
                     for stmt in &b.statements {
                         let Statement::Assign(dest, rval) = stmt;
                         let val_opt = match rval {
-                            Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) => Some(*v),
+                            Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(
+                                v,
+                                _,
+                            )) => Some(*v),
                             Rvalue::Use(p) => env.get(&p.local).copied(),
                             Rvalue::BinaryOp(op, l, r) => {
-                                if let (Some(&lv), Some(&rv)) = (env.get(&l.local), env.get(&r.local)) {
+                                if let (Some(&lv), Some(&rv)) =
+                                    (env.get(&l.local), env.get(&r.local))
+                                {
                                     match op {
                                         BinaryOp::Add => Some(lv.wrapping_add(rv)),
                                         BinaryOp::Sub => Some(lv.wrapping_sub(rv)),
                                         BinaryOp::Mul => Some(lv.wrapping_mul(rv)),
-                                        BinaryOp::Div => if rv != 0 { Some(lv / rv) } else { None },
-                                        BinaryOp::Mod => if rv != 0 { Some(lv % rv) } else { None },
+                                        BinaryOp::Div => {
+                                            if rv != 0 {
+                                                Some(lv / rv)
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        BinaryOp::Mod => {
+                                            if rv != 0 {
+                                                Some(lv % rv)
+                                            } else {
+                                                None
+                                            }
+                                        }
                                         BinaryOp::BitAnd => Some(lv & rv),
                                         BinaryOp::BitOr => Some(lv | rv),
                                         BinaryOp::BitXor => Some(lv ^ rv),
@@ -2073,7 +2296,9 @@ impl<'a> SupercompilerDriver<'a> {
                                     None
                                 }
                             }
-                            Rvalue::UnaryOp(crate::ast::UnaryOp::Neg, p) => env.get(&p.local).map(|v| -v),
+                            Rvalue::UnaryOp(crate::ast::UnaryOp::Neg, p) => {
+                                env.get(&p.local).map(|v| -v)
+                            }
                             _ => None,
                         };
                         if let Some(v) = val_opt {
@@ -2094,7 +2319,9 @@ impl<'a> SupercompilerDriver<'a> {
 
             for cand in &mutating_candidates {
                 if let Some(&val) = env.get(&cand.local) {
-                    if let Some(h) = histories.get_mut(&cand.local) { h.push(val); }
+                    if let Some(h) = histories.get_mut(&cand.local) {
+                        h.push(val);
+                    }
                 } else {
                     sim_success = false;
                     break;
@@ -2113,7 +2340,8 @@ impl<'a> SupercompilerDriver<'a> {
         for cand in &mutating_candidates {
             if let Some(samples) = histories.get(&cand.local) {
                 if samples.len() >= 4 {
-                    if let Some(closed_form) = solve_recurrence(samples, n_term, &mut self.interner) {
+                    if let Some(closed_form) = solve_recurrence(samples, n_term, &mut self.interner)
+                    {
                         solved_accs.push((cand.clone(), closed_form));
                     }
                 }
@@ -2161,33 +2389,37 @@ impl<'a> SupercompilerDriver<'a> {
         true
     }
 
-    fn term_references_locals(&self, term_id: SymTermId, locals: &std::collections::HashSet<String>) -> bool {
+    fn term_references_locals(
+        &self,
+        term_id: SymTermId,
+        locals: &std::collections::HashSet<String>,
+    ) -> bool {
         match self.interner.get(term_id) {
             SymTerm::Var(p, _) => locals.contains(&p.local),
             SymTerm::Binary(_, l, r, _) => {
                 self.term_references_locals(*l, locals) || self.term_references_locals(*r, locals)
             }
             SymTerm::Unary(_, inner, _) => self.term_references_locals(*inner, locals),
-            SymTerm::Constructor(_, _, fields, _) => {
-                fields.iter().any(|&f| self.term_references_locals(f, locals))
-            }
+            SymTerm::Constructor(_, _, fields, _) => fields
+                .iter()
+                .any(|&f| self.term_references_locals(f, locals)),
             SymTerm::Select(c, t, e, _) => {
                 self.term_references_locals(*c, locals)
                     || self.term_references_locals(*t, locals)
                     || self.term_references_locals(*e, locals)
             }
-            SymTerm::Phi(incoming, _) => {
-                incoming.iter().any(|(_, t)| self.term_references_locals(*t, locals))
-            }
+            SymTerm::Phi(incoming, _) => incoming
+                .iter()
+                .any(|(_, t)| self.term_references_locals(*t, locals)),
             SymTerm::Call(_, args, _) => {
                 args.iter().any(|&a| self.term_references_locals(a, locals))
             }
             SymTerm::Ref(inner, _) => self.term_references_locals(*inner, locals),
             SymTerm::Deref(ptr, _) => self.term_references_locals(*ptr, locals),
             SymTerm::Discriminant(inner, _) => self.term_references_locals(*inner, locals),
-            SymTerm::ClosureVal(_, captured, _) | SymTerm::Thunk(_, captured, _) => {
-                captured.iter().any(|&c| self.term_references_locals(c, locals))
-            }
+            SymTerm::ClosureVal(_, captured, _) | SymTerm::Thunk(_, captured, _) => captured
+                .iter()
+                .any(|&c| self.term_references_locals(c, locals)),
             _ => false,
         }
     }
@@ -2258,9 +2490,9 @@ impl<'a> SupercompilerDriver<'a> {
             Some(self.interner.import_from(&child_tree.interner, child_ret))
         } else if !return_terms.is_empty() {
             let first = return_terms[0];
-            let all_same = return_terms.iter().all(|&t| {
-                child_tree.interner.get(t) == child_tree.interner.get(first)
-            });
+            let all_same = return_terms
+                .iter()
+                .all(|&t| child_tree.interner.get(t) == child_tree.interner.get(first));
             if all_same {
                 Some(self.interner.import_from(&child_tree.interner, first))
             } else {
@@ -2383,8 +2615,9 @@ impl<'a> SupercompilerDriver<'a> {
         let mut initial_state = SymbolicState::new(entry_id, MemoryVersionId::LIVE_ON_ENTRY);
 
         // Bind captured vars (first n_captured params)
-        for ((param_name, _), &cap_term) in
-            callee.params[..n_captured].iter().zip(captured_terms.iter())
+        for ((param_name, _), &cap_term) in callee.params[..n_captured]
+            .iter()
+            .zip(captured_terms.iter())
         {
             let p = Place {
                 local: param_name.clone(),
@@ -2433,12 +2666,15 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         if return_terms.len() == 1 {
-            Some(self.interner.import_from(&child_tree.interner, return_terms[0]))
+            Some(
+                self.interner
+                    .import_from(&child_tree.interner, return_terms[0]),
+            )
         } else if !return_terms.is_empty() {
             let first = return_terms[0];
-            let all_same = return_terms.iter().all(|&t| {
-                child_tree.interner.get(t) == child_tree.interner.get(first)
-            });
+            let all_same = return_terms
+                .iter()
+                .all(|&t| child_tree.interner.get(t) == child_tree.interner.get(first));
             if all_same {
                 Some(self.interner.import_from(&child_tree.interner, first))
             } else {
@@ -2450,7 +2686,11 @@ impl<'a> SupercompilerDriver<'a> {
     }
 }
 
-pub fn evaluate_comparison_intervals(op: BinaryOp, l_iv: &Interval, r_iv: &Interval) -> Option<bool> {
+pub fn evaluate_comparison_intervals(
+    op: BinaryOp,
+    l_iv: &Interval,
+    r_iv: &Interval,
+) -> Option<bool> {
     match op {
         BinaryOp::Lt => {
             // l < r
@@ -2482,7 +2722,9 @@ pub fn evaluate_comparison_intervals(op: BinaryOp, l_iv: &Interval, r_iv: &Inter
         BinaryOp::Gt => evaluate_comparison_intervals(BinaryOp::Lt, r_iv, l_iv),
         BinaryOp::Ge => evaluate_comparison_intervals(BinaryOp::Le, r_iv, l_iv),
         BinaryOp::Eq => {
-            if let (Some(l_lo), Some(l_hi), Some(r_lo), Some(r_hi)) = (l_iv.lo, l_iv.hi, r_iv.lo, r_iv.hi) {
+            if let (Some(l_lo), Some(l_hi), Some(r_lo), Some(r_hi)) =
+                (l_iv.lo, l_iv.hi, r_iv.lo, r_iv.hi)
+            {
                 if l_lo == l_hi && r_lo == r_hi && l_lo == r_lo {
                     return Some(true);
                 }
@@ -2575,16 +2817,40 @@ fn narrow_single_var(x: SymTermId, op: BinaryOp, k: i64, is_true: bool, state: &
 
     match eff_op {
         BinaryOp::Lt => {
-            state.refine(x, Interval { lo: None, hi: Some(k.saturating_sub(1)) });
+            state.refine(
+                x,
+                Interval {
+                    lo: None,
+                    hi: Some(k.saturating_sub(1)),
+                },
+            );
         }
         BinaryOp::Le => {
-            state.refine(x, Interval { lo: None, hi: Some(k) });
+            state.refine(
+                x,
+                Interval {
+                    lo: None,
+                    hi: Some(k),
+                },
+            );
         }
         BinaryOp::Gt => {
-            state.refine(x, Interval { lo: Some(k.saturating_add(1)), hi: None });
+            state.refine(
+                x,
+                Interval {
+                    lo: Some(k.saturating_add(1)),
+                    hi: None,
+                },
+            );
         }
         BinaryOp::Ge => {
-            state.refine(x, Interval { lo: Some(k), hi: None });
+            state.refine(
+                x,
+                Interval {
+                    lo: Some(k),
+                    hi: None,
+                },
+            );
         }
         BinaryOp::Eq => {
             state.refine(x, Interval::exact(k));
@@ -2592,16 +2858,34 @@ fn narrow_single_var(x: SymTermId, op: BinaryOp, k: i64, is_true: bool, state: &
         BinaryOp::Ne => {
             let cur = state.get_refinement(x);
             if cur.lo == Some(k) {
-                state.refine(x, Interval { lo: Some(k.saturating_add(1)), hi: cur.hi });
+                state.refine(
+                    x,
+                    Interval {
+                        lo: Some(k.saturating_add(1)),
+                        hi: cur.hi,
+                    },
+                );
             } else if cur.hi == Some(k) {
-                state.refine(x, Interval { lo: cur.lo, hi: Some(k.saturating_sub(1)) });
+                state.refine(
+                    x,
+                    Interval {
+                        lo: cur.lo,
+                        hi: Some(k.saturating_sub(1)),
+                    },
+                );
             }
         }
         _ => {}
     }
 }
 
-fn narrow_two_vars(l: SymTermId, r: SymTermId, op: BinaryOp, is_true: bool, state: &mut SymbolicState) {
+fn narrow_two_vars(
+    l: SymTermId,
+    r: SymTermId,
+    op: BinaryOp,
+    is_true: bool,
+    state: &mut SymbolicState,
+) {
     let eff_op = if is_true {
         op
     } else if let Some(inv) = invert_relational_op(op) {
@@ -2616,18 +2900,42 @@ fn narrow_two_vars(l: SymTermId, r: SymTermId, op: BinaryOp, is_true: bool, stat
     match eff_op {
         BinaryOp::Lt => {
             if let Some(r_hi) = r_iv.hi {
-                state.refine(l, Interval { lo: None, hi: Some(r_hi.saturating_sub(1)) });
+                state.refine(
+                    l,
+                    Interval {
+                        lo: None,
+                        hi: Some(r_hi.saturating_sub(1)),
+                    },
+                );
             }
             if let Some(l_lo) = l_iv.lo {
-                state.refine(r, Interval { lo: Some(l_lo.saturating_add(1)), hi: None });
+                state.refine(
+                    r,
+                    Interval {
+                        lo: Some(l_lo.saturating_add(1)),
+                        hi: None,
+                    },
+                );
             }
         }
         BinaryOp::Le => {
             if let Some(r_hi) = r_iv.hi {
-                state.refine(l, Interval { lo: None, hi: Some(r_hi) });
+                state.refine(
+                    l,
+                    Interval {
+                        lo: None,
+                        hi: Some(r_hi),
+                    },
+                );
             }
             if let Some(l_lo) = l_iv.lo {
-                state.refine(r, Interval { lo: Some(l_lo), hi: None });
+                state.refine(
+                    r,
+                    Interval {
+                        lo: Some(l_lo),
+                        hi: None,
+                    },
+                );
             }
         }
         BinaryOp::Gt => {
@@ -2648,7 +2956,13 @@ fn narrow_two_vars(l: SymTermId, r: SymTermId, op: BinaryOp, is_true: bool, stat
 fn get_combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
     let mut result = Vec::new();
     let mut current = Vec::new();
-    fn backtrack(start: usize, n: usize, k: usize, current: &mut Vec<usize>, result: &mut Vec<Vec<usize>>) {
+    fn backtrack(
+        start: usize,
+        n: usize,
+        k: usize,
+        current: &mut Vec<usize>,
+        result: &mut Vec<Vec<usize>>,
+    ) {
         if current.len() == k {
             result.push(current.clone());
             return;

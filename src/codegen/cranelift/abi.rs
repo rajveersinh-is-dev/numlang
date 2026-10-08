@@ -1,13 +1,11 @@
 //! Target machine configuration, calling conventions, layouts, and type translations.
 
-use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::types;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::typecheck::{
-    Type, TypedBlock, TypedExpr, TypedLiteral, TypedStmt,
-};
+use crate::typecheck::{Type, TypedBlock, TypedExpr, TypedLiteral, TypedStmt};
 
 #[derive(Debug, Clone, Error)]
 pub enum CodegenError {
@@ -42,7 +40,12 @@ pub fn type_to_clif(ty: Type) -> types::Type {
         Type::Void => types::I32,
         Type::Str => types::I64,
         Type::Array(_, _) => types::I64, // Pointer to array
-        Type::Struct(_) | Type::Enum(_) | Type::Ptr(_) | Type::Fn(..) | Type::Closure(..) | Type::Box(_) => types::I64,
+        Type::Struct(_)
+        | Type::Enum(_)
+        | Type::Ptr(_)
+        | Type::Fn(..)
+        | Type::Closure(..)
+        | Type::Box(_) => types::I64,
         Type::Param(_) => types::I64,
     }
 }
@@ -63,7 +66,12 @@ impl StructLayout {
         leaves
     }
 
-    fn collect_leaf_fields(&self, base_offset: u32, layouts: &HashMap<String, StructLayout>, out: &mut Vec<(u32, Type)>) {
+    fn collect_leaf_fields(
+        &self,
+        base_offset: u32,
+        layouts: &HashMap<String, StructLayout>,
+        out: &mut Vec<(u32, Type)>,
+    ) {
         for (_, ty, offset) in &self.ordered_fields {
             let field_offset = base_offset + offset;
             if let Type::Struct(sname) = ty {
@@ -128,7 +136,9 @@ pub fn compute_type_layout(
     }
 }
 
-pub fn compute_struct_layouts(struct_defs: &[crate::typecheck::typed_ast::TypedStructDef]) -> HashMap<String, StructLayout> {
+pub fn compute_struct_layouts(
+    struct_defs: &[crate::typecheck::typed_ast::TypedStructDef],
+) -> HashMap<String, StructLayout> {
     let mut layouts: HashMap<String, StructLayout> = HashMap::new();
     let empty_enums = HashMap::new();
     for sdef in struct_defs {
@@ -146,14 +156,21 @@ pub fn compute_struct_layouts(struct_defs: &[crate::typecheck::typed_ast::TypedS
             offset += fsz;
         }
 
-        let total_size = if offset == 0 { 1 } else { (offset + max_align - 1) & !(max_align - 1) };
-        layouts.insert(sdef.name.clone(), StructLayout {
-            name: sdef.name.clone(),
-            total_size,
-            align: max_align,
-            fields,
-            ordered_fields,
-        });
+        let total_size = if offset == 0 {
+            1
+        } else {
+            (offset + max_align - 1) & !(max_align - 1)
+        };
+        layouts.insert(
+            sdef.name.clone(),
+            StructLayout {
+                name: sdef.name.clone(),
+                total_size,
+                align: max_align,
+                fields,
+                ordered_fields,
+            },
+        );
     }
     layouts
 }
@@ -305,7 +322,9 @@ pub fn is_safe_for_select(expr: &TypedExpr) -> bool {
     match expr {
         TypedExpr::Literal { .. } | TypedExpr::Ident { .. } => true,
         TypedExpr::Unary { expr, .. } => is_safe_for_select(expr),
-        TypedExpr::Binary { op, left, right, .. } => {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => {
             if *op == BinaryOp::Div || *op == BinaryOp::Mod {
                 match &**right {
                     TypedExpr::Literal {
@@ -318,14 +337,12 @@ pub fn is_safe_for_select(expr: &TypedExpr) -> bool {
                 is_safe_for_select(left) && is_safe_for_select(right)
             }
         }
-        TypedExpr::Call { callee, args, .. } => {
-            match callee.as_str() {
-                "tzcnt" | "ctz" | "clz" | "popcnt" | "rotl" | "rotr" | "isqrt" => {
-                    args.iter().all(is_safe_for_select)
-                }
-                _ => false,
+        TypedExpr::Call { callee, args, .. } => match callee.as_str() {
+            "tzcnt" | "ctz" | "clz" | "popcnt" | "rotl" | "rotr" | "isqrt" => {
+                args.iter().all(is_safe_for_select)
             }
-        }
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -368,7 +385,12 @@ pub fn collect_dynamic_arrays_in_stmt(stmt: &TypedStmt, dynamic: &mut HashSet<St
     match stmt {
         TypedStmt::Let { value, .. } => collect_dynamic_arrays_in_expr(value, dynamic),
         TypedStmt::Assign { value, .. } => collect_dynamic_arrays_in_expr(value, dynamic),
-        TypedStmt::IndexAssign { target, index, value, .. } => {
+        TypedStmt::IndexAssign {
+            target,
+            index,
+            value,
+            ..
+        } => {
             if get_constant_int(index).is_none() {
                 dynamic.insert(target.clone());
             }
@@ -376,14 +398,21 @@ pub fn collect_dynamic_arrays_in_stmt(stmt: &TypedStmt, dynamic: &mut HashSet<St
             collect_dynamic_arrays_in_expr(value, dynamic);
         }
         TypedStmt::Expr(expr) => collect_dynamic_arrays_in_expr(expr, dynamic),
-        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+        TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_dynamic_arrays_in_expr(condition, dynamic);
             collect_dynamic_arrays_in_block(then_branch, dynamic);
             if let Some(eb) = else_branch {
                 collect_dynamic_arrays_in_block(eb, dynamic);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_dynamic_arrays_in_expr(condition, dynamic);
             collect_dynamic_arrays_in_block(body, dynamic);
         }
@@ -440,7 +469,9 @@ pub fn collect_dynamic_arrays_in_expr(expr: &TypedExpr, dynamic: &mut HashSet<St
         TypedExpr::FieldAccess { target, .. } => {
             collect_dynamic_arrays_in_expr(target, dynamic);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_dynamic_arrays_in_expr(scrutinee, dynamic);
             for arm in arms {
                 collect_dynamic_arrays_in_expr(&arm.body, dynamic);
@@ -492,12 +523,28 @@ pub fn is_same_expr(a: &TypedExpr, b: &TypedExpr) -> bool {
     match (a, b) {
         (TypedExpr::Ident { name: na, .. }, TypedExpr::Ident { name: nb, .. }) => na == nb,
         (TypedExpr::Literal { lit: la, .. }, TypedExpr::Literal { lit: lb, .. }) => la == lb,
-        (TypedExpr::Binary { op: oa, left: la, right: ra, .. }, TypedExpr::Binary { op: ob, left: lb, right: rb, .. }) => {
-            oa == ob && is_same_expr(la, lb) && is_same_expr(ra, rb)
-        }
-        (TypedExpr::Unary { op: oa, expr: ea, .. }, TypedExpr::Unary { op: ob, expr: eb, .. }) => {
-            oa == ob && is_same_expr(ea, eb)
-        }
+        (
+            TypedExpr::Binary {
+                op: oa,
+                left: la,
+                right: ra,
+                ..
+            },
+            TypedExpr::Binary {
+                op: ob,
+                left: lb,
+                right: rb,
+                ..
+            },
+        ) => oa == ob && is_same_expr(la, lb) && is_same_expr(ra, rb),
+        (
+            TypedExpr::Unary {
+                op: oa, expr: ea, ..
+            },
+            TypedExpr::Unary {
+                op: ob, expr: eb, ..
+            },
+        ) => oa == ob && is_same_expr(ea, eb),
         _ => false,
     }
 }
@@ -507,7 +554,12 @@ pub fn is_expr_square_or_nonneg(e: &TypedExpr, non_negative_vars: &HashSet<Strin
         return true;
     }
     match e {
-        TypedExpr::Binary { op: BinaryOp::Mul, left, right, .. } => is_same_expr(left, right),
+        TypedExpr::Binary {
+            op: BinaryOp::Mul,
+            left,
+            right,
+            ..
+        } => is_same_expr(left, right),
         _ => false,
     }
 }
@@ -524,10 +576,7 @@ pub fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<
         } => true,
         TypedExpr::Ident { name, .. } => non_negative_vars.contains(name),
         TypedExpr::Binary {
-            op,
-            left,
-            right,
-            ..
+            op, left, right, ..
         } => match op {
             BinaryOp::Add => {
                 (is_expr_known_non_negative(left, non_negative_vars)
@@ -545,9 +594,7 @@ pub fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<
                     && (is_expr_known_non_negative(right, non_negative_vars)
                         || is_known_positive(right, non_negative_vars))
             }
-            BinaryOp::Mod => {
-                is_expr_known_non_negative(left, non_negative_vars)
-            }
+            BinaryOp::Mod => is_expr_known_non_negative(left, non_negative_vars),
             BinaryOp::BitAnd => {
                 // If either operand has sign bit 0 (is non-negative), bit 63 of result is 0
                 is_expr_known_non_negative(left, non_negative_vars)
@@ -564,21 +611,30 @@ pub fn is_expr_known_non_negative(expr: &TypedExpr, non_negative_vars: &HashSet<
             op: UnaryOp::Not, ..
         } => true,
         TypedExpr::Call { callee, .. } => {
-            callee == "abs" || callee == "sqrt" || callee == "isqrt" || callee == "ctz" || callee == "tzcnt" || callee == "clz" || callee == "popcnt"
+            callee == "abs"
+                || callee == "sqrt"
+                || callee == "isqrt"
+                || callee == "ctz"
+                || callee == "tzcnt"
+                || callee == "clz"
+                || callee == "popcnt"
         }
-        TypedExpr::ArrayLiteral { elements, .. } => {
-            elements.iter().all(|e| is_expr_known_non_negative(e, non_negative_vars))
-        }
-        TypedExpr::Index { target, .. } => {
-            is_expr_known_non_negative(target, non_negative_vars)
-        }
+        TypedExpr::ArrayLiteral { elements, .. } => elements
+            .iter()
+            .all(|e| is_expr_known_non_negative(e, non_negative_vars)),
+        TypedExpr::Index { target, .. } => is_expr_known_non_negative(target, non_negative_vars),
         _ => false,
     }
 }
 
-pub fn get_nonneg_var_from_condition(condition: &TypedExpr, known: &HashSet<String>) -> Option<String> {
+pub fn get_nonneg_var_from_condition(
+    condition: &TypedExpr,
+    known: &HashSet<String>,
+) -> Option<String> {
     match condition {
-        TypedExpr::Binary { op, left, right, .. } => match op {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => match op {
             BinaryOp::Gt | BinaryOp::Ge => {
                 if let TypedExpr::Ident { name: l_name, .. } = &**left {
                     if is_expr_known_non_negative(right, known) {
@@ -623,7 +679,10 @@ pub fn collect_known_non_negative_vars(body: &TypedBlock) -> HashSet<String> {
     candidates
 }
 
-pub fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &mut HashSet<String>) {
+pub fn collect_initial_nonneg_candidates_block(
+    block: &TypedBlock,
+    candidates: &mut HashSet<String>,
+) {
     for stmt in &block.stmts {
         match stmt {
             TypedStmt::Let { name, value, .. } => {
@@ -631,9 +690,21 @@ pub fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &
                     candidates.insert(name.clone());
                 }
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
-                if then_branch.stmts.iter().any(|s| matches!(s, TypedStmt::Return(..))) {
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if then_branch
+                    .stmts
+                    .iter()
+                    .any(|s| matches!(s, TypedStmt::Return(..)))
+                {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_non_negative(right, candidates) {
@@ -646,7 +717,10 @@ pub fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &
                 collect_initial_nonneg_candidates_block(then_branch, candidates);
                 if let Some(eb) = else_branch {
                     let mut else_candidates = candidates.clone();
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_non_negative(right, &else_candidates) {
@@ -661,7 +735,9 @@ pub fn collect_initial_nonneg_candidates_block(block: &TypedBlock, candidates: &
                     }
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 let mut while_candidates = candidates.clone();
                 if let Some(v) = get_nonneg_var_from_condition(condition, &while_candidates) {
                     while_candidates.insert(v);
@@ -706,13 +782,21 @@ pub fn all_assignments_are_nonneg_in_block(
                     current_candidates.remove(name);
                 }
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 if !all_assignments_are_nonneg_in_block(then_branch, var, &current_candidates) {
                     return false;
                 }
                 if let Some(eb) = else_branch {
                     let mut else_candidates = current_candidates.clone();
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_non_negative(right, &else_candidates) {
@@ -725,8 +809,15 @@ pub fn all_assignments_are_nonneg_in_block(
                         return false;
                     }
                 }
-                if then_branch.stmts.iter().any(|s| matches!(s, TypedStmt::Return(..))) {
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                if then_branch
+                    .stmts
+                    .iter()
+                    .any(|s| matches!(s, TypedStmt::Return(..)))
+                {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_non_negative(right, &current_candidates) {
@@ -737,7 +828,9 @@ pub fn all_assignments_are_nonneg_in_block(
                     }
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 let mut while_candidates = current_candidates.clone();
                 if let Some(v) = get_nonneg_var_from_condition(condition, &while_candidates) {
                     while_candidates.insert(v);
@@ -769,10 +862,14 @@ pub fn is_expr_known_u32(
             ..
         } => *val >= 0 && (*val as u64) <= 0xFFFF_FFFF,
         TypedExpr::Ident { name, .. } => u32_vars.contains(name),
-        TypedExpr::Binary { op, left, right, .. } => match op {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => match op {
             BinaryOp::Mod => {
                 if let Some(d) = get_constant_int(right) {
-                    d > 0 && (d as u64) <= 0x1_0000_0000 && is_expr_known_non_negative(left, non_negative_vars)
+                    d > 0
+                        && (d as u64) <= 0x1_0000_0000
+                        && is_expr_known_non_negative(left, non_negative_vars)
                 } else {
                     is_expr_known_non_negative(left, non_negative_vars)
                         && is_expr_known_u32(right, non_negative_vars, u32_vars)
@@ -780,12 +877,19 @@ pub fn is_expr_known_u32(
             }
             BinaryOp::Div => {
                 if is_expr_known_u32(left, non_negative_vars, u32_vars)
-                    && (is_known_positive(right, non_negative_vars) || is_expr_known_non_negative(right, non_negative_vars))
+                    && (is_known_positive(right, non_negative_vars)
+                        || is_expr_known_non_negative(right, non_negative_vars))
                 {
                     true
                 } else if let Some(d) = get_constant_int(right) {
                     if d >= 2 {
-                        if let TypedExpr::Binary { op: BinaryOp::Add, left: a, right: b, .. } = &**left {
+                        if let TypedExpr::Binary {
+                            op: BinaryOp::Add,
+                            left: a,
+                            right: b,
+                            ..
+                        } = &**left
+                        {
                             is_expr_known_u32(a, non_negative_vars, u32_vars)
                                 && is_expr_known_u32(b, non_negative_vars, u32_vars)
                         } else {
@@ -802,17 +906,23 @@ pub fn is_expr_known_u32(
                 if let Some(c) = get_constant_int(right) {
                     if c >= 0 {
                         match &**left {
-                            TypedExpr::Binary { op: BinaryOp::Mod, right: mod_r, .. } => {
+                            TypedExpr::Binary {
+                                op: BinaryOp::Mod,
+                                right: mod_r,
+                                ..
+                            } => {
                                 if let Some(d) = get_constant_int(mod_r) {
                                     if d > 0 && ((d as u64) + (c as u64) <= 0x1_0000_0000) {
                                         return true;
                                     }
                                 }
                             }
-                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. }
-                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
-                                    return true;
-                                }
+                            TypedExpr::Literal {
+                                lit: TypedLiteral::Int(v, _),
+                                ..
+                            } if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
+                                return true;
+                            }
                             _ => {}
                         }
                     }
@@ -820,17 +930,23 @@ pub fn is_expr_known_u32(
                 } else if let Some(c) = get_constant_int(left) {
                     if c >= 0 {
                         match &**right {
-                            TypedExpr::Binary { op: BinaryOp::Mod, right: mod_r, .. } => {
+                            TypedExpr::Binary {
+                                op: BinaryOp::Mod,
+                                right: mod_r,
+                                ..
+                            } => {
                                 if let Some(d) = get_constant_int(mod_r) {
                                     if d > 0 && ((d as u64) + (c as u64) <= 0x1_0000_0000) {
                                         return true;
                                     }
                                 }
                             }
-                            TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. }
-                                if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
-                                    return true;
-                                }
+                            TypedExpr::Literal {
+                                lit: TypedLiteral::Int(v, _),
+                                ..
+                            } if *v >= 0 && ((*v as u64) + (c as u64) <= 0xFFFF_FFFF) => {
+                                return true;
+                            }
                             _ => {}
                         }
                     }
@@ -857,7 +973,13 @@ pub fn is_expr_known_u32(
                     true
                 } else if let Some(s) = get_constant_int(right) {
                     if s >= 1 {
-                        if let TypedExpr::Binary { op: BinaryOp::Add, left: a, right: b, .. } = &**left {
+                        if let TypedExpr::Binary {
+                            op: BinaryOp::Add,
+                            left: a,
+                            right: b,
+                            ..
+                        } = &**left
+                        {
                             is_expr_known_u32(a, non_negative_vars, u32_vars)
                                 && is_expr_known_u32(b, non_negative_vars, u32_vars)
                         } else {
@@ -872,12 +994,10 @@ pub fn is_expr_known_u32(
             }
             _ => false,
         },
-        TypedExpr::ArrayLiteral { elements, .. } => {
-            elements.iter().all(|e| is_expr_known_u32(e, non_negative_vars, u32_vars))
-        }
-        TypedExpr::Index { target, .. } => {
-            is_expr_known_u32(target, non_negative_vars, u32_vars)
-        }
+        TypedExpr::ArrayLiteral { elements, .. } => elements
+            .iter()
+            .all(|e| is_expr_known_u32(e, non_negative_vars, u32_vars)),
+        TypedExpr::Index { target, .. } => is_expr_known_u32(target, non_negative_vars, u32_vars),
         _ => false,
     }
 }
@@ -919,11 +1039,19 @@ pub fn collect_initial_u32_candidates_block(
                     candidates.insert(name.clone());
                 }
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 collect_initial_u32_candidates_block(then_branch, non_negative_vars, candidates);
                 if let Some(eb) = else_branch {
                     let mut else_candidates = candidates.clone();
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_u32(right, non_negative_vars, &else_candidates) {
@@ -932,7 +1060,11 @@ pub fn collect_initial_u32_candidates_block(
                             }
                         }
                     }
-                    collect_initial_u32_candidates_block(eb, non_negative_vars, &mut else_candidates);
+                    collect_initial_u32_candidates_block(
+                        eb,
+                        non_negative_vars,
+                        &mut else_candidates,
+                    );
                     for v in else_candidates {
                         candidates.insert(v);
                     }
@@ -940,7 +1072,11 @@ pub fn collect_initial_u32_candidates_block(
             }
             TypedStmt::While { body, .. } => {
                 let mut while_candidates = candidates.clone();
-                collect_initial_u32_candidates_block(body, non_negative_vars, &mut while_candidates);
+                collect_initial_u32_candidates_block(
+                    body,
+                    non_negative_vars,
+                    &mut while_candidates,
+                );
                 for v in while_candidates {
                     candidates.insert(v);
                 }
@@ -981,13 +1117,26 @@ pub fn all_assignments_are_u32_in_block(
                     current_candidates.remove(name);
                 }
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
-                if !all_assignments_are_u32_in_block(then_branch, var, non_negative_vars, &current_candidates) {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                if !all_assignments_are_u32_in_block(
+                    then_branch,
+                    var,
+                    non_negative_vars,
+                    &current_candidates,
+                ) {
                     return false;
                 }
                 if let Some(eb) = else_branch {
                     let mut else_candidates = current_candidates.clone();
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
                                 if is_expr_known_u32(right, non_negative_vars, &else_candidates) {
@@ -996,13 +1145,23 @@ pub fn all_assignments_are_u32_in_block(
                             }
                         }
                     }
-                    if !all_assignments_are_u32_in_block(eb, var, non_negative_vars, &else_candidates) {
+                    if !all_assignments_are_u32_in_block(
+                        eb,
+                        var,
+                        non_negative_vars,
+                        &else_candidates,
+                    ) {
                         return false;
                     }
                 }
             }
             TypedStmt::While { body, .. } => {
-                if !all_assignments_are_u32_in_block(body, var, non_negative_vars, &current_candidates) {
+                if !all_assignments_are_u32_in_block(
+                    body,
+                    var,
+                    non_negative_vars,
+                    &current_candidates,
+                ) {
                     return false;
                 }
             }
@@ -1039,7 +1198,9 @@ pub fn compute_expr_upper_bound(
             ..
         } => Some(1),
         TypedExpr::Ident { name, .. } => var_bounds.get(name).copied(),
-        TypedExpr::Binary { op, left, right, .. } => match op {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => match op {
             BinaryOp::Mod => {
                 if let Some(d) = get_constant_int(right) {
                     if d > 0 && is_expr_known_non_negative(left, non_negative_vars) {
@@ -1073,7 +1234,9 @@ pub fn compute_expr_upper_bound(
                         return Some(l_bound / d);
                     }
                 }
-                if is_known_positive(right, non_negative_vars) || is_expr_known_non_negative(right, non_negative_vars) {
+                if is_known_positive(right, non_negative_vars)
+                    || is_expr_known_non_negative(right, non_negative_vars)
+                {
                     return Some(l_bound);
                 }
                 None
@@ -1165,13 +1328,17 @@ pub fn compute_expr_abs_upper_bound(
         return compute_expr_upper_bound(expr, var_bounds, non_negative_vars);
     }
     match expr {
-        TypedExpr::Literal { lit: TypedLiteral::Int(val, _), .. } => {
-            Some(val.unsigned_abs() as i64)
-        }
-        TypedExpr::Ident { name, .. } => {
-            var_bounds.get(name).copied()
-        }
-        TypedExpr::Binary { op: BinaryOp::Sub, left, right, .. } => {
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(val, _),
+            ..
+        } => Some(val.unsigned_abs() as i64),
+        TypedExpr::Ident { name, .. } => var_bounds.get(name).copied(),
+        TypedExpr::Binary {
+            op: BinaryOp::Sub,
+            left,
+            right,
+            ..
+        } => {
             if is_expr_known_non_negative(left, non_negative_vars)
                 && is_expr_known_non_negative(right, non_negative_vars)
             {
@@ -1182,9 +1349,11 @@ pub fn compute_expr_abs_upper_bound(
                 None
             }
         }
-        TypedExpr::Unary { op: UnaryOp::Neg, expr: inner, .. } => {
-            compute_expr_abs_upper_bound(inner, var_bounds, non_negative_vars)
-        }
+        TypedExpr::Unary {
+            op: UnaryOp::Neg,
+            expr: inner,
+            ..
+        } => compute_expr_abs_upper_bound(inner, var_bounds, non_negative_vars),
         _ => None,
     }
 }
@@ -1195,7 +1364,11 @@ pub fn collect_mutated_vars_in_block(block: &TypedBlock, mutated: &mut HashSet<S
             TypedStmt::Assign { name, .. } => {
                 mutated.insert(name.clone());
             }
-            TypedStmt::If { then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 collect_mutated_vars_in_block(then_branch, mutated);
                 if let Some(eb) = else_branch {
                     collect_mutated_vars_in_block(eb, mutated);
@@ -1268,16 +1441,30 @@ pub fn collect_bounds_in_block(
                     *changed = true;
                 }
             }
-            TypedStmt::If { condition, then_branch, else_branch, .. } => {
+            TypedStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
                 let orig_bounds = bounds.clone();
                 let mut then_bounds = bounds.clone();
-                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                if let TypedExpr::Binary {
+                    op, left, right, ..
+                } = condition
+                {
                     if let TypedExpr::Ident { name, .. } = &**left {
                         if let Some(c) = get_constant_int(right) {
                             if *op == BinaryOp::Lt && c > 0 {
-                                then_bounds.entry(name.clone()).and_modify(|old| *old = (*old).min(c - 1)).or_insert(c - 1);
+                                then_bounds
+                                    .entry(name.clone())
+                                    .and_modify(|old| *old = (*old).min(c - 1))
+                                    .or_insert(c - 1);
                             } else if *op == BinaryOp::Le && c >= 0 {
-                                then_bounds.entry(name.clone()).and_modify(|old| *old = (*old).min(c)).or_insert(c);
+                                then_bounds
+                                    .entry(name.clone())
+                                    .and_modify(|old| *old = (*old).min(c))
+                                    .or_insert(c);
                             }
                         }
                     }
@@ -1289,10 +1476,20 @@ pub fn collect_bounds_in_block(
                     collect_bounds_in_block(eb, non_negative_vars, &mut else_bounds, changed);
 
                     let mut merged_bounds = HashMap::new();
-                    let all_vars: HashSet<String> = then_bounds.keys().chain(else_bounds.keys()).cloned().collect();
+                    let all_vars: HashSet<String> = then_bounds
+                        .keys()
+                        .chain(else_bounds.keys())
+                        .cloned()
+                        .collect();
                     for v in all_vars {
-                        let t_b = then_bounds.get(&v).copied().or_else(|| orig_bounds.get(&v).copied());
-                        let e_b = else_bounds.get(&v).copied().or_else(|| orig_bounds.get(&v).copied());
+                        let t_b = then_bounds
+                            .get(&v)
+                            .copied()
+                            .or_else(|| orig_bounds.get(&v).copied());
+                        let e_b = else_bounds
+                            .get(&v)
+                            .copied()
+                            .or_else(|| orig_bounds.get(&v).copied());
                         if let (Some(t), Some(e)) = (t_b, e_b) {
                             merged_bounds.insert(v, t.max(e));
                         }
@@ -1308,11 +1505,16 @@ pub fn collect_bounds_in_block(
                     *bounds = merged_bounds;
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 let mut cond_bounded_var = None;
                 let mut cond_bound = None;
                 let mut exit_bound = None;
-                if let TypedExpr::Binary { op, left, right, .. } = condition {
+                if let TypedExpr::Binary {
+                    op, left, right, ..
+                } = condition
+                {
                     if let TypedExpr::Ident { name, .. } = &**left {
                         let limit = get_constant_int(right)
                             .or_else(|| compute_expr_upper_bound(right, bounds, non_negative_vars));
@@ -1381,14 +1583,21 @@ pub fn collect_constant_divisors_stmt(stmt: &TypedStmt, out: &mut Vec<i64>) {
         TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } => {
             collect_constant_divisors_expr(value, out);
         }
-        TypedStmt::If { condition, then_branch, else_branch, .. } => {
+        TypedStmt::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_constant_divisors_expr(condition, out);
             collect_constant_divisors_block(then_branch, out);
             if let Some(eb) = else_branch {
                 collect_constant_divisors_block(eb, out);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_constant_divisors_expr(condition, out);
             collect_constant_divisors_block(body, out);
         }
@@ -1404,7 +1613,9 @@ pub fn collect_constant_divisors_stmt(stmt: &TypedStmt, out: &mut Vec<i64>) {
 
 pub fn collect_constant_divisors_expr(expr: &TypedExpr, out: &mut Vec<i64>) {
     match expr {
-        TypedExpr::Binary { op, left, right, .. } => {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => {
             if *op == BinaryOp::Div || *op == BinaryOp::Mod {
                 if let Some(d) = get_constant_int(right) {
                     if d != 0 && !out.contains(&d) {
@@ -1424,4 +1635,3 @@ pub fn collect_constant_divisors_expr(expr: &TypedExpr, out: &mut Vec<i64>) {
         _ => {}
     }
 }
-

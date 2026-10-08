@@ -29,11 +29,7 @@ fn test_paper_sections_exist() {
 
     for sec in &required_sections {
         let path = sections_dir.join(sec);
-        assert!(
-            path.is_file(),
-            "Expected section file {:?} to exist",
-            path
-        );
+        assert!(path.is_file(), "Expected section file {:?} to exist", path);
         let content = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", path, e));
         assert!(
@@ -95,7 +91,15 @@ fn test_dockerfile_exists_and_is_valid() {
 
     let output = Command::new("docker")
         .current_dir(&root)
-        .args(["build", "--dry-run", "-f", "docker/Dockerfile", "-t", "numlang-artifact", "."])
+        .args([
+            "build",
+            "--dry-run",
+            "-f",
+            "docker/Dockerfile",
+            "-t",
+            "numlang-artifact",
+            ".",
+        ])
         .output()
         .expect("Failed to invoke docker build --dry-run");
 
@@ -140,13 +144,7 @@ fn test_rebuttal_objections_complete() {
     );
 
     let content = fs::read_to_string(&rebuttal_path).expect("Read likely_objections.md");
-    let required_keywords = [
-        "cherry-picked",
-        "Lean proofs",
-        "parallel",
-        "GHC",
-        "cache",
-    ];
+    let required_keywords = ["cherry-picked", "Lean proofs", "parallel", "GHC", "cache"];
 
     for kw in &required_keywords {
         assert!(

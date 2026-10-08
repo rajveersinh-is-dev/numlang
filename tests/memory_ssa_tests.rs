@@ -3,7 +3,9 @@ use std::process::Command;
 
 use numlang::mir::alias::{AliasAnalysis, AliasResult};
 use numlang::mir::lower::lower_program;
-use numlang::mir::mem2reg::{eliminate_dead_stores_and_redundant_loads, promote_memory_to_registers};
+use numlang::mir::mem2reg::{
+    eliminate_dead_stores_and_redundant_loads, promote_memory_to_registers,
+};
 use numlang::mir::memory_ssa::MemorySSA;
 use numlang::mir::{Place, Projection};
 use numlang::parser::parse;

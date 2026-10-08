@@ -23,5 +23,4 @@ impl<T> UnwrapOrCodegenError<T> for Option<T> {
     }
 }
 
-
 pub use crate::codegen::cranelift::*;

@@ -53,7 +53,8 @@ pub fn residualize_process_tree_parallel(
 
     // Map process tree transitions to residual BasicBlockIds
     // predecessor_map[target_node_id] = HashMap<original_bb, residual_pred_bb>
-    let mut node_preds: HashMap<ProcessNodeId, HashMap<BasicBlockId, BasicBlockId>> = HashMap::new();
+    let mut node_preds: HashMap<ProcessNodeId, HashMap<BasicBlockId, BasicBlockId>> =
+        HashMap::new();
     for node in &tree.nodes {
         let from_res_bb = node_to_block[&node.id].clone();
         let from_orig_bb = node.state.block.clone();
@@ -100,7 +101,10 @@ pub fn residualize_process_tree_parallel(
         let is_orig_void_return = original_func.blocks.iter().any(|b| {
             b.id == node.state.block && matches!(b.terminator, Terminator::Return { value: None })
         });
-        if node.overflow || (node.edges.is_empty() && (!is_orig_void_return || original_func.return_ty != Type::Void)) {
+        if node.overflow
+            || (node.edges.is_empty()
+                && (!is_orig_void_return || original_func.return_ty != Type::Void))
+        {
             // Task 2: Budget-overflow or zero-edge non-Return leaf.
             // Safely terminate with Unreachable rather than an empty Return.
             #[cfg(debug_assertions)]
@@ -176,7 +180,9 @@ pub fn residualize_process_tree_parallel(
                 id: join_bb.clone(),
                 arguments: Vec::new(),
                 statements: join_stmts,
-                terminator: Terminator::Branch { target: left_bb.clone() },
+                terminator: Terminator::Branch {
+                    target: left_bb.clone(),
+                },
             });
 
             residual_blocks[b_idx].statements = stmts;
@@ -228,7 +234,10 @@ pub fn residualize_process_tree_parallel(
                     // Then assign all dest places from temporaries
                     let mut has_heap_transfers = false;
                     for (dest_place, val_place) in evaled_transfers {
-                        let escapes_heap = new_locals.iter().find(|decl| decl.name == dest_place.local).is_some_and(|decl| decl.ty.contains_heap());
+                        let escapes_heap = new_locals
+                            .iter()
+                            .find(|decl| decl.name == dest_place.local)
+                            .is_some_and(|decl| decl.ty.contains_heap());
                         if escapes_heap {
                             has_heap_transfers = true;
                         }
@@ -249,7 +258,10 @@ pub fn residualize_process_tree_parallel(
                             local: reset_name,
                             projections: Vec::new(),
                         };
-                        stmts.push(Statement::Assign(reset_tmp, Rvalue::Call("__nl_loop_reset".to_string(), vec![])));
+                        stmts.push(Statement::Assign(
+                            reset_tmp,
+                            Rvalue::Call("__nl_loop_reset".to_string(), vec![]),
+                        ));
                     }
 
                     residual_blocks[b_idx].statements = stmts;
@@ -278,9 +290,7 @@ pub fn residualize_process_tree_parallel(
                 }
             }
 
-            if let (Some(then_t), Some(else_t), Some(c)) =
-                (true_target, false_target, cond_term)
-            {
+            if let (Some(then_t), Some(else_t), Some(c)) = (true_target, false_target, cond_term) {
                 let cond_place = emit_term_eval(
                     c,
                     &tree.interner,
@@ -340,7 +350,10 @@ pub fn residualize_process_tree_parallel(
                             &mut next_temp_id,
                             &phi_remap,
                         );
-                        let default_tgt = switch_targets.last().map(|t| t.1.clone()).unwrap_or(crate::mir::BasicBlockId(0));
+                        let default_tgt = switch_targets
+                            .last()
+                            .map(|t| t.1.clone())
+                            .unwrap_or(crate::mir::BasicBlockId(0));
                         residual_blocks[b_idx].statements = stmts;
                         residual_blocks[b_idx].terminator = Terminator::Switch {
                             value: val_place,
@@ -408,17 +421,19 @@ fn emit_term_eval(
             local: temp_name,
             projections: vec![],
         };
-        stmts.push(Statement::Assign(
-            place.clone(),
-            Rvalue::Constant(lit),
-        ));
+        stmts.push(Statement::Assign(place.clone(), Rvalue::Constant(lit)));
         return place;
     }
     match interner.get(term_id) {
         SymTerm::ConstInt(..)
         | SymTerm::ConstFloat(..)
         | SymTerm::ConstBool(..)
-        | SymTerm::ConstStr(..) => return crate::mir::Place { local: "_err".into(), projections: vec![] },
+        | SymTerm::ConstStr(..) => {
+            return crate::mir::Place {
+                local: "_err".into(),
+                projections: vec![],
+            }
+        }
         SymTerm::Var(p, _) => p.clone(),
         SymTerm::Binary(op, l, r, ty) => {
             let l_place = emit_term_eval(*l, interner, stmts, locals, next_temp_id, phi_remap);
@@ -476,10 +491,7 @@ fn emit_term_eval(
                 local: temp_name,
                 projections: vec![],
             };
-            stmts.push(Statement::Assign(
-                place.clone(),
-                Rvalue::Use(th_place),
-            ));
+            stmts.push(Statement::Assign(place.clone(), Rvalue::Use(th_place)));
             place
         }
         SymTerm::Phi(incoming, ty) => {
@@ -508,7 +520,10 @@ fn emit_term_eval(
                 projections: vec![],
             };
             if ops.len() == 1 {
-                stmts.push(Statement::Assign(place.clone(), Rvalue::Use(ops[0].1.clone())));
+                stmts.push(Statement::Assign(
+                    place.clone(),
+                    Rvalue::Use(ops[0].1.clone()),
+                ));
             } else {
                 stmts.push(Statement::Assign(place.clone(), Rvalue::Phi(ops)));
             }
@@ -552,7 +567,14 @@ fn emit_term_eval(
         SymTerm::Call(callee, args, ty) => {
             let mut arg_places = Vec::new();
             for &a in args {
-                arg_places.push(emit_term_eval(a, interner, stmts, locals, next_temp_id, phi_remap));
+                arg_places.push(emit_term_eval(
+                    a,
+                    interner,
+                    stmts,
+                    locals,
+                    next_temp_id,
+                    phi_remap,
+                ));
             }
             let temp_name = format!("_sc_{}", *next_temp_id);
             *next_temp_id += 1;
@@ -584,10 +606,7 @@ fn emit_term_eval(
                 local: temp_name,
                 projections: vec![],
             };
-            stmts.push(Statement::Assign(
-                place.clone(),
-                Rvalue::Alloc(in_place),
-            ));
+            stmts.push(Statement::Assign(place.clone(), Rvalue::Alloc(in_place)));
             place
         }
         SymTerm::Deref(ptr, ty) => {
@@ -603,10 +622,7 @@ fn emit_term_eval(
                 local: temp_name,
                 projections: vec![],
             };
-            stmts.push(Statement::Assign(
-                place.clone(),
-                Rvalue::Load(p_place),
-            ));
+            stmts.push(Statement::Assign(place.clone(), Rvalue::Load(p_place)));
             place
         }
         SymTerm::Discriminant(inner, ty) => {

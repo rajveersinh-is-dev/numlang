@@ -40,8 +40,6 @@ fn run_numlang_code(code: &str, supercompile: bool) -> (Option<i32>, String, Str
 
 const META_DEFS: &str = include_str!("../src/stdlib/meta.nl");
 
-
-
 #[test]
 fn test_1st_futamura_interpreter_specialization() {
     let code = format!(
@@ -83,7 +81,10 @@ fn main() -> i64 {{
         .find(|f| f.name == "main")
         .expect("main function exists");
 
-    assert!(!main_fn.blocks.is_empty(), "Residual main must contain valid MIR blocks");
+    assert!(
+        !main_fn.blocks.is_empty(),
+        "Residual main must contain valid MIR blocks"
+    );
 }
 
 #[test]
@@ -133,7 +134,10 @@ fn main() -> i64 {{
         .find(|f| f.name == "compiled_prog")
         .expect("compiled_prog exists");
 
-    assert!(!compiled_fn.blocks.is_empty(), "Residual compiled_prog must contain valid MIR blocks");
+    assert!(
+        !compiled_fn.blocks.is_empty(),
+        "Residual compiled_prog must contain valid MIR blocks"
+    );
 
     // 4. Test multiple inputs with supercompiled code
     let test_inputs = [(3, 4, 32), (10, 2, 30), (0, 7, 35)];
@@ -245,7 +249,10 @@ fn main() -> i64 {{
         .find(|f| f.name == "compiled_vm_prog")
         .expect("compiled_vm_prog exists");
 
-    assert!(!compiled_fn.blocks.is_empty(), "Residual compiled_vm_prog must contain valid MIR blocks");
+    assert!(
+        !compiled_fn.blocks.is_empty(),
+        "Residual compiled_vm_prog must contain valid MIR blocks"
+    );
 
     // 4. Verify on multiple inputs: x = 0 -> 20, x = 5 -> 30, x = 10 -> 40
     let test_inputs = [(0, 20), (5, 30), (10, 40)];
@@ -292,4 +299,3 @@ fn main() -> i64 {{
         );
     }
 }
-

@@ -5,8 +5,8 @@ use numlang::codegen::compile_supercompiled_to_obj_with_mode;
 use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::polyhedral::{
-    apply_polyhedral_tiling, BareissSimplex, ConstraintOp,
-    PlutoScheduler, SimplexResult, TilingConfig,
+    apply_polyhedral_tiling, BareissSimplex, ConstraintOp, PlutoScheduler, SimplexResult,
+    TilingConfig,
 };
 use numlang::mir::supercompiler::SupercompileMode;
 use numlang::mir::Terminator;
@@ -27,12 +27,9 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     let ast = parse(&tokens).expect("Parse failed");
     let typed = typecheck(&ast).expect("Typecheck failed");
 
-    let obj_bytes = compile_supercompiled_to_obj_with_mode(
-        &typed,
-        SupercompileMode::Classic,
-        "size",
-    )
-    .expect("Codegen failed");
+    let obj_bytes =
+        compile_supercompiled_to_obj_with_mode(&typed, SupercompileMode::Classic, "size")
+            .expect("Codegen failed");
 
     let test_dir = std::env::temp_dir().join(format!("numlang_poly_ilp_{}", test_name));
     let _ = fs::create_dir_all(&test_dir);
@@ -229,11 +226,18 @@ fn test_polyhedral_loop_tiling_3d_matmul_and_buffer_contraction() {
 
     // 1. Direct native execution and numerical verification
     let exit_code = compile_and_run(code, "poly_ilp_matmul_2x2");
-    assert_eq!(exit_code, 0, "Native matmul execution must produce 134 and return 0");
+    assert_eq!(
+        exit_code, 0,
+        "Native matmul execution must produce 134 and return 0"
+    );
 
     // 2. MIR analysis: verify loop tiling and buffer contraction
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "matmul_2x2").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "matmul_2x2")
+        .unwrap();
 
     let tiling_cfg = TilingConfig {
         tile_size: 32,
@@ -241,7 +245,10 @@ fn test_polyhedral_loop_tiling_3d_matmul_and_buffer_contraction() {
         vectorize_innermost: true,
     };
     let tiled_count = apply_polyhedral_tiling(func, &tiling_cfg);
-    assert!(tiled_count > 0, "Polyhedral loop tiling must succeed on nested loop");
+    assert!(
+        tiled_count > 0,
+        "Polyhedral loop tiling must succeed on nested loop"
+    );
 
     // Verify intermediate buffer `temp_buf` was contracted to scalar
     let mut has_temp_alloc = false;
@@ -274,7 +281,11 @@ fn test_tiled_loop_vectorization_fork_emission() {
     "#;
 
     let mut mir = get_mir(code);
-    let func = mir.functions.iter_mut().find(|f| f.name == "grid_blur_2d").unwrap();
+    let func = mir
+        .functions
+        .iter_mut()
+        .find(|f| f.name == "grid_blur_2d")
+        .unwrap();
 
     let tiling_cfg = TilingConfig {
         tile_size: 32,
@@ -285,6 +296,12 @@ fn test_tiled_loop_vectorization_fork_emission() {
     assert!(count > 0, "Tiling must succeed");
 
     // Verify that Terminator::Fork was emitted for innermost tile dimension
-    let has_fork = func.blocks.iter().any(|b| matches!(b.terminator, Terminator::Fork { .. }));
-    assert!(has_fork, "Innermost tile dimension must emit Terminator::Fork for parallel vectorization");
+    let has_fork = func
+        .blocks
+        .iter()
+        .any(|b| matches!(b.terminator, Terminator::Fork { .. }));
+    assert!(
+        has_fork,
+        "Innermost tile dimension must emit Terminator::Fork for parallel vectorization"
+    );
 }

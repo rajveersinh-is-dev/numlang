@@ -39,11 +39,26 @@ fn main() -> i64 {
     let mir = get_mir(src);
     let ack_func = mir.functions.iter().find(|f| f.name == "ack").unwrap();
     let mut driver = SupercompilerDriver::new(ack_func).with_program_functions(&mir.functions);
-    let mut init_state = SymbolicState::new(ack_func.blocks[0].id.clone(), MemoryVersionId::LIVE_ON_ENTRY);
+    let mut init_state = SymbolicState::new(
+        ack_func.blocks[0].id.clone(),
+        MemoryVersionId::LIVE_ON_ENTRY,
+    );
     let m_term = driver.interner_mut().intern_int(3);
     let n_term = driver.interner_mut().intern_int(4);
-    init_state.set_value(Place { local: "m".to_string(), projections: vec![] }, m_term);
-    init_state.set_value(Place { local: "n".to_string(), projections: vec![] }, n_term);
+    init_state.set_value(
+        Place {
+            local: "m".to_string(),
+            projections: vec![],
+        },
+        m_term,
+    );
+    init_state.set_value(
+        Place {
+            local: "n".to_string(),
+            projections: vec![],
+        },
+        n_term,
+    );
     let tree = driver.run_with_initial_state(init_state);
 
     assert!(
@@ -73,7 +88,14 @@ fn test_stream_fusion_supercompile_correct_and_fast() {
 
     // Build supercompiled
     let status_super = Command::new(exe)
-        .args(["build", "--supercompile", "--bench", "--backend", "cranelift", "-o"])
+        .args([
+            "build",
+            "--supercompile",
+            "--bench",
+            "--backend",
+            "cranelift",
+            "-o",
+        ])
         .arg(&super_bin)
         .arg(src_path)
         .status()
@@ -83,11 +105,16 @@ fn test_stream_fusion_supercompile_correct_and_fast() {
     // Run baseline 5 times
     let mut base_times = Vec::new();
     for _ in 0..5 {
-        let out = Command::new(&base_bin).output().expect("Failed to run baseline");
+        let out = Command::new(&base_bin)
+            .output()
+            .expect("Failed to run baseline");
         assert_eq!(out.status.code(), Some(0));
         let text = String::from_utf8_lossy(&out.stdout);
         if let Some(pos) = text.find("COMPUTE_NS:") {
-            let ns_str: String = text[pos + 11..].chars().take_while(|c| c.is_whitespace() || c.is_ascii_digit()).collect();
+            let ns_str: String = text[pos + 11..]
+                .chars()
+                .take_while(|c| c.is_whitespace() || c.is_ascii_digit())
+                .collect();
             if let Ok(ns) = ns_str.trim().parse::<u64>() {
                 base_times.push(ns);
             }
@@ -97,11 +124,16 @@ fn test_stream_fusion_supercompile_correct_and_fast() {
     // Run supercompiled 5 times
     let mut super_times = Vec::new();
     for _ in 0..5 {
-        let out = Command::new(&super_bin).output().expect("Failed to run supercompiled");
+        let out = Command::new(&super_bin)
+            .output()
+            .expect("Failed to run supercompiled");
         assert_eq!(out.status.code(), Some(0));
         let text = String::from_utf8_lossy(&out.stdout);
         if let Some(pos) = text.find("COMPUTE_NS:") {
-            let ns_str: String = text[pos + 11..].chars().take_while(|c| c.is_whitespace() || c.is_ascii_digit()).collect();
+            let ns_str: String = text[pos + 11..]
+                .chars()
+                .take_while(|c| c.is_whitespace() || c.is_ascii_digit())
+                .collect();
             if let Ok(ns) = ns_str.trim().parse::<u64>() {
                 super_times.push(ns);
             }
@@ -111,7 +143,10 @@ fn test_stream_fusion_supercompile_correct_and_fast() {
     let _ = std::fs::remove_dir_all(&test_dir);
 
     assert!(!base_times.is_empty(), "Failed to capture baseline timing");
-    assert!(!super_times.is_empty(), "Failed to capture supercompiled timing");
+    assert!(
+        !super_times.is_empty(),
+        "Failed to capture supercompiled timing"
+    );
 
     let mean_base = base_times.iter().sum::<u64>() as f64 / base_times.len() as f64;
     let mean_super = super_times.iter().sum::<u64>() as f64 / super_times.len() as f64;
@@ -120,7 +155,8 @@ fn test_stream_fusion_supercompile_correct_and_fast() {
     assert!(
         mean_super <= mean_base * 1.20 || mean_super < 50_000.0,
         "Stream fusion regression: super = {:.1} ns, base = {:.1} ns",
-        mean_super, mean_base
+        mean_super,
+        mean_base
     );
 }
 
@@ -142,16 +178,29 @@ fn test_fib_coupled_supercompile_no_slowdown() {
     assert!(status_base.success(), "Baseline build failed");
 
     let status_super = Command::new(exe)
-        .args(["build", "--supercompile", "--bench", "--backend", "cranelift", "-o"])
+        .args([
+            "build",
+            "--supercompile",
+            "--bench",
+            "--backend",
+            "cranelift",
+            "-o",
+        ])
         .arg(&super_bin)
         .arg(src_path)
         .status()
         .expect("Failed to build supercompiled fib_matrix");
     assert!(status_super.success(), "Supercompiled build failed");
 
-    let out_super = Command::new(&super_bin).output().expect("Failed to run supercompiled");
+    let out_super = Command::new(&super_bin)
+        .output()
+        .expect("Failed to run supercompiled");
     let text = String::from_utf8_lossy(&out_super.stdout);
-    assert!(text.contains("334154286"), "Incorrect Fibonacci value: {}", text);
+    assert!(
+        text.contains("334154286"),
+        "Incorrect Fibonacci value: {}",
+        text
+    );
 
     let _ = std::fs::remove_dir_all(&test_dir);
 }

@@ -53,9 +53,7 @@ fn compile_c_and_run(c_file: &Path, test_id: &str) -> Option<String> {
         return None;
     }
 
-    let output = Command::new(&exe_path)
-        .output()
-        .ok()?;
+    let output = Command::new(&exe_path).output().ok()?;
 
     let _ = fs::remove_dir_all(&temp_dir);
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -75,10 +73,20 @@ fn run_numlang_program(nl_file: &Path, supercompile: bool) -> String {
 
 fn verify_benchmark(name: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let nl_path = root.join("examples").join("clbg").join(format!("{}.nl", name));
-    let c_path = root.join("examples").join("clbg").join(format!("{}.c", name));
+    let nl_path = root
+        .join("examples")
+        .join("clbg")
+        .join(format!("{}.nl", name));
+    let c_path = root
+        .join("examples")
+        .join("clbg")
+        .join(format!("{}.c", name));
 
-    assert!(nl_path.exists(), "NumLang source missing: {}", nl_path.display());
+    assert!(
+        nl_path.exists(),
+        "NumLang source missing: {}",
+        nl_path.display()
+    );
     assert!(c_path.exists(), "C source missing: {}", c_path.display());
 
     let out_base = run_numlang_program(&nl_path, false);

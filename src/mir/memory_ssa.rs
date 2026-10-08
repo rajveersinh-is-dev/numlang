@@ -128,7 +128,10 @@ impl MemorySSA {
                 continue;
             }
             if let Some(parent) = dom.idom.get(b) {
-                dom_children.entry(parent.clone()).or_default().push(b.clone());
+                dom_children
+                    .entry(parent.clone())
+                    .or_default()
+                    .push(b.clone());
             }
         }
 
@@ -402,11 +405,7 @@ impl MemorySSA {
                 // Statement itself
                 match stmt {
                     Statement::Assign(p, rv) => {
-                        out.push_str(&format!(
-                            "  {} = {};",
-                            format_place(p),
-                            format_rvalue(rv)
-                        ));
+                        out.push_str(&format!("  {} = {};", format_place(p), format_rvalue(rv)));
                     }
                 }
 
@@ -494,7 +493,10 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         }
         Rvalue::Thunk { env, .. } => {
             for e in env {
-                reads.push(Place { local: e.clone(), projections: vec![] });
+                reads.push(Place {
+                    local: e.clone(),
+                    projections: vec![],
+                });
             }
         }
     }
@@ -514,7 +516,10 @@ fn collect_terminator_reads(term: &Terminator) -> Vec<Place> {
             r
         }
         Terminator::Force { thunk, .. } => {
-            vec![Place { local: thunk.clone(), projections: vec![] }]
+            vec![Place {
+                local: thunk.clone(),
+                projections: vec![],
+            }]
         }
         Terminator::TypeGuard { local, .. } => {
             vec![local.clone()]
@@ -577,7 +582,12 @@ fn format_rvalue(rv: &Rvalue) -> String {
                 .collect();
             format!("{} {{ {} }}", name, fields_str.join(", "))
         }
-        Rvalue::EnumVariant { enum_name, variant_name, fields, .. } => {
+        Rvalue::EnumVariant {
+            enum_name,
+            variant_name,
+            fields,
+            ..
+        } => {
             let fields_str: Vec<String> = fields.iter().map(format_place).collect();
             format!("{}::{}({})", enum_name, variant_name, fields_str.join(", "))
         }

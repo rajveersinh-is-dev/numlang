@@ -240,13 +240,18 @@ fn test_mutual_recursion_benchmark_integrity() {
     let mut total_dur_nanos: u128 = 0;
     for _ in 0..30 {
         let start = Instant::now();
-        let out = Command::new(&exe_path).output().expect("Measurement run failed");
+        let out = Command::new(&exe_path)
+            .output()
+            .expect("Measurement run failed");
         let elapsed = start.elapsed();
         assert_eq!(out.status.code(), Some(1));
         total_dur_nanos += elapsed.as_nanos();
     }
 
     let avg_dur_nanos = total_dur_nanos / 30;
-    println!("Average execution time over 30 rounds: {} ns", avg_dur_nanos);
+    println!(
+        "Average execution time over 30 rounds: {} ns",
+        avg_dur_nanos
+    );
     assert!(avg_dur_nanos > 0, "Timing counter must be positive");
 }

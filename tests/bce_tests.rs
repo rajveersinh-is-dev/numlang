@@ -1,7 +1,7 @@
 use numlang::parser::parse;
 use numlang::token::tokenize;
-use numlang::typecheck::typed_ast::{TypedExpr, TypedStmt};
 use numlang::typecheck::typecheck;
+use numlang::typecheck::typed_ast::{TypedExpr, TypedStmt};
 use std::fs;
 use std::process::Command;
 
@@ -23,7 +23,10 @@ fn test_constant_index_bce() {
     // Statement 1 is IndexAssign
     match &func.body.stmts[1] {
         TypedStmt::IndexAssign { is_safe, .. } => {
-            assert!(is_safe, "Constant index within bounds must have is_safe = true");
+            assert!(
+                is_safe,
+                "Constant index within bounds must have is_safe = true"
+            );
         }
         other => panic!("Expected IndexAssign, got {:?}", other),
     }
@@ -31,7 +34,10 @@ fn test_constant_index_bce() {
     // Statement 2 is Return(Some(TypedExpr::Index))
     match &func.body.stmts[2] {
         TypedStmt::Return(Some(TypedExpr::Index { is_safe, .. }), _) => {
-            assert!(is_safe, "Constant read index within bounds must have is_safe = true");
+            assert!(
+                is_safe,
+                "Constant read index within bounds must have is_safe = true"
+            );
         }
         other => panic!("Expected Return with Index, got {:?}", other),
     }
@@ -62,7 +68,10 @@ fn test_loop_induction_variable_bce() {
             // body stmt 0 is arr[i] = 42.0
             match &body.stmts[0] {
                 TypedStmt::IndexAssign { is_safe, .. } => {
-                    assert!(is_safe, "Loop induction index arr[i] within bound 10 must be is_safe = true");
+                    assert!(
+                        is_safe,
+                        "Loop induction index arr[i] within bound 10 must be is_safe = true"
+                    );
                 }
                 other => panic!("Expected IndexAssign, got {:?}", other),
             }
@@ -71,7 +80,10 @@ fn test_loop_induction_variable_bce() {
             match &body.stmts[1] {
                 TypedStmt::Let { value, .. } => match value {
                     TypedExpr::Index { is_safe, .. } => {
-                        assert!(is_safe, "Loop induction read arr[i] within bound 10 must be is_safe = true");
+                        assert!(
+                            is_safe,
+                            "Loop induction read arr[i] within bound 10 must be is_safe = true"
+                        );
                     }
                     other => panic!("Expected Index expr, got {:?}", other),
                 },
@@ -101,14 +113,15 @@ fn test_unbounded_index_retains_checks() {
 
     let func = &typed.functions[0];
     match &func.body.stmts[2] {
-        TypedStmt::While { body, .. } => {
-            match &body.stmts[0] {
-                TypedStmt::IndexAssign { is_safe, .. } => {
-                    assert!(!is_safe, "Loop induction bound 20 exceeding array length 10 must NOT be is_safe");
-                }
-                other => panic!("Expected IndexAssign, got {:?}", other),
+        TypedStmt::While { body, .. } => match &body.stmts[0] {
+            TypedStmt::IndexAssign { is_safe, .. } => {
+                assert!(
+                    !is_safe,
+                    "Loop induction bound 20 exceeding array length 10 must NOT be is_safe"
+                );
             }
-        }
+            other => panic!("Expected IndexAssign, got {:?}", other),
+        },
         other => panic!("Expected While stmt, got {:?}", other),
     }
 }
@@ -229,12 +242,20 @@ fn test_bce_multi_variable_affine_safety() {
     numlang::opt::bce::optimize_program(&mut typed);
 
     let func = &typed.functions[0];
-    if let TypedStmt::While { body: outer_body, .. } = &func.body.stmts[2] {
-        if let TypedStmt::While { body: inner_body, .. } = &outer_body.stmts[1] {
+    if let TypedStmt::While {
+        body: outer_body, ..
+    } = &func.body.stmts[2]
+    {
+        if let TypedStmt::While {
+            body: inner_body, ..
+        } = &outer_body.stmts[1]
+        {
             if let TypedStmt::IndexAssign { is_safe, .. } = &inner_body.stmts[0] {
-                assert!(is_safe, "Affine index r + c (< 24 on len 32) must be proven safe");
+                assert!(
+                    is_safe,
+                    "Affine index r + c (< 24 on len 32) must be proven safe"
+                );
             }
         }
     }
 }
-

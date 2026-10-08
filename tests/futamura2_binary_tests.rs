@@ -21,7 +21,11 @@ fn get_cogen_exe() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_minspec_cogen"))
 }
 
-fn run_with_cogen(cogen_path: &Path, src_path: &Path, out_exe: &Path) -> (Option<i32>, String, String) {
+fn run_with_cogen(
+    cogen_path: &Path,
+    src_path: &Path,
+    out_exe: &Path,
+) -> (Option<i32>, String, String) {
     let output = Command::new(cogen_path)
         .arg(src_path)
         .arg("-o")
@@ -59,20 +63,29 @@ fn run_compiled_binary(exe_path: &Path) -> (Option<i32>, String, String) {
 #[test]
 fn test_2nd_futamura_mir_specialization_invariants() {
     let mir = supercompile_2nd_futamura_cogen().expect("supercompile_2nd_futamura_cogen failed");
-    assert!(!mir.functions.is_empty(), "Residual 2nd Futamura MIR must contain functions");
+    assert!(
+        !mir.functions.is_empty(),
+        "Residual 2nd Futamura MIR must contain functions"
+    );
 
-    let has_cogen = mir
-        .functions
-        .iter()
-        .any(|f| f.name.contains("specialize_compiler") || f.name.contains("second_futamura_compiler"));
-    assert!(has_cogen, "Residual MIR must contain compiler generation logic");
+    let has_cogen = mir.functions.iter().any(|f| {
+        f.name.contains("specialize_compiler") || f.name.contains("second_futamura_compiler")
+    });
+    assert!(
+        has_cogen,
+        "Residual MIR must contain compiler generation logic"
+    );
 }
 
 #[test]
 fn test_futamura2_cli_flag_generation() {
     let temp_dir = std::env::temp_dir().join(format!("nl_futa2_cli_{}", std::process::id()));
     let _ = fs::create_dir_all(&temp_dir);
-    let cogen_target = temp_dir.join(if cfg!(windows) { "test_minspec_cogen.exe" } else { "test_minspec_cogen" });
+    let cogen_target = temp_dir.join(if cfg!(windows) {
+        "test_minspec_cogen.exe"
+    } else {
+        "test_minspec_cogen"
+    });
 
     // Test numlang --futamura2 --futamura2-out <cogen_target>
     let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
@@ -82,8 +95,16 @@ fn test_futamura2_cli_flag_generation() {
         .output()
         .expect("Failed to execute numlang --futamura2");
 
-    assert_eq!(output.status.code(), Some(0), "numlang --futamura2 must exit 0; stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert!(cogen_target.exists(), "minspec_cogen binary must exist at output target");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "numlang --futamura2 must exit 0; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        cogen_target.exists(),
+        "minspec_cogen binary must exist at output target"
+    );
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -127,7 +148,11 @@ fn verify_program_parity(name: &str, source: &str, expected_exit: i32) {
         cogen_out,
         cogen_err
     );
-    assert!(exe_file.exists(), "minspec_cogen must produce output executable: {}", exe_file.display());
+    assert!(
+        exe_file.exists(),
+        "minspec_cogen must produce output executable: {}",
+        exe_file.display()
+    );
 
     // 2. Execute binary produced by minspec_cogen
     let (bin_exit, bin_out, bin_err) = run_compiled_binary(&exe_file);
@@ -154,18 +179,14 @@ fn verify_program_parity(name: &str, source: &str, expected_exit: i32) {
 
     // 4. Parity check: binary exit code matches numlang run
     assert_eq!(
-        bin_exit,
-        numlang_exit,
+        bin_exit, numlang_exit,
         "Exit code mismatch between minspec_cogen binary ({:?}) and numlang run ({:?}) on {}",
-        bin_exit,
-        numlang_exit,
-        name
+        bin_exit, numlang_exit, name
     );
 
     // 5. Output parity check
     assert_eq!(
-        bin_out,
-        numlang_out,
+        bin_out, numlang_out,
         "Stdout mismatch between minspec_cogen binary and numlang run on {}",
         name
     );

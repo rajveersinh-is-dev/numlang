@@ -170,4 +170,3 @@ fn main() -> i64 {
     assert!(stdout.contains("-10"));
     assert!(stdout.contains("-2"));
 }
-

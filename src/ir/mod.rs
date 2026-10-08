@@ -228,10 +228,7 @@ pub fn format_ir(program: &IrProgram) -> String {
                         then_block,
                         else_block,
                     } => {
-                        out.push_str(&format!(
-                            "brif {}, {}, {}\n",
-                            cond, then_block, else_block
-                        ));
+                        out.push_str(&format!("brif {}, {}, {}\n", cond, then_block, else_block));
                     }
                     Instruction::Return { val } => match val {
                         Some(op) => out.push_str(&format!("ret {}\n", op)),

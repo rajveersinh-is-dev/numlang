@@ -49,7 +49,11 @@ fn main() -> i64 {
 }
 "#;
     let mir = get_mir(src);
-    let hof_func = mir.functions.iter().find(|f| f.name == "hofstadter").unwrap();
+    let hof_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "hofstadter")
+        .unwrap();
     let driver = SupercompilerDriver::new(hof_func);
     let tree = driver.run();
 
@@ -129,7 +133,11 @@ fn main() -> i64 {
 }
 "#;
     let mir = get_mir(src);
-    let triple_func = mir.functions.iter().find(|f| f.name == "triple_rec").unwrap();
+    let triple_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "triple_rec")
+        .unwrap();
     let driver = SupercompilerDriver::new(triple_func);
     let tree = driver.run();
 
@@ -160,11 +168,7 @@ fn test_detect_nway_system_unit() {
     );
     let sys = sys_opt.unwrap();
     assert_eq!(sys.n, 3, "Expected sys.n == 3");
-    let expected_companion = vec![
-        vec![1, 1, 1],
-        vec![1, 0, 0],
-        vec![0, 1, 0],
-    ];
+    let expected_companion = vec![vec![1, 1, 1], vec![1, 0, 0], vec![0, 1, 0]];
     assert_eq!(
         sys.a, expected_companion,
         "sys.a must match Tribonacci companion matrix [[1,1,1],[1,0,0],[0,1,0]]"

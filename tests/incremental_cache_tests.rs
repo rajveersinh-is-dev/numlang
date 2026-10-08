@@ -1,16 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::process::Command;
 use numlang::mir::lower::{lower_program, MirFunction, MirProgram};
 use numlang::mir::supercompiler::cache::{
     compute_composite_hash, CacheKey, CachedSpecialization, SpecializationCache,
 };
-use numlang::mir::supercompiler::{
-    supercompile_mir_program_with_cache, SupercompileMode,
-};
+use numlang::mir::supercompiler::{supercompile_mir_program_with_cache, SupercompileMode};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::process::Command;
 
 fn compile_src_to_mir(src: &str) -> MirProgram {
     let tokens = tokenize(src).expect("tokenize");
@@ -69,7 +67,10 @@ fn test_dependency_graph_tracking() {
     );
     let mut leaf2_callers = graph.callees_to_callers.get("leaf2").cloned().unwrap();
     leaf2_callers.sort();
-    assert_eq!(leaf2_callers, vec!["caller1".to_string(), "caller2".to_string()]);
+    assert_eq!(
+        leaf2_callers,
+        vec!["caller1".to_string(), "caller2".to_string()]
+    );
     assert_eq!(
         graph.callees_to_callers.get("leaf3"),
         Some(&vec!["caller2".to_string()])
@@ -132,13 +133,21 @@ fn test_transitive_invalidation_dag() {
     // Lookups for invalidated functions must return None
     for name in &["leaf", "helper", "calc", "main"] {
         let key = dummy_entry(name, "hash1").key;
-        assert!(cache.lookup(&key).is_none(), "{} should be invalidated", name);
+        assert!(
+            cache.lookup(&key).is_none(),
+            "{} should be invalidated",
+            name
+        );
     }
 
     // Lookups for unaffected functions must remain valid
     for name in &["other_root", "other_leaf"] {
         let key = dummy_entry(name, "hash1").key;
-        assert!(cache.lookup(&key).is_some(), "{} should remain in cache", name);
+        assert!(
+            cache.lookup(&key).is_some(),
+            "{} should remain in cache",
+            name
+        );
     }
 
     let _ = fs::remove_dir_all(&tmp);
@@ -201,13 +210,22 @@ fn unrelated() -> i32 {
     let hash_unrelated2 = compute_composite_hash("unrelated", &map2);
 
     // Leaf changed -> leaf hash must differ
-    assert_ne!(hash_leaf1, hash_leaf2, "leaf hash must change when body changes");
+    assert_ne!(
+        hash_leaf1, hash_leaf2,
+        "leaf hash must change when body changes"
+    );
 
     // Leaf changed -> middle calls leaf -> middle composite hash must change
-    assert_ne!(hash_mid1, hash_mid2, "middle composite hash must change when leaf changes");
+    assert_ne!(
+        hash_mid1, hash_mid2,
+        "middle composite hash must change when leaf changes"
+    );
 
     // Middle changed -> top calls middle -> top composite hash must change
-    assert_ne!(hash_top1, hash_top2, "top composite hash must change when callee changes");
+    assert_ne!(
+        hash_top1, hash_top2,
+        "top composite hash must change when callee changes"
+    );
 
     // Unrelated function was NOT modified and does not call leaf -> hash must be identical
     assert_eq!(

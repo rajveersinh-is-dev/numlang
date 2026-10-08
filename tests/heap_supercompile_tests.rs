@@ -26,8 +26,8 @@ fn test_textbook_msg_identical_terms() {
 
 #[test]
 fn test_textbook_anti_unify_interface() {
-    use std::collections::HashMap;
     use numlang::mir::supercompiler::generalize::anti_unify;
+    use std::collections::HashMap;
 
     let mut interner = TermInterner::new();
     let mut subst1 = HashMap::new();
@@ -107,7 +107,10 @@ fn test_textbook_msg_variable_sharing() {
         assert_eq!(name, "Pair");
         assert_eq!(*tag, 0);
         assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0], fields[1], "Both fields must share the identical generalized variable");
+        assert_eq!(
+            fields[0], fields[1],
+            "Both fields must share the identical generalized variable"
+        );
     } else {
         panic!("Expected Constructor term");
     }

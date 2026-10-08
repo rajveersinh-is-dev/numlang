@@ -1,18 +1,19 @@
 //! SSA Mid-level IR (MIR) lowering to Cranelift IR.
 
-use std::collections::HashMap;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{
-    types, AbiParam, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode, Value,
+    types, AbiParam, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode,
+    Value,
 };
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{Linkage, Module};
+use std::collections::HashMap;
 
-use crate::ast::{BinaryOp, UnaryOp};
-use crate::typecheck::{Type, TypedLiteral};
 use super::abi::*;
 use super::ast_stmt::emit_copy_bytes_raw;
 use super::CraneliftCompiler;
+use crate::ast::{BinaryOp, UnaryOp};
+use crate::typecheck::{Type, TypedLiteral};
 
 impl CraneliftCompiler {
     pub fn compile_mir_function(
@@ -21,10 +22,9 @@ impl CraneliftCompiler {
         ctx: &mut cranelift_codegen::Context,
         fn_builder_ctx: &mut FunctionBuilderContext,
     ) -> Result<(), CodegenError> {
-        let func_id = *self
-            .func_ids
-            .get(&func.name)
-            .ok_or_else(|| CodegenError::BackendError(format!("Function {} not declared", func.name)))?;
+        let func_id = *self.func_ids.get(&func.name).ok_or_else(|| {
+            CodegenError::BackendError(format!("Function {} not declared", func.name))
+        })?;
 
         let mut sig = self.module.make_signature();
         let is_sret = matches!(&func.return_ty, Type::Struct(_) | Type::Enum(_));
@@ -32,7 +32,8 @@ impl CraneliftCompiler {
             sig.params.push(AbiParam::new(types::I64));
             sig.returns.push(AbiParam::new(types::I64));
         } else if func.return_ty != Type::Void {
-            sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+            sig.returns
+                .push(AbiParam::new(type_to_clif(func.return_ty.clone())));
         }
         for (_, p_ty) in &func.params {
             if let Type::Struct(_) | Type::Enum(_) = p_ty {
@@ -258,8 +259,10 @@ impl CraneliftCompiler {
                         get_place_value(&mut builder, &var_map, &array_slots, &aliases, p)
                     }
                     crate::mir::lower::Rvalue::BinaryOp(op, l, r) => {
-                        let mut lv = get_place_value(&mut builder, &var_map, &array_slots, &aliases, l);
-                        let mut rv = get_place_value(&mut builder, &var_map, &array_slots, &aliases, r);
+                        let mut lv =
+                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, l);
+                        let mut rv =
+                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, r);
                         let l_ty = builder.func.dfg.value_type(lv);
                         let r_ty = builder.func.dfg.value_type(rv);
                         if l_ty.is_int() && r_ty.is_int() && l_ty != r_ty {
@@ -278,11 +281,16 @@ impl CraneliftCompiler {
                                 BinaryOp::Eq => builder.ins().fcmp(FloatCC::Equal, lv, rv),
                                 BinaryOp::Ne => builder.ins().fcmp(FloatCC::NotEqual, lv, rv),
                                 BinaryOp::Lt => builder.ins().fcmp(FloatCC::LessThan, lv, rv),
-                                BinaryOp::Le => builder.ins().fcmp(FloatCC::LessThanOrEqual, lv, rv),
+                                BinaryOp::Le => {
+                                    builder.ins().fcmp(FloatCC::LessThanOrEqual, lv, rv)
+                                }
                                 BinaryOp::Gt => builder.ins().fcmp(FloatCC::GreaterThan, lv, rv),
-                                BinaryOp::Ge => builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lv, rv),
+                                BinaryOp::Ge => {
+                                    builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lv, rv)
+                                }
                                 BinaryOp::Pow => {
-                                    let pow_func = self.module.declare_func_in_func(self.pow_id, builder.func);
+                                    let pow_func =
+                                        self.module.declare_func_in_func(self.pow_id, builder.func);
                                     let call = builder.ins().call(pow_func, &[lv, rv]);
                                     builder.inst_results(call)[0]
                                 }
@@ -297,9 +305,7 @@ impl CraneliftCompiler {
                                 BinaryOp::Mod => builder.ins().srem(lv, rv),
                                 BinaryOp::Eq => builder.ins().icmp(IntCC::Equal, lv, rv),
                                 BinaryOp::Ne => builder.ins().icmp(IntCC::NotEqual, lv, rv),
-                                BinaryOp::Lt => {
-                                    builder.ins().icmp(IntCC::SignedLessThan, lv, rv)
-                                }
+                                BinaryOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, lv, rv),
                                 BinaryOp::Le => {
                                     builder.ins().icmp(IntCC::SignedLessThanOrEqual, lv, rv)
                                 }
@@ -314,7 +320,14 @@ impl CraneliftCompiler {
                                 BinaryOp::BitXor => builder.ins().bxor(lv, rv),
                                 BinaryOp::Shl => builder.ins().ishl(lv, rv),
                                 BinaryOp::Shr => builder.ins().sshr(lv, rv),
-                                BinaryOp::Pow => super::ast_stmt::FunctionTranslationState::emit_int_pow_raw(lv, rv, l_ty, &mut builder),
+                                BinaryOp::Pow => {
+                                    super::ast_stmt::FunctionTranslationState::emit_int_pow_raw(
+                                        lv,
+                                        rv,
+                                        l_ty,
+                                        &mut builder,
+                                    )
+                                }
                             }
                         }
                     }
@@ -334,16 +347,32 @@ impl CraneliftCompiler {
                     }
                     crate::mir::lower::Rvalue::Call(callee, args) => {
                         if callee == "__nl_loop_reset" || callee == "__nl_arena_reset" {
-                            let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                            let loop_reset_func = self
+                                .module
+                                .declare_func_in_func(self.loop_reset_id, builder.func);
                             builder.ins().call(loop_reset_func, &[]);
                             builder.ins().iconst(types::I64, 0)
                         } else if callee == "__nl_arena_alloc" && !args.is_empty() {
-                            let size_arg = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
-                            let malloc_func = self.module.declare_func_in_func(self.malloc_id, builder.func);
+                            let size_arg = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
+                            let malloc_func = self
+                                .module
+                                .declare_func_in_func(self.malloc_id, builder.func);
                             let call_inst = builder.ins().call(malloc_func, &[size_arg]);
                             builder.inst_results(call_inst)[0]
                         } else if callee == "__numlang_fib" && !args.is_empty() {
-                            let n_arg = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let n_arg = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
                             let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
                                 builder.ins().uextend(types::I64, n_arg)
                             } else {
@@ -384,12 +413,21 @@ impl CraneliftCompiler {
 
                             builder.switch_to_block(fib_done);
                             builder.use_var(a_var)
-                        } else if (callee == "__coupled_a" || callee == "__coupled_b") && args.len() >= 9 {
+                        } else if (callee == "__coupled_a" || callee == "__coupled_b")
+                            && args.len() >= 9
+                        {
                             let is_b = callee == "__coupled_b";
                             let mut arg_vals = Vec::with_capacity(9);
                             for arg_op in args.iter().take(9) {
-                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_op);
-                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                let arg_val = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    arg_op,
+                                );
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
+                                {
                                     builder.ins().uextend(types::I64, arg_val)
                                 } else {
                                     arg_val
@@ -457,8 +495,15 @@ impl CraneliftCompiler {
                         } else if callee == "__order3_recurrence" && args.len() >= 7 {
                             let mut arg_vals = Vec::with_capacity(7);
                             for arg_op in args.iter().take(7) {
-                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_op);
-                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                let arg_val = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    arg_op,
+                                );
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
+                                {
                                     builder.ins().uextend(types::I64, arg_val)
                                 } else {
                                     arg_val
@@ -525,15 +570,24 @@ impl CraneliftCompiler {
                                 .unwrap_or(0);
                             let mut arg_vals = Vec::with_capacity(args.len());
                             for arg_op in args {
-                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_op);
-                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
+                                let arg_val = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    arg_op,
+                                );
+                                let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
+                                {
                                     builder.ins().uextend(types::I64, arg_val)
                                 } else {
                                     arg_val
                                 };
                                 arg_vals.push(val_i64);
                             }
-                            let n = (1..=8).find(|&k| k * k + 2 * k + 2 == arg_vals.len()).unwrap_or(3);
+                            let n = (1..=8)
+                                .find(|&k| k * k + 2 * k + 2 == arg_vals.len())
+                                .unwrap_or(3);
                             let n_val = arg_vals[1 + n * n + 2 * n];
 
                             let mut v_vars = Vec::with_capacity(n);
@@ -559,7 +613,11 @@ impl CraneliftCompiler {
                             builder.ins().brif(cond, loop_body, &[], loop_done, &[]);
 
                             builder.switch_to_block(loop_body);
-                            let cur_v: Vec<_> = v_vars.iter().take(n).map(|&var| builder.use_var(var)).collect();
+                            let cur_v: Vec<_> = v_vars
+                                .iter()
+                                .take(n)
+                                .map(|&var| builder.use_var(var))
+                                .collect();
 
                             let mut next_v = Vec::with_capacity(n);
                             for r in 0..n {
@@ -582,26 +640,56 @@ impl CraneliftCompiler {
                             builder.switch_to_block(loop_done);
                             let safe_target = if target_idx < n { target_idx } else { 0 };
                             builder.use_var(v_vars[safe_target])
-                        } else if (callee == "i64_to_f64" || (callee == "to_float" && !self.func_ids.contains_key("to_float"))) && !args.is_empty() {
-                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                        } else if (callee == "i64_to_f64"
+                            || (callee == "to_float" && !self.func_ids.contains_key("to_float")))
+                            && !args.is_empty()
+                        {
+                            let arg_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
                             let arg_i64 = if builder.func.dfg.value_type(arg_val) != types::I64 {
                                 builder.ins().uextend(types::I64, arg_val)
                             } else {
                                 arg_val
                             };
                             builder.ins().fcvt_from_sint(types::F64, arg_i64)
-                        } else if (callee == "f64_to_i64" || (callee == "to_int" && !self.func_ids.contains_key("to_int"))) && !args.is_empty() {
-                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                        } else if (callee == "f64_to_i64"
+                            || (callee == "to_int" && !self.func_ids.contains_key("to_int")))
+                            && !args.is_empty()
+                        {
+                            let arg_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
                             if builder.func.dfg.value_type(arg_val).is_float() {
                                 builder.ins().fcvt_to_sint_sat(types::I64, arg_val)
                             } else {
                                 arg_val
                             }
                         } else if callee == "sqrt" && !args.is_empty() {
-                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let arg_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
                             builder.ins().sqrt(arg_val)
                         } else if callee == "abs" && !args.is_empty() {
-                            let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &args[0]);
+                            let arg_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[0],
+                            );
                             let ty = builder.func.dfg.value_type(arg_val);
                             if ty.is_float() {
                                 builder.ins().fabs(arg_val)
@@ -613,15 +701,27 @@ impl CraneliftCompiler {
                         } else if callee == "print" || callee == "println" {
                             let is_nl = callee == "println";
                             if args.is_empty() {
-                                let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                                let print_nl_func = self
+                                    .module
+                                    .declare_func_in_func(self.print_newline_id, builder.func);
                                 builder.ins().call(print_nl_func, &[]);
                             } else {
                                 let arg_p = &args[0];
-                                let arg_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, arg_p);
-                                let print_i64_func = self.module.declare_func_in_func(self.print_i64_id, builder.func);
+                                let arg_val = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    arg_p,
+                                );
+                                let print_i64_func = self
+                                    .module
+                                    .declare_func_in_func(self.print_i64_id, builder.func);
                                 builder.ins().call(print_i64_func, &[arg_val]);
                                 if is_nl {
-                                    let print_nl_func = self.module.declare_func_in_func(self.print_newline_id, builder.func);
+                                    let print_nl_func = self
+                                        .module
+                                        .declare_func_in_func(self.print_newline_id, builder.func);
                                     builder.ins().call(print_nl_func, &[]);
                                 }
                             }
@@ -634,11 +734,8 @@ impl CraneliftCompiler {
                             let is_sret = expected_params.len() > args.len();
                             let mut arg_vals: Vec<Value> = Vec::new();
                             let ret_sret_ptr = if is_sret {
-                                let slot_data = StackSlotData::new(
-                                    StackSlotKind::ExplicitSlot,
-                                    64,
-                                    8,
-                                );
+                                let slot_data =
+                                    StackSlotData::new(StackSlotKind::ExplicitSlot, 64, 8);
                                 let slot = builder.create_sized_stack_slot(slot_data);
                                 let sret_ptr = builder.ins().stack_addr(types::I64, slot, 0);
                                 arg_vals.push(sret_ptr);
@@ -649,7 +746,13 @@ impl CraneliftCompiler {
 
                             let param_offset = if is_sret { 1 } else { 0 };
                             for (i, p) in args.iter().enumerate() {
-                                let v = get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
+                                let v = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    p,
+                                );
                                 let v_ty = builder.func.dfg.value_type(v);
                                 let exp_idx = i + param_offset;
                                 let expected_ty = if exp_idx < expected_params.len() {
@@ -683,20 +786,40 @@ impl CraneliftCompiler {
                         }
                     }
                     crate::mir::lower::Rvalue::Array(elem_places) => {
-                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(&place.local, &aliases);
-                        if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(target_name).or_else(|| array_slots.get(&place.local)) {
+                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(
+                            &place.local,
+                            &aliases,
+                        );
+                        if let Some(&(slot, _len, ref elem_ty)) = array_slots
+                            .get(target_name)
+                            .or_else(|| array_slots.get(&place.local))
+                        {
                             let elem_size = elem_ty.size_bytes().max(1);
                             let elem_clif = type_to_clif(elem_ty.clone());
                             for (i, ep) in elem_places.iter().enumerate() {
-                                let el_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, ep);
-                                builder.ins().stack_store(elem_clif, el_val, slot, (i * elem_size) as i32);
+                                let el_val = get_place_value(
+                                    &mut builder,
+                                    &var_map,
+                                    &array_slots,
+                                    &aliases,
+                                    ep,
+                                );
+                                builder.ins().stack_store(
+                                    elem_clif,
+                                    el_val,
+                                    slot,
+                                    (i * elem_size) as i32,
+                                );
                             }
                         }
                         builder.ins().iconst(types::I64, 0)
                     }
                     crate::mir::lower::Rvalue::Discriminant(p) => {
-                        let ptr_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
-                        builder.ins().load(types::I64, MemFlagsData::trusted(), ptr_val, 0)
+                        let ptr_val =
+                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
+                        builder
+                            .ins()
+                            .load(types::I64, MemFlagsData::trusted(), ptr_val, 0)
                     }
                     crate::mir::lower::Rvalue::EnumVariant {
                         enum_name,
@@ -709,19 +832,26 @@ impl CraneliftCompiler {
                             .get(enum_name)
                             .map(|l| l.total_size)
                             .unwrap_or((8 + fields.len() * 8) as u32);
-                        let slot_data = StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            total_size,
-                            8,
-                        );
+                        let slot_data =
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, total_size, 8);
                         let slot = builder.create_sized_stack_slot(slot_data);
                         let slot_addr = builder.ins().stack_addr(types::I64, slot, 0);
                         let tag_val = builder.ins().iconst(types::I64, *tag as i64);
-                        builder.ins().store(MemFlagsData::trusted(), tag_val, slot_addr, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), tag_val, slot_addr, 0);
                         for (i, f_place) in fields.iter().enumerate() {
-                            let f_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, f_place);
+                            let f_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                f_place,
+                            );
                             let offset = (8 + i * 8) as i32;
-                            builder.ins().store(MemFlagsData::trusted(), f_val, slot_addr, offset);
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), f_val, slot_addr, offset);
                         }
                         slot_addr
                     }
@@ -731,41 +861,74 @@ impl CraneliftCompiler {
                             .cloned()
                             .unwrap_or(Type::I64);
                         let size = match &inner_ty {
-                            Type::Struct(sname) => self.struct_layouts.get(sname).map_or(8, |l| l.total_size),
-                            Type::Enum(ename) => self.enum_layouts.get(ename).map_or(8, |l| l.total_size),
+                            Type::Struct(sname) => {
+                                self.struct_layouts.get(sname).map_or(8, |l| l.total_size)
+                            }
+                            Type::Enum(ename) => {
+                                self.enum_layouts.get(ename).map_or(8, |l| l.total_size)
+                            }
                             _ => inner_ty.size_bytes().max(8) as u32,
                         };
                         let size_val = builder.ins().iconst(types::I64, size as i64);
-                        let malloc_func = self.module.declare_func_in_func(self.malloc_id, builder.func);
+                        let malloc_func = self
+                            .module
+                            .declare_func_in_func(self.malloc_id, builder.func);
                         let call_inst = builder.ins().call(malloc_func, &[size_val]);
                         let slot_addr = builder.inst_results(call_inst)[0];
-                        let inner_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, inner_place);
+                        let inner_val = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            inner_place,
+                        );
                         if let Type::Struct(sname) = &inner_ty {
                             if let Some(sub_layout) = self.struct_layouts.get(sname) {
-                                emit_copy_bytes_raw(&mut builder, inner_val, slot_addr, sub_layout.total_size as usize);
+                                emit_copy_bytes_raw(
+                                    &mut builder,
+                                    inner_val,
+                                    slot_addr,
+                                    sub_layout.total_size as usize,
+                                );
                             }
                         } else if let Type::Enum(ename) = &inner_ty {
                             if let Some(sub_layout) = self.enum_layouts.get(ename) {
-                                emit_copy_bytes_raw(&mut builder, inner_val, slot_addr, sub_layout.total_size as usize);
+                                emit_copy_bytes_raw(
+                                    &mut builder,
+                                    inner_val,
+                                    slot_addr,
+                                    sub_layout.total_size as usize,
+                                );
                             }
                         } else {
-                            builder.ins().store(MemFlagsData::trusted(), inner_val, slot_addr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), inner_val, slot_addr, 0);
                         }
                         slot_addr
                     }
                     crate::mir::lower::Rvalue::Load(inner_place) => {
-                        let ptr_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, inner_place);
+                        let ptr_val = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            inner_place,
+                        );
                         let dest_ty = local_types.get(&place.local).cloned().unwrap_or(Type::I64);
                         if dest_ty.is_struct() || matches!(dest_ty, Type::Enum(_)) {
                             ptr_val
                         } else {
                             let clif_ty = type_to_clif(dest_ty);
-                            builder.ins().load(clif_ty, MemFlagsData::trusted(), ptr_val, 0)
+                            builder
+                                .ins()
+                                .load(clif_ty, MemFlagsData::trusted(), ptr_val, 0)
                         }
                     }
                     crate::mir::lower::Rvalue::FnPtr(name) => {
                         if let Some(func_id) = self.func_ids.get(name) {
-                            let local_func = self.module.declare_func_in_func(*func_id, builder.func);
+                            let local_func =
+                                self.module.declare_func_in_func(*func_id, builder.func);
                             builder.ins().func_addr(types::I64, local_func)
                         } else {
                             builder.ins().iconst(types::I64, 0)
@@ -783,9 +946,17 @@ impl CraneliftCompiler {
                 }
 
                 if !place.projections.is_empty() {
-                    if let Some(crate::mir::Projection::Index(idx_place)) = place.projections.first() {
-                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(&place.local, &aliases);
-                        if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(target_name).or_else(|| array_slots.get(&place.local)) {
+                    if let Some(crate::mir::Projection::Index(idx_place)) =
+                        place.projections.first()
+                    {
+                        let target_name = crate::mir::supercompiler::fusion::resolve_alias(
+                            &place.local,
+                            &aliases,
+                        );
+                        if let Some(&(slot, _len, ref elem_ty)) = array_slots
+                            .get(target_name)
+                            .or_else(|| array_slots.get(&place.local))
+                        {
                             let elem_size = elem_ty.size_bytes().max(1);
                             let elem_clif = type_to_clif(elem_ty.clone());
                             let val_ty = builder.func.dfg.value_type(val);
@@ -800,7 +971,8 @@ impl CraneliftCompiler {
                             } else {
                                 val
                             };
-                            let idx_val = var_map.get(&idx_place.local)
+                            let idx_val = var_map
+                                .get(&idx_place.local)
                                 .map(|&(v, _)| builder.use_var(v))
                                 .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
                             let idx_i64 = if builder.func.dfg.value_type(idx_val) != types::I64 {
@@ -815,7 +987,9 @@ impl CraneliftCompiler {
                             };
                             let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
                             let elem_addr = builder.ins().iadd(base_addr, offset);
-                            builder.ins().store(MemFlagsData::trusted(), coerced_val, elem_addr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), coerced_val, elem_addr, 0);
                         }
                     }
                 } else if let Some(&(var, var_ty)) = var_map.get(&place.local) {
@@ -846,22 +1020,38 @@ impl CraneliftCompiler {
             match &b.terminator {
                 crate::mir::Terminator::Return { value } => {
                     if is_sret {
-                        let sret = current_sret_ptr.ok_or_else(|| CodegenError::BackendError("sret_ptr must exist in MIR return".to_string()))?;
+                        let sret = current_sret_ptr.ok_or_else(|| {
+                            CodegenError::BackendError(
+                                "sret_ptr must exist in MIR return".to_string(),
+                            )
+                        })?;
                         if let Some(p) = value {
-                            let val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
+                            let val =
+                                get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
                             if let Type::Struct(ref sname) = func.return_ty {
                                 if let Some(layout) = self.struct_layouts.get(sname) {
-                                    emit_copy_bytes_raw(&mut builder, val, sret, layout.total_size as usize);
+                                    emit_copy_bytes_raw(
+                                        &mut builder,
+                                        val,
+                                        sret,
+                                        layout.total_size as usize,
+                                    );
                                 }
                             } else if let Type::Enum(ref ename) = func.return_ty {
                                 if let Some(layout) = self.enum_layouts.get(ename) {
-                                    emit_copy_bytes_raw(&mut builder, val, sret, layout.total_size as usize);
+                                    emit_copy_bytes_raw(
+                                        &mut builder,
+                                        val,
+                                        sret,
+                                        layout.total_size as usize,
+                                    );
                                 }
                             }
                         }
                         builder.ins().return_(&[sret]);
                     } else if let Some(p) = value {
-                        let val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
+                        let val =
+                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, p);
                         let ret_ty = if func.return_ty != Type::Void {
                             type_to_clif(func.return_ty.clone())
                         } else {
@@ -914,7 +1104,8 @@ impl CraneliftCompiler {
                     then_target,
                     else_target,
                 } => {
-                    let cond_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, condition);
+                    let cond_val =
+                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, condition);
                     if let (Some(&then_b), Some(&else_b)) =
                         (block_map.get(then_target), block_map.get(else_target))
                     {
@@ -926,14 +1117,17 @@ impl CraneliftCompiler {
                     targets,
                     default,
                 } => {
-                    let switch_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, value);
+                    let switch_val =
+                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, value);
                     if let Some(&def_b) = block_map.get(default) {
                         for (case_val, target_bb) in targets {
                             if let Some(&target_block) = block_map.get(target_bb) {
                                 let next_block = builder.create_block();
                                 let c_val = builder.ins().iconst(types::I64, *case_val);
                                 let is_match = builder.ins().icmp(IntCC::Equal, switch_val, c_val);
-                                builder.ins().brif(is_match, target_block, &[], next_block, &[]);
+                                builder
+                                    .ins()
+                                    .brif(is_match, target_block, &[], next_block, &[]);
                                 builder.switch_to_block(next_block);
                             }
                         }
@@ -944,13 +1138,21 @@ impl CraneliftCompiler {
                     builder.ins().trap(TrapCode::unwrap_user(1));
                 }
                 crate::mir::Terminator::IndirectCall { next, .. } => {
-                    let next_block = *block_map.get(next).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", next.0)))?;
+                    let next_block = *block_map.get(next).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", next.0))
+                    })?;
                     builder.ins().jump(next_block, &[]);
                 }
                 crate::mir::Terminator::Fork { left, right, join } => {
-                    let left_block = *block_map.get(left).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", left.0)))?;
-                    let right_block = *block_map.get(right).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", right.0)))?;
-                    let join_block = *block_map.get(join).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", join.0)))?;
+                    let left_block = *block_map.get(left).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", left.0))
+                    })?;
+                    let right_block = *block_map.get(right).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", right.0))
+                    })?;
+                    let join_block = *block_map.get(join).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", join.0))
+                    })?;
                     let zero = builder.ins().iconst(types::I32, 0);
                     let dummy_branch = builder.create_block();
                     builder.ins().brif(zero, dummy_branch, &[], left_block, &[]);
@@ -958,16 +1160,30 @@ impl CraneliftCompiler {
                     builder.ins().brif(zero, right_block, &[], join_block, &[]);
                 }
                 crate::mir::Terminator::Force { cont, .. } => {
-                    let cont_block = *block_map.get(cont).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", cont.0)))?;
+                    let cont_block = *block_map.get(cont).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", cont.0))
+                    })?;
                     builder.ins().jump(cont_block, &[]);
                 }
-                crate::mir::Terminator::TypeGuard { local, expected_tag, fast_path, deopt_stub } => {
-                    let fast_block = *block_map.get(fast_path).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", fast_path.0)))?;
-                    let deopt_block = *block_map.get(deopt_stub).ok_or_else(|| CodegenError::BackendError(format!("Block bb{} not found", deopt_stub.0)))?;
-                    let guard_val = get_place_value(&mut builder, &var_map, &array_slots, &aliases, local);
+                crate::mir::Terminator::TypeGuard {
+                    local,
+                    expected_tag,
+                    fast_path,
+                    deopt_stub,
+                } => {
+                    let fast_block = *block_map.get(fast_path).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", fast_path.0))
+                    })?;
+                    let deopt_block = *block_map.get(deopt_stub).ok_or_else(|| {
+                        CodegenError::BackendError(format!("Block bb{} not found", deopt_stub.0))
+                    })?;
+                    let guard_val =
+                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, local);
                     let exp_val = builder.ins().iconst(types::I64, *expected_tag);
                     let is_match = builder.ins().icmp(IntCC::Equal, guard_val, exp_val);
-                    builder.ins().brif(is_match, fast_block, &[], deopt_block, &[]);
+                    builder
+                        .ins()
+                        .brif(is_match, fast_block, &[], deopt_block, &[]);
                 }
             }
         }
@@ -975,9 +1191,9 @@ impl CraneliftCompiler {
         builder.seal_all_blocks();
         let config = self.module.target_config();
         builder.finalize(config);
-        self.module
-            .define_function(func_id, ctx)
-            .map_err(|e| CodegenError::BackendError(format!("Verifier error in {}: {:#?}", func.name, e)))?;
+        self.module.define_function(func_id, ctx).map_err(|e| {
+            CodegenError::BackendError(format!("Verifier error in {}: {:#?}", func.name, e))
+        })?;
         self.module.clear_context(ctx);
         Ok(())
     }
@@ -997,7 +1213,8 @@ impl CraneliftCompiler {
                 sig.params.push(AbiParam::new(types::I64));
                 sig.returns.push(AbiParam::new(types::I64));
             } else if func.return_ty != Type::Void {
-                sig.returns.push(AbiParam::new(type_to_clif(func.return_ty.clone())));
+                sig.returns
+                    .push(AbiParam::new(type_to_clif(func.return_ty.clone())));
             }
             for (_, p_ty) in &func.params {
                 if let Type::Struct(_) | Type::Enum(_) = p_ty {
@@ -1006,7 +1223,10 @@ impl CraneliftCompiler {
                     sig.params.push(AbiParam::new(type_to_clif(p_ty.clone())));
                 }
             }
-            let export_name = if func.name == "main" && std::env::var("NUMLANG_BENCH").is_ok() && !cfg!(target_os = "windows") {
+            let export_name = if func.name == "main"
+                && std::env::var("NUMLANG_BENCH").is_ok()
+                && !cfg!(target_os = "windows")
+            {
                 "numlang_main"
             } else {
                 &func.name
@@ -1065,17 +1285,27 @@ fn get_place_value(
         match proj {
             crate::mir::Projection::Payload(idx) => {
                 let offset = (8 + idx * 8) as i32;
-                current_val = builder.ins().load(types::I64, MemFlagsData::trusted(), current_val, offset);
+                current_val =
+                    builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), current_val, offset);
             }
             crate::mir::Projection::Field(_) => {
-                current_val = builder.ins().load(types::I64, MemFlagsData::trusted(), current_val, 0);
+                current_val =
+                    builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), current_val, 0);
             }
             crate::mir::Projection::Index(idx_place) => {
                 let p_name = crate::mir::supercompiler::fusion::resolve_alias(&p.local, aliases);
-                if let Some(&(slot, _len, ref elem_ty)) = array_slots.get(p_name).or_else(|| array_slots.get(&p.local)) {
+                if let Some(&(slot, _len, ref elem_ty)) = array_slots
+                    .get(p_name)
+                    .or_else(|| array_slots.get(&p.local))
+                {
                     let elem_size = elem_ty.size_bytes().max(1);
                     let elem_clif = type_to_clif(elem_ty.clone());
-                    let idx_val = var_map.get(&idx_place.local)
+                    let idx_val = var_map
+                        .get(&idx_place.local)
                         .map(|&(v, _)| builder.use_var(v))
                         .unwrap_or_else(|| builder.ins().iconst(types::I64, 0));
                     let idx_i64 = if builder.func.dfg.value_type(idx_val) != types::I64 {
@@ -1090,16 +1320,19 @@ fn get_place_value(
                     };
                     let base_addr = builder.ins().stack_addr(types::I64, slot, 0);
                     let elem_addr = builder.ins().iadd(base_addr, offset);
-                    current_val = builder.ins().load(elem_clif, MemFlagsData::trusted(), elem_addr, 0);
+                    current_val =
+                        builder
+                            .ins()
+                            .load(elem_clif, MemFlagsData::trusted(), elem_addr, 0);
                 }
             }
             crate::mir::Projection::Deref => {
-                current_val = builder.ins().load(types::I64, MemFlagsData::trusted(), current_val, 0);
+                current_val =
+                    builder
+                        .ins()
+                        .load(types::I64, MemFlagsData::trusted(), current_val, 0);
             }
         }
     }
     current_val
 }
-
-
-

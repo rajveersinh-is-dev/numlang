@@ -88,7 +88,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    pub fn parse_struct_def(&mut self, doc_comment: Option<String>) -> Result<StructDef, ParseError> {
+    pub fn parse_struct_def(
+        &mut self,
+        doc_comment: Option<String>,
+    ) -> Result<StructDef, ParseError> {
         let struct_span = self.consume(&Token::Struct, "'struct' keyword")?;
 
         let name = match self.peek_token().cloned() {
@@ -604,7 +607,9 @@ impl<'a> Parser<'a> {
         if !matches!(self.tokens[self.cursor].token, Token::Ident(_)) {
             return false;
         }
-        if self.cursor + 1 >= self.tokens.len() || self.tokens[self.cursor + 1].token != Token::LBracket {
+        if self.cursor + 1 >= self.tokens.len()
+            || self.tokens[self.cursor + 1].token != Token::LBracket
+        {
             return false;
         }
         let mut depth = 0;
@@ -615,7 +620,8 @@ impl<'a> Parser<'a> {
                 Token::RBracket => {
                     depth -= 1;
                     if depth == 0 {
-                        return i + 1 < self.tokens.len() && self.tokens[i + 1].token == Token::Assign;
+                        return i + 1 < self.tokens.len()
+                            && self.tokens[i + 1].token == Token::Assign;
                     }
                 }
                 Token::Semi => return false,

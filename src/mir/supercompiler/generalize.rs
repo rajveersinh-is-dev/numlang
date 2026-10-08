@@ -172,18 +172,8 @@ pub fn solve_recurrence(
         // s0 + N * d1
         let s0_term = interner.intern_int(s0);
         let d1_term = interner.intern_int(d1_0);
-        let n_times_d1 = interner.intern_binary(
-            BinaryOp::Mul,
-            num_iters,
-            d1_term,
-            Type::I64,
-        );
-        return Some(interner.intern_binary(
-            BinaryOp::Add,
-            s0_term,
-            n_times_d1,
-            Type::I64,
-        ));
+        let n_times_d1 = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
+        return Some(interner.intern_binary(BinaryOp::Add, s0_term, n_times_d1, Type::I64));
     }
 
     // Degree 2: Quadratic / Triangular sequence
@@ -202,58 +192,25 @@ pub fn solve_recurrence(
             let two_term = interner.intern_int(2);
 
             // k * d1_0
-            let linear_part = interner.intern_binary(
-                BinaryOp::Mul,
-                num_iters,
-                d1_term,
-                Type::I64,
-            );
+            let linear_part = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
 
             // (k - 1)
-            let k_minus_1 = interner.intern_binary(
-                BinaryOp::Sub,
-                num_iters,
-                one_term,
-                Type::I64,
-            );
+            let k_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one_term, Type::I64);
 
             // k * (k - 1)
-            let k_times_k_minus_1 = interner.intern_binary(
-                BinaryOp::Mul,
-                num_iters,
-                k_minus_1,
-                Type::I64,
-            );
+            let k_times_k_minus_1 =
+                interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
 
             // k * (k - 1) / 2
-            let tri_part = interner.intern_binary(
-                BinaryOp::Div,
-                k_times_k_minus_1,
-                two_term,
-                Type::I64,
-            );
+            let tri_part =
+                interner.intern_binary(BinaryOp::Div, k_times_k_minus_1, two_term, Type::I64);
 
             // (k * (k - 1) / 2) * d2_0
-            let quad_part = interner.intern_binary(
-                BinaryOp::Mul,
-                tri_part,
-                d2_term,
-                Type::I64,
-            );
+            let quad_part = interner.intern_binary(BinaryOp::Mul, tri_part, d2_term, Type::I64);
 
             // s0 + linear + quad
-            let part1 = interner.intern_binary(
-                BinaryOp::Add,
-                s0_term,
-                linear_part,
-                Type::I64,
-            );
-            return Some(interner.intern_binary(
-                BinaryOp::Add,
-                part1,
-                quad_part,
-                Type::I64,
-            ));
+            let part1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
+            return Some(interner.intern_binary(BinaryOp::Add, part1, quad_part, Type::I64));
         }
     }
 
@@ -286,8 +243,10 @@ pub fn solve_recurrence(
             let tri_part = interner.intern_binary(BinaryOp::Div, k_times_k1, two_term, Type::I64);
             let quad_part = interner.intern_binary(BinaryOp::Mul, tri_part, d2_term, Type::I64);
 
-            let k_times_k1_k2 = interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-            let cubic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
+            let k_times_k1_k2 =
+                interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
+            let cubic_binom =
+                interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
             let cubic_part = interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64);
 
             let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
@@ -335,13 +294,18 @@ pub fn solve_recurrence(
             let tri_part = interner.intern_binary(BinaryOp::Div, k_times_k1, two_term, Type::I64);
             let quad_part = interner.intern_binary(BinaryOp::Mul, tri_part, d2_term, Type::I64);
 
-            let k_times_k1_k2 = interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-            let cubic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
+            let k_times_k1_k2 =
+                interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
+            let cubic_binom =
+                interner.intern_binary(BinaryOp::Div, k_times_k1_k2, six_term, Type::I64);
             let cubic_part = interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64);
 
-            let k_times_k1_k2_k3 = interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
-            let quartic_binom = interner.intern_binary(BinaryOp::Div, k_times_k1_k2_k3, twentyfour_term, Type::I64);
-            let quartic_part = interner.intern_binary(BinaryOp::Mul, quartic_binom, d4_term, Type::I64);
+            let k_times_k1_k2_k3 =
+                interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
+            let quartic_binom =
+                interner.intern_binary(BinaryOp::Div, k_times_k1_k2_k3, twentyfour_term, Type::I64);
+            let quartic_part =
+                interner.intern_binary(BinaryOp::Mul, quartic_binom, d4_term, Type::I64);
 
             let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
             let sum2 = interner.intern_binary(BinaryOp::Add, sum1, quad_part, Type::I64);
@@ -357,24 +321,20 @@ pub fn solve_recurrence(
             // s_k = s0 * ratio^k
             let s0_term = interner.intern_int(s0);
             let ratio_term = interner.intern_int(ratio);
-            let pow_term = interner.intern_binary(
-                BinaryOp::Pow,
-                ratio_term,
-                num_iters,
-                Type::I64,
-            );
-            return Some(interner.intern_binary(
-                BinaryOp::Mul,
-                s0_term,
-                pow_term,
-                Type::I64,
-            ));
+            let pow_term = interner.intern_binary(BinaryOp::Pow, ratio_term, num_iters, Type::I64);
+            return Some(interner.intern_binary(BinaryOp::Mul, s0_term, pow_term, Type::I64));
         }
     }
 
     // Nonlinear recurrence detection (polynomial sums, geometric series, power towers)
-    if let Some(nonlin) = crate::mir::supercompiler::recurrence::detect_nonlinear_recurrence(samples, interner) {
-        return Some(crate::mir::supercompiler::recurrence::solve_nonlinear_recurrence(&nonlin, num_iters, interner));
+    if let Some(nonlin) =
+        crate::mir::supercompiler::recurrence::detect_nonlinear_recurrence(samples, interner)
+    {
+        return Some(
+            crate::mir::supercompiler::recurrence::solve_nonlinear_recurrence(
+                &nonlin, num_iters, interner,
+            ),
+        );
     }
 
     // Order-2 linear recurrence: s_k = c1 * s_{k-1} + c2 * s_{k-2} (Fibonacci, Lucas, coupled systems)
@@ -479,21 +439,13 @@ pub fn solve_order2_recurrence(
 
     // Fibonacci pattern: c1 = 1, c2 = 1, s0 = 0, s1 = 1
     if c1 == 1 && c2 == 1 && s0 == 0 && s1 == 1 {
-        return Some(interner.intern_call(
-            "__numlang_fib".to_string(),
-            vec![num_iters],
-            Type::I64,
-        ));
+        return Some(interner.intern_call("__numlang_fib".to_string(), vec![num_iters], Type::I64));
     }
     // Shifted Fibonacci pattern (e.g. b in fib loop): c1 = 1, c2 = 1, s0 = 1, s1 = 1 (F(k+1))
     if c1 == 1 && c2 == 1 && s0 == 1 && s1 == 1 {
         let one = interner.intern_int(1);
         let n_plus_1 = interner.intern_binary(BinaryOp::Add, num_iters, one, Type::I64);
-        return Some(interner.intern_call(
-            "__numlang_fib".to_string(),
-            vec![n_plus_1],
-            Type::I64,
-        ));
+        return Some(interner.intern_call("__numlang_fib".to_string(), vec![n_plus_1], Type::I64));
     }
 
     None
@@ -544,8 +496,12 @@ pub fn solve_coupled_2var_recurrence(
 
             let mut valid = true;
             for k in 2..samples_a.len().min(samples_b.len()) {
-                let exp_a = p.wrapping_mul(samples_a[k - 1]).wrapping_add(q.wrapping_mul(samples_b[k - 1]));
-                let exp_b = r.wrapping_mul(samples_a[k - 1]).wrapping_add(s.wrapping_mul(samples_b[k - 1]));
+                let exp_a = p
+                    .wrapping_mul(samples_a[k - 1])
+                    .wrapping_add(q.wrapping_mul(samples_b[k - 1]));
+                let exp_b = r
+                    .wrapping_mul(samples_a[k - 1])
+                    .wrapping_add(s.wrapping_mul(samples_b[k - 1]));
                 if samples_a[k] != exp_a || samples_b[k] != exp_b {
                     valid = false;
                     break;
@@ -574,21 +530,28 @@ pub fn solve_coupled_2var_recurrence(
             let num_r = db1.wrapping_mul(db1).wrapping_sub(db2.wrapping_mul(db0));
             let num_s = da0.wrapping_mul(db2).wrapping_sub(da1.wrapping_mul(db1));
 
-            if num_p % det_d == 0 && num_q % det_d == 0 && num_r % det_d == 0 && num_s % det_d == 0 {
+            if num_p % det_d == 0 && num_q % det_d == 0 && num_r % det_d == 0 && num_s % det_d == 0
+            {
                 let p = num_p / det_d;
                 let q = num_q / det_d;
                 let r = num_r / det_d;
                 let s = num_s / det_d;
 
-                let ca = a1.wrapping_sub(p.wrapping_mul(a0)).wrapping_sub(q.wrapping_mul(b0));
-                let cb = b1.wrapping_sub(r.wrapping_mul(a0)).wrapping_sub(s.wrapping_mul(b0));
+                let ca = a1
+                    .wrapping_sub(p.wrapping_mul(a0))
+                    .wrapping_sub(q.wrapping_mul(b0));
+                let cb = b1
+                    .wrapping_sub(r.wrapping_mul(a0))
+                    .wrapping_sub(s.wrapping_mul(b0));
 
                 let mut valid = true;
                 for k in 1..samples_a.len().min(samples_b.len()) {
-                    let exp_a = p.wrapping_mul(samples_a[k - 1])
+                    let exp_a = p
+                        .wrapping_mul(samples_a[k - 1])
                         .wrapping_add(q.wrapping_mul(samples_b[k - 1]))
                         .wrapping_add(ca);
-                    let exp_b = r.wrapping_mul(samples_a[k - 1])
+                    let exp_b = r
+                        .wrapping_mul(samples_a[k - 1])
                         .wrapping_add(s.wrapping_mul(samples_b[k - 1]))
                         .wrapping_add(cb);
                     if samples_a[k] != exp_a || samples_b[k] != exp_b {
@@ -619,11 +582,7 @@ pub fn solve_coupled_2var_recurrence(
             ));
         }
 
-        let m = [
-            [p, q, ca],
-            [r, s, cb],
-            [0, 0, 1],
-        ];
+        let m = [[p, q, ca], [r, s, cb], [0, 0, 1]];
         let m_pow = mat_pow_3x3(m, n);
         let a_n = m_pow[0][0]
             .wrapping_mul(a0)
@@ -648,15 +607,7 @@ pub fn solve_coupled_2var_recurrence(
     let b0_term = interner.intern_int(b0);
 
     let args = vec![
-        p_term,
-        q_term,
-        ca_term,
-        r_term,
-        s_term,
-        cb_term,
-        a0_term,
-        b0_term,
-        num_iters,
+        p_term, q_term, ca_term, r_term, s_term, cb_term, a0_term, b0_term, num_iters,
     ];
 
     let term_a = interner.intern_call("__coupled_a".to_string(), args.clone(), Type::I64);
@@ -680,12 +631,20 @@ fn mat_pow_2x2(mut m: [[i64; 2]; 2], mut exp: i64) -> [[i64; 2]; 2] {
 fn mat_mul_2x2(a: [[i64; 2]; 2], b: [[i64; 2]; 2]) -> [[i64; 2]; 2] {
     [
         [
-            a[0][0].wrapping_mul(b[0][0]).wrapping_add(a[0][1].wrapping_mul(b[1][0])),
-            a[0][0].wrapping_mul(b[0][1]).wrapping_add(a[0][1].wrapping_mul(b[1][1])),
+            a[0][0]
+                .wrapping_mul(b[0][0])
+                .wrapping_add(a[0][1].wrapping_mul(b[1][0])),
+            a[0][0]
+                .wrapping_mul(b[0][1])
+                .wrapping_add(a[0][1].wrapping_mul(b[1][1])),
         ],
         [
-            a[1][0].wrapping_mul(b[0][0]).wrapping_add(a[1][1].wrapping_mul(b[1][0])),
-            a[1][0].wrapping_mul(b[0][1]).wrapping_add(a[1][1].wrapping_mul(b[1][1])),
+            a[1][0]
+                .wrapping_mul(b[0][0])
+                .wrapping_add(a[1][1].wrapping_mul(b[1][0])),
+            a[1][0]
+                .wrapping_mul(b[0][1])
+                .wrapping_add(a[1][1].wrapping_mul(b[1][1])),
         ],
     ]
 }
@@ -701,11 +660,7 @@ pub fn solve_order3_recurrence(
         return None;
     }
     let s = samples;
-    let a = [
-        [s[2], s[1], s[0]],
-        [s[3], s[2], s[1]],
-        [s[4], s[3], s[2]],
-    ];
+    let a = [[s[2], s[1], s[0]], [s[3], s[2], s[1]], [s[4], s[3], s[2]]];
     let b = [s[3], s[4], s[5]];
 
     let det = det_3x3(a);
@@ -757,11 +712,7 @@ pub fn solve_order3_recurrence(
         if n_idx < samples.len() {
             return Some(interner.intern_int(samples[n_idx]));
         }
-        let m = [
-            [c1, c2, c3],
-            [1, 0, 0],
-            [0, 1, 0],
-        ];
+        let m = [[c1, c2, c3], [1, 0, 0], [0, 1, 0]];
         let m_pow = mat_pow_3x3(m, n - 2);
         let s_n = m_pow[0][0]
             .wrapping_mul(s[2])
@@ -779,7 +730,9 @@ pub fn solve_order3_recurrence(
     let s1_term = interner.intern_int(s[1]);
     let s2_term = interner.intern_int(s[2]);
 
-    let args = vec![c1_term, c2_term, c3_term, s0_term, s1_term, s2_term, num_iters];
+    let args = vec![
+        c1_term, c2_term, c3_term, s0_term, s1_term, s2_term, num_iters,
+    ];
     Some(interner.intern_call("__order3_recurrence".to_string(), args, Type::I64))
 }
 

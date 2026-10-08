@@ -40,7 +40,10 @@ pub fn generate_doc(program: &Program) -> String {
             } else {
                 String::new()
             };
-            out.push_str(&format!("### `fn {}({}){}`\n\n", f.name, params_str, ret_str));
+            out.push_str(&format!(
+                "### `fn {}({}){}`\n\n",
+                f.name, params_str, ret_str
+            ));
             if let Some(ref doc) = f.doc_comment {
                 out.push_str(doc);
                 out.push_str("\n\n");

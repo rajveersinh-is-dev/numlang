@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use crate::mir::BasicBlockId;
+use std::collections::{HashMap, HashSet};
 
 pub struct DominanceInfo {
     pub idom: HashMap<BasicBlockId, BasicBlockId>,
@@ -16,7 +16,7 @@ pub fn compute_dominance(
     entry: BasicBlockId,
     predecessors: &HashMap<BasicBlockId, Vec<BasicBlockId>>,
     _successors: &HashMap<BasicBlockId, Vec<BasicBlockId>>,
-    all_blocks: &[BasicBlockId]
+    all_blocks: &[BasicBlockId],
 ) -> DominanceInfo {
     let mut doms: HashMap<BasicBlockId, HashSet<BasicBlockId>> = HashMap::new();
     let all_set: HashSet<BasicBlockId> = all_blocks.iter().cloned().collect();
@@ -129,7 +129,7 @@ pub fn detect_loops(
     predecessors: &HashMap<BasicBlockId, Vec<BasicBlockId>>,
     successors: &HashMap<BasicBlockId, Vec<BasicBlockId>>,
     all_blocks: &[BasicBlockId],
-    dominance: &DominanceInfo
+    dominance: &DominanceInfo,
 ) -> LoopInfo {
     let mut back_edges = Vec::new();
     for n in all_blocks {
@@ -145,7 +145,9 @@ pub fn detect_loops(
                             dominates = true;
                             break;
                         }
-                        if *id == curr { break; }
+                        if *id == curr {
+                            break;
+                        }
                         curr = id.clone();
                     }
                 }
@@ -186,7 +188,8 @@ pub fn detect_loops(
     let mut pre_headers = HashMap::new();
     for h in &headers {
         if let Some(preds) = predecessors.get(h) {
-            let outside_preds: Vec<BasicBlockId> = preds.iter()
+            let outside_preds: Vec<BasicBlockId> = preds
+                .iter()
                 .filter(|&p| {
                     if let Some(l) = natural_loops.get(h) {
                         !l.contains(p)

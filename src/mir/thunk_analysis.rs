@@ -5,9 +5,9 @@
 //! - `GuardDemanded`: thunk is forced on some paths (e.g. inside a conditional or switch branch).
 //! - `FullyDemanded`: thunk is unconditionally forced on every execution path to exit.
 
-use std::collections::{HashMap, HashSet};
-use crate::mir::{BasicBlockId, Terminator};
 use crate::mir::lower::{MirFunction, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Terminator};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Demand {
@@ -105,7 +105,11 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
                         }
                     }
                 }
-                Terminator::BranchIf { then_target, else_target, .. } => {
+                Terminator::BranchIf {
+                    then_target,
+                    else_target,
+                    ..
+                } => {
                     let default_in = HashMap::new();
                     let then_in = in_demands.get(then_target).unwrap_or(&default_in);
                     let else_in = in_demands.get(else_target).unwrap_or(&default_in);
@@ -116,7 +120,9 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
                         new_out.insert(t.clone(), d_then.branch_meet(d_else));
                     }
                 }
-                Terminator::Switch { targets, default, .. } => {
+                Terminator::Switch {
+                    targets, default, ..
+                } => {
                     let default_in = HashMap::new();
                     let def_in = in_demands.get(default).unwrap_or(&default_in);
 
@@ -155,7 +161,11 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
                         new_out.insert(t.clone(), dl.join(dr));
                     }
                 }
-                Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+                Terminator::TypeGuard {
+                    fast_path,
+                    deopt_stub,
+                    ..
+                } => {
                     let default_in = HashMap::new();
                     let fast_in = in_demands.get(fast_path).unwrap_or(&default_in);
                     let deopt_in = in_demands.get(deopt_stub).unwrap_or(&default_in);
@@ -173,7 +183,9 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
                 new_in.insert(thunk.clone(), Demand::FullyDemanded);
             }
 
-            let Some(curr_in) = in_demands.get_mut(&block.id) else { continue; };
+            let Some(curr_in) = in_demands.get_mut(&block.id) else {
+                continue;
+            };
             if *curr_in != new_in {
                 *curr_in = new_in;
                 changed = true;

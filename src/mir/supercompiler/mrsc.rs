@@ -128,7 +128,9 @@ impl CandidateMetrics {
             code_size += 1.0 + b.statements.len() as f64;
             match &b.terminator {
                 Terminator::BranchIf { .. } => dynamic_branches += 10.0,
-                Terminator::Switch { targets, .. } => dynamic_branches += (targets.len() * 5) as f64,
+                Terminator::Switch { targets, .. } => {
+                    dynamic_branches += (targets.len() * 5) as f64
+                }
                 _ => dynamic_branches += 1.0,
             }
         }
@@ -185,10 +187,15 @@ impl ParetoFrontier {
     /// Rejects the candidate if dominated by any existing member.
     /// Removes any existing members dominated by the new candidate.
     pub fn insert(&mut self, candidate: ParetoCandidate) -> bool {
-        if self.candidates.iter().any(|c| c.metrics.dominates(&candidate.metrics)) {
+        if self
+            .candidates
+            .iter()
+            .any(|c| c.metrics.dominates(&candidate.metrics))
+        {
             return false;
         }
-        self.candidates.retain(|c| !candidate.metrics.dominates(&c.metrics));
+        self.candidates
+            .retain(|c| !candidate.metrics.dominates(&c.metrics));
         self.candidates.push(candidate);
         true
     }
@@ -237,14 +244,35 @@ pub struct HyperEdgeId(pub usize);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HyperAction {
-    DriveStep { target_block: BasicBlockId },
-    BranchSplit { cond: SymTermId, then_block: BasicBlockId, else_block: BasicBlockId },
-    FoldKnot { ancestor_node: ProcessNodeId, target_block: BasicBlockId },
-    GeneralizeFold { ancestor_node: ProcessNodeId, target_block: BasicBlockId },
-    LoopRecurrenceCollapse { exit_block: BasicBlockId },
-    UnrollIteration { iteration: usize, next_block: BasicBlockId },
-    CallInline { callee: String },
-    TerminalReturn { return_term: Option<SymTermId> },
+    DriveStep {
+        target_block: BasicBlockId,
+    },
+    BranchSplit {
+        cond: SymTermId,
+        then_block: BasicBlockId,
+        else_block: BasicBlockId,
+    },
+    FoldKnot {
+        ancestor_node: ProcessNodeId,
+        target_block: BasicBlockId,
+    },
+    GeneralizeFold {
+        ancestor_node: ProcessNodeId,
+        target_block: BasicBlockId,
+    },
+    LoopRecurrenceCollapse {
+        exit_block: BasicBlockId,
+    },
+    UnrollIteration {
+        iteration: usize,
+        next_block: BasicBlockId,
+    },
+    CallInline {
+        callee: String,
+    },
+    TerminalReturn {
+        return_term: Option<SymTermId>,
+    },
     DistillationDeforestation,
     IdentityBaseline,
 }
@@ -360,7 +388,10 @@ pub struct MultiResultEngine<'a> {
 
 impl<'a> MultiResultEngine<'a> {
     pub fn new(func: &'a MirFunction, program_funcs: &'a [MirFunction]) -> Self {
-        MultiResultEngine { func, program_funcs }
+        MultiResultEngine {
+            func,
+            program_funcs,
+        }
     }
 
     /// Systematically explores the configuration hypergraph across multiple supercompilation
@@ -464,7 +495,11 @@ impl<'a> MultiResultEngine<'a> {
         let metrics_distill = CandidateMetrics::new(&res_distill, &tree_distill);
 
         let root_id = hypergraph.root;
-        hypergraph.add_edge(root_id, HyperAction::DistillationDeforestation, vec![root_id]);
+        hypergraph.add_edge(
+            root_id,
+            HyperAction::DistillationDeforestation,
+            vec![root_id],
+        );
 
         frontier.insert(ParetoCandidate {
             name: "Distilled_Supercompiled".to_string(),
@@ -509,9 +544,9 @@ impl<'a> MultiResultEngine<'a> {
         // 1. Map each process node to a HyperNode
         for (depth, node) in tree.nodes.iter().enumerate() {
             let key = (node.state.block.clone(), depth);
-            let h_id = *node_map.entry(key).or_insert_with(|| {
-                hypergraph.add_node(node.state.block.clone(), depth)
-            });
+            let h_id = *node_map
+                .entry(key)
+                .or_insert_with(|| hypergraph.add_node(node.state.block.clone(), depth));
             tree_to_hyper.insert(node.id, h_id);
         }
 
@@ -643,7 +678,9 @@ impl MrscCostVector {
 }
 
 /// Optimization objectives for selecting from the Pareto frontier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum MrscObjective {
     /// Prioritizes minimizing dynamic steps and memory allocations.
     #[default]
@@ -707,7 +744,11 @@ impl MrscCostModel {
         }
 
         let residual_blocks = residual.blocks.len();
-        let mut dynamic_steps = residual.blocks.iter().map(|b| b.statements.len()).sum::<usize>() as f64;
+        let mut dynamic_steps = residual
+            .blocks
+            .iter()
+            .map(|b| b.statements.len())
+            .sum::<usize>() as f64;
         for block in &residual.blocks {
             match &block.terminator {
                 Terminator::BranchIf { .. } => dynamic_steps += 10.0,

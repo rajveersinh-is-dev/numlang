@@ -14,7 +14,12 @@ fn check_dir(dir: &Path, bad_strings: &[&str]) -> Vec<String> {
                 for (line_no, line) in content.lines().enumerate() {
                     for bad in bad_strings {
                         if line.contains(bad) && !line.trim_start().starts_with("//") {
-                            violations.push(format!("{}:{}: contains banned string pattern '{}'", path.display(), line_no + 1, bad));
+                            violations.push(format!(
+                                "{}:{}: contains banned string pattern '{}'",
+                                path.display(),
+                                line_no + 1,
+                                bad
+                            ));
                         }
                     }
                 }
@@ -37,11 +42,14 @@ fn test_no_hardcoded_benchmark_names() {
     ];
     let src_dir = Path::new("src");
     let violations = check_dir(src_dir, &bad_strings);
-    
+
     if !violations.is_empty() {
         for v in &violations {
             eprintln!("{}", v);
         }
-        panic!("Found {} integrity violations (hardcoded benchmark/function names).", violations.len());
+        panic!(
+            "Found {} integrity violations (hardcoded benchmark/function names).",
+            violations.len()
+        );
     }
 }

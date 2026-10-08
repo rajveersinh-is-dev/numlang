@@ -20,7 +20,9 @@ use std::time::Instant;
 
 use proptest::prelude::*;
 
-use numlang::codegen::{compile_mir_to_obj, compile_to_obj_with_opt, link_executable, LlvmCompiler, OptLevel};
+use numlang::codegen::{
+    compile_mir_to_obj, compile_to_obj_with_opt, link_executable, LlvmCompiler, OptLevel,
+};
 use numlang::compiler::{compile_tier0, compile_tier1};
 use numlang::mir::lower::lower_program;
 use numlang::parser::parse;
@@ -45,8 +47,7 @@ fn link_and_run(obj_bytes: &[u8], test_id: &str) -> Result<(Option<i32>, String)
     let exe_path = test_dir.join("test.exe");
     fs::write(&obj_path, obj_bytes).map_err(|e| e.to_string())?;
 
-    link_executable(&obj_path, &exe_path)
-        .map_err(|e| format!("Linker error: {:?}", e))?;
+    link_executable(&obj_path, &exe_path).map_err(|e| format!("Linker error: {:?}", e))?;
 
     let output = Command::new(&exe_path)
         .output()
@@ -90,7 +91,8 @@ fn validate_program_paths_a_to_e(
 
     let expected_exit = oracle_val as i32;
 
-    let mut typed = typecheck(&ast).map_err(|e| format!("Typecheck error on seed {}: {:?}", seed, e))?;
+    let mut typed =
+        typecheck(&ast).map_err(|e| format!("Typecheck error on seed {}: {:?}", seed, e))?;
     typed.desugar_for_loops();
 
     let obj_b = compile_to_obj_with_opt(&typed, false)
@@ -116,8 +118,12 @@ fn validate_program_paths_a_to_e(
 
     let mut typed_e = typed.clone();
     let mir_e = compile_tier1(&mut typed_e);
-    let obj_e = compile_mir_to_obj(&mir_e)
-        .map_err(|e| format!("Tier 1 Supercompiler codegen failed on seed {}: {:?}", seed, e))?;
+    let obj_e = compile_mir_to_obj(&mir_e).map_err(|e| {
+        format!(
+            "Tier 1 Supercompiler codegen failed on seed {}: {:?}",
+            seed, e
+        )
+    })?;
     let (e_exit, e_out) = link_and_run(&obj_e, &format!("{}_e", thread_id))?;
     if e_exit != Some(expected_exit) {
         return Err(format!(
@@ -163,7 +169,8 @@ fn validate_program_paths_a_and_f(src: &str, seed: u64) -> Result<(), String> {
     };
 
     // Path F: Lean 4 model
-    let mut typed = typecheck(&ast).map_err(|e| format!("Typecheck error on seed {}: {:?}", seed, e))?;
+    let mut typed =
+        typecheck(&ast).map_err(|e| format!("Typecheck error on seed {}: {:?}", seed, e))?;
     typed.desugar_for_loops();
     let mir = lower_program(&typed);
     let lean_val = eval_with_lean_model(&mir)
@@ -291,7 +298,11 @@ fn test_lean_model_cross_validation_1k() {
         "{} divergences found between Lean 4 model and Oracle in {} programs:\n{}",
         divs.len(),
         count,
-        divs.iter().take(3).map(|(s, e)| format!("seed {}: {}", s, e)).collect::<Vec<_>>().join("\n")
+        divs.iter()
+            .take(3)
+            .map(|(s, e)| format!("seed {}: {}", s, e))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }
 
@@ -354,6 +365,10 @@ fn test_differential_cross_validation_10k() {
         "{} divergences found across Paths A–E in {} programs:\n{}",
         divs.len(),
         count,
-        divs.iter().take(3).map(|(s, e)| format!("seed {}: {}", s, e)).collect::<Vec<_>>().join("\n")
+        divs.iter()
+            .take(3)
+            .map(|(s, e)| format!("seed {}: {}", s, e))
+            .collect::<Vec<_>>()
+            .join("\n")
     );
 }

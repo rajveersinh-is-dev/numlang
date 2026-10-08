@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
 use crate::ast::BinaryOp;
-use crate::typecheck::types::{wrap_int_by_type, Type};
 use crate::typecheck::typed_ast::{
     TypedBlock, TypedExpr, TypedFunction, TypedLiteral, TypedProgram, TypedStmt,
 };
+use crate::typecheck::types::{wrap_int_by_type, Type};
+use std::collections::{HashMap, HashSet};
 
 pub fn optimize_arrays(program: &mut TypedProgram) {
     for func in &mut program.functions {
@@ -63,7 +63,9 @@ fn expand_dots_in_block(block: &mut TypedBlock) {
                     expand_dots_in_block(eb);
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 expand_dot_calls(condition);
                 expand_dots_in_block(body);
             }
@@ -159,11 +161,7 @@ fn collect_array_info(
                 dynamic_mutated.insert(name.clone());
                 array_literals.remove(name);
             }
-            TypedStmt::IndexAssign {
-                target,
-                index,
-                ..
-            } => {
+            TypedStmt::IndexAssign { target, index, .. } => {
                 if let TypedExpr::Literal {
                     lit: TypedLiteral::Int(idx, _),
                     ..
@@ -180,7 +178,12 @@ fn collect_array_info(
                 else_branch,
                 ..
             } => {
-                collect_array_info(then_branch, array_literals, mutated_indices, dynamic_mutated);
+                collect_array_info(
+                    then_branch,
+                    array_literals,
+                    mutated_indices,
+                    dynamic_mutated,
+                );
                 if let Some(eb) = else_branch {
                     collect_array_info(eb, array_literals, mutated_indices, dynamic_mutated);
                 }
@@ -224,14 +227,31 @@ fn propagate_in_block(
                 else_branch,
                 ..
             } => {
-                propagate_array_elements(condition, array_literals, mutated_indices, dynamic_mutated);
-                propagate_in_block(then_branch, array_literals, mutated_indices, dynamic_mutated);
+                propagate_array_elements(
+                    condition,
+                    array_literals,
+                    mutated_indices,
+                    dynamic_mutated,
+                );
+                propagate_in_block(
+                    then_branch,
+                    array_literals,
+                    mutated_indices,
+                    dynamic_mutated,
+                );
                 if let Some(eb) = else_branch {
                     propagate_in_block(eb, array_literals, mutated_indices, dynamic_mutated);
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
-                propagate_array_elements(condition, array_literals, mutated_indices, dynamic_mutated);
+            TypedStmt::While {
+                condition, body, ..
+            } => {
+                propagate_array_elements(
+                    condition,
+                    array_literals,
+                    mutated_indices,
+                    dynamic_mutated,
+                );
                 propagate_in_block(body, array_literals, mutated_indices, dynamic_mutated);
             }
             _ => {}
@@ -246,11 +266,7 @@ fn propagate_array_elements(
     dynamic_mutated: &HashSet<String>,
 ) {
     match expr {
-        TypedExpr::Index {
-            target,
-            index,
-            ..
-        } => {
+        TypedExpr::Index { target, index, .. } => {
             if let TypedExpr::Ident { name, .. } = &**target {
                 if !dynamic_mutated.contains(name) {
                     if let TypedExpr::Literal {
@@ -312,7 +328,9 @@ fn fold_in_block(block: &mut TypedBlock) {
                     fold_in_block(eb);
                 }
             }
-            TypedStmt::While { condition, body, .. } => {
+            TypedStmt::While {
+                condition, body, ..
+            } => {
                 fold_constants(condition);
                 fold_in_block(body);
             }

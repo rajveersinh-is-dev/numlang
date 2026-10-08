@@ -2,8 +2,8 @@ use std::fs;
 use std::process::Command;
 
 use numlang::ast::BinaryOp;
-use numlang::codegen::linker::link_executable;
 use numlang::codegen::compile_supercompiled_to_obj;
+use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram};
 use numlang::mir::supercompiler::generalize::solve_recurrence;
 use numlang::mir::supercompiler::recurrence::{
@@ -173,14 +173,23 @@ fn test_symbolic_generalization_preserves_structure() {
     let mut interner = TermInterner::new();
     let samples = vec![0, 1, 5, 14, 30, 55, 91];
 
-    let n_sym = interner.intern_var(numlang::mir::Place { local: "n".to_string(), projections: Vec::new() }, Type::I64);
+    let n_sym = interner.intern_var(
+        numlang::mir::Place {
+            local: "n".to_string(),
+            projections: Vec::new(),
+        },
+        Type::I64,
+    );
     let sol = solve_recurrence(&samples, n_sym, &mut interner)
         .expect("Failed to solve recurrence symbolically");
 
     // Must be a composite expression containing Binary additions and multiplications
     match interner.get(sol) {
         SymTerm::Binary(BinaryOp::Add, _, _, _) => {}
-        other => panic!("Expected symbolic polynomial sum expression, got: {:?}", other),
+        other => panic!(
+            "Expected symbolic polynomial sum expression, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -204,7 +213,10 @@ fn test_supercompiled_square_pyramid_execution() {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program(&mut mir);
-    assert!(stats.loops_collapsed >= 1, "Pyramid loop should be collapsed to closed form");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Pyramid loop should be collapsed to closed form"
+    );
 
     let exit_code = compile_and_run_supercompiled(src, "test_square_pyramid_run");
     assert_eq!(exit_code, 385, "Pyramid sum for n=10 must be 385");
@@ -230,7 +242,10 @@ fn test_supercompiled_cubic_sum_execution() {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program(&mut mir);
-    assert!(stats.loops_collapsed >= 1, "Cubic sum loop should be collapsed to closed form");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Cubic sum loop should be collapsed to closed form"
+    );
 
     let exit_code = compile_and_run_supercompiled(src, "test_cubic_sum_run");
     assert_eq!(exit_code, 3025, "Cubic sum for n=10 must be 3025");
@@ -258,7 +273,10 @@ fn test_supercompiled_geometric_series_execution() {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program(&mut mir);
-    assert!(stats.loops_collapsed >= 1, "Coupled geometric series loop should be collapsed");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Coupled geometric series loop should be collapsed"
+    );
 
     let exit_code = compile_and_run_supercompiled(src, "test_geom_series_run");
     assert_eq!(exit_code, 1023, "2^10 - 1 must be 1023");
@@ -284,7 +302,10 @@ fn test_supercompiled_exponential_power_execution() {
 
     let mut mir = get_mir(src);
     let stats = supercompile_mir_program(&mut mir);
-    assert!(stats.loops_collapsed >= 1, "Exponential power loop should be collapsed");
+    assert!(
+        stats.loops_collapsed >= 1,
+        "Exponential power loop should be collapsed"
+    );
 
     let exit_code = compile_and_run_supercompiled(src, "test_exp_power_run");
     assert_eq!(exit_code, 3072, "3 * 2^10 must be 3072");

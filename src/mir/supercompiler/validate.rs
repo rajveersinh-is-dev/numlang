@@ -48,18 +48,30 @@ impl BvExpr {
     }
 
     pub fn constant(val: u64, width: usize) -> Self {
-        let mask = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+        let mask = if width >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << width) - 1
+        };
         BvExpr::Const(val & mask, width)
     }
 
     pub fn bitwidth(&self) -> usize {
         match self {
             BvExpr::Var(_, w) | BvExpr::Const(_, w) | BvExpr::Apply(_, _, w) => *w,
-            BvExpr::Add(l, _) | BvExpr::Sub(l, _) | BvExpr::Mul(l, _) |
-            BvExpr::UDiv(l, _) | BvExpr::SDiv(l, _) | BvExpr::URem(l, _) |
-            BvExpr::SRem(l, _) | BvExpr::And(l, _) | BvExpr::Or(l, _) |
-            BvExpr::Xor(l, _) | BvExpr::Shl(l, _) | BvExpr::LShr(l, _) |
-            BvExpr::AShr(l, _) => l.bitwidth(),
+            BvExpr::Add(l, _)
+            | BvExpr::Sub(l, _)
+            | BvExpr::Mul(l, _)
+            | BvExpr::UDiv(l, _)
+            | BvExpr::SDiv(l, _)
+            | BvExpr::URem(l, _)
+            | BvExpr::SRem(l, _)
+            | BvExpr::And(l, _)
+            | BvExpr::Or(l, _)
+            | BvExpr::Xor(l, _)
+            | BvExpr::Shl(l, _)
+            | BvExpr::LShr(l, _)
+            | BvExpr::AShr(l, _) => l.bitwidth(),
             BvExpr::Neg(e) | BvExpr::Not(e) => e.bitwidth(),
             BvExpr::Ite(_, t, _) => t.bitwidth(),
         }
@@ -165,7 +177,8 @@ impl BvExpr {
                         BvExpr::Or(
                             Box::new(BvExpr::Not(l.clone()).simplify()),
                             Box::new(BvExpr::Not(r.clone()).simplify()),
-                        ).simplify()
+                        )
+                        .simplify()
                     }
                     _ => BvExpr::Not(Box::new(se)),
                 }
@@ -445,7 +458,11 @@ impl BoolFormula {
                 }
                 match (&sl, &sr) {
                     (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
-                        if a == b { BoolFormula::True } else { BoolFormula::False }
+                        if a == b {
+                            BoolFormula::True
+                        } else {
+                            BoolFormula::False
+                        }
                     }
                     _ => BoolFormula::Eq(Box::new(sl), Box::new(sr)),
                 }
@@ -455,7 +472,11 @@ impl BoolFormula {
                 let sr = r.simplify();
                 match (&sl, &sr) {
                     (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
-                        if (*a as i64) < (*b as i64) { BoolFormula::True } else { BoolFormula::False }
+                        if (*a as i64) < (*b as i64) {
+                            BoolFormula::True
+                        } else {
+                            BoolFormula::False
+                        }
                     }
                     _ if sl == sr => BoolFormula::False,
                     _ => BoolFormula::Slt(Box::new(sl), Box::new(sr)),
@@ -466,7 +487,11 @@ impl BoolFormula {
                 let sr = r.simplify();
                 match (&sl, &sr) {
                     (BvExpr::Const(a, _), BvExpr::Const(b, _)) => {
-                        if (*a as i64) <= (*b as i64) { BoolFormula::True } else { BoolFormula::False }
+                        if (*a as i64) <= (*b as i64) {
+                            BoolFormula::True
+                        } else {
+                            BoolFormula::False
+                        }
                     }
                     _ if sl == sr => BoolFormula::True,
                     _ => BoolFormula::Sle(Box::new(sl), Box::new(sr)),
@@ -569,9 +594,15 @@ impl SmtLib2Printer {
         funcs: &mut BTreeMap<String, (Vec<usize>, usize)>,
     ) {
         match formula {
-            BoolFormula::Eq(l, r) | BoolFormula::Ult(l, r) | BoolFormula::Ule(l, r) |
-            BoolFormula::Ugt(l, r) | BoolFormula::Uge(l, r) | BoolFormula::Slt(l, r) |
-            BoolFormula::Sle(l, r) | BoolFormula::Sgt(l, r) | BoolFormula::Sge(l, r) => {
+            BoolFormula::Eq(l, r)
+            | BoolFormula::Ult(l, r)
+            | BoolFormula::Ule(l, r)
+            | BoolFormula::Ugt(l, r)
+            | BoolFormula::Uge(l, r)
+            | BoolFormula::Slt(l, r)
+            | BoolFormula::Sle(l, r)
+            | BoolFormula::Sgt(l, r)
+            | BoolFormula::Sge(l, r) => {
                 Self::collect_bv_symbols(l, vars, funcs);
                 Self::collect_bv_symbols(r, vars, funcs);
             }
@@ -605,11 +636,19 @@ impl SmtLib2Printer {
                     Self::collect_bv_symbols(a, vars, funcs);
                 }
             }
-            BvExpr::Add(l, r) | BvExpr::Sub(l, r) | BvExpr::Mul(l, r) |
-            BvExpr::UDiv(l, r) | BvExpr::SDiv(l, r) | BvExpr::URem(l, r) |
-            BvExpr::SRem(l, r) | BvExpr::And(l, r) | BvExpr::Or(l, r) |
-            BvExpr::Xor(l, r) | BvExpr::Shl(l, r) | BvExpr::LShr(l, r) |
-            BvExpr::AShr(l, r) => {
+            BvExpr::Add(l, r)
+            | BvExpr::Sub(l, r)
+            | BvExpr::Mul(l, r)
+            | BvExpr::UDiv(l, r)
+            | BvExpr::SDiv(l, r)
+            | BvExpr::URem(l, r)
+            | BvExpr::SRem(l, r)
+            | BvExpr::And(l, r)
+            | BvExpr::Or(l, r)
+            | BvExpr::Xor(l, r)
+            | BvExpr::Shl(l, r)
+            | BvExpr::LShr(l, r)
+            | BvExpr::AShr(l, r) => {
                 Self::collect_bv_symbols(l, vars, funcs);
                 Self::collect_bv_symbols(r, vars, funcs);
             }
@@ -629,14 +668,30 @@ impl SmtLib2Printer {
             BoolFormula::False => "false".to_string(),
             BoolFormula::Var(v) => v.clone(),
             BoolFormula::Eq(l, r) => format!("(= {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Ult(l, r) => format!("(bvult {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Ule(l, r) => format!("(bvule {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Ugt(l, r) => format!("(bvugt {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Uge(l, r) => format!("(bvuge {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Slt(l, r) => format!("(bvslt {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Sle(l, r) => format!("(bvsle {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Sgt(l, r) => format!("(bvsgt {} {})", Self::print_bv(l), Self::print_bv(r)),
-            BoolFormula::Sge(l, r) => format!("(bvsge {} {})", Self::print_bv(l), Self::print_bv(r)),
+            BoolFormula::Ult(l, r) => {
+                format!("(bvult {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Ule(l, r) => {
+                format!("(bvule {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Ugt(l, r) => {
+                format!("(bvugt {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Uge(l, r) => {
+                format!("(bvuge {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Slt(l, r) => {
+                format!("(bvslt {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Sle(l, r) => {
+                format!("(bvsle {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Sgt(l, r) => {
+                format!("(bvsgt {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
+            BoolFormula::Sge(l, r) => {
+                format!("(bvsge {} {})", Self::print_bv(l), Self::print_bv(r))
+            }
             BoolFormula::Not(f) => format!("(not {})", Self::print_bool(f)),
             BoolFormula::And(forms) => {
                 let parts: Vec<_> = forms.iter().map(Self::print_bool).collect();
@@ -926,7 +981,9 @@ impl SatSolver {
             // Backtrack
             self.trail_lim.pop();
             while self.trail.len() > trail_mark {
-                let Some(l) = self.trail.pop() else { break; };
+                let Some(l) = self.trail.pop() else {
+                    break;
+                };
                 let v = l.unsigned_abs() as usize;
                 self.assignment[v] = None;
             }
@@ -1084,7 +1141,10 @@ impl BitBlaster {
                     }
                 }
 
-                self.function_calls.entry(name.clone()).or_default().push((b_args, ret_bits.clone()));
+                self.function_calls
+                    .entry(name.clone())
+                    .or_default()
+                    .push((b_args, ret_bits.clone()));
                 ret_bits
             }
             _ => vec![self.solver.lit_false(); width],
@@ -1233,7 +1293,11 @@ impl BitBlaster {
             if shift_amt >= width {
                 break;
             }
-            let cond = if k < b.len() { b[k] } else { self.solver.lit_false() };
+            let cond = if k < b.len() {
+                b[k]
+            } else {
+                self.solver.lit_false()
+            };
             let mut shifted = vec![self.solver.lit_false(); width];
             shifted[shift_amt..width].copy_from_slice(&res[..(width - shift_amt)]);
             for j in 0..width {
@@ -1251,7 +1315,11 @@ impl BitBlaster {
             if shift_amt >= width {
                 break;
             }
-            let cond = if k < b.len() { b[k] } else { self.solver.lit_false() };
+            let cond = if k < b.len() {
+                b[k]
+            } else {
+                self.solver.lit_false()
+            };
             let mut shifted = vec![self.solver.lit_false(); width];
             shifted[..(width - shift_amt)].copy_from_slice(&res[shift_amt..width]);
             for j in 0..width {
@@ -1270,7 +1338,11 @@ impl BitBlaster {
             if shift_amt >= width {
                 break;
             }
-            let cond = if k < b.len() { b[k] } else { self.solver.lit_false() };
+            let cond = if k < b.len() {
+                b[k]
+            } else {
+                self.solver.lit_false()
+            };
             let mut shifted = vec![sign; width];
             shifted[..(width - shift_amt)].copy_from_slice(&res[shift_amt..width]);
             for j in 0..width {
@@ -1351,8 +1423,21 @@ pub fn check_satisfiability(formula: &BoolFormula) -> SmtResult {
 
     // Fast bounded / corner-case testing filter
     let corner_inputs: Vec<u64> = vec![
-        0, 1, 2, 3, 5, 8, 10, 16, 42, 64, 100,
-        u64::MAX, u64::MAX - 1, (i64::MAX as u64), (i64::MIN as u64),
+        0,
+        1,
+        2,
+        3,
+        5,
+        8,
+        10,
+        16,
+        42,
+        64,
+        100,
+        u64::MAX,
+        u64::MAX - 1,
+        (i64::MAX as u64),
+        (i64::MIN as u64),
     ];
     let mut vars = BTreeMap::new();
     let mut funcs = BTreeMap::new();
@@ -1445,7 +1530,10 @@ impl<'a> PathExtractor<'a> {
                 let Statement::Assign(dest, rval) = stmt;
                 let val_expr = self.eval_rval(rval, &env, &arrays);
                 if let Rvalue::Array(elems) = rval {
-                    let elem_exprs = elems.iter().map(|p| self.eval_place(p, &env, &arrays)).collect();
+                    let elem_exprs = elems
+                        .iter()
+                        .map(|p| self.eval_place(p, &env, &arrays))
+                        .collect();
                     arrays.insert(dest.local.clone(), elem_exprs);
                 }
                 env.insert(dest.local.clone(), val_expr);
@@ -1473,32 +1561,52 @@ impl<'a> PathExtractor<'a> {
                     next_hist.push(target.clone());
                     queue.push((target.clone(), env, arrays, conds, next_hist, depth + 1));
                 }
-                Terminator::BranchIf { condition, then_target, else_target } => {
+                Terminator::BranchIf {
+                    condition,
+                    then_target,
+                    else_target,
+                } => {
                     let cond_expr = self.eval_place(condition, &env, &arrays);
                     let is_nonzero = BoolFormula::Not(Box::new(BoolFormula::Eq(
                         Box::new(cond_expr.clone()),
                         Box::new(BvExpr::constant(0, 64)),
                     )));
-                    let is_zero = BoolFormula::Eq(
-                        Box::new(cond_expr),
-                        Box::new(BvExpr::constant(0, 64)),
-                    );
+                    let is_zero =
+                        BoolFormula::Eq(Box::new(cond_expr), Box::new(BvExpr::constant(0, 64)));
 
                     // Then branch
                     let mut then_conds = conds.clone();
                     then_conds.push(is_nonzero);
                     let mut then_hist = history.clone();
                     then_hist.push(then_target.clone());
-                    queue.push((then_target.clone(), env.clone(), arrays.clone(), then_conds, then_hist, depth + 1));
+                    queue.push((
+                        then_target.clone(),
+                        env.clone(),
+                        arrays.clone(),
+                        then_conds,
+                        then_hist,
+                        depth + 1,
+                    ));
 
                     // Else branch
                     let mut else_conds = conds;
                     else_conds.push(is_zero);
                     let mut else_hist = history;
                     else_hist.push(else_target.clone());
-                    queue.push((else_target.clone(), env, arrays, else_conds, else_hist, depth + 1));
+                    queue.push((
+                        else_target.clone(),
+                        env,
+                        arrays,
+                        else_conds,
+                        else_hist,
+                        depth + 1,
+                    ));
                 }
-                Terminator::Switch { value, targets, default } => {
+                Terminator::Switch {
+                    value,
+                    targets,
+                    default,
+                } => {
                     let val_expr = self.eval_place(value, &env, &arrays);
                     let mut all_neq = Vec::new();
 
@@ -1513,7 +1621,14 @@ impl<'a> PathExtractor<'a> {
                         target_conds.push(eq_form);
                         let mut target_hist = history.clone();
                         target_hist.push(target_bb.clone());
-                        queue.push((target_bb.clone(), env.clone(), arrays.clone(), target_conds, target_hist, depth + 1));
+                        queue.push((
+                            target_bb.clone(),
+                            env.clone(),
+                            arrays.clone(),
+                            target_conds,
+                            target_hist,
+                            depth + 1,
+                        ));
                     }
 
                     // Default branch
@@ -1528,14 +1643,32 @@ impl<'a> PathExtractor<'a> {
                     next_hist.push(cont.clone());
                     queue.push((cont.clone(), env, arrays, conds, next_hist, depth + 1));
                 }
-                Terminator::TypeGuard { fast_path, deopt_stub, .. } => {
+                Terminator::TypeGuard {
+                    fast_path,
+                    deopt_stub,
+                    ..
+                } => {
                     let mut fast_hist = history.clone();
                     fast_hist.push(fast_path.clone());
-                    queue.push((fast_path.clone(), env.clone(), arrays.clone(), conds.clone(), fast_hist, depth + 1));
+                    queue.push((
+                        fast_path.clone(),
+                        env.clone(),
+                        arrays.clone(),
+                        conds.clone(),
+                        fast_hist,
+                        depth + 1,
+                    ));
 
                     let mut deopt_hist = history;
                     deopt_hist.push(deopt_stub.clone());
-                    queue.push((deopt_stub.clone(), env, arrays, conds, deopt_hist, depth + 1));
+                    queue.push((
+                        deopt_stub.clone(),
+                        env,
+                        arrays,
+                        conds,
+                        deopt_hist,
+                        depth + 1,
+                    ));
                 }
                 _ => {}
             }
@@ -1645,9 +1778,18 @@ impl<'a> PathExtractor<'a> {
                             if sub_paths.len() == 1 {
                                 return subst_bv(&sub_paths[0].return_val, &param_map).simplify();
                             } else {
-                                let mut res = subst_bv(&sub_paths.last().map(|p| &p.return_val).unwrap_or(&BvExpr::Const(0, 64)), &param_map);
+                                let mut res = subst_bv(
+                                    &sub_paths
+                                        .last()
+                                        .map(|p| &p.return_val)
+                                        .unwrap_or(&BvExpr::Const(0, 64)),
+                                    &param_map,
+                                );
                                 for p in sub_paths.iter().rev().skip(1) {
-                                    let c = subst_bool(&BoolFormula::and_all(p.conditions.clone()), &param_map);
+                                    let c = subst_bool(
+                                        &BoolFormula::and_all(p.conditions.clone()),
+                                        &param_map,
+                                    );
                                     let val = subst_bv(&p.return_val, &param_map);
                                     res = BvExpr::Ite(Box::new(c), Box::new(val), Box::new(res));
                                 }
@@ -1699,7 +1841,9 @@ impl<'a> PathExtractor<'a> {
                 }
             }
         }
-        env.get(&p.local).cloned().unwrap_or_else(|| BvExpr::var(p.local.clone(), 64))
+        env.get(&p.local)
+            .cloned()
+            .unwrap_or_else(|| BvExpr::var(p.local.clone(), 64))
     }
 }
 
@@ -1742,19 +1886,43 @@ fn subst_bv(expr: &BvExpr, map: &HashMap<String, BvExpr>) -> BvExpr {
 
 fn subst_bool(formula: &BoolFormula, map: &HashMap<String, BvExpr>) -> BoolFormula {
     match formula {
-        BoolFormula::Eq(l, r) => BoolFormula::Eq(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Slt(l, r) => BoolFormula::Slt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Sle(l, r) => BoolFormula::Sle(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Sgt(l, r) => BoolFormula::Sgt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Sge(l, r) => BoolFormula::Sge(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Ult(l, r) => BoolFormula::Ult(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Ule(l, r) => BoolFormula::Ule(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Ugt(l, r) => BoolFormula::Ugt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
-        BoolFormula::Uge(l, r) => BoolFormula::Uge(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map))),
+        BoolFormula::Eq(l, r) => {
+            BoolFormula::Eq(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Slt(l, r) => {
+            BoolFormula::Slt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Sle(l, r) => {
+            BoolFormula::Sle(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Sgt(l, r) => {
+            BoolFormula::Sgt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Sge(l, r) => {
+            BoolFormula::Sge(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Ult(l, r) => {
+            BoolFormula::Ult(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Ule(l, r) => {
+            BoolFormula::Ule(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Ugt(l, r) => {
+            BoolFormula::Ugt(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
+        BoolFormula::Uge(l, r) => {
+            BoolFormula::Uge(Box::new(subst_bv(l, map)), Box::new(subst_bv(r, map)))
+        }
         BoolFormula::Not(inner) => BoolFormula::Not(Box::new(subst_bool(inner, map))),
-        BoolFormula::And(forms) => BoolFormula::And(forms.iter().map(|f| subst_bool(f, map)).collect()),
-        BoolFormula::Or(forms) => BoolFormula::Or(forms.iter().map(|f| subst_bool(f, map)).collect()),
-        BoolFormula::Implies(a, b) => BoolFormula::Implies(Box::new(subst_bool(a, map)), Box::new(subst_bool(b, map))),
+        BoolFormula::And(forms) => {
+            BoolFormula::And(forms.iter().map(|f| subst_bool(f, map)).collect())
+        }
+        BoolFormula::Or(forms) => {
+            BoolFormula::Or(forms.iter().map(|f| subst_bool(f, map)).collect())
+        }
+        BoolFormula::Implies(a, b) => {
+            BoolFormula::Implies(Box::new(subst_bool(a, map)), Box::new(subst_bool(b, map)))
+        }
         _ => formula.clone(),
     }
 }
@@ -1809,20 +1977,56 @@ pub enum ValidationError {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ValidationError::SignatureMismatch { func, orig_params, res_params } => {
-                write!(f, "Signature mismatch in `{}`: original had {} params, residual had {}", func, orig_params, res_params)
+            ValidationError::SignatureMismatch {
+                func,
+                orig_params,
+                res_params,
+            } => {
+                write!(
+                    f,
+                    "Signature mismatch in `{}`: original had {} params, residual had {}",
+                    func, orig_params, res_params
+                )
             }
-            ValidationError::PathDivergence { func, block, reason } => {
-                write!(f, "Control-flow path divergence in `{}` at block bb{}: {}", func, block.0, reason)
+            ValidationError::PathDivergence {
+                func,
+                block,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "Control-flow path divergence in `{}` at block bb{}: {}",
+                    func, block.0, reason
+                )
             }
-            ValidationError::OutputMismatch { func, expected, actual } => {
-                write!(f, "Semantic equivalence violation in `{}`: expected `{}`, got `{}`", func, expected, actual)
+            ValidationError::OutputMismatch {
+                func,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "Semantic equivalence violation in `{}`: expected `{}`, got `{}`",
+                    func, expected, actual
+                )
             }
-            ValidationError::InvariantViolation { func, step, message } => {
-                write!(f, "Loop invariant violation in `{}` at step {}: {}", func, step, message)
+            ValidationError::InvariantViolation {
+                func,
+                step,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Loop invariant violation in `{}` at step {}: {}",
+                    func, step, message
+                )
             }
             ValidationError::InductiveStepFailed { func, k, message } => {
-                write!(f, "Inductive step failed in `{}` for k={}: {}", func, k, message)
+                write!(
+                    f,
+                    "Inductive step failed in `{}` for k={}: {}",
+                    func, k, message
+                )
             }
             ValidationError::PostconditionFailed { func, message } => {
                 write!(f, "Loop postcondition failed in `{}`: {}", func, message)
@@ -1875,7 +2079,8 @@ impl<'a> TranslationValidator<'a> {
             return Err(ValidationError::PathDivergence {
                 func: self.orig.name.clone(),
                 block: BasicBlockId(0),
-                reason: "Residual produces execution paths where original has no reachable paths".to_string(),
+                reason: "Residual produces execution paths where original has no reachable paths"
+                    .to_string(),
             });
         }
 
@@ -1918,7 +2123,9 @@ impl<'a> TranslationValidator<'a> {
                         .first()
                         .and_then(|p| p.return_val.eval_concrete(&counterexample))
                         .map(|v| v.to_string())
-                        .unwrap_or_else(|| format!("{:?}", orig_paths.first().map(|p| &p.return_val)));
+                        .unwrap_or_else(|| {
+                            format!("{:?}", orig_paths.first().map(|p| &p.return_val))
+                        });
                     let res_eval_str = res_ret
                         .eval_concrete(&counterexample)
                         .map(|v| v.to_string())
@@ -2065,10 +2272,7 @@ impl<'a> KInductionValidator<'a> {
 
         // Invariant must hold at state k
         let inv_k = subst_bool(&self.candidate.invariant, &state_k);
-        let goal = BoolFormula::Implies(
-            Box::new(BoolFormula::And(hypotheses)),
-            Box::new(inv_k),
-        );
+        let goal = BoolFormula::Implies(Box::new(BoolFormula::And(hypotheses)), Box::new(inv_k));
 
         // Check validity: negating the goal must be UNSAT
         let not_goal = BoolFormula::Not(Box::new(goal));
@@ -2077,7 +2281,9 @@ impl<'a> KInductionValidator<'a> {
             SmtResult::Sat(counterexample) => Err(ValidationError::InductiveStepFailed {
                 func: self.candidate.name.clone(),
                 k,
-                message: format!("Inductive step failed at depth {k} with counterexample {counterexample:?}"),
+                message: format!(
+                    "Inductive step failed at depth {k} with counterexample {counterexample:?}"
+                ),
             }),
         }
     }
@@ -2086,10 +2292,7 @@ impl<'a> KInductionValidator<'a> {
     /// Invariant /\ Not(Condition) => Postcondition
     pub fn verify_postcondition(&self) -> Result<bool, ValidationError> {
         let not_cond = BoolFormula::Not(Box::new(self.candidate.loop_condition.clone()));
-        let antecedent = BoolFormula::And(vec![
-            self.candidate.invariant.clone(),
-            not_cond,
-        ]);
+        let antecedent = BoolFormula::And(vec![self.candidate.invariant.clone(), not_cond]);
         let goal = BoolFormula::Implies(
             Box::new(antecedent),
             Box::new(self.candidate.postcondition.clone()),

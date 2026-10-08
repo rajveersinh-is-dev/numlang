@@ -32,31 +32,51 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
     if s1 < s2 && d1 < d2 {
         let embedded_in_child = match term2 {
             SymTerm::Binary(_, l2, r2, _) => {
-                (interner.size(*l2) >= s1 && interner.depth(*l2) >= d1 && is_embedded(t1, *l2, interner))
-                    || (interner.size(*r2) >= s1 && interner.depth(*r2) >= d1 && is_embedded(t1, *r2, interner))
+                (interner.size(*l2) >= s1
+                    && interner.depth(*l2) >= d1
+                    && is_embedded(t1, *l2, interner))
+                    || (interner.size(*r2) >= s1
+                        && interner.depth(*r2) >= d1
+                        && is_embedded(t1, *r2, interner))
             }
             SymTerm::Unary(_, inner2, _) => {
-                interner.size(*inner2) >= s1 && interner.depth(*inner2) >= d1 && is_embedded(t1, *inner2, interner)
+                interner.size(*inner2) >= s1
+                    && interner.depth(*inner2) >= d1
+                    && is_embedded(t1, *inner2, interner)
             }
-            SymTerm::Constructor(_, _, fields2, _) => {
-                fields2.iter().any(|&f| interner.size(f) >= s1 && interner.depth(f) >= d1 && is_embedded(t1, f, interner))
-            }
-            SymTerm::Call(_, args2, _) => {
-                args2.iter().any(|&a| interner.size(a) >= s1 && interner.depth(a) >= d1 && is_embedded(t1, a, interner))
-            }
+            SymTerm::Constructor(_, _, fields2, _) => fields2.iter().any(|&f| {
+                interner.size(f) >= s1 && interner.depth(f) >= d1 && is_embedded(t1, f, interner)
+            }),
+            SymTerm::Call(_, args2, _) => args2.iter().any(|&a| {
+                interner.size(a) >= s1 && interner.depth(a) >= d1 && is_embedded(t1, a, interner)
+            }),
             SymTerm::Select(c2, th2, el2, _) => {
-                (interner.size(*c2) >= s1 && interner.depth(*c2) >= d1 && is_embedded(t1, *c2, interner))
-                    || (interner.size(*th2) >= s1 && interner.depth(*th2) >= d1 && is_embedded(t1, *th2, interner))
-                    || (interner.size(*el2) >= s1 && interner.depth(*el2) >= d1 && is_embedded(t1, *el2, interner))
+                (interner.size(*c2) >= s1
+                    && interner.depth(*c2) >= d1
+                    && is_embedded(t1, *c2, interner))
+                    || (interner.size(*th2) >= s1
+                        && interner.depth(*th2) >= d1
+                        && is_embedded(t1, *th2, interner))
+                    || (interner.size(*el2) >= s1
+                        && interner.depth(*el2) >= d1
+                        && is_embedded(t1, *el2, interner))
             }
             SymTerm::Phi(incoming2, _) => incoming2.iter().any(|(_, t)| {
                 interner.size(*t) >= s1 && interner.depth(*t) >= d1 && is_embedded(t1, *t, interner)
             }),
-            SymTerm::Ref(inner2, _) | SymTerm::Deref(inner2, _) | SymTerm::Discriminant(inner2, _) => {
-                interner.size(*inner2) >= s1 && interner.depth(*inner2) >= d1 && is_embedded(t1, *inner2, interner)
+            SymTerm::Ref(inner2, _)
+            | SymTerm::Deref(inner2, _)
+            | SymTerm::Discriminant(inner2, _) => {
+                interner.size(*inner2) >= s1
+                    && interner.depth(*inner2) >= d1
+                    && is_embedded(t1, *inner2, interner)
             }
             SymTerm::ClosureVal(_, captured2, _) | SymTerm::Thunk(_, captured2, _) => {
-                captured2.iter().any(|&c| interner.size(c) >= s1 && interner.depth(c) >= d1 && is_embedded(t1, c, interner))
+                captured2.iter().any(|&c| {
+                    interner.size(c) >= s1
+                        && interner.depth(c) >= d1
+                        && is_embedded(t1, c, interner)
+                })
             }
             _ => false,
         };
@@ -69,11 +89,11 @@ pub fn is_embedded(t1: SymTermId, t2: SymTermId, interner: &TermInterner) -> boo
     match (term1, term2) {
         (SymTerm::Ref(i1, _), SymTerm::Ref(i2, _)) => is_embedded(*i1, *i2, interner),
         (SymTerm::Deref(p1, _), SymTerm::Deref(p2, _)) => is_embedded(*p1, *p2, interner),
-        (SymTerm::Discriminant(i1, _), SymTerm::Discriminant(i2, _)) => is_embedded(*i1, *i2, interner),
+        (SymTerm::Discriminant(i1, _), SymTerm::Discriminant(i2, _)) => {
+            is_embedded(*i1, *i2, interner)
+        }
         (SymTerm::Binary(op1, l1, r1, _), SymTerm::Binary(op2, l2, r2, _)) => {
-            op1 == op2
-                && is_embedded(*l1, *l2, interner)
-                && is_embedded(*r1, *r2, interner)
+            op1 == op2 && is_embedded(*l1, *l2, interner) && is_embedded(*r1, *r2, interner)
         }
         (SymTerm::Unary(op1, in1, _), SymTerm::Unary(op2, in2, _)) => {
             op1 == op2 && is_embedded(*in1, *in2, interner)
@@ -171,11 +191,7 @@ pub fn state_embeds(
 }
 
 /// Checks if `curr` is an exact alpha-equivalent instance of `anc` (candidate for immediate knot-tying).
-pub fn is_instance_of(
-    anc: &SymbolicState,
-    curr: &SymbolicState,
-    active_places: &[Place],
-) -> bool {
+pub fn is_instance_of(anc: &SymbolicState, curr: &SymbolicState, active_places: &[Place]) -> bool {
     if anc.block != curr.block {
         return false;
     }

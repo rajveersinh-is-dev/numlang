@@ -19,10 +19,7 @@ pub enum CompilerDiagnostic {
     },
 
     #[error("Syntax error: {message}")]
-    #[diagnostic(
-        code(numlang::parser::syntax_error),
-        help("{help}")
-    )]
+    #[diagnostic(code(numlang::parser::syntax_error), help("{help}"))]
     SyntaxError {
         message: String,
         help: String,
@@ -33,10 +30,7 @@ pub enum CompilerDiagnostic {
     },
 
     #[error("Type error [{code}]: {message}")]
-    #[diagnostic(
-        code(numlang::typecheck::type_error),
-        help("{help}")
-    )]
+    #[diagnostic(code(numlang::typecheck::type_error), help("{help}"))]
     TypeError {
         code: &'static str,
         message: String,
@@ -99,7 +93,8 @@ impl CompilerDiagnostic {
                     "Did you mean: let <name>: <type> = <value>?".to_string()
                 } else if expected.contains("return type")
                     || expected.contains("->")
-                    || (found == Token::LBrace && (trimmed_prefix.ends_with(')') || expected.contains("type")))
+                    || (found == Token::LBrace
+                        && (trimmed_prefix.ends_with(')') || expected.contains("type")))
                 {
                     "Did you forget the return type arrow ->?".to_string()
                 } else {

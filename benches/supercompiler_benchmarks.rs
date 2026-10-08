@@ -4,12 +4,18 @@ fn bench_supercompile_all(c: &mut Criterion) {
     let benchmarks = [
         ("nrev", include_str!("../bench/numlang/nrev.nl")),
         ("append3", include_str!("../bench/numlang/append3.nl")),
-        ("stream_fusion", include_str!("../bench/numlang/stream_fusion.nl")),
+        (
+            "stream_fusion",
+            include_str!("../bench/numlang/stream_fusion.nl"),
+        ),
         ("ackermann", include_str!("../bench/numlang/ackermann.nl")),
         ("fib_matrix", include_str!("../bench/numlang/fib_matrix.nl")),
         ("sieve", include_str!("../bench/numlang/sieve.nl")),
         ("matvec_4x4", include_str!("../bench/numlang/matvec_4x4.nl")),
-        ("raytracer_sphere", include_str!("../bench/numlang/raytracer_sphere.nl")),
+        (
+            "raytracer_sphere",
+            include_str!("../bench/numlang/raytracer_sphere.nl"),
+        ),
         ("tree_flip", include_str!("../bench/numlang/tree_flip.nl")),
         ("peano_mul", include_str!("../bench/numlang/peano_mul.nl")),
     ];

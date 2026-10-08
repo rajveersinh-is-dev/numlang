@@ -2,8 +2,8 @@ use std::fs;
 use std::process::Command;
 
 use numlang::ast::BinaryOp;
-use numlang::codegen::linker::link_executable;
 use numlang::codegen::compile_supercompiled_to_obj;
+use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, Rvalue, Statement};
 use numlang::mir::supercompiler::generalize::{
     solve_coupled_2var_recurrence, solve_order2_recurrence, solve_order3_recurrence,
@@ -44,7 +44,8 @@ fn test_order2_recurrence_fibonacci_direct() {
     let samples = vec![0, 1, 1, 2, 3, 5, 8, 13, 21];
 
     let n10 = interner.intern_int(10);
-    let sol10 = solve_order2_recurrence(&samples, n10, &mut interner).expect("Failed to solve F(10)");
+    let sol10 =
+        solve_order2_recurrence(&samples, n10, &mut interner).expect("Failed to solve F(10)");
     if let SymTerm::ConstInt(val, _) = interner.get(sol10) {
         assert_eq!(*val, 55, "F(10) must be 55");
     } else {
@@ -52,7 +53,8 @@ fn test_order2_recurrence_fibonacci_direct() {
     }
 
     let n20 = interner.intern_int(20);
-    let sol20 = solve_order2_recurrence(&samples, n20, &mut interner).expect("Failed to solve F(20)");
+    let sol20 =
+        solve_order2_recurrence(&samples, n20, &mut interner).expect("Failed to solve F(20)");
     if let SymTerm::ConstInt(val, _) = interner.get(sol20) {
         assert_eq!(*val, 6765, "F(20) must be 6765");
     } else {
@@ -79,12 +81,16 @@ fn test_order2_recurrence_integer_roots_symbolic() {
     // Must produce a symbolic sum of powers
     match interner.get(sol) {
         SymTerm::Binary(BinaryOp::Add, _, _, _) => {}
-        other => panic!("Expected Binary Add term for closed form, found: {:?}", other),
+        other => panic!(
+            "Expected Binary Add term for closed form, found: {:?}",
+            other
+        ),
     }
 
     // Now test with concrete n=5: 2^6 - 1 = 63
     let n5 = interner.intern_int(5);
-    let sol5 = solve_order2_recurrence(&samples, n5, &mut interner).expect("Failed to solve for n=5");
+    let sol5 =
+        solve_order2_recurrence(&samples, n5, &mut interner).expect("Failed to solve for n=5");
     if let SymTerm::ConstInt(val, _) = interner.get(sol5) {
         assert_eq!(*val, 63, "s_5 must be 63");
     } else {
@@ -99,7 +105,8 @@ fn test_order3_recurrence_tribonacci() {
     let samples = vec![0, 0, 1, 1, 2, 4, 7, 13, 24, 44];
 
     let n7 = interner.intern_int(7);
-    let sol7 = solve_order3_recurrence(&samples, n7, &mut interner).expect("Failed to solve Tribonacci T(7)");
+    let sol7 = solve_order3_recurrence(&samples, n7, &mut interner)
+        .expect("Failed to solve Tribonacci T(7)");
     if let SymTerm::ConstInt(val, _) = interner.get(sol7) {
         assert_eq!(*val, 13, "T(7) must be 13");
     } else {
@@ -107,7 +114,8 @@ fn test_order3_recurrence_tribonacci() {
     }
 
     let n9 = interner.intern_int(9);
-    let sol9 = solve_order3_recurrence(&samples, n9, &mut interner).expect("Failed to solve Tribonacci T(9)");
+    let sol9 = solve_order3_recurrence(&samples, n9, &mut interner)
+        .expect("Failed to solve Tribonacci T(9)");
     if let SymTerm::ConstInt(val, _) = interner.get(sol9) {
         assert_eq!(*val, 44, "T(9) must be 44");
     } else {
@@ -143,7 +151,10 @@ fn test_interprocedural_inlining_and_folding() {
             .iter()
             .any(|s| matches!(s, Statement::Assign(_, Rvalue::Call(..))))
     });
-    assert!(!has_call, "Call to square should be completely eliminated via interprocedural inlining");
+    assert!(
+        !has_call,
+        "Call to square should be completely eliminated via interprocedural inlining"
+    );
 
     let code = compile_and_run_supercompiled(src, "interproc_square");
     assert_eq!(code, 81);
@@ -258,8 +269,9 @@ fn test_coupled_2var_recurrence_direct() {
         projections: vec![],
     };
     let n_sym = interner.intern_var(place, Type::I64);
-    let (sol_sym_a, sol_sym_b) = solve_coupled_2var_recurrence(&samples_a, &samples_b, n_sym, &mut interner)
-        .expect("Failed to solve coupled 2-variable recurrence symbolically");
+    let (sol_sym_a, sol_sym_b) =
+        solve_coupled_2var_recurrence(&samples_a, &samples_b, n_sym, &mut interner)
+            .expect("Failed to solve coupled 2-variable recurrence symbolically");
 
     match interner.get(sol_sym_a) {
         SymTerm::Call(callee, args, _) => {
@@ -301,4 +313,3 @@ fn test_coupled_2var_linear_recurrence() {
     let code = compile_and_run_supercompiled(src, "coupled_2var");
     assert_eq!(code, 81);
 }
-

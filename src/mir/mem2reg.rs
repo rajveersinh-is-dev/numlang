@@ -114,7 +114,10 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
         }
         Rvalue::Thunk { env, .. } => {
             for e in env {
-                places.push(Place { local: e.clone(), projections: vec![] });
+                places.push(Place {
+                    local: e.clone(),
+                    projections: vec![],
+                });
             }
         }
     }
@@ -144,7 +147,10 @@ pub fn promote_memory_to_registers(func: &mut MirFunction) {
         for stmt in &block.statements {
             let Statement::Assign(dest, _) = stmt;
             if candidates.contains(dest) {
-                place_defs.entry(dest.clone()).or_default().insert(block.id.clone());
+                place_defs
+                    .entry(dest.clone())
+                    .or_default()
+                    .insert(block.id.clone());
             }
         }
     }
@@ -186,7 +192,10 @@ pub fn promote_memory_to_registers(func: &mut MirFunction) {
             continue;
         }
         if let Some(parent) = dom.idom.get(b) {
-            dom_children.entry(parent.clone()).or_default().push(b.clone());
+            dom_children
+                .entry(parent.clone())
+                .or_default()
+                .push(b.clone());
         }
     }
 
@@ -444,7 +453,10 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
         }
         Rvalue::Thunk { env, .. } => {
             for e in env {
-                let p = Place { local: e.clone(), projections: vec![] };
+                let p = Place {
+                    local: e.clone(),
+                    projections: vec![],
+                };
                 if let Some(r) = replacements.get(&p) {
                     *e = r.local.clone();
                 }

@@ -34,13 +34,18 @@ fn compile_numlang(
     }
 
     let t0 = Instant::now();
-    let output = cmd.output().map_err(|e| format!("Failed to execute compiler: {}", e))?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute compiler: {}", e))?;
     let compile_time = t0.elapsed();
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        return Err(format!("Compilation failed:\nSTDOUT: {}\nSTDERR: {}", stdout, stderr));
+        return Err(format!(
+            "Compilation failed:\nSTDOUT: {}\nSTDERR: {}",
+            stdout, stderr
+        ));
     }
 
     Ok((exe_file, compile_time))
@@ -222,16 +227,23 @@ fn main() -> i64 {
     for w in &workloads {
         // Compile with Cranelift -O0
         let cl_res = compile_numlang(w.src, &test_dir, w.name, "cranelift", "0", w.supercompile);
-        assert!(cl_res.is_ok(), "Cranelift build failed for {}: {:?}", w.name, cl_res.err());
+        assert!(
+            cl_res.is_ok(),
+            "Cranelift build failed for {}: {:?}",
+            w.name,
+            cl_res.err()
+        );
         let (cl_exe, cl_compile_dur) = cl_res.unwrap();
-        let (_cl_code, cl_runtime_ns) = run_binary(&cl_exe).expect("Failed running Cranelift binary");
+        let (_cl_code, cl_runtime_ns) =
+            run_binary(&cl_exe).expect("Failed running Cranelift binary");
 
         // Try compiling with LLVM -O3
         let llvm_res = compile_numlang(w.src, &test_dir, w.name, "llvm", "3", w.supercompile);
 
         match llvm_res {
             Ok((llvm_exe, llvm_compile_dur)) => {
-                let (_llvm_code, llvm_runtime_ns) = run_binary(&llvm_exe).expect("Failed running LLVM binary");
+                let (_llvm_code, llvm_runtime_ns) =
+                    run_binary(&llvm_exe).expect("Failed running LLVM binary");
                 let speedup = if llvm_runtime_ns > 0 {
                     cl_runtime_ns as f64 / llvm_runtime_ns as f64
                 } else {
@@ -270,11 +282,17 @@ fn main() -> i64 {
         }
     }
 
-    println!("{:<24} | {:<15} | {:<15} | {:<12}", "Workload", "Cranelift -O0", "LLVM -O3", "Speedup");
+    println!(
+        "{:<24} | {:<15} | {:<15} | {:<12}",
+        "Workload", "Cranelift -O0", "LLVM -O3", "Speedup"
+    );
     println!("{:-<24}-|-{:-<15}-|-{:-<15}-|-{:-<12}", "", "", "", "");
 
     for (name, _cl_ct, cl_rt, _llvm_ct, llvm_rt, speedup) in &results {
-        println!("{:<24} | {:<15} | {:<15} | {:<12}", name, cl_rt, llvm_rt, speedup);
+        println!(
+            "{:<24} | {:<15} | {:<15} | {:<12}",
+            name, cl_rt, llvm_rt, speedup
+        );
     }
     println!("==========================================================================================\n");
 

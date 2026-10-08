@@ -186,7 +186,10 @@ pub fn generate_well_typed_program(seed: u64, config: &GenConfig) -> String {
                 let v2 = rng.choose(&vars).clone();
                 let c_add = rng.next_range(1, 20);
                 src.push_str(&format!("    if {} > {} {{\n", v1, v2));
-                src.push_str(&format!("        {} = ({} + {}) % 300;\n", target_var, v1, c_add));
+                src.push_str(&format!(
+                    "        {} = ({} + {}) % 300;\n",
+                    target_var, v1, c_add
+                ));
                 src.push_str("    } else {\n");
                 src.push_str(&format!("        {} = ({} - 2) % 300;\n", target_var, v2));
                 src.push_str("    }\n");
@@ -202,7 +205,10 @@ pub fn generate_well_typed_program(seed: u64, config: &GenConfig) -> String {
                 let loop_var = format!("iter_{}", s);
                 src.push_str(&format!("    let mut {}: i64 = 0;\n", loop_var));
                 src.push_str(&format!("    while {} < {} {{\n", loop_var, loop_bound));
-                src.push_str(&format!("        {} = ({} + {}) % 400;\n", target_var, target_var, loop_var));
+                src.push_str(&format!(
+                    "        {} = ({} + {}) % 400;\n",
+                    target_var, target_var, loop_var
+                ));
                 src.push_str(&format!("        {} = {} + 1;\n", loop_var, loop_var));
                 src.push_str("    }\n");
             }
@@ -247,11 +253,15 @@ mod tests {
             let res = evaluate_program(&program);
             match res {
                 OracleResult::Value(v) => {
-                    assert!((0..=256).contains(&v), "seed {} returned unexpected {}", seed, v);
+                    assert!(
+                        (0..=256).contains(&v),
+                        "seed {} returned unexpected {}",
+                        seed,
+                        v
+                    );
                 }
                 other => panic!("seed {} failed with {:?}", seed, other),
             }
         }
     }
 }
-

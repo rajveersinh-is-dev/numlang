@@ -1,6 +1,5 @@
 //! Statement and block lowering to Cranelift IR.
 
-use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
     types, InstBuilder, MemFlagsData, StackSlot, StackSlotData, StackSlotKind, TrapCode, Value,
@@ -8,12 +7,11 @@ use cranelift_codegen::ir::{
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::{FuncId, Module};
 use cranelift_object::ObjectModule;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast::BinaryOp;
-use crate::typecheck::{
-    Type, TypedBlock, TypedExpr, TypedLiteral, TypedStmt,
-};
 use super::abi::*;
+use crate::ast::BinaryOp;
+use crate::typecheck::{Type, TypedBlock, TypedExpr, TypedLiteral, TypedStmt};
 
 #[derive(Clone)]
 pub(crate) enum Storage {
@@ -69,9 +67,14 @@ impl ResolvedArray {
 
 pub(crate) fn format_index_key(expr: &TypedExpr) -> String {
     match expr {
-        TypedExpr::Literal { lit: TypedLiteral::Int(v, _), .. } => format!("#{}", v),
+        TypedExpr::Literal {
+            lit: TypedLiteral::Int(v, _),
+            ..
+        } => format!("#{}", v),
         TypedExpr::Ident { name, .. } => format!("${}", name),
-        TypedExpr::Binary { op, left, right, .. } => {
+        TypedExpr::Binary {
+            op, left, right, ..
+        } => {
             let l = format_index_key(left);
             let r = format_index_key(right);
             if l.is_empty() || r.is_empty() {
@@ -103,26 +106,47 @@ fn index_reads_var(expr: &TypedExpr, var: &str) -> bool {
     }
 }
 
-pub(crate) fn emit_copy_bytes_raw(builder: &mut FunctionBuilder, src_ptr: Value, dst_ptr: Value, total_bytes: usize) {
+pub(crate) fn emit_copy_bytes_raw(
+    builder: &mut FunctionBuilder,
+    src_ptr: Value,
+    dst_ptr: Value,
+    total_bytes: usize,
+) {
     let mut offset = 0;
     while offset + 8 <= total_bytes {
-        let val = builder.ins().load(types::I64, MemFlagsData::trusted(), src_ptr, offset as i32);
-        builder.ins().store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
+        let val = builder
+            .ins()
+            .load(types::I64, MemFlagsData::trusted(), src_ptr, offset as i32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
         offset += 8;
     }
     if offset + 4 <= total_bytes {
-        let val = builder.ins().load(types::I32, MemFlagsData::trusted(), src_ptr, offset as i32);
-        builder.ins().store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
+        let val = builder
+            .ins()
+            .load(types::I32, MemFlagsData::trusted(), src_ptr, offset as i32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
         offset += 4;
     }
     if offset + 2 <= total_bytes {
-        let val = builder.ins().load(types::I16, MemFlagsData::trusted(), src_ptr, offset as i32);
-        builder.ins().store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
+        let val = builder
+            .ins()
+            .load(types::I16, MemFlagsData::trusted(), src_ptr, offset as i32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
         offset += 2;
     }
     if offset < total_bytes {
-        let val = builder.ins().load(types::I8, MemFlagsData::trusted(), src_ptr, offset as i32);
-        builder.ins().store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
+        let val = builder
+            .ins()
+            .load(types::I8, MemFlagsData::trusted(), src_ptr, offset as i32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), val, dst_ptr, offset as i32);
     }
 }
 
@@ -167,8 +191,14 @@ pub(crate) struct FunctionTranslationState<'a> {
 impl<'a> FunctionTranslationState<'a> {
     pub(crate) fn get_type_size(&self, ty: &Type) -> usize {
         match ty {
-            Type::Struct(name) => self.struct_layouts.get(name).map_or(8, |l| l.total_size as usize),
-            Type::Enum(name) => self.enum_layouts.get(name).map_or(8, |l| l.total_size as usize),
+            Type::Struct(name) => self
+                .struct_layouts
+                .get(name)
+                .map_or(8, |l| l.total_size as usize),
+            Type::Enum(name) => self
+                .enum_layouts
+                .get(name)
+                .map_or(8, |l| l.total_size as usize),
             Type::Array(elem, len) => self.get_type_size(elem) * len,
             _ => ty.size_bytes(),
         }
@@ -190,7 +220,10 @@ impl<'a> FunctionTranslationState<'a> {
             let stmt = &block.stmts[i];
 
             // Full loop unrolling for small fixed iteration loops
-            if let TypedStmt::While { condition, body, .. } = stmt {
+            if let TypedStmt::While {
+                condition, body, ..
+            } = stmt
+            {
                 if i > 0 {
                     if let Some((var_name, limit)) = Self::get_small_constant_loop_info(condition) {
                         if Self::is_var_initialized_to_zero(&block.stmts[i - 1], var_name)
@@ -225,16 +258,15 @@ impl<'a> FunctionTranslationState<'a> {
         len: usize,
         builder: &mut FunctionBuilder,
     ) {
-        let is_oob = builder
-            .ins()
-            .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, idx_val, len as i64);
+        let is_oob =
+            builder
+                .ins()
+                .icmp_imm_u(IntCC::UnsignedGreaterThanOrEqual, idx_val, len as i64);
 
         let ok_block = builder.create_block();
         let panic_block = builder.create_block();
 
-        builder
-            .ins()
-            .brif(is_oob, panic_block, &[], ok_block, &[]);
+        builder.ins().brif(is_oob, panic_block, &[], ok_block, &[]);
 
         builder.switch_to_block(panic_block);
         builder.seal_block(panic_block);
@@ -255,7 +287,11 @@ impl<'a> FunctionTranslationState<'a> {
 
         #[cfg(target_os = "windows")]
         {
-            let written_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 8));
+            let written_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                8,
+            ));
             let written_addr = builder.ins().stack_addr(types::I64, written_slot, 0);
 
             let std_err_handle = builder.ins().iconst(types::I32, -12); // STD_ERROR_HANDLE
@@ -266,8 +302,13 @@ impl<'a> FunctionTranslationState<'a> {
 
                 let msg_len = builder.ins().iconst(types::I32, msg.len() as i64);
                 let zero64 = builder.ins().iconst(types::I64, 0);
-                let write_file_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-                builder.ins().call(write_file_func, &[h_stderr, msg_addr, msg_len, written_addr, zero64]);
+                let write_file_func = self
+                    .module
+                    .declare_func_in_func(self.write_file_id, builder.func);
+                builder.ins().call(
+                    write_file_func,
+                    &[h_stderr, msg_addr, msg_len, written_addr, zero64],
+                );
             }
         }
 
@@ -275,8 +316,12 @@ impl<'a> FunctionTranslationState<'a> {
         {
             let fd_stderr = builder.ins().iconst(types::I32, 2);
             let msg_len = builder.ins().iconst(types::I64, msg.len() as i64);
-            let write_func = self.module.declare_func_in_func(self.write_file_id, builder.func);
-            builder.ins().call(write_func, &[fd_stderr, msg_addr, msg_len]);
+            let write_func = self
+                .module
+                .declare_func_in_func(self.write_file_id, builder.func);
+            builder
+                .ins()
+                .call(write_func, &[fd_stderr, msg_addr, msg_len]);
         }
 
         let exit_code = builder.ins().iconst(types::I32, 101);
@@ -340,17 +385,33 @@ impl<'a> FunctionTranslationState<'a> {
                             Ok(ResolvedArray::Promoted { vars, len, elem_ty })
                         }
                         Storage::Array { slot, len } => {
-                            let elem_ty = ty.element_type().ok_or_else(|| CodegenError::BackendError("Expected array element type".to_string()))?.clone();
+                            let elem_ty = ty
+                                .element_type()
+                                .ok_or_else(|| {
+                                    CodegenError::BackendError(
+                                        "Expected array element type".to_string(),
+                                    )
+                                })?
+                                .clone();
                             Ok(ResolvedArray::Slot { slot, len, elem_ty })
                         }
-                        _ => Err(CodegenError::BackendError(format!("Argument '{name}' is not an array variable"))),
+                        _ => Err(CodegenError::BackendError(format!(
+                            "Argument '{name}' is not an array variable"
+                        ))),
                     }
                 } else {
-                    Err(CodegenError::BackendError(format!("Variable '{name}' not found")))
+                    Err(CodegenError::BackendError(format!(
+                        "Variable '{name}' not found"
+                    )))
                 }
             }
             TypedExpr::ArrayLiteral { elements, ty, .. } => {
-                let elem = ty.element_type().ok_or_else(|| CodegenError::BackendError("Expected array element type".to_string()))?.clone();
+                let elem = ty
+                    .element_type()
+                    .ok_or_else(|| {
+                        CodegenError::BackendError("Expected array element type".to_string())
+                    })?
+                    .clone();
                 let len = elements.len();
                 if len <= 16 {
                     let clif_ty = type_to_clif(elem.clone());
@@ -380,7 +441,9 @@ impl<'a> FunctionTranslationState<'a> {
                         let el_val = self.translate_expr(el, builder)?;
                         let offset = (i as i32) * (elem_size as i32);
                         let addr = builder.ins().stack_addr(types::I64, slot, offset);
-                        builder.ins().store(MemFlagsData::trusted(), el_val, addr, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), el_val, addr, 0);
                     }
                     Ok(ResolvedArray::Slot {
                         slot,
@@ -389,9 +452,18 @@ impl<'a> FunctionTranslationState<'a> {
                     })
                 }
             }
-            TypedExpr::Call { callee, args, ty, .. } if Self::is_array_op(callee) => {
-                let elem = ty.element_type().ok_or_else(|| CodegenError::BackendError("Expected array element type".to_string()))?.clone();
-                let len = ty.array_len().ok_or_else(|| CodegenError::BackendError("Expected array length".to_string()))?;
+            TypedExpr::Call {
+                callee, args, ty, ..
+            } if Self::is_array_op(callee) => {
+                let elem = ty
+                    .element_type()
+                    .ok_or_else(|| {
+                        CodegenError::BackendError("Expected array element type".to_string())
+                    })?
+                    .clone();
+                let len = ty.array_len().ok_or_else(|| {
+                    CodegenError::BackendError("Expected array length".to_string())
+                })?;
                 if len <= 16 {
                     let clif_ty = type_to_clif(elem.clone());
                     let mut vars = Vec::with_capacity(len);
@@ -421,7 +493,9 @@ impl<'a> FunctionTranslationState<'a> {
                     })
                 }
             }
-            _ => Err(CodegenError::BackendError("Expected array variable, literal, or array-returning call".to_string())),
+            _ => Err(CodegenError::BackendError(
+                "Expected array variable, literal, or array-returning call".to_string(),
+            )),
         }
     }
 
@@ -438,7 +512,9 @@ impl<'a> FunctionTranslationState<'a> {
                 let clif_ty = type_to_clif(elem_ty.clone());
                 let offset = (idx as i32) * elem_size;
                 let addr = builder.ins().stack_addr(types::I64, *slot, offset);
-                builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0)
+                builder
+                    .ins()
+                    .load(clif_ty, MemFlagsData::trusted(), addr, 0)
             }
         }
     }
@@ -834,35 +910,69 @@ impl<'a> FunctionTranslationState<'a> {
             "mat_inv4" => {
                 let arr = self.resolve_array(&args[0], builder)?;
                 let elem_ty = arr.elem_ty();
-                let a: Vec<Value> = (0..16).map(|i| self.get_array_element(&arr, i, builder)).collect();
+                let a: Vec<Value> = (0..16)
+                    .map(|i| self.get_array_element(&arr, i, builder))
+                    .collect();
 
-                let c00 = Self::emit_det3_val(builder, &elem_ty, a[5], a[6], a[7], a[9], a[10], a[11], a[13], a[14], a[15]);
-                let d01 = Self::emit_det3_val(builder, &elem_ty, a[4], a[6], a[7], a[8], a[10], a[11], a[12], a[14], a[15]);
+                let c00 = Self::emit_det3_val(
+                    builder, &elem_ty, a[5], a[6], a[7], a[9], a[10], a[11], a[13], a[14], a[15],
+                );
+                let d01 = Self::emit_det3_val(
+                    builder, &elem_ty, a[4], a[6], a[7], a[8], a[10], a[11], a[12], a[14], a[15],
+                );
                 let c01 = builder.ins().fneg(d01);
-                let c02 = Self::emit_det3_val(builder, &elem_ty, a[4], a[5], a[7], a[8], a[9], a[11], a[12], a[13], a[15]);
-                let d03 = Self::emit_det3_val(builder, &elem_ty, a[4], a[5], a[6], a[8], a[9], a[10], a[12], a[13], a[14]);
+                let c02 = Self::emit_det3_val(
+                    builder, &elem_ty, a[4], a[5], a[7], a[8], a[9], a[11], a[12], a[13], a[15],
+                );
+                let d03 = Self::emit_det3_val(
+                    builder, &elem_ty, a[4], a[5], a[6], a[8], a[9], a[10], a[12], a[13], a[14],
+                );
                 let c03 = builder.ins().fneg(d03);
 
-                let d10 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[9], a[10], a[11], a[13], a[14], a[15]);
+                let d10 = Self::emit_det3_val(
+                    builder, &elem_ty, a[1], a[2], a[3], a[9], a[10], a[11], a[13], a[14], a[15],
+                );
                 let c10 = builder.ins().fneg(d10);
-                let c11 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[8], a[10], a[11], a[12], a[14], a[15]);
-                let d12 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[8], a[9], a[11], a[12], a[13], a[15]);
+                let c11 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[2], a[3], a[8], a[10], a[11], a[12], a[14], a[15],
+                );
+                let d12 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[3], a[8], a[9], a[11], a[12], a[13], a[15],
+                );
                 let c12 = builder.ins().fneg(d12);
-                let c13 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[8], a[9], a[10], a[12], a[13], a[14]);
+                let c13 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[2], a[8], a[9], a[10], a[12], a[13], a[14],
+                );
 
-                let c20 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[13], a[14], a[15]);
-                let d21 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[12], a[14], a[15]);
+                let c20 = Self::emit_det3_val(
+                    builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[13], a[14], a[15],
+                );
+                let d21 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[12], a[14], a[15],
+                );
                 let c21 = builder.ins().fneg(d21);
-                let c22 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[12], a[13], a[15]);
-                let d23 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[12], a[13], a[14]);
+                let c22 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[12], a[13], a[15],
+                );
+                let d23 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[12], a[13], a[14],
+                );
                 let c23 = builder.ins().fneg(d23);
 
-                let d30 = Self::emit_det3_val(builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[9], a[10], a[11]);
+                let d30 = Self::emit_det3_val(
+                    builder, &elem_ty, a[1], a[2], a[3], a[5], a[6], a[7], a[9], a[10], a[11],
+                );
                 let c30 = builder.ins().fneg(d30);
-                let c31 = Self::emit_det3_val(builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[8], a[10], a[11]);
-                let d32 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[8], a[9], a[11]);
+                let c31 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[2], a[3], a[4], a[6], a[7], a[8], a[10], a[11],
+                );
+                let d32 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[3], a[4], a[5], a[7], a[8], a[9], a[11],
+                );
                 let c32 = builder.ins().fneg(d32);
-                let c33 = Self::emit_det3_val(builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[8], a[9], a[10]);
+                let c33 = Self::emit_det3_val(
+                    builder, &elem_ty, a[0], a[1], a[2], a[4], a[5], a[6], a[8], a[9], a[10],
+                );
 
                 let d0 = builder.ins().fmul(a[0], c00);
                 let d1 = builder.ins().fma(a[1], c01, d0);
@@ -872,10 +982,7 @@ impl<'a> FunctionTranslationState<'a> {
                 let inv_det = builder.ins().fdiv(one, det);
 
                 let cofactors = [
-                    c00, c10, c20, c30,
-                    c01, c11, c21, c31,
-                    c02, c12, c22, c32,
-                    c03, c13, c23, c33,
+                    c00, c10, c20, c30, c01, c11, c21, c31, c02, c12, c22, c32, c03, c13, c23, c33,
                 ];
                 let mut res = Vec::with_capacity(16);
                 for c in cofactors {
@@ -884,9 +991,12 @@ impl<'a> FunctionTranslationState<'a> {
                 Ok(res)
             }
             "mat_solve4" => {
-                let mat_inv = self.evaluate_array_op_values("mat_inv4", &args[0..1], elem_ty, 16, builder)?;
+                let mat_inv =
+                    self.evaluate_array_op_values("mat_inv4", &args[0..1], elem_ty, 16, builder)?;
                 let vec_b = self.resolve_array(&args[1], builder)?;
-                let b: Vec<Value> = (0..4).map(|i| self.get_array_element(&vec_b, i, builder)).collect();
+                let b: Vec<Value> = (0..4)
+                    .map(|i| self.get_array_element(&vec_b, i, builder))
+                    .collect();
                 let mut res = Vec::with_capacity(4);
                 for r in 0..4 {
                     let p0 = builder.ins().fmul(mat_inv[r * 4], b[0]);
@@ -983,8 +1093,12 @@ impl<'a> FunctionTranslationState<'a> {
             "fft8" => {
                 let re_arr = self.resolve_array(&args[0], builder)?;
                 let im_arr = self.resolve_array(&args[1], builder)?;
-                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
-                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let re_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&re_arr, k, builder))
+                    .collect();
+                let im_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&im_arr, k, builder))
+                    .collect();
                 let (r, i) = Self::emit_fft(builder, &re_in, &im_in, 8, false);
                 let mut res = r;
                 res.extend(i);
@@ -993,36 +1107,54 @@ impl<'a> FunctionTranslationState<'a> {
             "fft8_re" => {
                 let re_arr = self.resolve_array(&args[0], builder)?;
                 let im_arr = self.resolve_array(&args[1], builder)?;
-                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
-                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let re_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&re_arr, k, builder))
+                    .collect();
+                let im_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&im_arr, k, builder))
+                    .collect();
                 let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 8, true);
                 Ok(r)
             }
             "fft8_im" => {
                 let re_arr = self.resolve_array(&args[0], builder)?;
                 let im_arr = self.resolve_array(&args[1], builder)?;
-                let re_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
-                let im_in: Vec<Value> = (0..8).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let re_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&re_arr, k, builder))
+                    .collect();
+                let im_in: Vec<Value> = (0..8)
+                    .map(|k| self.get_array_element(&im_arr, k, builder))
+                    .collect();
                 let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 8, false);
                 Ok(i)
             }
             "fft16_re" => {
                 let re_arr = self.resolve_array(&args[0], builder)?;
                 let im_arr = self.resolve_array(&args[1], builder)?;
-                let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
-                let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let re_in: Vec<Value> = (0..16)
+                    .map(|k| self.get_array_element(&re_arr, k, builder))
+                    .collect();
+                let im_in: Vec<Value> = (0..16)
+                    .map(|k| self.get_array_element(&im_arr, k, builder))
+                    .collect();
                 let (r, _) = Self::emit_fft(builder, &re_in, &im_in, 16, true);
                 Ok(r)
             }
             "fft16_im" => {
                 let re_arr = self.resolve_array(&args[0], builder)?;
                 let im_arr = self.resolve_array(&args[1], builder)?;
-                let re_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&re_arr, k, builder)).collect();
-                let im_in: Vec<Value> = (0..16).map(|k| self.get_array_element(&im_arr, k, builder)).collect();
+                let re_in: Vec<Value> = (0..16)
+                    .map(|k| self.get_array_element(&re_arr, k, builder))
+                    .collect();
+                let im_in: Vec<Value> = (0..16)
+                    .map(|k| self.get_array_element(&im_arr, k, builder))
+                    .collect();
                 let (_, i) = Self::emit_fft(builder, &re_in, &im_in, 16, false);
                 Ok(i)
             }
-            _ => Err(CodegenError::BackendError(format!("Unsupported array op {callee}"))),
+            _ => Err(CodegenError::BackendError(format!(
+                "Unsupported array op {callee}"
+            ))),
         }
     }
 
@@ -1054,34 +1186,51 @@ impl<'a> FunctionTranslationState<'a> {
         if total_bytes <= 128 && total_bytes.is_multiple_of(16) {
             let mut chunks = Vec::with_capacity(total_bytes / 16);
             while offset + 16 <= total_bytes {
-                let chunk = builder.ins().stack_load(types::I64, types::I8X16, src_slot, offset as i32);
+                let chunk =
+                    builder
+                        .ins()
+                        .stack_load(types::I64, types::I8X16, src_slot, offset as i32);
                 chunks.push((offset, chunk));
                 offset += 16;
             }
             for (off, val) in chunks {
-                builder.ins().stack_store(types::I64, val, dst_slot, off as i32);
+                builder
+                    .ins()
+                    .stack_store(types::I64, val, dst_slot, off as i32);
             }
             return;
         }
 
         while offset + 16 <= total_bytes {
-            let chunk = builder.ins().stack_load(types::I64, types::I8X16, src_slot, offset as i32);
-            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
+            let chunk = builder
+                .ins()
+                .stack_load(types::I64, types::I8X16, src_slot, offset as i32);
+            builder
+                .ins()
+                .stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += 16;
         }
 
         // 8-byte scalar chunks
         while offset + 8 <= total_bytes {
-            let chunk = builder.ins().stack_load(types::I64, types::I64, src_slot, offset as i32);
-            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
+            let chunk = builder
+                .ins()
+                .stack_load(types::I64, types::I64, src_slot, offset as i32);
+            builder
+                .ins()
+                .stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += 8;
         }
         // remaining elements
         let clif_ty = type_to_clif(elem_ty.clone());
         let elem_size = elem_ty.size_bytes();
         while offset < total_bytes {
-            let chunk = builder.ins().stack_load(types::I64, clif_ty, src_slot, offset as i32);
-            builder.ins().stack_store(types::I64, chunk, dst_slot, offset as i32);
+            let chunk = builder
+                .ins()
+                .stack_load(types::I64, clif_ty, src_slot, offset as i32);
+            builder
+                .ins()
+                .stack_store(types::I64, chunk, dst_slot, offset as i32);
             offset += elem_size;
         }
     }
@@ -1121,19 +1270,31 @@ impl<'a> FunctionTranslationState<'a> {
         let elem_size = elem_ty.size_bytes() as i32;
 
         // If both arrays are stack slots, leverage SIMD vector arithmetic instructions
-        if let (ResolvedArray::Slot { slot: slot_a, .. }, ResolvedArray::Slot { slot: slot_b, .. }) = (&arr_a, &arr_b) {
+        if let (
+            ResolvedArray::Slot { slot: slot_a, .. },
+            ResolvedArray::Slot { slot: slot_b, .. },
+        ) = (&arr_a, &arr_b)
+        {
             let mut i = 0;
             match elem_ty {
                 Type::I64 => {
                     while i + 2 <= len {
                         let offset = (i as i32) * 8;
                         let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
-                        let va = builder.ins().load(types::I64X2, MemFlagsData::trusted(), addr_a, 0);
+                        let va =
+                            builder
+                                .ins()
+                                .load(types::I64X2, MemFlagsData::trusted(), addr_a, 0);
                         let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
-                        let vb = builder.ins().load(types::I64X2, MemFlagsData::trusted(), addr_b, 0);
+                        let vb =
+                            builder
+                                .ins()
+                                .load(types::I64X2, MemFlagsData::trusted(), addr_b, 0);
                         let vsum = builder.ins().iadd(va, vb);
                         let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), vsum, addr_d, 0);
                         i += 2;
                     }
                 }
@@ -1141,12 +1302,20 @@ impl<'a> FunctionTranslationState<'a> {
                     while i + 2 <= len {
                         let offset = (i as i32) * 8;
                         let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
-                        let va = builder.ins().load(types::F64X2, MemFlagsData::trusted(), addr_a, 0);
+                        let va =
+                            builder
+                                .ins()
+                                .load(types::F64X2, MemFlagsData::trusted(), addr_a, 0);
                         let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
-                        let vb = builder.ins().load(types::F64X2, MemFlagsData::trusted(), addr_b, 0);
+                        let vb =
+                            builder
+                                .ins()
+                                .load(types::F64X2, MemFlagsData::trusted(), addr_b, 0);
                         let vsum = builder.ins().fadd(va, vb);
                         let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), vsum, addr_d, 0);
                         i += 2;
                     }
                 }
@@ -1154,12 +1323,20 @@ impl<'a> FunctionTranslationState<'a> {
                     while i + 4 <= len {
                         let offset = (i as i32) * 4;
                         let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
-                        let va = builder.ins().load(types::I32X4, MemFlagsData::trusted(), addr_a, 0);
+                        let va =
+                            builder
+                                .ins()
+                                .load(types::I32X4, MemFlagsData::trusted(), addr_a, 0);
                         let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
-                        let vb = builder.ins().load(types::I32X4, MemFlagsData::trusted(), addr_b, 0);
+                        let vb =
+                            builder
+                                .ins()
+                                .load(types::I32X4, MemFlagsData::trusted(), addr_b, 0);
                         let vsum = builder.ins().iadd(va, vb);
                         let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), vsum, addr_d, 0);
                         i += 4;
                     }
                 }
@@ -1167,12 +1344,20 @@ impl<'a> FunctionTranslationState<'a> {
                     while i + 4 <= len {
                         let offset = (i as i32) * 4;
                         let addr_a = builder.ins().stack_addr(types::I64, *slot_a, offset);
-                        let va = builder.ins().load(types::F32X4, MemFlagsData::trusted(), addr_a, 0);
+                        let va =
+                            builder
+                                .ins()
+                                .load(types::F32X4, MemFlagsData::trusted(), addr_a, 0);
                         let addr_b = builder.ins().stack_addr(types::I64, *slot_b, offset);
-                        let vb = builder.ins().load(types::F32X4, MemFlagsData::trusted(), addr_b, 0);
+                        let vb =
+                            builder
+                                .ins()
+                                .load(types::F32X4, MemFlagsData::trusted(), addr_b, 0);
                         let vsum = builder.ins().fadd(va, vb);
                         let addr_d = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                        builder.ins().store(MemFlagsData::trusted(), vsum, addr_d, 0);
+                        builder
+                            .ins()
+                            .store(MemFlagsData::trusted(), vsum, addr_d, 0);
                         i += 4;
                     }
                 }
@@ -1188,7 +1373,9 @@ impl<'a> FunctionTranslationState<'a> {
                     builder.ins().iadd(val_a, val_b)
                 };
                 let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
-                builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
+                builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), sum, addr_dst, 0);
                 i += 1;
             }
             return Ok(());
@@ -1205,7 +1392,9 @@ impl<'a> FunctionTranslationState<'a> {
                 builder.ins().iadd(val_a, val_b)
             };
             let addr_dst = builder.ins().stack_addr(types::I64, dst_slot, offset);
-            builder.ins().store(MemFlagsData::trusted(), sum, addr_dst, 0);
+            builder
+                .ins()
+                .store(MemFlagsData::trusted(), sum, addr_dst, 0);
         }
         Ok(())
     }
@@ -1350,14 +1539,22 @@ impl<'a> FunctionTranslationState<'a> {
                 acc6 = builder.ins().fma(v_a6, v_b6, acc6);
                 acc7 = builder.ins().fma(v_a7, v_b7, acc7);
             } else {
-                let p0 = builder.ins().imul(v_a0, v_b0); acc0 = builder.ins().iadd(acc0, p0);
-                let p1 = builder.ins().imul(v_a1, v_b1); acc1 = builder.ins().iadd(acc1, p1);
-                let p2 = builder.ins().imul(v_a2, v_b2); acc2 = builder.ins().iadd(acc2, p2);
-                let p3 = builder.ins().imul(v_a3, v_b3); acc3 = builder.ins().iadd(acc3, p3);
-                let p4 = builder.ins().imul(v_a4, v_b4); acc4 = builder.ins().iadd(acc4, p4);
-                let p5 = builder.ins().imul(v_a5, v_b5); acc5 = builder.ins().iadd(acc5, p5);
-                let p6 = builder.ins().imul(v_a6, v_b6); acc6 = builder.ins().iadd(acc6, p6);
-                let p7 = builder.ins().imul(v_a7, v_b7); acc7 = builder.ins().iadd(acc7, p7);
+                let p0 = builder.ins().imul(v_a0, v_b0);
+                acc0 = builder.ins().iadd(acc0, p0);
+                let p1 = builder.ins().imul(v_a1, v_b1);
+                acc1 = builder.ins().iadd(acc1, p1);
+                let p2 = builder.ins().imul(v_a2, v_b2);
+                acc2 = builder.ins().iadd(acc2, p2);
+                let p3 = builder.ins().imul(v_a3, v_b3);
+                acc3 = builder.ins().iadd(acc3, p3);
+                let p4 = builder.ins().imul(v_a4, v_b4);
+                acc4 = builder.ins().iadd(acc4, p4);
+                let p5 = builder.ins().imul(v_a5, v_b5);
+                acc5 = builder.ins().iadd(acc5, p5);
+                let p6 = builder.ins().imul(v_a6, v_b6);
+                acc6 = builder.ins().iadd(acc6, p6);
+                let p7 = builder.ins().imul(v_a7, v_b7);
+                acc7 = builder.ins().iadd(acc7, p7);
             }
             i += 8;
         }
@@ -1456,7 +1653,9 @@ impl<'a> FunctionTranslationState<'a> {
             TypedExpr::FieldAccess { target, .. } => {
                 Self::collect_expr_reads(target, reads);
             }
-            TypedExpr::Match { scrutinee, arms, .. } => {
+            TypedExpr::Match {
+                scrutinee, arms, ..
+            } => {
                 Self::collect_expr_reads(scrutinee, reads);
                 for arm in arms {
                     Self::collect_expr_reads(&arm.body, reads);
@@ -1468,10 +1667,17 @@ impl<'a> FunctionTranslationState<'a> {
 
     pub(crate) fn collect_stmt_reads(stmt: &TypedStmt, reads: &mut HashSet<String>) {
         match stmt {
-            TypedStmt::Let { value, .. } | TypedStmt::Assign { value, .. } | TypedStmt::Expr(value) => {
+            TypedStmt::Let { value, .. }
+            | TypedStmt::Assign { value, .. }
+            | TypedStmt::Expr(value) => {
                 Self::collect_expr_reads(value, reads);
             }
-            TypedStmt::IndexAssign { target, index, value, .. } => {
+            TypedStmt::IndexAssign {
+                target,
+                index,
+                value,
+                ..
+            } => {
                 reads.insert(target.clone());
                 Self::collect_expr_reads(index, reads);
                 Self::collect_expr_reads(value, reads);
@@ -1489,9 +1695,20 @@ impl<'a> FunctionTranslationState<'a> {
 
     pub(crate) fn parse_stride_offset(index: &TypedExpr, loop_var: &str) -> Option<(i64, i64)> {
         match index {
-            TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } => {
+            TypedExpr::Binary {
+                op: BinaryOp::Add,
+                left,
+                right,
+                ..
+            } => {
                 let off = get_constant_int(right)?;
-                if let TypedExpr::Binary { op: BinaryOp::Mul, left: mul_l, right: mul_r, .. } = &**left {
+                if let TypedExpr::Binary {
+                    op: BinaryOp::Mul,
+                    left: mul_l,
+                    right: mul_r,
+                    ..
+                } = &**left
+                {
                     if matches!(&**mul_l, TypedExpr::Ident { name: v, .. } if v == loop_var) {
                         let stride = get_constant_int(mul_r)?;
                         return Some((stride, off));
@@ -1499,7 +1716,12 @@ impl<'a> FunctionTranslationState<'a> {
                 }
                 None
             }
-            TypedExpr::Binary { op: BinaryOp::Mul, left, right, .. } => {
+            TypedExpr::Binary {
+                op: BinaryOp::Mul,
+                left,
+                right,
+                ..
+            } => {
                 if matches!(&**left, TypedExpr::Ident { name: v, .. } if v == loop_var) {
                     let stride = get_constant_int(right)?;
                     return Some((stride, 0));
@@ -1510,7 +1732,12 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 
-    pub(crate) fn while_covers_array_indices(name: &str, len: usize, condition: &TypedExpr, body: &TypedBlock) -> bool {
+    pub(crate) fn while_covers_array_indices(
+        name: &str,
+        len: usize,
+        condition: &TypedExpr,
+        body: &TypedBlock,
+    ) -> bool {
         for s in &body.stmts {
             match s {
                 TypedStmt::IndexAssign { index, value, .. } => {
@@ -1531,8 +1758,15 @@ impl<'a> FunctionTranslationState<'a> {
             }
         }
         let (loop_var, bound) = match condition {
-            TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
-                if let (TypedExpr::Ident { name: v, .. }, Some(b)) = (&**left, get_constant_int(right)) {
+            TypedExpr::Binary {
+                op: BinaryOp::Lt,
+                left,
+                right,
+                ..
+            } => {
+                if let (TypedExpr::Ident { name: v, .. }, Some(b)) =
+                    (&**left, get_constant_int(right))
+                {
                     (v.as_str(), b)
                 } else {
                     return false;
@@ -1548,8 +1782,16 @@ impl<'a> FunctionTranslationState<'a> {
         for s in &body.stmts {
             if let TypedStmt::Assign { name: v, value, .. } = s {
                 if v == loop_var {
-                    if let TypedExpr::Binary { op: BinaryOp::Add, left, right, .. } = value {
-                        if matches!(&**left, TypedExpr::Ident { name: l, .. } if l == loop_var) && get_constant_int(right) == Some(1) {
+                    if let TypedExpr::Binary {
+                        op: BinaryOp::Add,
+                        left,
+                        right,
+                        ..
+                    } = value
+                    {
+                        if matches!(&**left, TypedExpr::Ident { name: l, .. } if l == loop_var)
+                            && get_constant_int(right) == Some(1)
+                        {
                             has_step = true;
                         }
                     }
@@ -1568,7 +1810,9 @@ impl<'a> FunctionTranslationState<'a> {
                 if target == name {
                     if let Some((stride, off)) = Self::parse_stride_offset(index, loop_var) {
                         if let Some(s) = detected_stride {
-                            if s != stride { return false; }
+                            if s != stride {
+                                return false;
+                            }
                         } else {
                             detected_stride = Some(stride);
                         }
@@ -1586,11 +1830,20 @@ impl<'a> FunctionTranslationState<'a> {
         false
     }
 
-    pub(crate) fn is_array_fully_overwritten(name: &str, len: usize, remaining_stmts: &[TypedStmt]) -> bool {
+    pub(crate) fn is_array_fully_overwritten(
+        name: &str,
+        len: usize,
+        remaining_stmts: &[TypedStmt],
+    ) -> bool {
         let mut assigned_indices = HashSet::new();
         for s in remaining_stmts {
             match s {
-                TypedStmt::IndexAssign { target, index, value, .. } if target == name => {
+                TypedStmt::IndexAssign {
+                    target,
+                    index,
+                    value,
+                    ..
+                } if target == name => {
                     let mut rhs_reads = HashSet::new();
                     Self::collect_expr_reads(value, &mut rhs_reads);
                     if rhs_reads.contains(name) {
@@ -1609,7 +1862,9 @@ impl<'a> FunctionTranslationState<'a> {
                         return false;
                     }
                 }
-                TypedStmt::While { condition, body, .. } => {
+                TypedStmt::While {
+                    condition, body, ..
+                } => {
                     let mut reads = HashSet::new();
                     Self::collect_stmt_reads(s, &mut reads);
                     if reads.contains(name) {
@@ -1626,7 +1881,10 @@ impl<'a> FunctionTranslationState<'a> {
                     if reads.contains(name) {
                         return false;
                     }
-                    if matches!(s, TypedStmt::If { .. } | TypedStmt::Break(_) | TypedStmt::Return(..)) {
+                    if matches!(
+                        s,
+                        TypedStmt::If { .. } | TypedStmt::Break(_) | TypedStmt::Return(..)
+                    ) {
                         return false;
                     }
                 }
@@ -1647,7 +1905,13 @@ impl<'a> FunctionTranslationState<'a> {
                 name, ty, value, ..
             } => {
                 if let Type::Struct(sname) = ty {
-                    let layout = self.struct_layouts.get(sname).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for struct {sname}")))?.clone();
+                    let layout = self
+                        .struct_layouts
+                        .get(sname)
+                        .ok_or_else(|| {
+                            CodegenError::BackendError(format!("Missing layout for struct {sname}"))
+                        })?
+                        .clone();
                     let slot_data = StackSlotData::new(
                         StackSlotKind::ExplicitSlot,
                         layout.total_size,
@@ -1658,21 +1922,49 @@ impl<'a> FunctionTranslationState<'a> {
 
                     if let TypedExpr::StructLiteral { fields, .. } = value {
                         for (fname, fexpr) in fields {
-                            let (foffset, fty) = layout.fields.get(fname).ok_or_else(|| CodegenError::BackendError(format!("Field {fname} not found in struct {sname}")))?.clone();
+                            let (foffset, fty) = layout
+                                .fields
+                                .get(fname)
+                                .ok_or_else(|| {
+                                    CodegenError::BackendError(format!(
+                                        "Field {fname} not found in struct {sname}"
+                                    ))
+                                })?
+                                .clone();
                             let fval = self.translate_expr(fexpr, builder)?;
                             if let Type::Struct(sub_name) = &fty {
-                                let sub_layout = self.struct_layouts.get(sub_name).ok_or_else(|| CodegenError::BackendError(format!("Missing sub-layout for struct {sub_name}")))?;
+                                let sub_layout =
+                                    self.struct_layouts.get(sub_name).ok_or_else(|| {
+                                        CodegenError::BackendError(format!(
+                                            "Missing sub-layout for struct {sub_name}"
+                                        ))
+                                    })?;
                                 let sub_dst = builder.ins().iadd_imm_s(dst_ptr, foffset as i64);
-                                Self::emit_copy_bytes(builder, fval, sub_dst, sub_layout.total_size as usize);
+                                Self::emit_copy_bytes(
+                                    builder,
+                                    fval,
+                                    sub_dst,
+                                    sub_layout.total_size as usize,
+                                );
                             } else {
-                                builder.ins().store(MemFlagsData::trusted(), fval, dst_ptr, foffset as i32);
+                                builder.ins().store(
+                                    MemFlagsData::trusted(),
+                                    fval,
+                                    dst_ptr,
+                                    foffset as i32,
+                                );
                             }
                         }
                     } else if matches!(value, TypedExpr::Literal { .. }) {
                         Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                     } else {
                         let src_ptr = self.translate_expr(value, builder)?;
-                        Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                        Self::emit_copy_bytes(
+                            builder,
+                            src_ptr,
+                            dst_ptr,
+                            layout.total_size as usize,
+                        );
                     }
 
                     self.variables.insert(
@@ -1686,7 +1978,13 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 if let Type::Enum(ename) = ty {
-                    let layout = self.enum_layouts.get(ename).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for enum {ename}")))?.clone();
+                    let layout = self
+                        .enum_layouts
+                        .get(ename)
+                        .ok_or_else(|| {
+                            CodegenError::BackendError(format!("Missing layout for enum {ename}"))
+                        })?
+                        .clone();
                     let slot_data = StackSlotData::new(
                         StackSlotKind::ExplicitSlot,
                         layout.total_size,
@@ -1699,7 +1997,12 @@ impl<'a> FunctionTranslationState<'a> {
                         Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                     } else {
                         let src_ptr = self.translate_expr(value, builder)?;
-                        Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                        Self::emit_copy_bytes(
+                            builder,
+                            src_ptr,
+                            dst_ptr,
+                            layout.total_size as usize,
+                        );
                     }
 
                     self.variables.insert(
@@ -1717,7 +2020,11 @@ impl<'a> FunctionTranslationState<'a> {
                     if *len <= 16 && !is_dynamic && !elem.is_struct() {
                         let clif_ty = type_to_clif((**elem).clone());
                         let vars = match self.variables.get(name) {
-                            Some(Storage::PromotedArray { vars: existing_vars, len: existing_len, .. }) if *existing_len == *len => existing_vars.clone(),
+                            Some(Storage::PromotedArray {
+                                vars: existing_vars,
+                                len: existing_len,
+                                ..
+                            }) if *existing_len == *len => existing_vars.clone(),
                             _ => {
                                 let mut vars = Vec::with_capacity(*len);
                                 for _ in 0..*len {
@@ -1727,7 +2034,8 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         };
 
-                        let is_dead_init = Self::is_array_fully_overwritten(name, *len, remaining_stmts);
+                        let is_dead_init =
+                            Self::is_array_fully_overwritten(name, *len, remaining_stmts);
                         if !is_dead_init {
                             match value {
                                 TypedExpr::ArrayLiteral { elements, .. } => {
@@ -1737,7 +2045,8 @@ impl<'a> FunctionTranslationState<'a> {
                                     }
                                 }
                                 TypedExpr::Ident { name: src_name, .. } => {
-                                    if let Some(src_storage) = self.variables.get(src_name).cloned() {
+                                    if let Some(src_storage) = self.variables.get(src_name).cloned()
+                                    {
                                         match src_storage {
                                             Storage::PromotedArray { vars: src_vars, .. } => {
                                                 for i in 0..*len {
@@ -1749,7 +2058,12 @@ impl<'a> FunctionTranslationState<'a> {
                                                 let elem_size = elem.size_bytes() as i32;
                                                 for i in 0..*len {
                                                     let offset = (i as i32) * elem_size;
-                                                    let val = builder.ins().stack_load(types::I64, clif_ty, src_slot, offset);
+                                                    let val = builder.ins().stack_load(
+                                                        types::I64,
+                                                        clif_ty,
+                                                        src_slot,
+                                                        offset,
+                                                    );
                                                     builder.def_var(vars[i], val);
                                                 }
                                             }
@@ -1757,12 +2071,20 @@ impl<'a> FunctionTranslationState<'a> {
                                         }
                                     }
                                 }
-                                TypedExpr::Call { callee, args, .. } if Self::is_array_op(callee) => {
-                                    self.translate_array_op_into_vars(callee, args, &vars, elem, *len, builder)?;
+                                TypedExpr::Call { callee, args, .. }
+                                    if Self::is_array_op(callee) =>
+                                {
+                                    self.translate_array_op_into_vars(
+                                        callee, args, &vars, elem, *len, builder,
+                                    )?;
                                 }
                                 _ => {
                                     let zero = if elem.is_float() {
-                                        if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                                        if **elem == Type::F32 {
+                                            builder.ins().f32const(0.0)
+                                        } else {
+                                            builder.ins().f64const(0.0)
+                                        }
                                     } else {
                                         builder.ins().iconst(clif_ty, 0)
                                     };
@@ -1787,15 +2109,22 @@ impl<'a> FunctionTranslationState<'a> {
                     let elem_size = self.get_type_size(elem) as u32;
                     let total_bytes = (elem_size * (*len as u32)).max(1);
                     let slot = match self.variables.get(name) {
-                        Some(Storage::Array { slot: existing_slot, len: existing_len }) if *existing_len == *len => *existing_slot,
+                        Some(Storage::Array {
+                            slot: existing_slot,
+                            len: existing_len,
+                        }) if *existing_len == *len => *existing_slot,
                         _ => {
-                            let slot_data =
-                                StackSlotData::new(StackSlotKind::ExplicitSlot, total_bytes, elem_size.min(8) as u8);
+                            let slot_data = StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                total_bytes,
+                                elem_size.min(8) as u8,
+                            );
                             builder.create_sized_stack_slot(slot_data)
                         }
                     };
 
-                    let is_dead_init = Self::is_array_fully_overwritten(name, *len, remaining_stmts);
+                    let is_dead_init =
+                        Self::is_array_fully_overwritten(name, *len, remaining_stmts);
                     if !is_dead_init {
                         match value {
                             TypedExpr::ArrayLiteral { elements, .. } => {
@@ -1803,8 +2132,14 @@ impl<'a> FunctionTranslationState<'a> {
                                     let el_val = self.translate_expr(el, builder)?;
                                     let offset = (i as i32) * (elem_size as i32);
                                     if el.ty().is_struct() {
-                                        let dst_addr = builder.ins().stack_addr(types::I64, slot, offset);
-                                        Self::emit_copy_bytes(builder, el_val, dst_addr, elem_size as usize);
+                                        let dst_addr =
+                                            builder.ins().stack_addr(types::I64, slot, offset);
+                                        Self::emit_copy_bytes(
+                                            builder,
+                                            el_val,
+                                            dst_addr,
+                                            elem_size as usize,
+                                        );
                                     } else {
                                         builder.ins().stack_store(types::I64, el_val, slot, offset);
                                     }
@@ -1817,24 +2152,41 @@ impl<'a> FunctionTranslationState<'a> {
                                             for i in 0..*len {
                                                 let offset = (i as i32) * (elem_size as i32);
                                                 let el_val = builder.use_var(src_vars[i]);
-                                                builder.ins().stack_store(types::I64, el_val, slot, offset);
+                                                builder.ins().stack_store(
+                                                    types::I64,
+                                                    el_val,
+                                                    slot,
+                                                    offset,
+                                                );
                                             }
                                         }
                                         Storage::Array { slot: src_slot, .. } => {
                                             let total_bytes = (*len) * self.get_type_size(elem);
-                                            self.copy_array_slots(src_slot, slot, total_bytes, elem, builder);
+                                            self.copy_array_slots(
+                                                src_slot,
+                                                slot,
+                                                total_bytes,
+                                                elem,
+                                                builder,
+                                            );
                                         }
                                         _ => {}
                                     }
                                 }
                             }
                             TypedExpr::Call { callee, args, .. } if Self::is_array_op(callee) => {
-                                self.translate_array_op_into_slot(callee, args, slot, elem, *len, builder)?;
+                                self.translate_array_op_into_slot(
+                                    callee, args, slot, elem, *len, builder,
+                                )?;
                             }
                             _ => {
                                 let clif_ty = type_to_clif((**elem).clone());
                                 let zero = if elem.is_float() {
-                                    if **elem == Type::F32 { builder.ins().f32const(0.0) } else { builder.ins().f64const(0.0) }
+                                    if **elem == Type::F32 {
+                                        builder.ins().f32const(0.0)
+                                    } else {
+                                        builder.ins().f64const(0.0)
+                                    }
                                 } else {
                                     builder.ins().iconst(clif_ty, 0)
                                 };
@@ -1848,7 +2200,9 @@ impl<'a> FunctionTranslationState<'a> {
 
                     self.variables
                         .insert(name.clone(), Storage::Array { slot, len: *len });
-                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
+                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| {
+                        arr != name && !index_reads_var(idx_expr, name)
+                    });
                     Ok(false)
                 } else {
                     let val = self.translate_expr(value, builder)?;
@@ -1857,53 +2211,103 @@ impl<'a> FunctionTranslationState<'a> {
                         _ => {
                             let clif_ty = type_to_clif(ty.clone());
                             let new_var = builder.declare_var(clif_ty);
-                            self.variables.insert(name.clone(), Storage::Scalar(new_var));
+                            self.variables
+                                .insert(name.clone(), Storage::Scalar(new_var));
                             new_var
                         }
                     };
                     builder.def_var(var, val);
-                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
+                    self.array_load_cache.retain(|(arr, _), (idx_expr, _)| {
+                        arr != name && !index_reads_var(idx_expr, name)
+                    });
                     Ok(false)
                 }
             }
 
             TypedStmt::Assign { name, value, .. } => {
-                let storage = self
-                    .variables
-                    .get(name)
-                    .cloned()
-                    .ok_or_else(|| CodegenError::BackendError("Variable must exist for assignment".to_string()))?;
+                let storage = self.variables.get(name).cloned().ok_or_else(|| {
+                    CodegenError::BackendError("Variable must exist for assignment".to_string())
+                })?;
                 match storage {
                     Storage::Struct { slot, struct_name } => {
-                        let layout = self.struct_layouts.get(&struct_name).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for struct {struct_name}")))?.clone();
+                        let layout = self
+                            .struct_layouts
+                            .get(&struct_name)
+                            .ok_or_else(|| {
+                                CodegenError::BackendError(format!(
+                                    "Missing layout for struct {struct_name}"
+                                ))
+                            })?
+                            .clone();
                         let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
                         if let TypedExpr::StructLiteral { fields, .. } = value {
                             for (fname, fexpr) in fields {
-                                let (foffset, fty) = layout.fields.get(fname).ok_or_else(|| CodegenError::BackendError(format!("Field {fname} not found in struct {struct_name}")))?.clone();
+                                let (foffset, fty) = layout
+                                    .fields
+                                    .get(fname)
+                                    .ok_or_else(|| {
+                                        CodegenError::BackendError(format!(
+                                            "Field {fname} not found in struct {struct_name}"
+                                        ))
+                                    })?
+                                    .clone();
                                 let fval = self.translate_expr(fexpr, builder)?;
                                 if let Type::Struct(sub_name) = &fty {
-                                    let sub_layout = self.struct_layouts.get(sub_name).ok_or_else(|| CodegenError::BackendError(format!("Missing sub-layout for struct {sub_name}")))?;
+                                    let sub_layout =
+                                        self.struct_layouts.get(sub_name).ok_or_else(|| {
+                                            CodegenError::BackendError(format!(
+                                                "Missing sub-layout for struct {sub_name}"
+                                            ))
+                                        })?;
                                     let sub_dst = builder.ins().iadd_imm_s(dst_ptr, foffset as i64);
-                                    Self::emit_copy_bytes(builder, fval, sub_dst, sub_layout.total_size as usize);
+                                    Self::emit_copy_bytes(
+                                        builder,
+                                        fval,
+                                        sub_dst,
+                                        sub_layout.total_size as usize,
+                                    );
                                 } else {
-                                    builder.ins().store(MemFlagsData::trusted(), fval, dst_ptr, foffset as i32);
+                                    builder.ins().store(
+                                        MemFlagsData::trusted(),
+                                        fval,
+                                        dst_ptr,
+                                        foffset as i32,
+                                    );
                                 }
                             }
                         } else if matches!(value, TypedExpr::Literal { .. }) {
                             Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                         } else {
                             let src_ptr = self.translate_expr(value, builder)?;
-                            Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                            Self::emit_copy_bytes(
+                                builder,
+                                src_ptr,
+                                dst_ptr,
+                                layout.total_size as usize,
+                            );
                         }
                     }
                     Storage::Enum { slot, enum_name } => {
-                        let layout = self.enum_layouts.get(&enum_name).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for enum {enum_name}")))?.clone();
+                        let layout = self
+                            .enum_layouts
+                            .get(&enum_name)
+                            .ok_or_else(|| {
+                                CodegenError::BackendError(format!(
+                                    "Missing layout for enum {enum_name}"
+                                ))
+                            })?
+                            .clone();
                         let dst_ptr = builder.ins().stack_addr(types::I64, slot, 0);
                         if matches!(value, TypedExpr::Literal { .. }) {
                             Self::emit_zero_bytes(builder, dst_ptr, layout.total_size as usize);
                         } else {
                             let src_ptr = self.translate_expr(value, builder)?;
-                            Self::emit_copy_bytes(builder, src_ptr, dst_ptr, layout.total_size as usize);
+                            Self::emit_copy_bytes(
+                                builder,
+                                src_ptr,
+                                dst_ptr,
+                                layout.total_size as usize,
+                            );
                         }
                     }
                     Storage::Scalar(var) => {
@@ -1925,8 +2329,17 @@ impl<'a> FunctionTranslationState<'a> {
                                         let clif_ty = type_to_clif(elem_ty.clone());
                                         for i in 0..len {
                                             let offset = (i as i32) * elem_size;
-                                            let addr = builder.ins().stack_addr(types::I64, src_slot, offset);
-                                            let val = builder.ins().load(clif_ty, MemFlagsData::trusted(), addr, 0);
+                                            let addr = builder.ins().stack_addr(
+                                                types::I64,
+                                                src_slot,
+                                                offset,
+                                            );
+                                            let val = builder.ins().load(
+                                                clif_ty,
+                                                MemFlagsData::trusted(),
+                                                addr,
+                                                0,
+                                            );
                                             builder.def_var(vars[i], val);
                                         }
                                     }
@@ -1935,13 +2348,25 @@ impl<'a> FunctionTranslationState<'a> {
                             }
                         } else if let TypedExpr::Call { callee, args, .. } = value {
                             if Self::is_array_op(callee) {
-                                self.translate_array_op_into_vars(callee, args, &vars, &elem_ty, len, builder)?;
+                                self.translate_array_op_into_vars(
+                                    callee, args, &vars, &elem_ty, len, builder,
+                                )?;
                             }
                         }
                     }
                     Storage::Array { slot, len } => {
-                        if let TypedExpr::Ident { name: src_name, ty, .. } = value {
-                            let elem = ty.element_type().ok_or_else(|| CodegenError::BackendError("Expected array element type".to_string()))?.clone();
+                        if let TypedExpr::Ident {
+                            name: src_name, ty, ..
+                        } = value
+                        {
+                            let elem = ty
+                                .element_type()
+                                .ok_or_else(|| {
+                                    CodegenError::BackendError(
+                                        "Expected array element type".to_string(),
+                                    )
+                                })?
+                                .clone();
                             let elem_size = self.get_type_size(&elem) as i32;
                             if let Some(src_storage) = self.variables.get(src_name).cloned() {
                                 match src_storage {
@@ -1949,25 +2374,50 @@ impl<'a> FunctionTranslationState<'a> {
                                         for i in 0..len {
                                             let offset = (i as i32) * elem_size;
                                             let el_val = builder.use_var(src_vars[i]);
-                                            builder.ins().stack_store(types::I64, el_val, slot, offset);
+                                            builder.ins().stack_store(
+                                                types::I64,
+                                                el_val,
+                                                slot,
+                                                offset,
+                                            );
                                         }
                                     }
                                     Storage::Array { slot: src_slot, .. } => {
                                         let total_bytes = len * self.get_type_size(&elem);
-                                        self.copy_array_slots(src_slot, slot, total_bytes, &elem, builder);
+                                        self.copy_array_slots(
+                                            src_slot,
+                                            slot,
+                                            total_bytes,
+                                            &elem,
+                                            builder,
+                                        );
                                     }
                                     _ => {}
                                 }
                             }
-                        } else if let TypedExpr::Call { callee, args, ty, .. } = value {
+                        } else if let TypedExpr::Call {
+                            callee, args, ty, ..
+                        } = value
+                        {
                             if Self::is_array_op(callee) {
-                                let elem = ty.element_type().ok_or_else(|| CodegenError::BackendError("Expected array element type".to_string()))?.clone();
-                                self.translate_array_op_into_slot(callee, args, slot, &elem, len, builder)?;
+                                let elem = ty
+                                    .element_type()
+                                    .ok_or_else(|| {
+                                        CodegenError::BackendError(
+                                            "Expected array element type".to_string(),
+                                        )
+                                    })?
+                                    .clone();
+                                self.translate_array_op_into_slot(
+                                    callee, args, slot, &elem, len, builder,
+                                )?;
                             }
                         }
                     }
                 }
-                self.array_load_cache.retain(|(arr, _), (idx_expr, _)| arr != name && !index_reads_var(idx_expr, name));
+                self.array_load_cache.retain(|(arr, _), (idx_expr, _)| {
+                    arr != name && !index_reads_var(idx_expr, name)
+                });
                 Ok(false)
             }
 
@@ -1979,11 +2429,9 @@ impl<'a> FunctionTranslationState<'a> {
                 ..
             } => {
                 self.array_load_cache.retain(|(arr, _), _| arr != target);
-                let storage = self
-                    .variables
-                    .get(target)
-                    .cloned()
-                    .ok_or_else(|| CodegenError::BackendError("Target must be an array variable".to_string()))?;
+                let storage = self.variables.get(target).cloned().ok_or_else(|| {
+                    CodegenError::BackendError("Target must be an array variable".to_string())
+                })?;
                 match storage {
                     Storage::PromotedArray { vars, len, .. } => {
                         if let TypedExpr::Literal {
@@ -2029,7 +2477,8 @@ impl<'a> FunctionTranslationState<'a> {
                             if c >= 0 && (c as usize) < len {
                                 let offset = (c as i32) * (elem_size as i32);
                                 if elem_ty.is_struct() {
-                                    let dst_addr = builder.ins().stack_addr(types::I64, slot, offset);
+                                    let dst_addr =
+                                        builder.ins().stack_addr(types::I64, slot, offset);
                                     Self::emit_copy_bytes(builder, val, dst_addr, elem_size);
                                 } else {
                                     builder.ins().stack_store(types::I64, val, slot, offset);
@@ -2064,27 +2513,68 @@ impl<'a> FunctionTranslationState<'a> {
                         if elem_ty.is_struct() {
                             Self::emit_copy_bytes(builder, val, elem_addr, elem_size);
                         } else {
-                            builder.ins().store(MemFlagsData::trusted(), val, elem_addr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlagsData::trusted(), val, elem_addr, 0);
                         }
                         Ok(false)
                     }
-                    _ => Err(CodegenError::BackendError("Target must be an array variable".to_string())),
+                    _ => Err(CodegenError::BackendError(
+                        "Target must be an array variable".to_string(),
+                    )),
                 }
             }
 
-            TypedStmt::FieldAssign { target, field, value, .. } => {
-                let storage = self.variables.get(target).cloned().ok_or_else(|| CodegenError::BackendError("FieldAssign target variable must exist".to_string()))?;
+            TypedStmt::FieldAssign {
+                target,
+                field,
+                value,
+                ..
+            } => {
+                let storage = self.variables.get(target).cloned().ok_or_else(|| {
+                    CodegenError::BackendError("FieldAssign target variable must exist".to_string())
+                })?;
                 if let Storage::Struct { slot, struct_name } = storage {
-                    let layout = self.struct_layouts.get(&struct_name).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for struct {struct_name}")))?.clone();
-                    let (foffset, fty) = layout.fields.get(field).ok_or_else(|| CodegenError::BackendError(format!("Field {field} not found in struct {struct_name}")))?.clone();
+                    let layout = self
+                        .struct_layouts
+                        .get(&struct_name)
+                        .ok_or_else(|| {
+                            CodegenError::BackendError(format!(
+                                "Missing layout for struct {struct_name}"
+                            ))
+                        })?
+                        .clone();
+                    let (foffset, fty) = layout
+                        .fields
+                        .get(field)
+                        .ok_or_else(|| {
+                            CodegenError::BackendError(format!(
+                                "Field {field} not found in struct {struct_name}"
+                            ))
+                        })?
+                        .clone();
                     let target_ptr = builder.ins().stack_addr(types::I64, slot, 0);
                     let fval = self.translate_expr(value, builder)?;
                     if let Type::Struct(sub_name) = &fty {
-                        let sub_layout = self.struct_layouts.get(sub_name).ok_or_else(|| CodegenError::BackendError(format!("Missing sub-layout for struct {sub_name}")))?;
+                        let sub_layout = self.struct_layouts.get(sub_name).ok_or_else(|| {
+                            CodegenError::BackendError(format!(
+                                "Missing sub-layout for struct {sub_name}"
+                            ))
+                        })?;
                         let sub_dst = builder.ins().iadd_imm_s(target_ptr, foffset as i64);
-                        Self::emit_copy_bytes(builder, fval, sub_dst, sub_layout.total_size as usize);
+                        Self::emit_copy_bytes(
+                            builder,
+                            fval,
+                            sub_dst,
+                            sub_layout.total_size as usize,
+                        );
                     } else {
-                        builder.ins().store(MemFlagsData::trusted(), fval, target_ptr, foffset as i32);
+                        builder.ins().store(
+                            MemFlagsData::trusted(),
+                            fval,
+                            target_ptr,
+                            foffset as i32,
+                        );
                     }
                 }
                 Ok(false)
@@ -2094,14 +2584,26 @@ impl<'a> FunctionTranslationState<'a> {
                 if let Some(expr) = opt_expr {
                     if let Type::Struct(sname) = expr.ty() {
                         let val = self.translate_expr(expr, builder)?;
-                        let sret = self.current_sret_ptr.ok_or_else(|| CodegenError::BackendError("sret_ptr must exist when returning struct".to_string()))?;
-                        let layout = self.struct_layouts.get(&sname).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for struct {sname}")))?;
+                        let sret = self.current_sret_ptr.ok_or_else(|| {
+                            CodegenError::BackendError(
+                                "sret_ptr must exist when returning struct".to_string(),
+                            )
+                        })?;
+                        let layout = self.struct_layouts.get(&sname).ok_or_else(|| {
+                            CodegenError::BackendError(format!("Missing layout for struct {sname}"))
+                        })?;
                         Self::emit_copy_bytes(builder, val, sret, layout.total_size as usize);
                         builder.ins().return_(&[sret]);
                     } else if let Type::Enum(ename) = expr.ty() {
                         let val = self.translate_expr(expr, builder)?;
-                        let sret = self.current_sret_ptr.ok_or_else(|| CodegenError::BackendError("sret_ptr must exist when returning enum".to_string()))?;
-                        let layout = self.enum_layouts.get(&ename).ok_or_else(|| CodegenError::BackendError(format!("Missing layout for enum {ename}")))?;
+                        let sret = self.current_sret_ptr.ok_or_else(|| {
+                            CodegenError::BackendError(
+                                "sret_ptr must exist when returning enum".to_string(),
+                            )
+                        })?;
+                        let layout = self.enum_layouts.get(&ename).ok_or_else(|| {
+                            CodegenError::BackendError(format!("Missing layout for enum {ename}"))
+                        })?;
                         Self::emit_copy_bytes(builder, val, sret, layout.total_size as usize);
                         builder.ins().return_(&[sret]);
                     } else {
@@ -2124,10 +2626,9 @@ impl<'a> FunctionTranslationState<'a> {
             }
 
             TypedStmt::Continue(..) => {
-                let cont_block = *self
-                    .loop_continue_blocks
-                    .last()
-                    .ok_or_else(|| CodegenError::BackendError("Continue outside loop".to_string()))?;
+                let cont_block = *self.loop_continue_blocks.last().ok_or_else(|| {
+                    CodegenError::BackendError("Continue outside loop".to_string())
+                })?;
                 builder.ins().jump(cont_block, &[]);
                 Ok(true)
             }
@@ -2159,13 +2660,9 @@ impl<'a> FunctionTranslationState<'a> {
                 let else_block = builder.create_block();
                 let merge_block = builder.create_block();
 
-                builder.ins().brif(
-                    cond_val,
-                    then_block,
-                    &[],
-                    else_block,
-                    &[],
-                );
+                builder
+                    .ins()
+                    .brif(cond_val, then_block, &[], else_block, &[]);
 
                 // Then branch
                 builder.switch_to_block(then_block);
@@ -2181,13 +2678,21 @@ impl<'a> FunctionTranslationState<'a> {
                 let else_term = if let Some(eb) = else_branch {
                     let saved_nonneg = self.known_non_negative_vars.clone();
                     let saved_u32 = self.known_u32_vars.clone();
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
-                                if is_expr_known_non_negative(right, &self.known_non_negative_vars) {
+                                if is_expr_known_non_negative(right, &self.known_non_negative_vars)
+                                {
                                     self.known_non_negative_vars.insert(name.clone());
                                 }
-                                if is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars) {
+                                if is_expr_known_u32(
+                                    right,
+                                    &self.known_non_negative_vars,
+                                    &self.known_u32_vars,
+                                ) {
                                     self.known_u32_vars.insert(name.clone());
                                 }
                             }
@@ -2208,13 +2713,21 @@ impl<'a> FunctionTranslationState<'a> {
                 builder.seal_block(merge_block);
 
                 if then_term && else_branch.is_none() {
-                    if let TypedExpr::Binary { op, left, right, .. } = condition {
+                    if let TypedExpr::Binary {
+                        op, left, right, ..
+                    } = condition
+                    {
                         if *op == BinaryOp::Le || *op == BinaryOp::Lt {
                             if let TypedExpr::Ident { name, .. } = &**left {
-                                if is_expr_known_non_negative(right, &self.known_non_negative_vars) {
+                                if is_expr_known_non_negative(right, &self.known_non_negative_vars)
+                                {
                                     self.known_non_negative_vars.insert(name.clone());
                                 }
-                                if is_expr_known_u32(right, &self.known_non_negative_vars, &self.known_u32_vars) {
+                                if is_expr_known_u32(
+                                    right,
+                                    &self.known_non_negative_vars,
+                                    &self.known_u32_vars,
+                                ) {
                                     self.known_u32_vars.insert(name.clone());
                                 }
                             }
@@ -2231,22 +2744,30 @@ impl<'a> FunctionTranslationState<'a> {
             }
 
             TypedStmt::While {
-                condition,
-                body,
-                ..
+                condition, body, ..
             } => {
                 self.array_load_cache.clear();
                 let should_reset = self.should_reset_loop_iteration(body);
 
                 let induction_info = match condition {
-                    TypedExpr::Binary { op: BinaryOp::Lt, left, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Lt,
+                        left,
+                        right,
+                        ..
+                    } => {
                         if let TypedExpr::Ident { name, .. } = &**left {
                             Some((name.clone(), &**right, false))
                         } else {
                             None
                         }
                     }
-                    TypedExpr::Binary { op: BinaryOp::Le, left, right, .. } => {
+                    TypedExpr::Binary {
+                        op: BinaryOp::Le,
+                        left,
+                        right,
+                        ..
+                    } => {
                         if let TypedExpr::Ident { name, .. } = &**left {
                             Some((name.clone(), &**right, true))
                         } else {
@@ -2281,11 +2802,23 @@ impl<'a> FunctionTranslationState<'a> {
                             }
 
                             let can_unroll = if is_le {
-                                builder.ins().icmp(IntCC::SignedLessThanOrEqual, cur_plus_3, limit_val)
+                                builder.ins().icmp(
+                                    IntCC::SignedLessThanOrEqual,
+                                    cur_plus_3,
+                                    limit_val,
+                                )
                             } else {
-                                builder.ins().icmp(IntCC::SignedLessThan, cur_plus_3, limit_val)
+                                builder
+                                    .ins()
+                                    .icmp(IntCC::SignedLessThan, cur_plus_3, limit_val)
                             };
-                            builder.ins().brif(can_unroll, unroll_body_block, &[], cleanup_head_block, &[]);
+                            builder.ins().brif(
+                                can_unroll,
+                                unroll_body_block,
+                                &[],
+                                cleanup_head_block,
+                                &[],
+                            );
 
                             // Unrolled body (4 iterations straight-line)
                             builder.switch_to_block(unroll_body_block);
@@ -2294,7 +2827,9 @@ impl<'a> FunctionTranslationState<'a> {
                                 self.translate_block(body, builder)?;
                             }
                             if should_reset {
-                                let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                                let loop_reset_func = self
+                                    .module
+                                    .declare_func_in_func(self.loop_reset_id, builder.func);
                                 builder.ins().call(loop_reset_func, &[]);
                             }
                             builder.ins().jump(unroll_head_block, &[]);
@@ -2304,26 +2839,41 @@ impl<'a> FunctionTranslationState<'a> {
                             builder.switch_to_block(cleanup_head_block);
                             let cur_val_cleanup = builder.use_var(var);
                             let mut limit_val_cleanup = self.translate_expr(limit_expr, builder)?;
-                            let limit_clif_ty_cleanup = builder.func.dfg.value_type(limit_val_cleanup);
+                            let limit_clif_ty_cleanup =
+                                builder.func.dfg.value_type(limit_val_cleanup);
                             if var_ty == types::I64 && limit_clif_ty_cleanup == types::I32 {
-                                limit_val_cleanup = builder.ins().sextend(types::I64, limit_val_cleanup);
+                                limit_val_cleanup =
+                                    builder.ins().sextend(types::I64, limit_val_cleanup);
                             } else if var_ty == types::I32 && limit_clif_ty_cleanup == types::I64 {
-                                limit_val_cleanup = builder.ins().ireduce(types::I32, limit_val_cleanup);
+                                limit_val_cleanup =
+                                    builder.ins().ireduce(types::I32, limit_val_cleanup);
                             }
 
                             let has_more = if is_le {
-                                builder.ins().icmp(IntCC::SignedLessThanOrEqual, cur_val_cleanup, limit_val_cleanup)
+                                builder.ins().icmp(
+                                    IntCC::SignedLessThanOrEqual,
+                                    cur_val_cleanup,
+                                    limit_val_cleanup,
+                                )
                             } else {
-                                builder.ins().icmp(IntCC::SignedLessThan, cur_val_cleanup, limit_val_cleanup)
+                                builder.ins().icmp(
+                                    IntCC::SignedLessThan,
+                                    cur_val_cleanup,
+                                    limit_val_cleanup,
+                                )
                             };
-                            builder.ins().brif(has_more, cleanup_body_block, &[], exit_block, &[]);
+                            builder
+                                .ins()
+                                .brif(has_more, cleanup_body_block, &[], exit_block, &[]);
 
                             // Cleanup body (1 iteration)
                             builder.switch_to_block(cleanup_body_block);
                             builder.seal_block(cleanup_body_block);
                             self.translate_block(body, builder)?;
                             if should_reset {
-                                let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                                let loop_reset_func = self
+                                    .module
+                                    .declare_func_in_func(self.loop_reset_id, builder.func);
                                 builder.ins().call(loop_reset_func, &[]);
                             }
                             builder.ins().jump(cleanup_head_block, &[]);
@@ -2343,7 +2893,11 @@ impl<'a> FunctionTranslationState<'a> {
                 let latch_block = builder.create_block();
                 let exit_block = builder.create_block();
 
-                if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                if let TypedExpr::Literal {
+                    lit: TypedLiteral::Bool(true),
+                    ..
+                } = condition
+                {
                     builder.ins().jump(body_block, &[]);
                 } else {
                     let cond_init = self.translate_expr(condition, builder)?;
@@ -2353,7 +2907,9 @@ impl<'a> FunctionTranslationState<'a> {
                 }
 
                 let mut added_nonneg = None;
-                if let Some(var) = get_nonneg_var_from_condition(condition, &self.known_non_negative_vars) {
+                if let Some(var) =
+                    get_nonneg_var_from_condition(condition, &self.known_non_negative_vars)
+                {
                     if self.known_non_negative_vars.insert(var.clone()) {
                         added_nonneg = Some(var);
                     }
@@ -2374,10 +2930,16 @@ impl<'a> FunctionTranslationState<'a> {
 
                 builder.switch_to_block(latch_block);
                 if should_reset {
-                    let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                    let loop_reset_func = self
+                        .module
+                        .declare_func_in_func(self.loop_reset_id, builder.func);
                     builder.ins().call(loop_reset_func, &[]);
                 }
-                if let TypedExpr::Literal { lit: TypedLiteral::Bool(true), .. } = condition {
+                if let TypedExpr::Literal {
+                    lit: TypedLiteral::Bool(true),
+                    ..
+                } = condition
+                {
                     builder.ins().jump(body_block, &[]);
                 } else {
                     let cond_repeat = self.translate_expr(condition, builder)?;
@@ -2431,7 +2993,9 @@ impl<'a> FunctionTranslationState<'a> {
                 let latch_block = builder.create_block();
                 let exit_block = builder.create_block();
 
-                builder.ins().brif(cond_init, body_block, &[], exit_block, &[]);
+                builder
+                    .ins()
+                    .brif(cond_init, body_block, &[], exit_block, &[]);
 
                 builder.switch_to_block(body_block);
                 self.loop_exit_blocks.push(exit_block);
@@ -2445,7 +3009,9 @@ impl<'a> FunctionTranslationState<'a> {
 
                 builder.switch_to_block(latch_block);
                 if should_reset {
-                    let loop_reset_func = self.module.declare_func_in_func(self.loop_reset_id, builder.func);
+                    let loop_reset_func = self
+                        .module
+                        .declare_func_in_func(self.loop_reset_id, builder.func);
                     builder.ins().call(loop_reset_func, &[]);
                 }
                 let cur_val = builder.use_var(var_id);
@@ -2454,7 +3020,9 @@ impl<'a> FunctionTranslationState<'a> {
 
                 let hi_val_repeat = self.translate_expr(hi, builder)?;
                 let cond_repeat = builder.ins().icmp(cond_cc, next_val, hi_val_repeat);
-                builder.ins().brif(cond_repeat, body_block, &[], exit_block, &[]);
+                builder
+                    .ins()
+                    .brif(cond_repeat, body_block, &[], exit_block, &[]);
                 builder.seal_block(latch_block);
                 builder.seal_block(body_block);
 
@@ -2466,4 +3034,3 @@ impl<'a> FunctionTranslationState<'a> {
         }
     }
 }
-

@@ -1,7 +1,7 @@
 use numlang::parser::parse;
 use numlang::token::tokenize;
-use numlang::typecheck::typed_ast::{TypedExpr, TypedStmt};
 use numlang::typecheck::typecheck;
+use numlang::typecheck::typed_ast::{TypedExpr, TypedStmt};
 use std::fs;
 use std::process::Command;
 
@@ -77,7 +77,11 @@ fn test_binary_search_bce_midpoint_is_safe() {
     for stmt in &func.body.stmts {
         if let TypedStmt::While { body, .. } = stmt {
             for s in &body.stmts {
-                if let TypedStmt::Let { value: TypedExpr::Index { is_safe, .. }, .. } = s {
+                if let TypedStmt::Let {
+                    value: TypedExpr::Index { is_safe, .. },
+                    ..
+                } = s
+                {
                     if *is_safe {
                         found_is_safe = true;
                     }
@@ -85,7 +89,10 @@ fn test_binary_search_bce_midpoint_is_safe() {
             }
         }
     }
-    assert!(found_is_safe, "Binary search midpoint index arr[mid] must have is_safe = true!");
+    assert!(
+        found_is_safe,
+        "Binary search midpoint index arr[mid] must have is_safe = true!"
+    );
 
     let code = run_numlang_code(src, "bsearch_bce");
     // Target 14 is at index 6 (arr[6] == 14)
