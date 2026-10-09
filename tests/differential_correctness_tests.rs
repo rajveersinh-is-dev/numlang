@@ -76,21 +76,43 @@ fn test_differential_random_programs_small() {
 }
 
 #[test]
-#[ignore] // Run manually: cargo test -- --ignored test_differential_10k
 fn test_differential_10k() {
-    let mut divergences = Vec::new();
-    for seed in 0u64..10_000 {
-        let prog = generate_random_program(seed);
-        let norm = run_numlang_code(&prog, false);
-        let sc = run_numlang_code(&prog, true);
-        if norm != sc {
-            divergences.push((seed, norm, sc));
+    let count: u64 = std::env::var("DIFF_CORRECTNESS_COUNT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(if cfg!(debug_assertions) { 200 } else { 10_000 });
+
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8)
+        .min(16);
+    let current_seed = AtomicU64::new(0);
+    let divergences = Mutex::new(Vec::new());
+
+    std::thread::scope(|s| {
+        for _ in 0..num_threads {
+            s.spawn(|| loop {
+                let seed = current_seed.fetch_add(1, Ordering::Relaxed);
+                if seed >= count {
+                    break;
+                }
+                let prog = generate_random_program(seed);
+                let norm = run_numlang_code(&prog, false);
+                let sc = run_numlang_code(&prog, true);
+                if norm != sc {
+                    let mut divs = divergences.lock().expect("mutex lock");
+                    divs.push((seed, norm, sc));
+                }
+            });
         }
-    }
+    });
+
+    let divs = divergences.into_inner().expect("mutex poisoned");
     assert!(
-        divergences.is_empty(),
-        "{} divergences in 10K programs: {:?}",
-        divergences.len(),
-        &divergences[..5.min(divergences.len())]
+        divs.is_empty(),
+        "{} divergences in {} programs: {:?}",
+        divs.len(),
+        count,
+        &divs[..5.min(divs.len())]
     );
 }

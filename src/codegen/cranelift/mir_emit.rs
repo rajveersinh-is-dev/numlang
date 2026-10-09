@@ -365,13 +365,41 @@ impl CraneliftCompiler {
                                 .declare_func_in_func(self.malloc_id, builder.func);
                             let call_inst = builder.ins().call(malloc_func, &[size_arg]);
                             builder.inst_results(call_inst)[0]
-                        } else if callee == "__numlang_fib" && !args.is_empty() {
-                            let n_arg = get_place_value(
+                        } else if callee == "__numlang_linear_rec2" && args.len() >= 5 {
+                            let c1_val = get_place_value(
                                 &mut builder,
                                 &var_map,
                                 &array_slots,
                                 &aliases,
                                 &args[0],
+                            );
+                            let c2_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[1],
+                            );
+                            let s0_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[2],
+                            );
+                            let s1_val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[3],
+                            );
+                            let n_arg = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &args[4],
                             );
                             let n_val = if builder.func.dfg.value_type(n_arg) != types::I64 {
                                 builder.ins().uextend(types::I64, n_arg)
@@ -379,9 +407,9 @@ impl CraneliftCompiler {
                                 n_arg
                             };
 
-                            let fib_loop = builder.create_block();
-                            let fib_body = builder.create_block();
-                            let fib_done = builder.create_block();
+                            let rec_loop = builder.create_block();
+                            let rec_body = builder.create_block();
+                            let rec_done = builder.create_block();
 
                             let a_var = builder.declare_var(types::I64);
                             let b_var = builder.declare_var(types::I64);
@@ -390,28 +418,30 @@ impl CraneliftCompiler {
                             let zero = builder.ins().iconst(types::I64, 0);
                             let one = builder.ins().iconst(types::I64, 1);
 
-                            builder.def_var(a_var, zero);
-                            builder.def_var(b_var, one);
+                            builder.def_var(a_var, s0_val);
+                            builder.def_var(b_var, s1_val);
                             builder.def_var(i_var, zero);
 
-                            builder.ins().jump(fib_loop, &[]);
-                            builder.switch_to_block(fib_loop);
+                            builder.ins().jump(rec_loop, &[]);
+                            builder.switch_to_block(rec_loop);
 
                             let cur_i = builder.use_var(i_var);
                             let cond = builder.ins().icmp(IntCC::SignedLessThan, cur_i, n_val);
-                            builder.ins().brif(cond, fib_body, &[], fib_done, &[]);
+                            builder.ins().brif(cond, rec_body, &[], rec_done, &[]);
 
-                            builder.switch_to_block(fib_body);
+                            builder.switch_to_block(rec_body);
                             let cur_a = builder.use_var(a_var);
                             let cur_b = builder.use_var(b_var);
-                            let next_b = builder.ins().iadd(cur_a, cur_b);
+                            let term1 = builder.ins().imul(c1_val, cur_b);
+                            let term2 = builder.ins().imul(c2_val, cur_a);
+                            let next_b = builder.ins().iadd(term1, term2);
                             let next_i = builder.ins().iadd(cur_i, one);
                             builder.def_var(a_var, cur_b);
                             builder.def_var(b_var, next_b);
                             builder.def_var(i_var, next_i);
-                            builder.ins().jump(fib_loop, &[]);
+                            builder.ins().jump(rec_loop, &[]);
 
-                            builder.switch_to_block(fib_done);
+                            builder.switch_to_block(rec_done);
                             builder.use_var(a_var)
                         } else if (callee == "__coupled_a" || callee == "__coupled_b")
                             && args.len() >= 9

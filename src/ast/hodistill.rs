@@ -650,8 +650,11 @@ pub fn distill_mutual_recursion(functions: &mut [TypedFunction], stats: &mut Ast
         // Look for mutual recursion chains: func calling g calling h calling func
         let mut visited = Vec::new();
         let mut curr_name = func.name.clone();
-
-        while let Some(next_call) = find_tail_call_callee(&fn_map.get(&curr_name).unwrap().body) {
+        while let Some(curr_fn) = fn_map.get(&curr_name) {
+            let next_call = match find_tail_call_callee(&curr_fn.body) {
+                Some(call) => call,
+                None => break,
+            };
             if next_call == func.name && visited.len() >= 2 {
                 // Detected mutual recursion loop: func -> ... -> next_call == func
                 // Unfold the intermediate chain into func's body and tie a fold knot back to func!

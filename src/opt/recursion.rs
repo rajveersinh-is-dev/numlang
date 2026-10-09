@@ -54,8 +54,13 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
     // If nested hyper recurrence (e.g. Ackermann-type A(m, n)),
     // inline inductive base slices: m == 1 => n + 2, m == 2 => 2 * n + 3
     if let Some(pattern) = hyper_rec {
-        let m_name = param_map.get(&pattern.param_m).unwrap().clone();
-        let n_name = param_map.get(&pattern.param_n).unwrap().clone();
+        let (m_name, n_name) = match (
+            param_map.get(&pattern.param_m),
+            param_map.get(&pattern.param_n),
+        ) {
+            (Some(m), Some(n)) => (m.clone(), n.clone()),
+            _ => return None,
+        };
 
         let check_m1 = TypedStmt::If {
             condition: TypedExpr::Binary {
@@ -156,9 +161,14 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
     // If symmetric permutation recurrence (e.g. Takeuchi-type tak(x, y, z)),
     // inline inductive base slice: x == y + 1 => if z <= y + 1 { y } else { y + 1 }
     if let Some(pattern) = perm_rec {
-        let x_name = param_map.get(&pattern.param_x).unwrap().clone();
-        let y_name = param_map.get(&pattern.param_y).unwrap().clone();
-        let z_name = param_map.get(&pattern.param_z).unwrap().clone();
+        let (x_name, y_name, z_name) = match (
+            param_map.get(&pattern.param_x),
+            param_map.get(&pattern.param_y),
+            param_map.get(&pattern.param_z),
+        ) {
+            (Some(x), Some(y), Some(z)) => (x.clone(), y.clone(), z.clone()),
+            _ => return None,
+        };
 
         let check_tak1 = TypedStmt::If {
             condition: TypedExpr::Binary {
@@ -259,7 +269,10 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
     // 3. Construct mutable shadow parameter declarations.
     let mut new_top_stmts = Vec::new();
     for param in &func.params {
-        let shadow_name = param_map.get(&param.name).unwrap().clone();
+        let shadow_name = match param_map.get(&param.name) {
+            Some(name) => name.clone(),
+            None => continue,
+        };
         new_top_stmts.push(TypedStmt::Let {
             name: shadow_name,
             is_mutable: true,
@@ -286,7 +299,11 @@ pub fn try_lower_tail_calls(func: &TypedFunction) -> Option<TypedBlock> {
     new_top_stmts.push(while_loop);
 
     // 5. Fallback return.
-    let first_shadow = param_map.get(&func.params[0].name).unwrap().clone();
+    let first_shadow = func
+        .params
+        .first()
+        .and_then(|p| param_map.get(&p.name).cloned())
+        .unwrap_or_else(|| "fallback".to_string());
     new_top_stmts.push(TypedStmt::Return(
         Some(TypedExpr::Ident {
             name: first_shadow,
@@ -513,7 +530,10 @@ fn replace_tail_calls_block(
 
             for (i, param) in params.iter().enumerate() {
                 let (ref tmp_name, ref tmp_ty, s) = tmp_bindings[i];
-                let shadow_name = param_map.get(&param.name).unwrap().clone();
+                let shadow_name = match param_map.get(&param.name) {
+                    Some(name) => name.clone(),
+                    None => continue,
+                };
                 replacements.push(TypedStmt::Assign {
                     name: shadow_name,
                     value: TypedExpr::Ident {

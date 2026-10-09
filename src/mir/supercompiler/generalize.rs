@@ -437,15 +437,17 @@ pub fn solve_order2_recurrence(
         }
     }
 
-    // Fibonacci pattern: c1 = 1, c2 = 1, s0 = 0, s1 = 1
-    if c1 == 1 && c2 == 1 && s0 == 0 && s1 == 1 {
-        return Some(interner.intern_call("__numlang_fib".to_string(), vec![num_iters], Type::I64));
-    }
-    // Shifted Fibonacci pattern (e.g. b in fib loop): c1 = 1, c2 = 1, s0 = 1, s1 = 1 (F(k+1))
-    if c1 == 1 && c2 == 1 && s0 == 1 && s1 == 1 {
-        let one = interner.intern_int(1);
-        let n_plus_1 = interner.intern_binary(BinaryOp::Add, num_iters, one, Type::I64);
-        return Some(interner.intern_call("__numlang_fib".to_string(), vec![n_plus_1], Type::I64));
+    // Case 3: Arbitrary order-2 linear recurrence s_{k+1} = c1 * s_k + c2 * s_{k-1} with initial values (s0, s1)
+    if c1 != 0 || c2 != 0 {
+        let c1_term = interner.intern_int(c1);
+        let c2_term = interner.intern_int(c2);
+        let s0_term = interner.intern_int(s0);
+        let s1_term = interner.intern_int(s1);
+        return Some(interner.intern_call(
+            "__numlang_linear_rec2".to_string(),
+            vec![c1_term, c2_term, s0_term, s1_term, num_iters],
+            Type::I64,
+        ));
     }
 
     None

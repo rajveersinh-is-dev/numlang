@@ -59,6 +59,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn advance_token(&mut self, expected: &str) -> Result<&SpannedToken, ParseError> {
+        let prev = self.previous_span();
+        self.advance().ok_or_else(|| ParseError::UnexpectedEof {
+            expected: expected.to_string(),
+            span: prev,
+        })
+    }
+
     pub fn previous_span(&self) -> Span {
         if self.cursor > 0 && self.cursor - 1 < self.tokens.len() {
             self.tokens[self.cursor - 1].span
@@ -93,7 +101,7 @@ impl<'a> Parser<'a> {
 
     pub fn consume(&mut self, expected: &Token, desc: &str) -> Result<Span, ParseError> {
         if self.check(expected) {
-            let sp = self.advance().unwrap().span;
+            let sp = self.advance_token(desc)?.span;
             Ok(sp)
         } else if let Some(tok) = self.peek_token() {
             Err(ParseError::UnexpectedToken {

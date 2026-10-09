@@ -110,20 +110,59 @@ impl LlvmCompiler {
     }
 
     /// Compile a `MirProgram` to an object file (`.obj`).
+    /// If system `clang` is available, compiles textual LLVM IR; otherwise returns `LlvmError::BackendDisabled`.
     pub fn compile_mir_to_obj(
         &mut self,
-        _program: &MirProgram,
-        _output_path: &Path,
+        program: &MirProgram,
+        output_path: &Path,
     ) -> Result<(), LlvmError> {
-        Err(LlvmError::BackendDisabled)
+        let ir = self.emit_llvm_ir(program)?;
+        Self::compile_ir_with_system_clang(&ir, output_path, self.opt_level)
     }
 
     /// Compile a `MirProgram` to in-memory object bytes.
-    pub fn compile_mir_to_obj_bytes(
-        &mut self,
-        _program: &MirProgram,
-    ) -> Result<Vec<u8>, LlvmError> {
-        Err(LlvmError::BackendDisabled)
+    pub fn compile_mir_to_obj_bytes(&mut self, program: &MirProgram) -> Result<Vec<u8>, LlvmError> {
+        let temp_obj = std::env::temp_dir().join(format!("nl_llvm_{}.obj", std::process::id()));
+        self.compile_mir_to_obj(program, &temp_obj)?;
+        let bytes = std::fs::read(&temp_obj)?;
+        let _ = std::fs::remove_file(&temp_obj);
+        Ok(bytes)
+    }
+
+    fn compile_ir_with_system_clang(
+        ir: &str,
+        output_path: &Path,
+        opt_level: OptLevel,
+    ) -> Result<(), LlvmError> {
+        let opt_flag = match opt_level {
+            OptLevel::O0 => "-O0",
+            OptLevel::O1 => "-O1",
+            OptLevel::O2 => "-O2",
+            OptLevel::O3 => "-O3",
+        };
+        let temp_ll = std::env::temp_dir().join(format!("nl_ir_{}.ll", std::process::id()));
+        std::fs::write(&temp_ll, ir)?;
+
+        let clang_res = std::process::Command::new("clang")
+            .args(["-c", opt_flag])
+            .arg(&temp_ll)
+            .arg("-o")
+            .arg(output_path)
+            .output();
+
+        let _ = std::fs::remove_file(&temp_ll);
+
+        match clang_res {
+            Ok(output) if output.status.success() => Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(LlvmError::CodegenError(format!(
+                    "clang compilation failed: {}",
+                    stderr
+                )))
+            }
+            Err(_) => Err(LlvmError::BackendDisabled),
+        }
     }
 }
 
@@ -1014,11 +1053,26 @@ impl LlvmCompiler {
                         }
                     }
                     Rvalue::Call(callee, args) => {
-                        if callee == "__numlang_fib" && args.len() == 1 {
-                            let n = self
+                        if callee == "__numlang_linear_rec2" && args.len() >= 5 {
+                            let c1 = self
                                 .eval_place_val(&args[0], builder, struct_types, local_allocas)?
                                 .into_int_value();
-                            Some(self.emit_inline_fib(n, builder).into())
+                            let c2 = self
+                                .eval_place_val(&args[1], builder, struct_types, local_allocas)?
+                                .into_int_value();
+                            let s0 = self
+                                .eval_place_val(&args[2], builder, struct_types, local_allocas)?
+                                .into_int_value();
+                            let s1 = self
+                                .eval_place_val(&args[3], builder, struct_types, local_allocas)?
+                                .into_int_value();
+                            let n = self
+                                .eval_place_val(&args[4], builder, struct_types, local_allocas)?
+                                .into_int_value();
+                            Some(
+                                self.emit_inline_linear_rec2(c1, c2, s0, s1, n, builder)?
+                                    .into(),
+                            )
                         } else if let Some(&callee_fn) = func_vals.get(callee) {
                             let mut arg_vals = Vec::with_capacity(args.len());
                             for arg in args {
@@ -1148,23 +1202,22 @@ impl LlvmCompiler {
         Ok(())
     }
 
-    fn emit_inline_fib(
+    fn emit_inline_linear_rec2(
         &self,
-        n: inkwell::values::IntValue,
-        builder: &inkwell::builder::Builder,
-    ) -> inkwell::values::IntValue {
-        // Fast iterative Fibonacci in LLVM IR
-        // if n <= 1 return n;
-        // let mut a = 0; let mut b = 1; let mut i = 2;
-        // while i <= n { let c = a + b; a = b; b = c; i += 1; }
-        // return b;
+        c1: inkwell::values::IntValue<'ctx>,
+        c2: inkwell::values::IntValue<'ctx>,
+        s0: inkwell::values::IntValue<'ctx>,
+        s1: inkwell::values::IntValue<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        builder: &inkwell::builder::Builder<'ctx>,
+    ) -> Result<inkwell::values::IntValue<'ctx>, LlvmError> {
         let parent_fn = builder
             .get_insert_block()
             .unwrap_or_err()?
             .get_parent()
             .unwrap_or_err()?;
-        let loop_bb = self.context.append_basic_block(parent_fn, "fib_loop");
-        let done_bb = self.context.append_basic_block(parent_fn, "fib_done");
+        let loop_bb = self.context.append_basic_block(parent_fn, "rec_loop");
+        let done_bb = self.context.append_basic_block(parent_fn, "rec_done");
 
         let zero = self.context.i64_type().const_zero();
         let one = self.context.i64_type().const_int(1, false);
@@ -1177,26 +1230,24 @@ impl LlvmCompiler {
         };
 
         let a_alloca = builder
-            .build_alloca(self.context.i64_type(), "fib_a")
+            .build_alloca(self.context.i64_type(), "rec_a")
             .unwrap_or_err()?;
         let b_alloca = builder
-            .build_alloca(self.context.i64_type(), "fib_b")
+            .build_alloca(self.context.i64_type(), "rec_b")
             .unwrap_or_err()?;
         let i_alloca = builder
-            .build_alloca(self.context.i64_type(), "fib_i")
+            .build_alloca(self.context.i64_type(), "rec_i")
             .unwrap_or_err()?;
 
-        builder.build_store(a_alloca, zero).unwrap_or_err()?;
-        builder.build_store(b_alloca, one).unwrap_or_err()?;
-        builder
-            .build_store(i_alloca, self.context.i64_type().const_int(2, false))
-            .unwrap_or_err()?;
+        builder.build_store(a_alloca, s0).unwrap_or_err()?;
+        builder.build_store(b_alloca, s1).unwrap_or_err()?;
+        builder.build_store(i_alloca, zero).unwrap_or_err()?;
 
-        let is_base = builder
-            .build_int_compare(inkwell::IntPredicate::SLE, n_i64, one, "is_base")
+        let has_iters = builder
+            .build_int_compare(inkwell::IntPredicate::SGT, n_i64, zero, "has_iters")
             .unwrap_or_err()?;
         builder
-            .build_conditional_branch(is_base, done_bb, loop_bb)
+            .build_conditional_branch(has_iters, loop_bb, done_bb)
             .unwrap_or_err()?;
 
         // Loop BB
@@ -1214,18 +1265,21 @@ impl LlvmCompiler {
             .unwrap_or_err()?
             .into_int_value();
 
-        let next_c = builder
-            .build_int_add(cur_a, cur_b, "next_c")
+        let term1 = builder.build_int_mul(c1, cur_b, "t1").unwrap_or_err()?;
+        let term2 = builder.build_int_mul(c2, cur_a, "t2").unwrap_or_err()?;
+        let next_b = builder
+            .build_int_add(term1, term2, "next_b")
             .unwrap_or_err()?;
-        builder.build_store(a_alloca, cur_b).unwrap_or_err()?;
-        builder.build_store(b_alloca, next_c).unwrap_or_err()?;
         let next_i = builder
             .build_int_add(cur_i, one, "next_i")
             .unwrap_or_err()?;
+
+        builder.build_store(a_alloca, cur_b).unwrap_or_err()?;
+        builder.build_store(b_alloca, next_b).unwrap_or_err()?;
         builder.build_store(i_alloca, next_i).unwrap_or_err()?;
 
         let continue_loop = builder
-            .build_int_compare(inkwell::IntPredicate::SLE, next_i, n_i64, "cont")
+            .build_int_compare(inkwell::IntPredicate::SLT, next_i, n_i64, "cont")
             .unwrap_or_err()?;
         builder
             .build_conditional_branch(continue_loop, loop_bb, done_bb)
@@ -1233,15 +1287,11 @@ impl LlvmCompiler {
 
         // Done BB
         builder.position_at_end(done_bb);
-        let res = builder
-            .build_phi(self.context.i64_type(), "fib_res")
-            .unwrap_or_err()?;
-        res.add_incoming(&[
-            (&n_i64, parent_fn.get_first_basic_block().unwrap_or_err()?),
-            (&cur_b, loop_bb),
-        ]);
-
-        res.as_basic_value().into_int_value()
+        let final_a = builder
+            .build_load(self.context.i64_type(), a_alloca, "final_a")
+            .unwrap_or_err()?
+            .into_int_value();
+        Ok(final_a)
     }
 
     fn emit_int_pow(
