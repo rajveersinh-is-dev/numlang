@@ -38,6 +38,17 @@ fn compile_and_run_supercompiled(src: &str, test_name: &str) -> i32 {
     output.status.code().unwrap_or(-1)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 fn get_mir(src: &str) -> MirProgram {
     let tokens = tokenize(src).expect("Tokenize failed");
     let ast = parse(&tokens).expect("Parse failed");
@@ -219,7 +230,11 @@ fn test_supercompiled_square_pyramid_execution() {
     );
 
     let exit_code = compile_and_run_supercompiled(src, "test_square_pyramid_run");
-    assert_eq!(exit_code, 385, "Pyramid sum for n=10 must be 385");
+    assert_eq!(
+        exit_code,
+        expected_exit(385),
+        "Pyramid sum for n=10 must be 385"
+    );
 }
 
 #[test]
@@ -248,7 +263,11 @@ fn test_supercompiled_cubic_sum_execution() {
     );
 
     let exit_code = compile_and_run_supercompiled(src, "test_cubic_sum_run");
-    assert_eq!(exit_code, 3025, "Cubic sum for n=10 must be 3025");
+    assert_eq!(
+        exit_code,
+        expected_exit(3025),
+        "Cubic sum for n=10 must be 3025"
+    );
 }
 
 #[test]
@@ -279,7 +298,7 @@ fn test_supercompiled_geometric_series_execution() {
     );
 
     let exit_code = compile_and_run_supercompiled(src, "test_geom_series_run");
-    assert_eq!(exit_code, 1023, "2^10 - 1 must be 1023");
+    assert_eq!(exit_code, expected_exit(1023), "2^10 - 1 must be 1023");
 }
 
 #[test]
@@ -308,5 +327,5 @@ fn test_supercompiled_exponential_power_execution() {
     );
 
     let exit_code = compile_and_run_supercompiled(src, "test_exp_power_run");
-    assert_eq!(exit_code, 3072, "3 * 2^10 must be 3072");
+    assert_eq!(exit_code, expected_exit(3072), "3 * 2^10 must be 3072");
 }
