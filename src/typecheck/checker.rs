@@ -606,7 +606,10 @@ impl TypeChecker {
             .env
             .lookup_function(&func.name)
             .cloned()
-            .expect("Function must exist in scope");
+            .ok_or_else(|| TypeError::UndeclaredFunction {
+                name: func.name.clone(),
+                span: func.span,
+            })?;
 
         self.current_type_params = func.type_params.clone();
         self.current_fn_return_ty = sig.return_ty.clone();
@@ -3739,7 +3742,14 @@ impl TypeChecker {
 
                 let mut typed_fields = Vec::new();
                 for (decl_name, decl_ty) in &info.fields {
-                    let f_expr = provided_fields.get(decl_name).unwrap();
+                    let f_expr =
+                        provided_fields
+                            .get(decl_name)
+                            .ok_or_else(|| TypeError::MissingField {
+                                name: name.clone(),
+                                field: decl_name.clone(),
+                                span: *span,
+                            })?;
                     let typed_expr = self.check_expr(f_expr, Some(decl_ty.clone()))?;
                     if typed_expr.ty() != *decl_ty {
                         return Err(TypeError::TypeMismatch {
@@ -3855,7 +3865,12 @@ impl TypeChecker {
                                 }
                                 let s_enum_name = match &scrutinee_ty {
                                     Type::Enum(n) => n.clone(),
-                                    _ => unreachable!(),
+                                    _ => {
+                                        return Err(TypeError::CannotMatchNonEnum {
+                                            found: scrutinee_ty.clone(),
+                                            span: *pat_span,
+                                        });
+                                    }
                                 };
                                 if let Some(ref specified_en) = enum_name {
                                     if specified_en != &s_enum_name {

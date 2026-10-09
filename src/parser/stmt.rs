@@ -299,7 +299,7 @@ impl<'a> Parser<'a> {
 
     pub fn parse_stmt(&mut self) -> Result<Stmt, ParseError> {
         if self.check(&Token::Let) {
-            let let_span = self.advance().unwrap().span;
+            let let_span = self.advance_token("'let'")?.span;
             let is_mutable = if self.check(&Token::Mut) {
                 self.advance();
                 true
@@ -346,7 +346,7 @@ impl<'a> Parser<'a> {
                 span,
             })
         } else if self.check(&Token::Return) {
-            let ret_span = self.advance().unwrap().span;
+            let ret_span = self.advance_token("'return'")?.span;
             let mut value = None;
             if !self.check(&Token::Semi) {
                 value = Some(self.parse_expr(0)?);
@@ -355,20 +355,20 @@ impl<'a> Parser<'a> {
             let span = ret_span.merge(&semi_span);
             Ok(Stmt::Return(value, span))
         } else if self.check(&Token::Break) {
-            let break_span = self.advance().unwrap().span;
+            let break_span = self.advance_token("'break'")?.span;
             let semi_span = self.consume(&Token::Semi, "';' after break statement")?;
             Ok(Stmt::Break(break_span.merge(&semi_span)))
         } else if self.check(&Token::Continue) {
-            let cont_span = self.advance().unwrap().span;
+            let cont_span = self.advance_token("'continue'")?.span;
             let semi_span = self.consume(&Token::Semi, "';' after continue statement")?;
             Ok(Stmt::Continue(cont_span.merge(&semi_span)))
         } else if self.check(&Token::Loop) {
-            let loop_span = self.advance().unwrap().span;
+            let loop_span = self.advance_token("'loop'")?.span;
             let body = self.parse_block()?;
             let span = loop_span.merge(&body.span);
             Ok(Stmt::Loop { body, span })
         } else if self.check(&Token::For) {
-            let for_span = self.advance().unwrap().span;
+            let for_span = self.advance_token("'for'")?.span;
             let (var, _) = match self.peek_token().cloned() {
                 Some(t) => match t.token {
                     Token::Ident(id) => {
@@ -422,7 +422,7 @@ impl<'a> Parser<'a> {
                 span,
             })
         } else if self.check(&Token::If) {
-            let if_span = self.advance().unwrap().span;
+            let if_span = self.advance_token("'if'")?.span;
             let condition = self.parse_expr(0)?;
             let then_branch = self.parse_block()?;
 
@@ -442,7 +442,7 @@ impl<'a> Parser<'a> {
                 span,
             })
         } else if self.check(&Token::While) {
-            let while_span = self.advance().unwrap().span;
+            let while_span = self.advance_token("'while'")?.span;
             let condition = self.parse_expr(0)?;
             let body = self.parse_block()?;
             let span = while_span.merge(&body.span);
@@ -455,10 +455,16 @@ impl<'a> Parser<'a> {
             && matches!(self.tokens[self.cursor].token, Token::Ident(_))
             && self.tokens[self.cursor + 1].token == Token::Assign
         {
-            let id_token = self.advance().unwrap();
+            let id_token = self.advance_token("identifier in assignment")?;
             let name = match &id_token.token {
                 Token::Ident(id) => id.clone(),
-                _ => unreachable!(),
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: id_token.token.clone(),
+                        expected: "identifier".to_string(),
+                        span: id_token.span,
+                    });
+                }
             };
             let start_span = id_token.span;
             self.consume(&Token::Assign, "'=' in assignment")?;
@@ -467,10 +473,16 @@ impl<'a> Parser<'a> {
             let span = start_span.merge(&semi_span);
             Ok(Stmt::Assign { name, value, span })
         } else if self.is_index_assignment() {
-            let id_token = self.advance().unwrap();
+            let id_token = self.advance_token("identifier in array index assignment")?;
             let name = match &id_token.token {
                 Token::Ident(id) => id.clone(),
-                _ => unreachable!(),
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: id_token.token.clone(),
+                        expected: "identifier".to_string(),
+                        span: id_token.span,
+                    });
+                }
             };
             let start_span = id_token.span;
             self.consume(&Token::LBracket, "'[' in array index assignment")?;
@@ -492,17 +504,29 @@ impl<'a> Parser<'a> {
             && matches!(self.tokens[self.cursor + 2].token, Token::Ident(_))
             && self.tokens[self.cursor + 3].token == Token::Assign
         {
-            let id_token = self.advance().unwrap();
+            let id_token = self.advance_token("identifier in field assignment")?;
             let target = match &id_token.token {
                 Token::Ident(id) => id.clone(),
-                _ => unreachable!(),
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: id_token.token.clone(),
+                        expected: "identifier".to_string(),
+                        span: id_token.span,
+                    });
+                }
             };
             let start_span = id_token.span;
             self.consume(&Token::Dot, "'.' in field assignment")?;
-            let field_tok = self.advance().unwrap();
+            let field_tok = self.advance_token("field name in field assignment")?;
             let field = match &field_tok.token {
                 Token::Ident(id) => id.clone(),
-                _ => unreachable!(),
+                _ => {
+                    return Err(ParseError::UnexpectedToken {
+                        found: field_tok.token.clone(),
+                        expected: "field identifier".to_string(),
+                        span: field_tok.span,
+                    });
+                }
             };
             self.consume(&Token::Assign, "'=' in field assignment")?;
             let value = self.parse_expr(0)?;

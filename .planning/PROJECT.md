@@ -48,7 +48,7 @@ Systematic architectural upgrades to outperform all functional (GHC, HOSC) and s
 ### World's Fastest General Supercompiler (Phases 59–66) [COMPLETE]
 - Algebraic identity interning reduction, nonlinear polynomial recurrence solver, O(1) hash-cons whistle, whole-program cross-function mutual recurrence closing, production 2nd Futamura binary output (`MinSpec.nl`), strength reduction, CPS trampolined driving for unbounded stack safety, and incremental modular supercompilation with callee dependency tracking.
 
-### Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [PLANNED]
+### Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [COMPLETE]
 - Eliminate remaining 41 invariant shortcuts across compiler frontend and midend (Phase 67).
 - Replace heuristic recurrence patterns with general 2nd-order linear recurrence emitter `__numlang_linear_rec2` (Phase 68).
 - Standalone LLVM toolchain CLI driver fallback and tiered differential fuzzing test execution (Phase 69).
@@ -99,10 +99,10 @@ Systematic architectural upgrades to outperform all functional (GHC, HOSC) and s
 - [x] **Phase 64**: Strength Reduction in Residual After Loop Collapse (STR-01..04).
 - [x] **Phase 65**: CPS Transformation of the Driving Loop (Infinite Stack Safety) (CPS-01..04).
 - [x] **Phase 66**: Incremental Modular Supercompilation with Fine-Grained Invalidation (INC-01..04).
-- [ ] **Phase 67**: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics) (INV-01..04).
-- [ ] **Phase 68**: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling (REC-01..04).
-- [ ] **Phase 69**: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering (TOOL-01..04).
-- [ ] **Phase 70**: Monograph Script Alignment & Repository-Wide Synchronization (SYNC-01..04).
+- [x] **Phase 67**: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics) (INV-01..04).
+- [x] **Phase 68**: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling (REC-01..04).
+- [x] **Phase 69**: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering (TOOL-01..04).
+- [x] **Phase 70**: Monograph Script Alignment & Repository-Wide Synchronization (SYNC-01..04).
 
 
 

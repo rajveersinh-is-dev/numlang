@@ -72,13 +72,17 @@ static GLOBAL_DEOPT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Initialize the global deopt table.
 pub fn init_global_deopt_table() {
-    let mut table = GLOBAL_DEOPT_TABLE.write().unwrap();
+    let mut table = GLOBAL_DEOPT_TABLE
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
     *table = Some(DeoptTable::new());
 }
 
 /// Register a safepoint in the global deopt table.
 pub fn register_global_deopt(meta: DeoptMetadata) {
-    let mut guard = GLOBAL_DEOPT_TABLE.write().unwrap();
+    let mut guard = GLOBAL_DEOPT_TABLE
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
     if guard.is_none() {
         *guard = Some(DeoptTable::new());
     }
@@ -108,7 +112,9 @@ pub fn reconstruct_interpreter_frame(
 #[no_mangle]
 pub extern "C" fn __nl_deopt(deopt_id: u64, _frame_ptr: *const u8) -> i64 {
     GLOBAL_DEOPT_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let mut guard = GLOBAL_DEOPT_TABLE.write().unwrap();
+    let mut guard = GLOBAL_DEOPT_TABLE
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(ref mut table) = *guard {
         table.record_event(deopt_id as u32);
     }

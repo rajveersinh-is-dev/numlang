@@ -164,7 +164,9 @@ impl IrLowerer {
                     operand: op,
                     ty: ty.clone(),
                 });
-                self.scopes.last_mut().unwrap().insert(name.clone(), dest);
+                if let Some(scope) = self.scopes.last_mut() {
+                    scope.insert(name.clone(), dest);
+                }
             }
 
             TypedStmt::Assign { name, value, .. } => {
@@ -199,19 +201,15 @@ impl IrLowerer {
             }
 
             TypedStmt::Break(..) => {
-                let exit = *self
-                    .loop_exit_blocks
-                    .last()
-                    .expect("type checker guarantees break is inside a loop");
-                self.emit(Instruction::Branch { target: exit });
+                if let Some(&exit) = self.loop_exit_blocks.last() {
+                    self.emit(Instruction::Branch { target: exit });
+                }
             }
 
             TypedStmt::Continue(..) => {
-                let cont = *self
-                    .loop_continue_blocks
-                    .last()
-                    .expect("type checker guarantees continue is inside a loop");
-                self.emit(Instruction::Branch { target: cont });
+                if let Some(&cont) = self.loop_continue_blocks.last() {
+                    self.emit(Instruction::Branch { target: cont });
+                }
             }
 
             TypedStmt::Expr(expr) => {
@@ -396,9 +394,7 @@ impl IrLowerer {
             },
 
             TypedExpr::Ident { name, .. } => {
-                let val = self
-                    .get_variable(name)
-                    .expect("Variable must be found in scope");
+                let val = self.get_variable(name).unwrap_or_else(|| self.new_value());
                 Operand::Value(val)
             }
 

@@ -245,7 +245,7 @@ fn test_lean_model_cross_validation_1k() {
     let count: u64 = std::env::var("LEAN_VALIDATION_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+        .unwrap_or(if cfg!(debug_assertions) { 100 } else { 1000 });
 
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -312,7 +312,7 @@ fn test_differential_cross_validation_10k() {
     let count: u64 = std::env::var("DIFF_VALIDATION_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(10000);
+        .unwrap_or(if cfg!(debug_assertions) { 200 } else { 10000 });
 
     let llvm_supported = check_llvm_available();
     println!(

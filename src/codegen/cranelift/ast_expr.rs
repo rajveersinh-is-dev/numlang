@@ -2554,7 +2554,11 @@ impl<'a> FunctionTranslationState<'a> {
                     let val = self.eval_pure_select_expr(value, &then_locals, builder)?;
                     then_locals.insert(name.clone(), val);
                 }
-                _ => unreachable!(),
+                _ => {
+                    return Err(CodegenError::BackendError(
+                        "Unsupported statement in select branch".to_string(),
+                    ));
+                }
             }
         }
 
@@ -2570,7 +2574,11 @@ impl<'a> FunctionTranslationState<'a> {
                         let val = self.eval_pure_select_expr(value, &else_locals, builder)?;
                         else_locals.insert(name.clone(), val);
                     }
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(CodegenError::BackendError(
+                            "Unsupported statement in select branch".to_string(),
+                        ));
+                    }
                 }
             }
         }
@@ -2581,7 +2589,11 @@ impl<'a> FunctionTranslationState<'a> {
                     CodegenError::BackendError(format!("Variable {name} not found"))
                 })? {
                     Storage::Scalar(v) => *v,
-                    _ => unreachable!(),
+                    _ => {
+                        return Err(CodegenError::BackendError(format!(
+                            "Variable {name} is not a scalar"
+                        )));
+                    }
                 };
             let orig_val = builder.use_var(var);
             let then_val = then_locals.get(name).copied().unwrap_or(orig_val);

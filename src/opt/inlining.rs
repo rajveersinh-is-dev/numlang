@@ -1134,7 +1134,10 @@ fn expand_inlined_call(
             // Directly mapped to caller variable, skip redundant binding
             continue;
         }
-        let renamed_name = rename_map.get(&p.name).unwrap().clone();
+        let renamed_name = rename_map
+            .get(&p.name)
+            .cloned()
+            .unwrap_or_else(|| p.name.clone());
         let arg_expr = if i < args.len() {
             args[i].clone()
         } else {

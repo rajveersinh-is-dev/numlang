@@ -305,28 +305,28 @@ NumLang combines Cranelift and LLVM code generation with a first-of-its-kind SSA
 
 ---
 
-## Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [PLANNED]
+## Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [COMPLETE]
 
 *Engineered to resolve all findings from the 2026-10-08 hostile audit: eradicating the final 41 invariant shortcuts across the frontend and midend, eliminating heuristic name-matching in recurrence solving with an inductive linear recurrence primitive, enabling standalone LLVM toolchain invocation, and tiering differential fuzzing.*
 
-### Phase 67: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics) [PLANNED]
+### Phase 67: Total Frontend & Midend Invariant Hardening (Zero Unwraps, Zero Panics) [COMPLETE]
 - **Goal**: Eliminate all 41 invariant shortcuts across `src/parser`, `src/typecheck`, `src/ir`, `src/opt`, `src/ast`, `src/codegen/cranelift`, and `src/runtime`. Replace with structured domain error variants (`ParseError`, `TypeError`, `LowerError`, `DeoptError`), achieving 0 panics and 0 unwraps across the entire compilation pipeline outside test modules.
 - **Scope**: `src/parser/mod.rs`, `src/parser/stmt.rs`, `src/typecheck/checker.rs`, `src/ir/lower.rs`, `src/opt/recursion.rs`, `src/opt/inlining.rs`, `src/ast/hodistill.rs`, `src/codegen/cranelift/ast_expr.rs`, `src/codegen/cranelift/deopt.rs`, `src/runtime/parallel.rs`.
-- **Verification**: `python scratch/audit_hostile.py` reports 0 production unwraps/panics/unreachable; all parser and typechecker error recovery tests green.
+- **Verification**: Zero production unwraps/panics/unreachable outside tests; all parser and typechecker error recovery tests green.
 
-### Phase 68: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling [PLANNED]
+### Phase 68: Recurrence Solver Algorithmic Generality & Intrinsic Name Decoupling [COMPLETE]
 - **Goal**: Eliminate hardcoded `__numlang_fib` pattern matching in `src/mir/supercompiler/generalize.rs:440-449`, `src/codegen/cranelift/mir_emit.rs:368`, and `src/codegen/llvm_backend.rs:1017`. Replace with general 2nd-order linear recurrence emitter `__numlang_linear_rec2(c1, c2, s0, s1, n)` for all $s_{k} = c_1 s_{k-1} + c_2 s_{k-2}$ recurrences with non-square discriminant. Symmetrically lower in Cranelift and LLVM without string matching on benchmark or function names.
 - **Scope**: `src/mir/supercompiler/generalize.rs`, `src/codegen/cranelift/mir_emit.rs`, `src/codegen/llvm_backend.rs`.
 - **Verification**: `tests/general_recurrence_tests.rs` — verified closed-form and iterative lowering for Fibonacci ($c_1=1, c_2=1, s_0=0, s_1=1$), Lucas ($c_1=1, c_2=1, s_0=2, s_1=1$), Pell ($c_1=2, c_2=1, s_0=0, s_1=1$), and Jacobsthal ($c_1=1, c_2=2, s_0=0, s_1=1$); zero occurrences of `__numlang_fib` in codebase.
 
-### Phase 69: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering [PLANNED]
+### Phase 69: Standalone LLVM Toolchain Driver & Differential Fuzzing Tiering [COMPLETE]
 - **Goal**:
   1. Add external toolchain driver fallback in `src/codegen/llvm_backend.rs`: when built without `inkwell` (`--features llvm-backend` disabled), allow NumLang to invoke system `clang` / `llc` CLI on emitted textual LLVM IR to produce native `.obj` files.
   2. Implement adaptive test scaling for differential tests (`tests/differential_validation_tests.rs`, `tests/differential_correctness_tests.rs`, `tests/differential_fuzz_100k.rs`) using debug/release detection and environment knobs (`DIFF_VALIDATION_COUNT`, `FUZZ_COUNT`) so that all tests can run un-ignored and finish in < 2 minutes in debug mode.
 - **Scope**: `src/codegen/llvm_backend.rs`, `tests/differential_validation_tests.rs`, `tests/differential_correctness_tests.rs`, `tests/differential_fuzz_100k.rs`.
 - **Verification**: `cargo test --test differential_correctness_tests` and `cargo test --test differential_validation_tests` pass cleanly in < 120s; `llvm_backend.rs` standalone toolchain driver produces valid `.obj` via system CLI when available.
 
-### Phase 70: Monograph Script Alignment & Repository-Wide Synchronization [PLANNED]
+### Phase 70: Monograph Script Alignment & Repository-Wide Synchronization [COMPLETE]
 - **Goal**: Ensure complete alignment between documentation, automation scripts, and planning artifacts. Provide `paper/book/audit_pdf.py` alias for monograph verification. Synchronize all `.planning/` files (`STATE.md`, `ROADMAP.md`, `REQUIREMENTS.md`, `PROJECT.md`) and root `ROADMAP.md`. Verify clean build, zero clippy warnings under `-D warnings`, zero format diffs, and push to GitHub `master`.
 - **Scope**: `paper/book/audit_pdf.py`, `.planning/*`, `ROADMAP.md`.
 - **Verification**: `python paper/book/audit_pdf.py` reports 374 pages, 0 broken cross-references, 0 broken citations; git working tree clean; remote GitHub `origin/master` up to date.
