@@ -25,6 +25,17 @@ fn run_numlang_code(code: &str) -> Option<i32> {
     output.status.code()
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_math_min_max_clamp_int() {
     let code = r#"
@@ -328,7 +339,7 @@ fn main() -> i64 {
     return score; // 1 + 2 + 4 + 8 + 16 + 32 + 64 + 128 + 256 + 512 + 1024 + 2048 = 4095
 }
 "#;
-    assert_eq!(run_numlang_code(code), Some(4095));
+    assert_eq!(run_numlang_code(code), Some(expected_exit(4095)));
 }
 
 #[test]
