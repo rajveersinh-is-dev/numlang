@@ -29,9 +29,34 @@ fn test_host_cpu_feature_compilation() {
     let obj_bytes = compile_to_obj(&typed).unwrap();
 
     assert!(!obj_bytes.is_empty());
-    // Verify Windows COFF header
-    assert_eq!(obj_bytes[0], 0x64);
-    assert_eq!(obj_bytes[1], 0x86);
+    #[cfg(target_os = "windows")]
+    {
+        // Verify Windows COFF header
+        assert_eq!(obj_bytes[0], 0x64);
+        assert_eq!(obj_bytes[1], 0x86);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Linux ELF magic: 0x7F, 'E', 'L', 'F'
+        assert_eq!(obj_bytes[0], 0x7f);
+        assert_eq!(obj_bytes[1], b'E');
+        assert_eq!(obj_bytes[2], b'L');
+        assert_eq!(obj_bytes[3], b'F');
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // macOS Mach-O 64-bit magic (MH_MAGIC_64 / MH_CIGAM_64)
+        assert!(
+            (obj_bytes[0] == 0xfe
+                && obj_bytes[1] == 0xed
+                && obj_bytes[2] == 0xfa
+                && obj_bytes[3] == 0xcf)
+                || (obj_bytes[0] == 0xcf
+                    && obj_bytes[1] == 0xfa
+                    && obj_bytes[2] == 0xed
+                    && obj_bytes[3] == 0xfe)
+        );
+    }
 }
 
 #[test]

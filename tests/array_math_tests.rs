@@ -29,7 +29,15 @@ fn run_numlang_code(code: &str) -> Option<i32> {
         .expect("Failed to run numlang program");
 
     let _ = fs::remove_dir_all(&test_dir);
-    output.status.code()
+    let code_status = output.status.code();
+    if code_status == Some(1) {
+        eprintln!(
+            "numlang run error:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    code_status
 }
 
 #[test]
