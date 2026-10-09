@@ -49,6 +49,17 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     output.status.code().unwrap_or(-1)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_polyhedral_affine_algebra_and_inequalities() {
     // 1. Test AffineExpr arithmetic
@@ -287,7 +298,11 @@ fn test_polyhedral_multi_stage_3pass_deforestation() {
     let res = compile_and_run(code, "test_polyhedral_3stage");
     // (10+5)*3 + (20+5)*3 + (30+5)*3 + (40+5)*3
     // = 45 + 75 + 105 + 135 = 360
-    assert_eq!(res, 360, "Three stage pipeline execution must produce 360");
+    assert_eq!(
+        res,
+        expected_exit(360),
+        "Three stage pipeline execution must produce 360"
+    );
 
     // 2. Fixed-point deforestation: p1 and p2 eliminated
     let mut mir = get_mir(code);

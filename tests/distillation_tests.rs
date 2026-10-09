@@ -46,6 +46,17 @@ fn compile_and_run_distill(src: &str, test_name: &str) -> (i32, String) {
     (code, stdout)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_append3_single_pass_zero_intermediate_allocations() {
     let code = r#"
@@ -305,7 +316,7 @@ fn test_distillation_sum_list_append_deforestation() {
 
     // Verify execution output: 100 + 200 + 300 = 600
     let (code_res, _) = compile_and_run_distill(code, "sum_list_append");
-    assert_eq!(code_res, 600, "Exit code must match 600");
+    assert_eq!(code_res, expected_exit(600), "Exit code must match 600");
 }
 
 #[test]
