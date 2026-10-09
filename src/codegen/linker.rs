@@ -161,6 +161,84 @@ fn scan_and_append_sdk_libs(base: &Path, dirs: &mut Vec<PathBuf>) {
 }
 
 static ENTRY_BENCH_C: &str = include_str!("entry_bench.c");
+static ENTRY_BENCH_RS: &str = r#"#![no_std]
+#![no_main]
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn QueryPerformanceFrequency(lpFrequency: *mut i64) -> i32;
+    fn QueryPerformanceCounter(lpPerformanceCount: *mut i64) -> i32;
+    fn GetStdHandle(nStdHandle: u32) -> *mut core::ffi::c_void;
+    fn WriteFile(
+        hFile: *mut core::ffi::c_void,
+        lpBuffer: *const u8,
+        nNumberOfBytesToWrite: u32,
+        lpNumberOfBytesWritten: *mut u32,
+        lpOverlapped: *mut core::ffi::c_void,
+    ) -> i32;
+    fn ExitProcess(uExitCode: u32) -> !;
+}
+
+extern "C" {
+    fn main() -> i64;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mainCRTStartup() -> ! {
+    let mut freq: i64 = 0;
+    let mut t0: i64 = 0;
+    let mut t1: i64 = 0;
+    QueryPerformanceFrequency(&mut freq);
+    QueryPerformanceCounter(&mut t0);
+    let ret = main();
+    QueryPerformanceCounter(&mut t1);
+
+    let ns = if freq > 0 {
+        ((t1.wrapping_sub(t0)).wrapping_mul(1_000_000_000)) / freq
+    } else {
+        0
+    };
+
+    let mut buf = [0u8; 64];
+    let prefix = b"COMPUTE_NS: ";
+    core::ptr::copy_nonoverlapping(prefix.as_ptr(), buf.as_mut_ptr(), 12);
+    let mut len = 12;
+
+    let mut digits = [0u8; 32];
+    let mut dlen = 0;
+    let mut temp = ns;
+    while temp > 0 {
+        *digits.as_mut_ptr().add(dlen) = b'0' + (temp % 10) as u8;
+        dlen += 1;
+        temp /= 10;
+    }
+    if dlen == 0 {
+        *digits.as_mut_ptr() = b'0';
+        dlen = 1;
+    }
+    for i in (0..dlen).rev() {
+        *buf.as_mut_ptr().add(len) = *digits.as_ptr().add(i);
+        len += 1;
+    }
+    *buf.as_mut_ptr().add(len) = b'\n';
+    len += 1;
+
+    let mut written: u32 = 0;
+    WriteFile(
+        GetStdHandle(0xFFFFFFF5),
+        buf.as_ptr(),
+        len as u32,
+        &mut written,
+        core::ptr::null_mut(),
+    );
+    ExitProcess(ret as u32);
+}
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+"#;
 
 pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     let linker = find_windows_linker().ok_or(LinkerError::LinkerNotFound)?;
@@ -186,7 +264,29 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
         if ok {
             Some(p)
         } else {
-            None
+            // Fallback: compile Rust equivalent with rustc (guaranteed to exist in any rust toolchain)
+            let rs_path = obj_path.with_file_name(format!("entry_bench_{}.rs", std::process::id()));
+            let _ = std::fs::write(&rs_path, ENTRY_BENCH_RS);
+            let rustc_ok = Command::new("rustc")
+                .args([
+                    "-O",
+                    "-C",
+                    "panic=abort",
+                    "--crate-type=staticlib",
+                    "--emit=obj",
+                ])
+                .arg(&rs_path)
+                .arg("-o")
+                .arg(&p)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let _ = std::fs::remove_file(&rs_path);
+            if rustc_ok {
+                Some(p)
+            } else {
+                None
+            }
         }
     } else {
         None

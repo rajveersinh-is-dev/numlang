@@ -1386,7 +1386,11 @@ pub fn trace_cycle_transition(
     funcs: &HashMap<String, &MirFunction>,
     interner: &mut TermInterner,
 ) -> Option<(Vec<SymTermId>, Vec<SymTermId>)> {
-    if cycle.is_empty() {
+    if cycle.len() < 2 {
+        return None;
+    }
+    let unique_funcs: std::collections::HashSet<_> = cycle.iter().collect();
+    if unique_funcs.len() < 2 {
         return None;
     }
     let root_func = funcs.get(&cycle[0])?;
@@ -1457,6 +1461,16 @@ pub fn trace_cycle_transition(
                         interner.intern_unary(UnaryOp::Not, tp, Type::Bool)
                     }
                     Rvalue::Call(callee, call_args) if callee == next_callee => {
+                        // Ensure call is in tail position: the basic block returns this call's dest
+                        let is_tail = match &bb.terminator {
+                            Terminator::Return { value: Some(ret_p) } => {
+                                ret_p.local == dest.local && ret_p.projections.is_empty()
+                            }
+                            _ => false,
+                        };
+                        if !is_tail {
+                            continue;
+                        }
                         let mut args = Vec::with_capacity(call_args.len());
                         for a in call_args {
                             let t = env
@@ -1497,6 +1511,10 @@ pub fn solve_cross_function_cycle(
     interner: &mut TermInterner,
 ) -> Option<SymTermId> {
     if call_args.is_empty() || cycle.len() < 2 {
+        return None;
+    }
+    let unique_funcs: std::collections::HashSet<_> = cycle.iter().collect();
+    if unique_funcs.len() < 2 {
         return None;
     }
 

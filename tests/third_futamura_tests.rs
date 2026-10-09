@@ -230,12 +230,6 @@ fn main() -> i64 {{
     assert_eq!(code_sc, Some(30), "stderr sc: {}", stderr_sc);
 
     // 3. Static verification of 3rd Futamura projection:
-    // The residual function compiled_vm_prog must contain:
-    // - ZERO calls to min_eval / interp_spec
-    // - ZERO calls to env_lookup
-    // - ZERO Match expressions
-    // - ZERO If branches (the interpreter branch was eliminated!)
-    // Pure arithmetic: (x + 10) * 2
     let tokens = tokenize(&code).unwrap();
     let program = parse(&tokens).unwrap();
     let mut typed = typecheck(&program).unwrap();

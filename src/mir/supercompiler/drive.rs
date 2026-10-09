@@ -4,7 +4,7 @@ use std::fmt;
 use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
 use super::state::{Interval, SymbolicState};
 use super::term::{SymTerm, SymTermId, TermInterner};
-use super::whistle::{is_instance_of, state_embeds};
+use super::whistle::{is_embedded, is_instance_of, state_embeds};
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::dominance::detect_loops;
 use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
@@ -204,7 +204,7 @@ pub struct SupercompilerDriver<'a> {
     active_places: Vec<Place>,
     stats: SupercompilerStats,
     program_funcs: HashMap<String, &'a MirFunction>,
-    call_stack: Vec<String>,
+    call_stack: Vec<(String, Vec<SymTermId>)>,
     pub config: DriverConfig,
     witness: TerminationWitness,
     param_refinements: HashMap<String, Interval>,
@@ -230,11 +230,26 @@ impl<'a> SupercompilerDriver<'a> {
             });
         }
 
+        let mut interner = TermInterner::new();
+        let initial_param_terms: Vec<SymTermId> = func
+            .params
+            .iter()
+            .map(|(p, ty)| {
+                interner.intern_var(
+                    Place {
+                        local: p.clone(),
+                        projections: vec![],
+                    },
+                    ty.clone(),
+                )
+            })
+            .collect();
+
         SupercompilerDriver {
             func,
             nodes: Vec::new(),
             parents: Vec::new(),
-            interner: TermInterner::new(),
+            interner,
             block_map,
             loop_headers: loop_info.headers,
             natural_loops: loop_info.natural_loops,
@@ -243,7 +258,7 @@ impl<'a> SupercompilerDriver<'a> {
             active_places,
             stats: SupercompilerStats::default(),
             program_funcs: HashMap::new(),
-            call_stack: vec![func.name.clone()],
+            call_stack: vec![(func.name.clone(), initial_param_terms)],
             config: DriverConfig::default(),
             witness: TerminationWitness::default(),
             param_refinements: HashMap::new(),
@@ -296,7 +311,7 @@ impl<'a> SupercompilerDriver<'a> {
         self
     }
 
-    pub fn with_call_stack(mut self, stack: Vec<String>) -> Self {
+    pub fn with_call_stack(mut self, stack: Vec<(String, Vec<SymTermId>)>) -> Self {
         self.call_stack = stack;
         self
     }
@@ -1248,12 +1263,20 @@ impl<'a> SupercompilerDriver<'a> {
 
                 // Check for mutual recursion / inter-procedural call cycle
                 let mut cycle_res = None;
-                if let Some(cycle_start) = self.call_stack.iter().position(|s| s == callee) {
-                    let cycle = self.call_stack[cycle_start..].to_vec();
-                    if let Some(closed_term) = self.try_solve_call_cycle(&cycle, callee, &arg_terms)
-                    {
-                        self.stats.loops_collapsed += 1;
-                        cycle_res = Some(closed_term);
+                if let Some(cycle_start) = self.call_stack.iter().position(|(s, _)| s == callee) {
+                    let cycle: Vec<String> = self.call_stack[cycle_start..]
+                        .iter()
+                        .map(|(s, _)| s.clone())
+                        .collect();
+                    let has_distinct_funcs =
+                        cycle.iter().collect::<std::collections::HashSet<_>>().len() >= 2;
+                    if has_distinct_funcs {
+                        if let Some(closed_term) =
+                            self.try_solve_call_cycle(&cycle, callee, &arg_terms)
+                        {
+                            self.stats.loops_collapsed += 1;
+                            cycle_res = Some(closed_term);
+                        }
                     }
                 }
 
@@ -1274,19 +1297,34 @@ impl<'a> SupercompilerDriver<'a> {
                                 true
                             };
 
-                        let callee_count = self.call_stack.iter().filter(|&s| s == callee).count();
+                        let callee_count =
+                            self.call_stack.iter().filter(|(s, _)| s == callee).count();
                         let depth_ok = self.call_stack.len() < self.config.max_inline_depth
                             && callee_count < self.config.max_inline_depth;
-                        let has_inductive_arg = arg_terms.iter().any(|&a| {
-                            matches!(
-                                self.interner.get(a),
-                                SymTerm::Constructor(..)
-                                    | SymTerm::ConstInt(..)
-                                    | SymTerm::ConstBool(..)
-                            )
-                        });
+
+                        let is_recursive = self.call_stack.iter().any(|(s, _)| s == callee);
+                        let recursion_ok = if is_recursive {
+                            if let Some((_, prev_args)) =
+                                self.call_stack.iter().rev().find(|(s, _)| s == callee)
+                            {
+                                if prev_args.len() == arg_terms.len() {
+                                    arg_terms
+                                        .iter()
+                                        .zip(prev_args.iter())
+                                        .any(|(&curr, &prev)| {
+                                            self.is_argument_strictly_decreasing(prev, curr)
+                                        })
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            true
+                        };
+
                         let budget_ok = self.nodes.len() < self.config.max_inline_nodes;
-                        let recursion_ok = !self.call_stack.contains(callee) || has_inductive_arg;
 
                         if loop_invariance_ok && depth_ok && budget_ok && recursion_ok {
                             if let Some(callee_func) = self.program_funcs.get(callee).copied() {
@@ -2116,15 +2154,23 @@ impl<'a> SupercompilerDriver<'a> {
             _ => return AccumulatorLoopResult::NotApplicable,
         };
 
+        let mut env: HashMap<String, i64> = HashMap::new();
+        for p in &self.active_places {
+            if let Some(t) = base_state.get_value(p) {
+                if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
+                    env.insert(p.local.clone(), *v);
+                }
+            }
+        }
+
         // Identify all mutating places across the loop body blocks (excluding header)
         let mut mutating_candidates = Vec::new();
         for place in &self.active_places {
             if place.local == iv.local {
                 continue;
             }
-            match (base_state.get_value(place), curr.get_value(place)) {
-                (Some(t_anc), Some(t_curr)) if t_anc != t_curr => {}
-                _ => continue,
+            if !env.contains_key(&place.local) {
+                continue;
             }
             let mut is_mutated = false;
             for b_id in blocks {
@@ -2202,14 +2248,6 @@ impl<'a> SupercompilerDriver<'a> {
             0
         };
 
-        let mut env: HashMap<String, i64> = HashMap::new();
-        for p in &self.active_places {
-            if let Some(t) = base_state.get_value(p) {
-                if let SymTerm::ConstInt(v, _) = self.interner.get(t) {
-                    env.insert(p.local.clone(), *v);
-                }
-            }
-        }
         let iv_step =
             if let (Some(t_anc), Some(t_curr)) = (base_state.get_value(&iv), curr.get_value(&iv)) {
                 if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
@@ -2432,6 +2470,30 @@ impl<'a> SupercompilerDriver<'a> {
         }
     }
 
+    fn is_argument_strictly_decreasing(&self, prev: SymTermId, curr: SymTermId) -> bool {
+        if prev == curr {
+            return false;
+        }
+        let prev_term = self.interner.get(prev);
+        let curr_term = self.interner.get(curr);
+
+        match (prev_term, curr_term) {
+            (SymTerm::ConstInt(p_val, _), SymTerm::ConstInt(c_val, _)) => {
+                (*p_val > 0 && *c_val >= 0 && *c_val < *p_val) || (c_val.abs() < p_val.abs())
+            }
+            (SymTerm::ConstFloat(p_bits, _), SymTerm::ConstFloat(c_bits, _)) => {
+                let p_f = f64::from_bits(*p_bits);
+                let c_f = f64::from_bits(*c_bits);
+                c_f.abs() < p_f.abs()
+            }
+            _ => {
+                let p_sz = self.interner.size(prev);
+                let c_sz = self.interner.size(curr);
+                c_sz < p_sz && is_embedded(curr, prev, &self.interner)
+            }
+        }
+    }
+
     fn try_drive_interprocedural_call(
         &mut self,
         callee: &'a MirFunction,
@@ -2441,22 +2503,62 @@ impl<'a> SupercompilerDriver<'a> {
         if callee.blocks.is_empty() || callee.params.len() != args.len() {
             return None;
         }
-
         // Check if an inter-procedural call cycle exceeds inductive recursion threshold
         let recursion_depth = self
             .call_stack
             .iter()
-            .filter(|&name| name == &callee.name)
+            .filter(|(name, _)| name == &callee.name)
             .count();
         if recursion_depth >= 16 {
-            if let Some(pos) = self.call_stack.iter().position(|name| name == &callee.name) {
-                let cycle: Vec<String> = self.call_stack[pos..].to_vec();
-                if let Some(closed_term) = self.try_solve_call_cycle(&cycle, &callee.name, args) {
-                    self.stats.loops_collapsed += 1;
-                    return Some(closed_term);
+            if let Some(pos) = self
+                .call_stack
+                .iter()
+                .position(|(name, _)| name == &callee.name)
+            {
+                let cycle: Vec<String> = self.call_stack[pos..]
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                let has_distinct_funcs =
+                    cycle.iter().collect::<std::collections::HashSet<_>>().len() >= 2;
+                if has_distinct_funcs {
+                    if let Some(closed_term) = self.try_solve_call_cycle(&cycle, &callee.name, args)
+                    {
+                        self.stats.loops_collapsed += 1;
+                        return Some(closed_term);
+                    }
                 }
                 return None;
             }
+        }
+
+        let is_recursive = self.call_stack.iter().any(|(name, _)| name == &callee.name);
+        if is_recursive {
+            if let Some((_, prev_args)) = self
+                .call_stack
+                .iter()
+                .rev()
+                .find(|(name, _)| name == &callee.name)
+            {
+                if prev_args.len() != args.len()
+                    || !args
+                        .iter()
+                        .zip(prev_args.iter())
+                        .any(|(&curr, &prev)| self.is_argument_strictly_decreasing(prev, curr))
+                {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        let remaining_budget = self
+            .config
+            .max_inline_nodes
+            .saturating_sub(self.nodes.len());
+        if remaining_budget == 0 {
+            return None;
         }
 
         let entry_id = callee.blocks[0].id.clone();
@@ -2476,10 +2578,13 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         let mut child_call_stack = self.call_stack.clone();
-        child_call_stack.push(callee.name.clone());
+        child_call_stack.push((callee.name.clone(), args.to_vec()));
+
+        let mut child_config = self.config;
+        child_config.max_inline_nodes = remaining_budget;
 
         let mut child_driver = SupercompilerDriver::new(callee)
-            .with_config(self.config)
+            .with_config(child_config)
             .with_program_functions_map(self.program_funcs.clone())
             .with_call_stack(child_call_stack);
 
@@ -2488,6 +2593,11 @@ impl<'a> SupercompilerDriver<'a> {
 
         let child_tree = child_driver.run_with_initial_state(initial_state);
 
+        self.config.max_inline_nodes = self
+            .config
+            .max_inline_nodes
+            .saturating_sub(child_tree.nodes.len());
+        self.stats.nodes_explored += child_tree.nodes.len();
         self.stats.branches_pruned += child_tree.stats.branches_pruned;
         self.stats.sc_bce_eliminated += child_tree.stats.sc_bce_eliminated;
 
@@ -2658,17 +2768,58 @@ impl<'a> SupercompilerDriver<'a> {
             }
         }
 
+        let mut all_callee_args = Vec::with_capacity(n_captured + n_args);
+        all_callee_args.extend_from_slice(captured_terms);
+        all_callee_args.extend_from_slice(args);
+
+        let is_recursive = self.call_stack.iter().any(|(name, _)| name == &callee.name);
+        if is_recursive {
+            if let Some((_, prev_args)) = self
+                .call_stack
+                .iter()
+                .rev()
+                .find(|(name, _)| name == &callee.name)
+            {
+                if prev_args.len() != all_callee_args.len()
+                    || !all_callee_args
+                        .iter()
+                        .zip(prev_args.iter())
+                        .any(|(&curr, &prev)| self.is_argument_strictly_decreasing(prev, curr))
+                {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+
+        let remaining_budget = self
+            .config
+            .max_inline_nodes
+            .saturating_sub(self.nodes.len());
+        if remaining_budget == 0 {
+            return None;
+        }
+
         let mut child_call_stack = self.call_stack.clone();
-        child_call_stack.push(callee.name.clone());
+        child_call_stack.push((callee.name.clone(), all_callee_args));
+
+        let mut child_config = self.config;
+        child_config.max_inline_nodes = remaining_budget;
 
         let mut child_driver = SupercompilerDriver::new(callee)
-            .with_config(self.config)
+            .with_config(child_config)
             .with_program_functions_map(self.program_funcs.clone())
             .with_call_stack(child_call_stack);
         child_driver.interner = self.interner.clone();
 
         let child_tree = child_driver.run_with_initial_state(initial_state);
 
+        self.config.max_inline_nodes = self
+            .config
+            .max_inline_nodes
+            .saturating_sub(child_tree.nodes.len());
+        self.stats.nodes_explored += child_tree.nodes.len();
         self.stats.branches_pruned += child_tree.stats.branches_pruned;
         self.stats.sc_bce_eliminated += child_tree.stats.sc_bce_eliminated;
         self.stats.calls_inlined += 1;
