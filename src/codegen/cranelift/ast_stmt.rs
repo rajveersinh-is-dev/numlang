@@ -314,6 +314,7 @@ impl<'a> FunctionTranslationState<'a> {
 
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = self.get_std_handle_id;
             let fd_stderr = builder.ins().iconst(types::I32, 2);
             let msg_len = builder.ins().iconst(types::I64, msg.len() as i64);
             let write_func = self
