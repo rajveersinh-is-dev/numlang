@@ -260,11 +260,10 @@ pub fn link_unix(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
     if let Some(ref bp) = bench_c_path {
         cmd.arg(bp);
     }
-    cmd.arg(obj_path)
-        .arg("-o")
-        .arg(exe_path)
-        .arg("-lm")
-        .arg("-no-pie");
+    cmd.arg(obj_path).arg("-o").arg(exe_path).arg("-lm");
+
+    #[cfg(target_os = "linux")]
+    cmd.arg("-no-pie");
 
     let output = cmd.output().map_err(|e| LinkerError::LinkFailed {
         message: e.to_string(),

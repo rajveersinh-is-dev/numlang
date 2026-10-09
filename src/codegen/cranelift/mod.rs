@@ -69,11 +69,12 @@ impl CraneliftCompiler {
             .set("opt_level", "speed")
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
-        let mut isa_builder =
+        let isa_builder =
             cranelift_native::builder().map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
         #[cfg(target_arch = "x86_64")]
-        {
+        let isa_builder = {
+            let mut isa_builder = isa_builder;
             if std::is_x86_feature_detected!("avx2") {
                 let _ = isa_builder.enable("has_avx2");
             }
@@ -89,7 +90,8 @@ impl CraneliftCompiler {
             if std::is_x86_feature_detected!("bmi2") {
                 let _ = isa_builder.enable("has_bmi2");
             }
-        }
+            isa_builder
+        };
 
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
