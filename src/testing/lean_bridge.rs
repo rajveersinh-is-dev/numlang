@@ -14,34 +14,56 @@ use crate::mir::lower::{MirBasicBlock, MirFunction, MirProgram, Rvalue, Statemen
 use crate::mir::Terminator;
 use crate::typecheck::typed_ast::TypedLiteral;
 
-fn get_lean_eval_exe() -> PathBuf {
+pub fn get_lean_eval_exe() -> Option<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut exe = manifest_dir
+    #[cfg(target_os = "windows")]
+    let exe_name = "lean_eval.exe";
+    #[cfg(not(target_os = "windows"))]
+    let exe_name = "lean_eval";
+
+    let bin_path = manifest_dir
         .join("lean")
         .join(".lake")
         .join("build")
         .join("bin")
-        .join("lean_eval.exe");
+        .join(exe_name);
 
-    if !exe.exists() {
-        let non_win = manifest_dir
-            .join("lean")
-            .join(".lake")
-            .join("build")
-            .join("bin")
-            .join("lean_eval");
-        if non_win.exists() {
-            exe = non_win;
-        } else {
-            // Build it on demand using lake
-            let _ = Command::new("lake")
-                .arg("build")
-                .arg("lean_eval")
-                .current_dir(manifest_dir.join("lean"))
-                .status();
+    if bin_path.exists() {
+        return Some(bin_path);
+    }
+
+    let alt_name = if cfg!(target_os = "windows") {
+        "lean_eval"
+    } else {
+        "lean_eval.exe"
+    };
+    let alt_path = manifest_dir
+        .join("lean")
+        .join(".lake")
+        .join("build")
+        .join("bin")
+        .join(alt_name);
+    if alt_path.exists() {
+        return Some(alt_path);
+    }
+
+    // Try building it on demand using lake if lake is present on the system
+    let status = Command::new("lake")
+        .arg("build")
+        .arg("lean_eval")
+        .current_dir(manifest_dir.join("lean"))
+        .status();
+
+    if status.map(|s| s.success()).unwrap_or(false) {
+        if bin_path.exists() {
+            return Some(bin_path);
+        }
+        if alt_path.exists() {
+            return Some(alt_path);
         }
     }
-    exe
+
+    None
 }
 
 fn map_binary_op(op: BinaryOp) -> &'static str {
@@ -219,13 +241,9 @@ pub fn mir_to_json(program: &MirProgram) -> serde_json::Value {
 
 /// Evaluates a MIR program using the Lean 4 mechanized operational semantics evaluator.
 pub fn eval_with_lean_model(mir: &MirProgram) -> Result<i64, String> {
-    let exe = get_lean_eval_exe();
-    if !exe.exists() {
-        return Err(format!(
-            "lean_eval executable not found at {}",
-            exe.display()
-        ));
-    }
+    let exe = get_lean_eval_exe().ok_or_else(|| {
+        "lean_eval executable not found (requires Lean 4 / Elan toolchain)".to_string()
+    })?;
 
     let payload = mir_to_json(mir);
     let payload_str =
@@ -284,6 +302,10 @@ mod tests {
 
     #[test]
     fn test_lean_bridge_simple_eval() {
+        if get_lean_eval_exe().is_none() {
+            eprintln!("Skipping test_lean_bridge_simple_eval: lean_eval binary not available");
+            return;
+        }
         let src = r#"
 fn main() -> i64 {
     let a: i64 = 10;
@@ -301,6 +323,10 @@ fn main() -> i64 {
 
     #[test]
     fn test_lean_and_oracle_agreement() {
+        if get_lean_eval_exe().is_none() {
+            eprintln!("Skipping test_lean_and_oracle_agreement: lean_eval binary not available");
+            return;
+        }
         use crate::testing::gen::{generate_well_typed_program, GenConfig};
         use crate::testing::oracle::{evaluate_program, OracleResult};
 

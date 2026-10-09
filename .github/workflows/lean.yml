@@ -33,3 +33,9 @@ jobs:
             echo "Error: Found unproven 'axiom' in Lean proofs!"
             exit 1
           fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify Lean 4 Bridge & Operational Model Cross-Validation
+        run: cargo test --test differential_validation_tests test_lean_model_cross_validation_1k

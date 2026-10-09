@@ -242,6 +242,11 @@ proptest! {
 /// DIFF-02: 1,000 programs evaluated through Path F (Lean 4 model) vs Path A (Oracle).
 #[test]
 fn test_lean_model_cross_validation_1k() {
+    if numlang::testing::lean_bridge::get_lean_eval_exe().is_none() {
+        println!("[Phase 57 DIFF-02] Skipping Lean 4 model cross validation: lean_eval binary not available");
+        return;
+    }
+
     let count: u64 = std::env::var("LEAN_VALIDATION_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
