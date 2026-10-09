@@ -1183,7 +1183,7 @@ impl<'a> FunctionTranslationState<'a> {
         builder: &mut FunctionBuilder,
     ) {
         let mut offset = 0;
-        if total_bytes <= 128 && total_bytes.is_multiple_of(16) {
+        if total_bytes <= 128 && total_bytes % 16 == 0 {
             let mut chunks = Vec::with_capacity(total_bytes / 16);
             while offset + 16 <= total_bytes {
                 let chunk =
