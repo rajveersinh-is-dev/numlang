@@ -10,6 +10,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let computeSum = sum [ sum (append3 [1..10] [11..20] [21..30]) | _ <- [1..100 :: Int] ]
+    computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

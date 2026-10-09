@@ -15,6 +15,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let r = pow2 100
+    r `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

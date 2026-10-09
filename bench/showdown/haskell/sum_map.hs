@@ -11,6 +11,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let total = sum (map square [1..1000000 :: Int64])
+    total `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

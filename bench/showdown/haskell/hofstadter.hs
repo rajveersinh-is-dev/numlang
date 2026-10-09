@@ -18,6 +18,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let res = hofstadterM 100
+    res `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

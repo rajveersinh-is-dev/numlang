@@ -32,6 +32,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let computeSum = sum [ matchState0 (makeText 15) | _ <- [1..100 :: Int] ]
+    computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns
