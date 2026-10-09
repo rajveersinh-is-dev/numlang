@@ -160,7 +160,6 @@ fn scan_and_append_sdk_libs(base: &Path, dirs: &mut Vec<PathBuf>) {
     }
 }
 
-static ENTRY_BENCH_OBJ: &[u8] = include_bytes!("entry_bench.obj");
 static ENTRY_BENCH_C: &str = include_str!("entry_bench.c");
 
 pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
@@ -173,8 +172,22 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     let bench_mode = std::env::var("NUMLANG_BENCH").is_ok();
     let bench_obj_path = if bench_mode {
         let p = obj_path.with_file_name(format!("entry_bench_{}.obj", std::process::id()));
-        let _ = std::fs::write(&p, ENTRY_BENCH_OBJ);
-        Some(p)
+        let c_path = obj_path.with_file_name(format!("entry_bench_{}.c", std::process::id()));
+        let _ = std::fs::write(&c_path, ENTRY_BENCH_C);
+        let ok = Command::new("clang")
+            .args(["-c", "-O2"])
+            .arg(&c_path)
+            .arg("-o")
+            .arg(&p)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_file(&c_path);
+        if ok {
+            Some(p)
+        } else {
+            None
+        }
     } else {
         None
     };

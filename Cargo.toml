@@ -3,7 +3,13 @@ name = "numlang"
 version = "0.1.0"
 edition = "2021"
 authors = ["Rajveersinh Pardeshi"]
-description = "A fast, statically typed compiled programming language for numerical computing"
+description = "A statically typed compiled research programming language with an SSA supercompiler"
+repository = "https://github.com/rajveersinh-is-dev/numlang"
+readme = "README.md"
+license = "MIT"
+keywords = ["compiler", "supercompiler", "deforestation", "optimization", "cranelift"]
+categories = ["compilers", "development-tools"]
+rust-version = "1.82.0"
 default-run = "numlang"
 
 [dependencies]

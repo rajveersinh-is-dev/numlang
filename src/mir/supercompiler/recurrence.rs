@@ -157,7 +157,7 @@ pub fn mat_mul_strassen(a: &[Vec<i64>], b: &[Vec<i64>]) -> Vec<Vec<i64>> {
     }
 
     // Pad to even dimension if n is odd
-    let (a_pad, b_pad, unpad) = if !n.is_multiple_of(2) {
+    let (a_pad, b_pad, unpad) = if n % 2 != 0 {
         let mut ap = vec![vec![0i64; n + 1]; n + 1];
         let mut bp = vec![vec![0i64; n + 1]; n + 1];
         for r in 0..n {

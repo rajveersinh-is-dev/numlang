@@ -8,7 +8,10 @@ on:
 
 jobs:
   build_and_test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v3
 
@@ -26,4 +29,7 @@ jobs:
       - name: Run Tests
         run: cargo test
         env:
-          QUICK_BENCHMARKS: "1" # Use quick mode to avoid CI timeouts, but logic must be valid
+          QUICK_BENCHMARKS: "1"
+
+      - name: Run Integrity Lint Test
+        run: cargo test --test integrity_lint

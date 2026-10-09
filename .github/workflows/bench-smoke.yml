@@ -1,0 +1,24 @@
+name: Benchmark Smoke Verification
+
+on:
+  push:
+    branches: [ "master", "honesty-overhaul" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  bench_smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Smoke Verification Tests
+        env:
+          QUICK_BENCHMARKS: "1"
+        run: |
+          cargo test --test structural_generality_tests
+          cargo test --test general_recurrence_tests
+          cargo test --test integrity_lint
