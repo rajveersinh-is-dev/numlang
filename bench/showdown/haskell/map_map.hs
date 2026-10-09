@@ -17,6 +17,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let computeSum = sum [ runPass | _ <- [1..100000 :: Int] ]
+    computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

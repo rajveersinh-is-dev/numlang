@@ -26,6 +26,7 @@ main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
     let computeSum = sum [ toInt (mulPeano (fromInt 3) (fromInt 4)) | _ <- [1..100 :: Int] ]
+    computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
     putStrLn $ "COMPUTE_NS: " ++ show ns

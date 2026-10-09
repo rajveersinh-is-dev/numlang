@@ -377,8 +377,9 @@ fn get_median_ns(status: &RunStatus) -> Option<u64> {
 
 #[test]
 fn test_supercompiler_showdown() {
-    let is_quick =
-        std::env::args().any(|a| a == "quick") || std::env::var("SHOWDOWN_QUICK").is_ok();
+    let is_quick = std::env::args().any(|a| a == "quick")
+        || std::env::var("SHOWDOWN_QUICK").is_ok()
+        || std::env::var("QUICK_BENCHMARKS").is_ok();
 
     let warmup_rounds = if is_quick { 2 } else { 5 };
     let measure_rounds = if is_quick { 5 } else { 30 };
