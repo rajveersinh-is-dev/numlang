@@ -40,6 +40,17 @@ fn compile_and_run_supercompiled(src: &str, test_name: &str) -> i32 {
     output.status.code().unwrap_or(-1)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 fn assert_buffer_eliminated(mir: &MirProgram, buf_name: &str) {
     for func in &mir.functions {
         for b in &func.blocks {
@@ -168,7 +179,7 @@ fn test_fold_over_map() {
     );
 
     let exit_code = compile_and_run_supercompiled(code, "test_fold_over_map");
-    assert_eq!(exit_code, 285);
+    assert_eq!(exit_code, expected_exit(285));
 }
 
 #[test]
@@ -228,7 +239,7 @@ fn test_accumulator_fold_closed_form() {
     );
 
     let exit_code = compile_and_run_supercompiled(code, "test_accumulator_fold_closed_form");
-    assert_eq!(exit_code, 328350);
+    assert_eq!(exit_code, expected_exit(328350));
 }
 
 #[test]
@@ -250,5 +261,5 @@ fn test_accumulator_fold_cubic_closed_form() {
     assert!(stats.loops_collapsed >= 1, "Cubic loop should be collapsed");
 
     let exit_code = compile_and_run_supercompiled(code, "test_accumulator_fold_cubic");
-    assert_eq!(exit_code, 2025);
+    assert_eq!(exit_code, expected_exit(2025));
 }
