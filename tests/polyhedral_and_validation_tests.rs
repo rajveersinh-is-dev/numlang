@@ -50,6 +50,17 @@ fn compile_and_run(src: &str, test_name: &str) -> i32 {
     output.status.code().unwrap_or(-1)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_polyhedral_stencil_fusion() {
     let code = r#"
@@ -75,7 +86,7 @@ fn test_polyhedral_stencil_fusion() {
     let res = compile_and_run(code, "test_polyhedral_stencil_fusion");
     // (10*2+1)*3 + (20*2+1)*3 + (30*2+1)*3 + (40*2+1)*3
     // = 63 + 123 + 183 + 243 = 612
-    assert_eq!(res, 612, "Pipeline result must match 612");
+    assert_eq!(res, expected_exit(612), "Pipeline result must match 612");
 
     // Polyhedral analysis test: verify `temp` array allocation is eliminated
     let mut mir = get_mir(code);

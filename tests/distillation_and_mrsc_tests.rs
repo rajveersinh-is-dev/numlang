@@ -48,6 +48,17 @@ fn compile_and_run_mode(
     output.status.code().unwrap_or(-1)
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_distillation_nested_tree_inversion() {
     let code = r#"
@@ -127,7 +138,11 @@ fn test_distillation_double_zip() {
         "size",
     );
     // (1*10+100) + (2*20+200) + (3*30+300) + (4*40+400) = 110 + 240 + 390 + 560 = 1300
-    assert_eq!(res, 1300, "double_zip exit code must match 1300");
+    assert_eq!(
+        res,
+        expected_exit(1300),
+        "double_zip exit code must match 1300"
+    );
 
     // Verify intermediate buffer elimination and fusion in MIR
     let mut mir_program = get_mir(code);

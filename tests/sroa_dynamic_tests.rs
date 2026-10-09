@@ -32,6 +32,17 @@ fn run_numlang_code(src: &str, test_name: &str) -> i32 {
     run_output.status.code().unwrap()
 }
 
+fn expected_exit(code: i32) -> i32 {
+    #[cfg(target_os = "windows")]
+    {
+        code
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        code.rem_euclid(256)
+    }
+}
+
 #[test]
 fn test_dynamic_indexed_array_mutation_and_read() {
     let src = r#"
@@ -76,7 +87,7 @@ fn test_mixed_static_and_dynamic_arrays() {
     let code = run_numlang_code(src, "mixed_static_dynamic");
     // arr_static[0] = 105, arr_static[2] = 310 => 415
     // arr_dynamic[2] = 99 => 415 - 99 = 316
-    assert_eq!(code, 316);
+    assert_eq!(code, expected_exit(316));
 }
 
 #[test]
