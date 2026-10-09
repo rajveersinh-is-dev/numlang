@@ -49,13 +49,42 @@ fn link_and_run(obj_bytes: &[u8], test_id: &str) -> Result<(Option<i32>, String)
 
     link_executable(&obj_path, &exe_path).map_err(|e| format!("Linker error: {:?}", e))?;
 
-    let output = Command::new(&exe_path)
-        .output()
+    let mut child = Command::new(&exe_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| e.to_string())?;
 
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(3);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_dir_all(&test_dir);
+                    return Err(format!("Execution timed out after {:?}", timeout));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = fs::remove_dir_all(&test_dir);
+                return Err(e.to_string());
+            }
+        }
+    };
+
+    let mut stdout = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        use std::io::Read;
+        let _ = out.read_to_end(&mut stdout);
+    }
     let _ = fs::remove_dir_all(&test_dir);
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((output.status.code(), stdout))
+    let stdout_str = String::from_utf8_lossy(&stdout).trim().to_string();
+    Ok((status.code(), stdout_str))
 }
 
 fn check_llvm_available() -> bool {
@@ -250,7 +279,13 @@ fn test_lean_model_cross_validation_1k() {
     let count: u64 = std::env::var("LEAN_VALIDATION_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(if cfg!(debug_assertions) { 100 } else { 1000 });
+        .unwrap_or(if std::env::var("QUICK_BENCHMARKS").is_ok() {
+            50
+        } else if cfg!(debug_assertions) {
+            100
+        } else {
+            1000
+        });
 
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -317,7 +352,13 @@ fn test_differential_cross_validation_10k() {
     let count: u64 = std::env::var("DIFF_VALIDATION_COUNT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(if cfg!(debug_assertions) { 200 } else { 10000 });
+        .unwrap_or(if std::env::var("QUICK_BENCHMARKS").is_ok() {
+            50
+        } else if cfg!(debug_assertions) {
+            200
+        } else {
+            10000
+        });
 
     let llvm_supported = check_llvm_available();
     println!(

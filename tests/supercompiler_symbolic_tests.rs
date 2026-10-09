@@ -110,10 +110,15 @@ fn test_homeomorphic_embedding_growth_detection() {
     let x_plus_1 = interner.intern_binary(BinaryOp::Add, x, one, Type::I64);
     assert!(is_embedded(x, x_plus_1, &interner));
 
-    // Nested: x + 1 embeds in (x + 1) + 1
-    let x_plus_2 = interner.intern_binary(BinaryOp::Add, x_plus_1, one, Type::I64);
-    assert!(is_embedded(x_plus_1, x_plus_2, &interner));
-    assert!(is_embedded(x, x_plus_2, &interner));
+    // Nested: x + 1 embeds in (x + 1) + y
+    let y_place = Place {
+        local: "y".to_string(),
+        projections: vec![],
+    };
+    let y = interner.intern_var(y_place, Type::I64);
+    let x_plus_1_plus_y = interner.intern_binary(BinaryOp::Add, x_plus_1, y, Type::I64);
+    assert!(is_embedded(x_plus_1, x_plus_1_plus_y, &interner));
+    assert!(is_embedded(x, x_plus_1_plus_y, &interner));
 }
 
 #[test]

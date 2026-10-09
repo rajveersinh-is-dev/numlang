@@ -145,7 +145,6 @@ fn main() -> i64 {
     let trib_func = mir.functions.iter().find(|f| f.name == "trib").unwrap();
     let driver = SupercompilerDriver::new(trib_func);
     let tree = driver.run();
-
     assert!(
         tree.stats.loops_collapsed >= 1,
         "Expected at least 1 loop to be collapsed via order-3 recurrence solver, got {}",

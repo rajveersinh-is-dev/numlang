@@ -229,8 +229,9 @@ pub fn supercompile_mir_program_with_cache(
                     && residual_blocks > 3 * baseline_blocks
                     && baseline_blocks > 4; // only guard non-trivial functions
 
+                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
                 let mut stats = stats;
-                if !has_uncollapsed_array_loops && !code_size_bloat {
+                if !has_uncollapsed_array_loops && !code_size_bloat && !uncollapsed_knot {
                     *func = new_func;
                 } else {
                     stats.residual_block_count = func.blocks.len();
@@ -273,7 +274,9 @@ pub fn supercompile_mir_program_with_cache(
                 let mut stats = tree.stats.clone();
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
+                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
                 if !has_uncollapsed_array_loops
+                    && !uncollapsed_knot
                     && (is_profitable(&stats, budget, &tree)
                         || (tree.nodes.len() < budget && folds > 0))
                 {
@@ -314,7 +317,11 @@ pub fn supercompile_mir_program_with_cache(
                 let budget = SupercompilerDriver::new(func).config.max_inline_nodes;
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
-                if !has_uncollapsed_array_loops && is_profitable(&stats, budget, &best_tree) {
+                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
+                if !has_uncollapsed_array_loops
+                    && !uncollapsed_knot
+                    && is_profitable(&stats, budget, &best_tree)
+                {
                     let mut new_func = best_res;
                     let _stmts_removed = compact_mir_function(&mut new_func);
                     let _sr = strength_reduce_mir_function(&mut new_func);
@@ -463,8 +470,9 @@ pub fn supercompile_mir_function_with_stats(
     let budget = driver.config.max_inline_nodes;
     let mut tree = driver.run();
     let mut stats = tree.stats.clone();
+    let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if !is_profitable(&stats, budget, &tree) {
+    if !is_profitable(&stats, budget, &tree) || uncollapsed_knot {
         stats.residual_block_count = func.blocks.len();
         stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
@@ -499,8 +507,9 @@ pub fn supercompile_mir_function_with_program_options(
     let budget = driver.config.max_inline_nodes;
     let mut tree = driver.run();
     let mut stats = tree.stats.clone();
+    let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
-    if !is_profitable(&stats, budget, &tree) {
+    if !is_profitable(&stats, budget, &tree) || uncollapsed_knot {
         stats.residual_block_count = func.blocks.len();
         stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
         return (func.clone(), stats);
