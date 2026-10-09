@@ -343,6 +343,7 @@ impl CraneliftCompiler {
 
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = self.get_std_handle_id;
             let fd_stdout = builder.ins().iconst(types::I32, 1);
             let len64 = builder.ins().uextend(types::I64, len);
             let write_func = self
