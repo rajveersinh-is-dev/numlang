@@ -2,7 +2,7 @@ name: Lean 4 Proof Verification
 
 on:
   push:
-    branches: [ "master", "honesty-overhaul" ]
+    branches: [ "master", "honesty-overhaul", "honesty-round2" ]
   pull_request:
     branches: [ "master" ]
 
@@ -19,18 +19,27 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
-      - name: Build and Verify Lean Proofs
+      - name: Build and Verify Lean Package (lean/)
         working-directory: ./lean
         run: lake build
 
+      - name: Build and Verify Lean Package (proof/)
+        working-directory: ./proof
+        run: lake build
+
+      - name: Run Lean Axiom Introspection Check
+        run: python scripts/check_lean_axioms.py
+
+      - name: Run Lean Documentation Honesty Check
+        run: python scripts/check_lean_docs.py
+
       - name: Check for sorry and axiom usage
-        working-directory: ./lean
         run: |
-          if grep -rn "sorry" . ; then
+          if grep -rn --exclude-dir=".lake" "sorry" lean/ proof/ ; then
             echo "Error: Found 'sorry' in Lean proofs!"
             exit 1
           fi
-          if grep -rn "axiom " . ; then
+          if grep -rn --exclude-dir=".lake" "axiom " lean/ proof/ ; then
             echo "Error: Found unproven 'axiom' in Lean proofs!"
             exit 1
           fi

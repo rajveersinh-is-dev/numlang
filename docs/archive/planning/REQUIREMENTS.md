@@ -190,7 +190,7 @@
 
 ### 28. Constructive Lean 4 Operational Proofs (Phase 42)
 - [x] **LEAN-04**: In `lean/Supercompiler/Semantics.lean`, define small-step `Step` relation and transitive closure `StepStar`. Define `TerminatesWith` and re-anchor `Evaluates`.
-- [x] **LEAN-05**: Prove simulation preservation lemmas (`step_blocks_equiv`, `stepstar_blocks_equiv`, `terminates_blocks_equiv`, `semantic_equiv_of_blocks_equiv`).
+- [x] **LEAN-05**: Prove operational preservation lemmas (stepstar_trans, stepstar_single, const_fold_stmt_equiv, drive_step_preserves_semantics).
 - [x] **LEAN-06**: Eliminate circular hypotheses from `Preservation.lean` (`DriveStep`), `Compaction.lean` (`NoopRemoval`, `EtaReduction`), and `Distillation.lean` (`FoldStep`).
 - [x] **LEAN-07**: Prove end-to-end `supercompiler_sound` in `Main.lean`.
 - [x] **LEAN-08**: Provide test suite `tests/constructive_lean4_phase42_tests.rs` verifying 0 `sorry`, 0 `axiom`, and successful `lake build`.

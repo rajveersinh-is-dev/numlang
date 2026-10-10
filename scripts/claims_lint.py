@@ -114,7 +114,7 @@ def main():
     else:
         print("  [OK] No static build badges detected.")
 
-    print("[3/3] Checking Lean 4 formalization for 'sorry' and 'axiom' shortcuts...")
+    print("[3/4] Checking Lean 4 formalization for 'sorry' and 'axiom' shortcuts...")
     lean_errors = check_lean_proofs()
     if lean_errors:
         for err in lean_errors:
@@ -123,12 +123,30 @@ def main():
     else:
         print("  [OK] Zero 'sorry' and zero 'axiom' statements found in Lean formalizations.")
 
+    print("[4/4] Checking documentation references to Lean files and theorems...")
+    try:
+        from scripts.check_lean_docs import check_docs
+        doc_lean_errors = check_docs(REPO_ROOT)
+    except ImportError:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("check_lean_docs", REPO_ROOT / "scripts" / "check_lean_docs.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        doc_lean_errors = mod.check_docs(REPO_ROOT)
+
+    if doc_lean_errors:
+        for err in doc_lean_errors:
+            print(f"  [ERROR] {err}")
+        all_errors.extend(doc_lean_errors)
+    else:
+        print("  [OK] Documentation references match verified Lean inventory.")
+
     print("=====================================================================")
     if all_errors:
         print(f"FAILED: Found {len(all_errors)} claim integrity violation(s).")
         sys.exit(1)
     else:
-        print("PASSED: 100% claim integrity checks satisfied.")
+        print("PASSED: All audited claim integrity rules satisfied.")
         sys.exit(0)
 
 if __name__ == "__main__":
