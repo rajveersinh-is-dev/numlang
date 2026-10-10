@@ -30,6 +30,6 @@ Status legend:
 | **CLM-15** | Pure Rust implementation | `Cargo.toml`, `README.md` | `src/`, `Cargo.toml` | **REMOVED** (Requires external native linker; optional LLVM backend is C++) | a403bb8 |
 | **CLM-16** | Cross-platform execution across Linux, macOS, and Windows | `README.md`, `ROADMAP.md:Phase 41` | GitHub Actions CI matrix `[ubuntu, macos, windows]` | **TESTED** (All 3 platforms green in CI) | a403bb8 |
 | **CLM-17** | Formal SMT-based translation validation via bit-vectors and Horn clauses | `ROADMAP.md:Phase 24` | `tests/translation_validation_smt_tests.rs`, `src/mir/supercompiler/validate.rs` | **TESTED** (In-tree QF_BV CDCL decision procedure) | a403bb8 |
-| **CLM-18** | Two-level specialization disk cache (`.numlang_cache/`) | `ROADMAP.md:Phase 37` | `tests/supercompiler_phase37_tests.rs`, `src/mir/supercompiler/cache.rs` | **PARTIAL** (Missing compiler version and flags in `CacheKey`) | a403bb8 |
+| **CLM-18** | Two-level specialization disk cache (`.numlang_cache/`) | `ROADMAP.md:Phase 37` | `tests/supercompiler_phase37_tests.rs`, `src/mir/supercompiler/cache.rs` | **TESTED** | f9adfe8 |
 | **CLM-19** | Computer Language Benchmarks Game (CLBG) evaluations (Phase 58) | `ROADMAP.md:Phase 58` | N/A | **REMOVED** (No CLBG benchmark implementation or data exists) | a403bb8 |
 | **CLM-20** | 30 canonical literature benchmarks evaluated | `ROADMAP.md:Phase 39` | `tests/supercompiler_phase39_tests.rs`, `SHOWDOWN.md` | **PARTIAL** (30 benchmarks compile and pass correctness in test; 14 in SHOWDOWN) | a403bb8 |

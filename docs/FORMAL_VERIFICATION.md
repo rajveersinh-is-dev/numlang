@@ -41,3 +41,15 @@ The formal claims rely on:
 2. **Host Hardware & OS**: The physical environment executing the proof checker and test harnesses.
 
 All proofs in `lean/` build cleanly with **zero `sorry`** declarations and **zero unproven `axiom`** assumptions.
+
+---
+
+## 4. In-Tree Translation Validation Engine (`validate.rs`)
+
+To bridge the formal Lean 4 model and the real Rust compiler implementation, NumLang includes a self-contained, certified **Translation Validation Engine** (`src/mir/supercompiler/validate.rs`, 2,327 lines):
+
+### Architecture & Design
+1. **Zero External Solver Dependencies**: Unlike tools requiring dynamic linking against C++ libraries (such as Z3 or CVC5) or external process invocations, NumLang embeds its own **QF_BV / QF_UFBV bit-blasting and CDCL SAT decision procedure**. This explains why `Cargo.toml` contains no third-party SMT crate.
+2. **Relational Verification Condition (VC) Extraction**: Extracts path conditions and symbolic equivalence formulas connecting entry blocks of the original MIR to terminal returns of the supercompiled residual CFG.
+3. **Simulation Preorder Verification**: Certifies that every reachable trace in the transformed residual CFG simulates an execution path of the original function under identical input environments.
+4. **SMT-LIB2 Interoperability**: For hostile peer review and independent third-party verification, the validation engine can serialize all generated verification conditions directly to standard SMT-LIB2 format (`(set-logic QF_UFBV) ... (check-sat)`), allowing verification with external automated theorem provers (Z3, CVC5, Bitwuzla).

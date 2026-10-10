@@ -242,11 +242,12 @@ impl<'a> MrscOracleEngine<'a> {
         } else {
             sha256_str(&format!("{:#?}", self.func))
         };
-        let key = CacheKey {
-            function_name: self.func.name.clone(),
-            function_source_hash: src_hash,
-            argument_fingerprint: format!("mrsc_oracle_{:?}", self.config.objective),
-        };
+        let key = CacheKey::new(
+            &self.func.name,
+            src_hash,
+            format!("mrsc_oracle_{:?}", self.config.objective),
+        )
+        .with_flags(format!("objective={:?}", self.config.objective));
 
         // Check cache first
         if let Some(cached) = cache.lookup(&key) {

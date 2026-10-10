@@ -858,7 +858,6 @@ pub fn solve_nonlinear_recurrence(
             // Symbolic: S_n = init + c * n + b * n(n-1)/2 + a * n(n-1)(2n-1)/6
             let one = interner.intern_int(1);
             let two = interner.intern_int(2);
-            let six = interner.intern_int(6);
             let n_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one, Type::I64);
 
             let mut res = *init;
@@ -872,25 +871,37 @@ pub fn solve_nonlinear_recurrence(
 
             // b * n(n-1) / 2
             if *b != 0 {
-                let b_term = interner.intern_int(*b);
-                let n_times_n1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
-                let tri = interner.intern_binary(BinaryOp::Div, n_times_n1, two, Type::I64);
-                let b_tri = interner.intern_binary(BinaryOp::Mul, b_term, tri, Type::I64);
+                let b_tri = super::generalize::build_triangular_term(interner, num_iters, *b);
                 res = interner.intern_binary(BinaryOp::Add, res, b_tri, Type::I64);
             }
 
             // a * n(n-1)(2n-1) / 6
             if *a != 0 {
-                let a_term = interner.intern_int(*a);
                 let two_n = interner.intern_binary(BinaryOp::Mul, two, num_iters, Type::I64);
                 let two_n_minus_1 = interner.intern_binary(BinaryOp::Sub, two_n, one, Type::I64);
-                let n_times_n1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
-                let pyr_num =
-                    interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
-                let pyr = interner.intern_binary(BinaryOp::Div, pyr_num, six, Type::I64);
-                let a_pyr = interner.intern_binary(BinaryOp::Mul, a_term, pyr, Type::I64);
+                let a_pyr = if *a % 6 == 0 {
+                    let sixth_a = interner.intern_int(*a / 6);
+                    let n_times_n1 =
+                        interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
+                    let pyr_num =
+                        interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
+                    interner.intern_binary(BinaryOp::Mul, pyr_num, sixth_a, Type::I64)
+                } else {
+                    let tri_one =
+                        super::generalize::build_triangular_term(interner, num_iters, 1);
+                    let tri_times_pyr =
+                        interner.intern_binary(BinaryOp::Mul, tri_one, two_n_minus_1, Type::I64);
+                    let three_term = interner.intern_int(3);
+                    if *a % 3 == 0 {
+                        let third_a = interner.intern_int(*a / 3);
+                        interner.intern_binary(BinaryOp::Mul, tri_times_pyr, third_a, Type::I64)
+                    } else {
+                        let pyr =
+                            interner.intern_binary(BinaryOp::Div, tri_times_pyr, three_term, Type::I64);
+                        let a_term = interner.intern_int(*a);
+                        interner.intern_binary(BinaryOp::Mul, a_term, pyr, Type::I64)
+                    }
+                };
                 res = interner.intern_binary(BinaryOp::Add, res, a_pyr, Type::I64);
             }
 
@@ -927,7 +938,6 @@ pub fn solve_nonlinear_recurrence(
             // Symbolic: S_n = init + d*n + c*n(n-1)/2 + b*n(n-1)(2n-1)/6 + a * (n(n-1)/2)^2
             let one = interner.intern_int(1);
             let two = interner.intern_int(2);
-            let six = interner.intern_int(6);
             let n_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one, Type::I64);
 
             let mut res = *init;
@@ -938,29 +948,49 @@ pub fn solve_nonlinear_recurrence(
                 res = interner.intern_binary(BinaryOp::Add, res, d_n, Type::I64);
             }
 
-            let n_times_n1 = interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
-            let tri = interner.intern_binary(BinaryOp::Div, n_times_n1, two, Type::I64);
             if *c != 0 {
-                let c_term = interner.intern_int(*c);
-                let c_tri = interner.intern_binary(BinaryOp::Mul, c_term, tri, Type::I64);
+                let c_tri = super::generalize::build_triangular_term(interner, num_iters, *c);
                 res = interner.intern_binary(BinaryOp::Add, res, c_tri, Type::I64);
             }
 
             if *b != 0 {
-                let b_term = interner.intern_int(*b);
                 let two_n = interner.intern_binary(BinaryOp::Mul, two, num_iters, Type::I64);
                 let two_n_minus_1 = interner.intern_binary(BinaryOp::Sub, two_n, one, Type::I64);
-                let pyr_num =
-                    interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
-                let pyr = interner.intern_binary(BinaryOp::Div, pyr_num, six, Type::I64);
-                let b_pyr = interner.intern_binary(BinaryOp::Mul, b_term, pyr, Type::I64);
+                let b_pyr = if *b % 6 == 0 {
+                    let sixth_b = interner.intern_int(*b / 6);
+                    let n_times_n1 =
+                        interner.intern_binary(BinaryOp::Mul, num_iters, n_minus_1, Type::I64);
+                    let pyr_num =
+                        interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
+                    interner.intern_binary(BinaryOp::Mul, pyr_num, sixth_b, Type::I64)
+                } else {
+                    let tri_one =
+                        super::generalize::build_triangular_term(interner, num_iters, 1);
+                    let tri_times_pyr =
+                        interner.intern_binary(BinaryOp::Mul, tri_one, two_n_minus_1, Type::I64);
+                    let three_term = interner.intern_int(3);
+                    if *b % 3 == 0 {
+                        let third_b = interner.intern_int(*b / 3);
+                        interner.intern_binary(BinaryOp::Mul, tri_times_pyr, third_b, Type::I64)
+                    } else {
+                        let pyr =
+                            interner.intern_binary(BinaryOp::Div, tri_times_pyr, three_term, Type::I64);
+                        let b_term = interner.intern_int(*b);
+                        interner.intern_binary(BinaryOp::Mul, b_term, pyr, Type::I64)
+                    }
+                };
                 res = interner.intern_binary(BinaryOp::Add, res, b_pyr, Type::I64);
             }
 
             if *a != 0 {
-                let a_term = interner.intern_int(*a);
-                let tri_sq = interner.intern_binary(BinaryOp::Mul, tri, tri, Type::I64);
-                let a_tri_sq = interner.intern_binary(BinaryOp::Mul, a_term, tri_sq, Type::I64);
+                let tri_one = super::generalize::build_triangular_term(interner, num_iters, 1);
+                let tri_sq = interner.intern_binary(BinaryOp::Mul, tri_one, tri_one, Type::I64);
+                let a_tri_sq = if *a == 1 {
+                    tri_sq
+                } else {
+                    let a_term = interner.intern_int(*a);
+                    interner.intern_binary(BinaryOp::Mul, a_term, tri_sq, Type::I64)
+                };
                 res = interner.intern_binary(BinaryOp::Add, res, a_tri_sq, Type::I64);
             }
 

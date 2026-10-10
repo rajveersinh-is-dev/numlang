@@ -19,11 +19,7 @@ fn compile_src_to_mir(src: &str) -> MirProgram {
 
 fn dummy_entry(func_name: &str, hash: &str) -> CachedSpecialization {
     CachedSpecialization {
-        key: CacheKey {
-            function_name: func_name.to_string(),
-            function_source_hash: hash.to_string(),
-            argument_fingerprint: "generic".to_string(),
-        },
+        key: CacheKey::new(func_name, hash, "generic"),
         residual_json: format!(r#"{{"name": "{}"}}"#, func_name),
         stats_nodes_explored: 1,
         stats_branches_pruned: 0,
