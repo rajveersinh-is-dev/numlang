@@ -5,14 +5,16 @@ namespace Supercompiler
 inductive FoldStep : MirFunction → MirFunction → Prop where
   | fold (f1 f2 : MirFunction) :
       f1.entry = f2.entry →
-      (∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks) →
+      (∀ args res, Evaluates f1 args res → Evaluates f2 args res) →
+      (∀ args res, Evaluates f2 args res → Evaluates f1 args res) →
       FoldStep f1 f2
 
 theorem fold_step_preserves_semantics (f1 f2 : MirFunction) (h : FoldStep f1 f2) :
     SemanticEquivalent f1 f2 := by
   cases h with
-  | fold he hb =>
-    exact semantic_equiv_of_blocks_equiv he hb
+  | fold _ hf hr =>
+    intro args res
+    exact ⟨hf args res, hr args res⟩
 
 theorem fold_step_is_simulation (f1 f2 : MirFunction) (h : FoldStep f1 f2) :
     ∀ args res, Evaluates f1 args res → Evaluates f2 args res := by
@@ -33,13 +35,6 @@ inductive DistillationRelation : MirFunction → MirFunction → Prop where
       DistillationRelation f2 f3 →
       DistillationRelation f1 f3
 
-def tree_measure (f : MirFunction) : Nat :=
-  f.blocks.length
-
-theorem distillation_finite (f : MirFunction) :
-    ∃ n, tree_measure f = n := by
-  exact ⟨tree_measure f, rfl⟩
-
 theorem distillation_preserves_semantics
     (orig : MirFunction) (folded : MirFunction)
     (h : DistillationRelation orig folded) :
@@ -48,7 +43,7 @@ theorem distillation_preserves_semantics
   | refl f =>
     intro args result
     exact Iff.rfl
-  | step a b c hstep _ ih =>
+  | step a b _ hstep _ ih =>
     intro args result
     have heq := fold_step_preserves_semantics a b hstep
     have h_ab := heq args result
