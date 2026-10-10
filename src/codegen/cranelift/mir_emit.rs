@@ -226,7 +226,9 @@ impl CraneliftCompiler {
         for b in &func.blocks {
             for stmt in &b.statements {
                 let crate::mir::lower::Statement::Assign(place, rval) = stmt;
-                inferred_types.entry(place.local.clone()).or_insert(types::I64);
+                inferred_types
+                    .entry(place.local.clone())
+                    .or_insert(types::I64);
                 match rval {
                     crate::mir::lower::Rvalue::Use(p) => {
                         inferred_types.entry(p.local.clone()).or_insert(types::I64);
@@ -262,13 +264,19 @@ impl CraneliftCompiler {
                     inferred_types.entry(p.local.clone()).or_insert(types::I64);
                 }
                 crate::mir::Terminator::BranchIf { condition, .. } => {
-                    inferred_types.entry(condition.local.clone()).or_insert(types::I8);
+                    inferred_types
+                        .entry(condition.local.clone())
+                        .or_insert(types::I8);
                 }
                 crate::mir::Terminator::Switch { value, .. } => {
-                    inferred_types.entry(value.local.clone()).or_insert(types::I64);
+                    inferred_types
+                        .entry(value.local.clone())
+                        .or_insert(types::I64);
                 }
                 crate::mir::Terminator::TypeGuard { local, .. } => {
-                    inferred_types.entry(local.local.clone()).or_insert(types::I64);
+                    inferred_types
+                        .entry(local.local.clone())
+                        .or_insert(types::I64);
                 }
                 _ => {}
             }
@@ -385,21 +393,42 @@ impl CraneliftCompiler {
                                 val_bytes[..chunk.len()].copy_from_slice(chunk);
                                 let val_u64 = u64::from_le_bytes(val_bytes);
                                 let val = builder.ins().iconst(types::I64, val_u64 as i64);
-                                let addr = builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
+                                let addr =
+                                    builder.ins().stack_addr(types::I64, slot, (i * 8) as i32);
                                 builder.ins().store(MemFlagsData::trusted(), val, addr, 0);
                             }
                             string_lengths.insert(place.local.clone(), bytes.len());
                             builder.ins().stack_addr(types::I64, slot, 0)
                         }
                     },
-                    crate::mir::lower::Rvalue::Use(p) => {
-                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, p)
-                    }
+                    crate::mir::lower::Rvalue::Use(p) => get_place_value(
+                        &mut builder,
+                        &var_map,
+                        &array_slots,
+                        &aliases,
+                        &local_types,
+                        &self.struct_layouts,
+                        p,
+                    ),
                     crate::mir::lower::Rvalue::BinaryOp(op, l, r) => {
-                        let mut lv =
-                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, l);
-                        let mut rv =
-                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, r);
+                        let mut lv = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            l,
+                        );
+                        let mut rv = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            r,
+                        );
                         let l_ty = builder.func.dfg.value_type(lv);
                         let r_ty = builder.func.dfg.value_type(rv);
                         if l_ty.is_int() && r_ty.is_int() && l_ty != r_ty {
@@ -473,7 +502,15 @@ impl CraneliftCompiler {
                         }
                     }
                     crate::mir::lower::Rvalue::UnaryOp(op, p) => {
-                        let v = get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, p);
+                        let v = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            p,
+                        );
                         let v_ty = builder.func.dfg.value_type(v);
                         match op {
                             UnaryOp::Neg => {
@@ -607,8 +644,8 @@ impl CraneliftCompiler {
                                     &var_map,
                                     &array_slots,
                                     &aliases,
-                                &local_types,
-                                &self.struct_layouts,
+                                    &local_types,
+                                    &self.struct_layouts,
                                     arg_op,
                                 );
                                 let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
@@ -685,8 +722,8 @@ impl CraneliftCompiler {
                                     &var_map,
                                     &array_slots,
                                     &aliases,
-                                &local_types,
-                                &self.struct_layouts,
+                                    &local_types,
+                                    &self.struct_layouts,
                                     arg_op,
                                 );
                                 let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
@@ -762,8 +799,8 @@ impl CraneliftCompiler {
                                     &var_map,
                                     &array_slots,
                                     &aliases,
-                                &local_types,
-                                &self.struct_layouts,
+                                    &local_types,
+                                    &self.struct_layouts,
                                     arg_op,
                                 );
                                 let val_i64 = if builder.func.dfg.value_type(arg_val) != types::I64
@@ -1139,8 +1176,15 @@ impl CraneliftCompiler {
                         builder.ins().iconst(types::I64, 0)
                     }
                     crate::mir::lower::Rvalue::Discriminant(p) => {
-                        let ptr_val =
-                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, p);
+                        let ptr_val = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            p,
+                        );
                         builder
                             .ins()
                             .load(types::I64, MemFlagsData::trusted(), ptr_val, 0)
@@ -1394,8 +1438,15 @@ impl CraneliftCompiler {
                             )
                         })?;
                         if let Some(p) = value {
-                            let val =
-                                get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, p);
+                            let val = get_place_value(
+                                &mut builder,
+                                &var_map,
+                                &array_slots,
+                                &aliases,
+                                &local_types,
+                                &self.struct_layouts,
+                                p,
+                            );
                             if let Type::Struct(ref sname) = func.return_ty {
                                 if let Some(layout) = self.struct_layouts.get(sname) {
                                     emit_copy_bytes_raw(
@@ -1418,8 +1469,15 @@ impl CraneliftCompiler {
                         }
                         builder.ins().return_(&[sret]);
                     } else if let Some(p) = value {
-                        let val =
-                            get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, p);
+                        let val = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            p,
+                        );
                         let ret_ty = if func.return_ty != Type::Void {
                             type_to_clif(func.return_ty.clone())
                         } else {
@@ -1472,8 +1530,15 @@ impl CraneliftCompiler {
                     then_target,
                     else_target,
                 } => {
-                    let cond_val =
-                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, condition);
+                    let cond_val = get_place_value(
+                        &mut builder,
+                        &var_map,
+                        &array_slots,
+                        &aliases,
+                        &local_types,
+                        &self.struct_layouts,
+                        condition,
+                    );
                     if let (Some(&then_b), Some(&else_b)) =
                         (block_map.get(then_target), block_map.get(else_target))
                     {
@@ -1485,8 +1550,15 @@ impl CraneliftCompiler {
                     targets,
                     default,
                 } => {
-                    let switch_val =
-                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, value);
+                    let switch_val = get_place_value(
+                        &mut builder,
+                        &var_map,
+                        &array_slots,
+                        &aliases,
+                        &local_types,
+                        &self.struct_layouts,
+                        value,
+                    );
                     if let Some(&def_b) = block_map.get(default) {
                         for (case_val, target_bb) in targets {
                             if let Some(&target_block) = block_map.get(target_bb) {
@@ -1545,8 +1617,15 @@ impl CraneliftCompiler {
                     let deopt_block = *block_map.get(deopt_stub).ok_or_else(|| {
                         CodegenError::BackendError(format!("Block bb{} not found", deopt_stub.0))
                     })?;
-                    let guard_val =
-                        get_place_value(&mut builder, &var_map, &array_slots, &aliases, &local_types, &self.struct_layouts, local);
+                    let guard_val = get_place_value(
+                        &mut builder,
+                        &var_map,
+                        &array_slots,
+                        &aliases,
+                        &local_types,
+                        &self.struct_layouts,
+                        local,
+                    );
                     let exp_val = builder.ins().iconst(types::I64, *expected_tag);
                     let is_match = builder.ins().icmp(IntCC::Equal, guard_val, exp_val);
                     builder

@@ -85,7 +85,10 @@ fn test_cache_key_invalidation_on_compiler_version() {
     cache.store(&entry).expect("store");
 
     assert!(cache.lookup(&key1).is_some());
-    assert!(cache.lookup(&key2).is_none(), "Cache must invalidate across compiler versions");
+    assert!(
+        cache.lookup(&key2).is_none(),
+        "Cache must invalidate across compiler versions"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -115,7 +118,10 @@ fn test_cache_key_invalidation_on_optimization_flags() {
     cache.store(&entry).expect("store");
 
     assert!(cache.lookup(&key1).is_some());
-    assert!(cache.lookup(&key2).is_none(), "Cache must invalidate across optimization flag changes");
+    assert!(
+        cache.lookup(&key2).is_none(),
+        "Cache must invalidate across optimization flag changes"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -136,10 +142,17 @@ fn test_corrupted_disk_cache_fallback() {
 
     let metrics_before = cache.metrics();
     let result = cache.lookup(&key);
-    assert!(result.is_none(), "Corrupted cache file must not crash and must return None");
+    assert!(
+        result.is_none(),
+        "Corrupted cache file must not crash and must return None"
+    );
 
     let metrics_after = cache.metrics();
-    assert_eq!(metrics_after.misses, metrics_before.misses + 1, "Must record a cache miss on corrupted disk cache");
+    assert_eq!(
+        metrics_after.misses,
+        metrics_before.misses + 1,
+        "Must record a cache miss on corrupted disk cache"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

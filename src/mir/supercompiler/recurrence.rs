@@ -887,8 +887,7 @@ pub fn solve_nonlinear_recurrence(
                         interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
                     interner.intern_binary(BinaryOp::Mul, pyr_num, sixth_a, Type::I64)
                 } else {
-                    let tri_one =
-                        super::generalize::build_triangular_term(interner, num_iters, 1);
+                    let tri_one = super::generalize::build_triangular_term(interner, num_iters, 1);
                     let tri_times_pyr =
                         interner.intern_binary(BinaryOp::Mul, tri_one, two_n_minus_1, Type::I64);
                     let three_term = interner.intern_int(3);
@@ -896,8 +895,12 @@ pub fn solve_nonlinear_recurrence(
                         let third_a = interner.intern_int(*a / 3);
                         interner.intern_binary(BinaryOp::Mul, tri_times_pyr, third_a, Type::I64)
                     } else {
-                        let pyr =
-                            interner.intern_binary(BinaryOp::Div, tri_times_pyr, three_term, Type::I64);
+                        let pyr = interner.intern_binary(
+                            BinaryOp::Div,
+                            tri_times_pyr,
+                            three_term,
+                            Type::I64,
+                        );
                         let a_term = interner.intern_int(*a);
                         interner.intern_binary(BinaryOp::Mul, a_term, pyr, Type::I64)
                     }
@@ -964,8 +967,7 @@ pub fn solve_nonlinear_recurrence(
                         interner.intern_binary(BinaryOp::Mul, n_times_n1, two_n_minus_1, Type::I64);
                     interner.intern_binary(BinaryOp::Mul, pyr_num, sixth_b, Type::I64)
                 } else {
-                    let tri_one =
-                        super::generalize::build_triangular_term(interner, num_iters, 1);
+                    let tri_one = super::generalize::build_triangular_term(interner, num_iters, 1);
                     let tri_times_pyr =
                         interner.intern_binary(BinaryOp::Mul, tri_one, two_n_minus_1, Type::I64);
                     let three_term = interner.intern_int(3);
@@ -973,8 +975,12 @@ pub fn solve_nonlinear_recurrence(
                         let third_b = interner.intern_int(*b / 3);
                         interner.intern_binary(BinaryOp::Mul, tri_times_pyr, third_b, Type::I64)
                     } else {
-                        let pyr =
-                            interner.intern_binary(BinaryOp::Div, tri_times_pyr, three_term, Type::I64);
+                        let pyr = interner.intern_binary(
+                            BinaryOp::Div,
+                            tri_times_pyr,
+                            three_term,
+                            Type::I64,
+                        );
                         let b_term = interner.intern_int(*b);
                         interner.intern_binary(BinaryOp::Mul, b_term, pyr, Type::I64)
                     }
