@@ -395,6 +395,13 @@ fn main() -> i64 {
     let sq2: i64 = isqrt_newton(100);  // 10
     let sq3: i64 = isqrt_newton(2);    // 1
 
+    println(g1);
+    println(g2);
+    println(g3);
+    println(sq1);
+    println(sq2);
+    println(sq3);
+
     return g1 + g2 + g3 + sq1 + sq2 + sq3; // 6 + 25 + 1 + 5 + 10 + 1 = 48
 }
 "#;
