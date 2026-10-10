@@ -26,7 +26,9 @@ def run_axiom_check(directory, file_name):
         return False, []
     
     lines = result.stdout.strip().splitlines()
-    print(f"--- Axiom output for {directory}/{file_name} ---")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    rel_path = os.path.relpath(os.path.join(directory, file_name), root).replace("\\", "/")
+    print(f"--- Axiom output for {rel_path} ---")
     for line in lines:
         print(line)
     return True, lines

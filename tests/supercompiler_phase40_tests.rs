@@ -136,7 +136,10 @@ fn test_makefile_targets_present() {
 #[test]
 fn test_rebuttal_objections_complete() {
     let root = get_repo_root();
-    let rebuttal_path = if root.join("docs/archive/rebuttal/likely_objections.md").is_file() {
+    let rebuttal_path = if root
+        .join("docs/archive/rebuttal/likely_objections.md")
+        .is_file()
+    {
         root.join("docs/archive/rebuttal/likely_objections.md")
     } else {
         root.join("rebuttal/likely_objections.md")

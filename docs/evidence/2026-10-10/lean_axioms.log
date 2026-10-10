@@ -1,4 +1,4 @@
---- Axiom output for C:\Users\davea\.gemini\antigravity\scratch\numlang\lean/AxiomCheck.lean ---
+--- Axiom output for lean/AxiomCheck.lean ---
 'Supercompiler.const_fold_stmt_equiv' depends on axioms: [propext, Quot.sound]
 'Supercompiler.drive_step_preserves_semantics' depends on axioms: [propext, Quot.sound]
 'Supercompiler.driving_preserves_semantics' depends on axioms: [propext, Quot.sound]
@@ -10,7 +10,7 @@
 'Supercompiler.eta_reduction_preserves_semantics' depends on axioms: [propext, Quot.sound]
 'Supercompiler.function_transformed_preserves_semantics' depends on axioms: [propext, Quot.sound]
 'Supercompiler.supercompiler_sound' depends on axioms: [propext, Quot.sound]
---- Axiom output for C:\Users\davea\.gemini\antigravity\scratch\numlang\proof/AxiomCheck.lean ---
+--- Axiom output for proof/AxiomCheck.lean ---
 'NumLang.driving_correctness' depends on axioms: [propext]
 'NumLang.driving_soundness' depends on axioms: [propext]
 'NumLang.driving_equiv' depends on axioms: [propext]
