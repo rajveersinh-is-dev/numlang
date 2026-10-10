@@ -28,7 +28,8 @@ int main(void) {
     clock_gettime(CLOCK_MONOTONIC, &t0);
 #endif
 
-    int64_t r = cubic_sum(10000000) % 256;
+    int64_t full_res = cubic_sum(10000000);
+    int64_t r = full_res % 256;
     if (r < 0) r += 256;
 
 #ifdef _WIN32
@@ -39,6 +40,7 @@ int main(void) {
     int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
 #endif
 
+    printf("%lld\n", (long long)full_res);
     printf("COMPUTE_NS: %lld\n", (long long)ns);
     return (int)r;
 }

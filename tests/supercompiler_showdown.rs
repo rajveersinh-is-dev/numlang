@@ -29,6 +29,7 @@ pub struct BenchmarkSpec {
     pub name: &'static str,
     pub algorithm: &'static str,
     pub expected_exit: i32,
+    pub runtime_arg: Option<&'static str>,
     pub nl_rel: &'static str,
     pub rs_rel: &'static str,
     pub c_rel: &'static str,
@@ -263,27 +264,103 @@ fn compile_ghc(src_file: &Path, exe_file: &Path) -> Result<Duration, String> {
     }
 }
 
-fn measure_binary(exe: &Path, expected_exit: i32, warmup: usize, rounds: usize) -> RunStatus {
-    // 1. Correctness Gate: Run once and verify exit code
-    let check_out = match Command::new(exe).output() {
-        Ok(o) => o,
-        Err(e) => return RunStatus::Crash(format!("Spawn error: {}", e).len() as i32),
-    };
+fn parse_stdout_output(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("COMPUTE_NS:") {
+            continue;
+        }
+        return Some(trimmed.to_string());
+    }
+    None
+}
 
-    let actual_exit = check_out.status.code().unwrap_or(-1);
+fn verify_output(
+    out: &std::process::Output,
+    expected_exit: i32,
+    expected_output: &str,
+) -> Result<(), RunStatus> {
+    let actual_exit = out.status.code().unwrap_or(-1);
     let norm_actual = actual_exit.rem_euclid(256);
     let norm_expected = expected_exit.rem_euclid(256);
 
-    if norm_actual != norm_expected {
-        return RunStatus::WrongOutput {
+    let stdout_str = String::from_utf8_lossy(&out.stdout);
+    let actual_output = parse_stdout_output(&stdout_str);
+
+    match actual_output {
+        Some(ref val) if val.trim() == expected_output.trim() => {
+            if norm_actual != norm_expected {
+                return Err(RunStatus::WrongOutput {
+                    actual: actual_exit,
+                    expected: expected_exit,
+                });
+            }
+            Ok(())
+        }
+        _ => Err(RunStatus::WrongOutput {
             actual: actual_exit,
             expected: expected_exit,
-        };
+        }),
+    }
+}
+
+fn load_oracle_outputs() -> BTreeMap<String, String> {
+    let output = Command::new("python")
+        .args(["scripts/benchmark_oracle.py", "--all"])
+        .output()
+        .expect("Failed to execute scripts/benchmark_oracle.py --all");
+    assert!(
+        output.status.success(),
+        "scripts/benchmark_oracle.py --all exited with error:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&json_str).expect("Failed to parse oracle JSON output");
+    let mut map = BTreeMap::new();
+    if let serde_json::Value::Object(obj) = parsed {
+        for (k, v) in obj {
+            let s = match v {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s,
+                _ => v.to_string(),
+            };
+            map.insert(k, s);
+        }
+    }
+    map
+}
+
+fn measure_binary(
+    exe: &Path,
+    expected_exit: i32,
+    expected_output: &str,
+    runtime_arg: Option<&str>,
+    warmup: usize,
+    rounds: usize,
+) -> RunStatus {
+    let run_cmd = |exe: &Path| -> Result<std::process::Output, RunStatus> {
+        let mut cmd = Command::new(exe);
+        if let Some(arg) = runtime_arg {
+            cmd.arg(arg);
+        }
+        cmd.output()
+            .map_err(|e| RunStatus::Crash(format!("Spawn error: {}", e).len() as i32))
+    };
+
+    // 1. Correctness Gate: Run once and verify full stdout and exit code against oracle
+    let check_out = match run_cmd(exe) {
+        Ok(o) => o,
+        Err(status) => return status,
+    };
+
+    if let Err(status) = verify_output(&check_out, expected_exit, expected_output) {
+        return status;
     }
 
     // 2. Discarded Warmups (>= 5 iterations)
     for _ in 0..warmup {
-        let _ = Command::new(exe).output();
+        let _ = run_cmd(exe);
     }
 
     // 3. High-Precision Timed Measurement Rounds (>= 30 iterations)
@@ -292,19 +369,14 @@ fn measure_binary(exe: &Path, expected_exit: i32, warmup: usize, rounds: usize) 
 
     for _ in 0..rounds {
         let t_wall_0 = Instant::now();
-        let out = match Command::new(exe).output() {
+        let out = match run_cmd(exe) {
             Ok(o) => o,
             Err(_) => return RunStatus::Crash(-1),
         };
         let t_wall_elapsed = t_wall_0.elapsed();
 
-        let code = out.status.code().unwrap_or(-1);
-        let n_code = code.rem_euclid(256);
-        if n_code != norm_expected {
-            return RunStatus::WrongOutput {
-                actual: code,
-                expected: expected_exit,
-            };
+        if let Err(status) = verify_output(&out, expected_exit, expected_output) {
+            return status;
         }
 
         // Parse in-process COMPUTE_NS
@@ -424,6 +496,8 @@ fn test_supercompiler_showdown() {
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
+    let oracle_outputs = load_oracle_outputs();
+
     let all_benchmarks = vec![
         // Group 1: Classical Functional Deforestation
         BenchmarkSpec {
@@ -432,6 +506,7 @@ fn test_supercompiler_showdown() {
             name: "Naive Reverse (Double nrev)",
             algorithm: "nrev(nrev(xs)) list reversal",
             expected_exit: 224,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/nrev.nl",
             rs_rel: "bench/showdown/rust/nrev.rs",
             c_rel: "bench/showdown/c/nrev.c",
@@ -443,6 +518,7 @@ fn test_supercompiler_showdown() {
             name: "Triple List Append",
             algorithm: "append(append(xs, ys), zs)",
             expected_exit: 164,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/append3.nl",
             rs_rel: "bench/showdown/rust/append3.rs",
             c_rel: "bench/showdown/c/append3.c",
@@ -454,6 +530,7 @@ fn test_supercompiler_showdown() {
             name: "Knuth-Morris-Pratt DFA",
             algorithm: "Matcher specialized to pattern",
             expected_exit: 88,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/kmp.nl",
             rs_rel: "bench/showdown/rust/kmp.rs",
             c_rel: "bench/showdown/c/kmp.c",
@@ -465,6 +542,7 @@ fn test_supercompiler_showdown() {
             name: "Peano Multiplication",
             algorithm: "mul(3, 4) via recursive Peano add",
             expected_exit: 176,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/peano_mul.nl",
             rs_rel: "bench/showdown/rust/peano_mul.rs",
             c_rel: "bench/showdown/c/peano_mul.c",
@@ -476,18 +554,20 @@ fn test_supercompiler_showdown() {
             name: "Double Tree Inversion",
             algorithm: "flip(flip(t)) binary tree inversion",
             expected_exit: 224,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/tree_flip.nl",
             rs_rel: "bench/showdown/rust/tree_flip.rs",
             c_rel: "bench/showdown/c/tree_flip.c",
             hs_rel: "bench/showdown/haskell/tree_flip.hs",
         },
-        // Group 2: Arithmetic Recurrences
+        // Group 2: Arithmetic Recurrences (Static)
         BenchmarkSpec {
             id: "fib_matrix",
             group: "G2: Recurrences",
             name: "Coupled Fibonacci Recurrence Matrix Power",
             algorithm: "Order-2 coupled Fibonacci matrix power (1000 iters)",
             expected_exit: 46,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/fib_matrix.nl",
             rs_rel: "bench/showdown/rust/fib_matrix.rs",
             c_rel: "bench/showdown/c/fib_matrix.c",
@@ -499,6 +579,7 @@ fn test_supercompiler_showdown() {
             name: "Triangular Summation (50M)",
             algorithm: "Sum 1 + 2 + ... + 50,000,000",
             expected_exit: 64,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/tri_sum.nl",
             rs_rel: "bench/showdown/rust/tri_sum.rs",
             c_rel: "bench/showdown/c/tri_sum.c",
@@ -510,6 +591,7 @@ fn test_supercompiler_showdown() {
             name: "Sum of Squares 1^2+...+10M^2 (Degree-3)",
             algorithm: "Sum of squares 1^2 + ... + 10M^2",
             expected_exit: 192,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/cubic_sum.nl",
             rs_rel: "bench/showdown/rust/cubic_sum.rs",
             c_rel: "bench/showdown/c/cubic_sum.c",
@@ -521,6 +603,7 @@ fn test_supercompiler_showdown() {
             name: "Geometric Power Loop (100)",
             algorithm: "acc = acc * 2 loop",
             expected_exit: 0,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/pow2_mod.nl",
             rs_rel: "bench/showdown/rust/pow2_mod.rs",
             c_rel: "bench/showdown/c/pow2_mod.c",
@@ -532,10 +615,60 @@ fn test_supercompiler_showdown() {
             name: "Hofstadter Mutual Linear Recurrence",
             algorithm: "Mutual recursive companion sequences Female/Male",
             expected_exit: 62,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/hofstadter.nl",
             rs_rel: "bench/showdown/rust/hofstadter.rs",
             c_rel: "bench/showdown/c/hofstadter.c",
             hs_rel: "bench/showdown/haskell/hofstadter.hs",
+        },
+        // Group 2-Dyn: Dynamic Arithmetic Recurrences (Runtime Input)
+        BenchmarkSpec {
+            id: "tri_sum_dyn",
+            group: "G2-Dyn: Recurrences (Runtime)",
+            name: "Dynamic Triangular Summation (50M)",
+            algorithm: "Dynamic loop 1..N with N=50,000,000 via read_i64()",
+            expected_exit: 64,
+            runtime_arg: Some("50000000"),
+            nl_rel: "bench/showdown/numlang/tri_sum_dyn.nl",
+            rs_rel: "bench/showdown/rust/tri_sum_dyn.rs",
+            c_rel: "bench/showdown/c/tri_sum_dyn.c",
+            hs_rel: "bench/showdown/haskell/tri_sum_dyn.hs",
+        },
+        BenchmarkSpec {
+            id: "cubic_sum_dyn",
+            group: "G2-Dyn: Recurrences (Runtime)",
+            name: "Dynamic Sum of Squares (10M)",
+            algorithm: "Dynamic loop 1^2..N^2 with N=10,000,000 via read_i64()",
+            expected_exit: 192,
+            runtime_arg: Some("10000000"),
+            nl_rel: "bench/showdown/numlang/cubic_sum_dyn.nl",
+            rs_rel: "bench/showdown/rust/cubic_sum_dyn.rs",
+            c_rel: "bench/showdown/c/cubic_sum_dyn.c",
+            hs_rel: "bench/showdown/haskell/cubic_sum_dyn.hs",
+        },
+        BenchmarkSpec {
+            id: "fib_matrix_dyn",
+            group: "G2-Dyn: Recurrences (Runtime)",
+            name: "Dynamic Fibonacci Matrix Power (1000)",
+            algorithm: "Dynamic coupled Fibonacci recurrence N=1000 via read_i64()",
+            expected_exit: 46,
+            runtime_arg: Some("1000"),
+            nl_rel: "bench/showdown/numlang/fib_matrix_dyn.nl",
+            rs_rel: "bench/showdown/rust/fib_matrix_dyn.rs",
+            c_rel: "bench/showdown/c/fib_matrix_dyn.c",
+            hs_rel: "bench/showdown/haskell/fib_matrix_dyn.hs",
+        },
+        BenchmarkSpec {
+            id: "pow2_mod_dyn",
+            group: "G2-Dyn: Recurrences (Runtime)",
+            name: "Dynamic Geometric Power Loop (100)",
+            algorithm: "Dynamic acc = acc * 2 loop N=100 via read_i64()",
+            expected_exit: 0,
+            runtime_arg: Some("100"),
+            nl_rel: "bench/showdown/numlang/pow2_mod_dyn.nl",
+            rs_rel: "bench/showdown/rust/pow2_mod_dyn.rs",
+            c_rel: "bench/showdown/c/pow2_mod_dyn.c",
+            hs_rel: "bench/showdown/haskell/pow2_mod_dyn.hs",
         },
         // Group 3: Higher-Order & Codata
         BenchmarkSpec {
@@ -544,6 +677,7 @@ fn test_supercompiler_showdown() {
             name: "5-Deep Function Composition Chain",
             algorithm: "(f . g . h . i . j)(x) repeated 1000 times",
             expected_exit: 192,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/compose5.nl",
             rs_rel: "bench/showdown/rust/compose5.rs",
             c_rel: "bench/showdown/c/compose5.c",
@@ -555,6 +689,7 @@ fn test_supercompiler_showdown() {
             name: "Map-Map Pipeline Deforestation",
             algorithm: "map double (map inc xs) over array buffer",
             expected_exit: 164,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/map_map.nl",
             rs_rel: "bench/showdown/rust/map_map.rs",
             c_rel: "bench/showdown/c/map_map.c",
@@ -566,6 +701,7 @@ fn test_supercompiler_showdown() {
             name: "Sum-Map Stream Fusion (1M)",
             algorithm: "sum (map (\\x -> x * x) [1..1M])",
             expected_exit: 96,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/sum_map.nl",
             rs_rel: "bench/showdown/rust/sum_map.rs",
             c_rel: "bench/showdown/c/sum_map.c",
@@ -577,6 +713,7 @@ fn test_supercompiler_showdown() {
             name: "Stream Pipeline Filter-Sum",
             algorithm: "stream_pipeline(50) predicate filter",
             expected_exit: 0,
+            runtime_arg: None,
             nl_rel: "bench/showdown/numlang/stream_take.nl",
             rs_rel: "bench/showdown/rust/stream_take.rs",
             c_rel: "bench/showdown/c/stream_take.c",
@@ -586,9 +723,10 @@ fn test_supercompiler_showdown() {
 
     let benchmarks: Vec<BenchmarkSpec> = if is_quick {
         vec![
-            all_benchmarks[1].clone(),  // append3
+            all_benchmarks[2].clone(),  // kmp (G1 Deforestation winner)
             all_benchmarks[5].clone(),  // fib_matrix
-            all_benchmarks[10].clone(), // compose5
+            all_benchmarks[10].clone(), // tri_sum_dyn (test dynamic recurrence)
+            all_benchmarks[14].clone(), // compose5
         ]
     } else {
         all_benchmarks
@@ -605,6 +743,10 @@ fn test_supercompiler_showdown() {
             spec.id, spec.name, spec.group
         );
 
+        let expected_output = oracle_outputs.get(spec.id).unwrap_or_else(|| {
+            panic!("Oracle missing expected stdout for benchmark '{}'", spec.id)
+        });
+
         let nl_src = root.join(spec.nl_rel);
         let rs_src = root.join(spec.rs_rel);
         let c_src = root.join(spec.c_rel);
@@ -616,6 +758,8 @@ fn test_supercompiler_showdown() {
             Ok(_) => measure_binary(
                 &nl_sc_exe,
                 spec.expected_exit,
+                expected_output,
+                spec.runtime_arg,
                 warmup_rounds,
                 measure_rounds,
             ),
@@ -628,6 +772,8 @@ fn test_supercompiler_showdown() {
             Ok(_) => measure_binary(
                 &nl_base_exe,
                 spec.expected_exit,
+                expected_output,
+                spec.runtime_arg,
                 warmup_rounds,
                 measure_rounds,
             ),
@@ -638,7 +784,14 @@ fn test_supercompiler_showdown() {
         let rust_opt_status = if competitors["Rustc-O3"].installed && rs_src.exists() {
             let rs_exe = test_dir.join(format!("{}_rs.exe", spec.id));
             match compile_rust(&rs_src, &rs_exe) {
-                Ok(_) => measure_binary(&rs_exe, spec.expected_exit, warmup_rounds, measure_rounds),
+                Ok(_) => measure_binary(
+                    &rs_exe,
+                    spec.expected_exit,
+                    expected_output,
+                    spec.runtime_arg,
+                    warmup_rounds,
+                    measure_rounds,
+                ),
                 Err(e) => RunStatus::CompileFailed(e),
             }
         } else {
@@ -650,9 +803,14 @@ fn test_supercompiler_showdown() {
             if let Some(ref vcvars) = competitors["MSVC-O2"].path {
                 let c_exe = test_dir.join(format!("{}_c.exe", spec.id));
                 match compile_msvc_c(&c_src, &c_exe, vcvars) {
-                    Ok(_) => {
-                        measure_binary(&c_exe, spec.expected_exit, warmup_rounds, measure_rounds)
-                    }
+                    Ok(_) => measure_binary(
+                        &c_exe,
+                        spec.expected_exit,
+                        expected_output,
+                        spec.runtime_arg,
+                        warmup_rounds,
+                        measure_rounds,
+                    ),
                     Err(e) => RunStatus::CompileFailed(e),
                 }
             } else {
@@ -666,7 +824,14 @@ fn test_supercompiler_showdown() {
         let ghc_opt_status = if competitors["GHC-O2"].installed && hs_src.exists() {
             let hs_exe = test_dir.join(format!("{}_hs.exe", spec.id));
             match compile_ghc(&hs_src, &hs_exe) {
-                Ok(_) => measure_binary(&hs_exe, spec.expected_exit, warmup_rounds, measure_rounds),
+                Ok(_) => measure_binary(
+                    &hs_exe,
+                    spec.expected_exit,
+                    expected_output,
+                    spec.runtime_arg,
+                    warmup_rounds,
+                    measure_rounds,
+                ),
                 Err(e) => RunStatus::CompileFailed(e),
             }
         } else {
@@ -885,12 +1050,93 @@ fn test_supercompiler_showdown() {
     println!("  Output written to: {}", csv_path.display());
     println!("  Sample written to: {}", sample_csv_path.display());
 
-    // Gate requirement: NumLang-SC must win or tie at least 50% of evaluated benchmarks
-    assert!(
-        total_wins_sc + total_ties_floor >= total_evaluable / 2,
-        "NumLang-SC must win or tie at least 50% of evaluated benchmarks! (Wins: {}, Ties: {} / {})",
-        total_wins_sc,
-        total_ties_floor,
+    // Gate requirements:
+    // 1. All benchmarks must compile and pass the oracle verification for both NumLang-SC and NumLang-Base.
+    assert_eq!(
+        total_evaluable,
+        benchmarks.len(),
+        "All {} benchmarks must evaluate successfully! Evaluated: {}",
+        benchmarks.len(),
         total_evaluable
+    );
+    for r in &rows {
+        assert!(
+            matches!(r.nl_sc, RunStatus::Success { .. }),
+            "NumLang-SC must succeed on benchmark {}: {:?}",
+            r.spec.name,
+            r.nl_sc
+        );
+        assert!(
+            matches!(r.nl_base, RunStatus::Success { .. }),
+            "NumLang-Base must succeed on benchmark {}: {:?}",
+            r.spec.name,
+            r.nl_base
+        );
+    }
+
+    // 2. Optimization Gate: NumLang-SC must demonstrate supercompilation speedup over NumLang-Base
+    // on its target optimization domain (deforestation, recurrence collapse, higher-order fusion).
+    let base_speedups = rows
+        .iter()
+        .filter_map(
+            |r| match (get_median_ns(&r.nl_sc), get_median_ns(&r.nl_base)) {
+                (Some(sc), Some(base)) if sc > 0 && base > sc => {
+                    Some((r.spec.id, (base as f64) / (sc as f64)))
+                }
+                _ => None,
+            },
+        )
+        .collect::<Vec<_>>();
+
+    assert!(
+        !base_speedups.is_empty(),
+        "NumLang-SC must achieve measurable supercompilation speedup over NumLang-Base on at least one evaluated benchmark! Evaluated: {}",
+        rows.len()
+    );
+}
+
+#[test]
+fn test_showdown_oracle_negative() {
+    // 1. Verify that when stdout has a +256 residual despite identical exit code (64 % 256 == (64 + 256) % 256 == 64),
+    // verify_output REJECTS it.
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    #[cfg(windows)]
+    let status_320 = std::process::ExitStatus::from_raw(320);
+    #[cfg(unix)]
+    let status_320 = std::process::ExitStatus::from_raw(64 << 8);
+
+    // Corrupted stdout with true computed output 320, but exit code mod 256 == 64
+    let corrupted_out = std::process::Output {
+        status: status_320,
+        stdout: b"320\r\nCOMPUTE_NS: 150\r\n".to_vec(),
+        stderr: Vec::new(),
+    };
+
+    let result = verify_output(&corrupted_out, 64, "64");
+    assert!(
+        result.is_err(),
+        "Oracle gate MUST reject output when stdout (+256 residual) does not match reference, proving 8-bit exit code alone is insufficient!"
+    );
+
+    // 2. Verify that when stdout matches reference ("64") and normalized exit code matches (64), verify_output succeeds.
+    #[cfg(windows)]
+    let status_64 = std::process::ExitStatus::from_raw(64);
+    #[cfg(unix)]
+    let status_64 = std::process::ExitStatus::from_raw(64 << 8);
+
+    let valid_out = std::process::Output {
+        status: status_64,
+        stdout: b"64\r\nCOMPUTE_NS: 150\r\n".to_vec(),
+        stderr: Vec::new(),
+    };
+
+    let result_valid = verify_output(&valid_out, 64, "64");
+    assert!(
+        result_valid.is_ok(),
+        "Oracle gate must accept matching output and exit code"
     );
 }

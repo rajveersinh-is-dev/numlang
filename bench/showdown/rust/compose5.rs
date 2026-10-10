@@ -15,6 +15,7 @@ fn main() {
         sum += run_chain(i);
     }
     let elapsed = t0.elapsed();
+    println!("{}", sum);
     println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit((sum % 256) as i32);
 }

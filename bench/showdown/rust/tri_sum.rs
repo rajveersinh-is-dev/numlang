@@ -10,9 +10,10 @@ fn tri_sum(n: i64) -> i64 {
 
 fn main() {
     let t0 = std::time::Instant::now();
-    let r = tri_sum(50000000) % 256;
+    let r = tri_sum(50000000);
     let r_norm = (r % 256 + 256) % 256;
     let elapsed = t0.elapsed();
+    println!("{}", r);
     println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit(r_norm as i32);
 }

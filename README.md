@@ -110,16 +110,24 @@ Full empirical benchmark evaluation against industrial compilers is documented i
 
 | Benchmark | Category | NumLang-SC | NumLang-Base | Rustc -O3 | MSVC /O2 | Result |
 |:---|:---|:---:|:---:|:---:|:---:|:---|
-| Naive Reverse (`nrev`) | Deforestation | **248.2 µs** | 265.7 µs | 1.27 ms | 53.9 µs | 1.07x vs Base; list alloc in C faster |
-| Triple Append (`append3`) | Deforestation | **97.3 µs** | 96.5 µs | 442.7 µs | 20.0 µs | 0.99x vs Base; list alloc in C faster |
-| Knuth-Morris-Pratt (`kmp`) | Specialization | **41.2 µs** | 41.6 µs | 226.7 µs | 60.8 µs | **NumLang-SC Wins** (Specialized DFA) |
-| Peano Multiplication | Specialization | **41.1 µs** | 40.2 µs | 130.4 µs | 191.4 µs | **NumLang-SC Wins** (Unfolded Peano) |
-| Double Tree Inversion | Deforestation | **113.9 µs** | 117.0 µs | 541.1 µs | 521.4 µs | **NumLang-SC Wins** (Tree traversal pruned) |
-| Fibonacci Matrix Power | Recurrences | **14.1 µs** | 124.8 µs | 3.4 µs | 34.8 µs | 8.85x vs Base ($O(N) \to O(\log N)$) |
-| Triangular Summation (50M) | Recurrences | **≤ 500 ns\*** | 15.44 ms | ≤ 500 ns\* | 9.54 ms | **Tie (≤500ns)\*** (Both collapse to $O(1)$) |
-| Sum of Squares (10M) | Recurrences | **≤ 500 ns\*** | 4.16 ms | ≤ 500 ns\* | 3.72 ms | **Tie (≤500ns)\*** (Both collapse to $O(1)$) |
-| Sum-Map Stream Fusion (1M) | Stream Fusion | **≤ 500 ns\*** | 412.9 µs | 964.2 µs | 355.4 µs | **NumLang-SC Wins** (>800x loop fusion) |
-| Filter-Sum Stream Pipeline | Stream Fusion | **11.8 µs** | 63.1 µs | 26.5 µs | 37.1 µs | **NumLang-SC Wins** (5.35x vs Base) |
+| Naive Reverse (Double nrev) (`nrev`) | G1: Deforestation | **336.10 µs** | 300.70 µs | 1.72 ms | 68.10 µs | 0.89x vs Base; MSVC /O2 faster |
+| Triple List Append (`append3`) | G1: Deforestation | **132.40 µs** | 118.00 µs | 550.00 µs | 19.00 µs | 0.89x vs Base; MSVC /O2 faster |
+| Knuth-Morris-Pratt DFA (`kmp`) | G1: Deforestation | **53.60 µs** | 59.20 µs | 241.90 µs | 91.30 µs | **NumLang-SC Wins** |
+| Peano Multiplication (`peano_mul`) | G1: Deforestation | **49.60 µs** | 44.40 µs | 131.80 µs | 201.00 µs | **NumLang-SC Wins** |
+| Double Tree Inversion (`tree_flip`) | G1: Deforestation | **124.50 µs** | 128.80 µs | 540.20 µs | 513.60 µs | **NumLang-SC Wins** |
+| Coupled Fibonacci Recurrence Matrix Power (`fib_matrix`) | G2: Recurrences | **127.70 µs** | 128.00 µs | 3.50 µs | 34.90 µs | 1.00x vs Base; Rustc -O3 faster |
+| Triangular Summation (50M) (`tri_sum`) | G2: Recurrences | **21.98 ms** | 21.54 ms | ≤ 500 ns* | 9.81 ms | 0.98x vs Base; Rustc -O3 faster |
+| Sum of Squares 1^2+...+10M^2 (Degree-3) (`cubic_sum`) | G2: Recurrences | **4.71 ms** | 4.86 ms | ≤ 500 ns* | 3.98 ms | 1.03x vs Base; Rustc -O3 faster |
+| Geometric Power Loop (100) (`pow2_mod`) | G2: Recurrences | **14.30 µs** | 13.90 µs | ≤ 500 ns* | ≤ 500 ns* | 0.97x vs Base; Rustc -O3 faster |
+| Hofstadter Mutual Linear Recurrence (`hofstadter`) | G2: Recurrences | **14.50 µs** | 15.70 µs | 6.50 µs | ≤ 500 ns* | 1.08x vs Base; MSVC /O2 faster |
+| Dynamic Triangular Summation (50M) (`tri_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | **21.58 ms** | 21.58 ms | 6.35 ms | 12.88 ms | 1.00x vs Base; Rustc -O3 faster |
+| Dynamic Sum of Squares (10M) (`cubic_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | **4.74 ms** | 4.95 ms | 4.18 ms | 4.07 ms | 1.04x vs Base; MSVC /O2 faster |
+| Dynamic Fibonacci Matrix Power (1000) (`fib_matrix_dyn`) | G2-Dyn: Recurrences (Runtime) | **18.20 µs** | 16.60 µs | 4.70 µs | 3.40 µs | 0.91x vs Base; MSVC /O2 faster |
+| Dynamic Geometric Power Loop (100) (`pow2_mod_dyn`) | G2-Dyn: Recurrences (Runtime) | **14.10 µs** | 14.40 µs | ≤ 500 ns* | ≤ 500 ns* | 1.02x vs Base; Rustc -O3 faster |
+| 5-Deep Function Composition Chain (`compose5`) | G3: Higher-Order | **14.60 µs** | 14.80 µs | ≤ 500 ns* | ≤ 500 ns* | 1.01x vs Base; Rustc -O3 faster |
+| Map-Map Pipeline Deforestation (`map_map`) | G3: Higher-Order | **12.60 µs** | 13.00 µs | ≤ 500 ns* | ≤ 500 ns* | 1.03x vs Base; Rustc -O3 faster |
+| Sum-Map Stream Fusion (1M) (`sum_map`) | G3: Higher-Order | **472.10 µs** | 469.90 µs | 975.10 µs | 364.80 µs | 1.00x vs Base; MSVC /O2 faster |
+| Stream Pipeline Filter-Sum (`stream_take`) | G3: Higher-Order | **65.90 µs** | 64.80 µs | 26.50 µs | 37.20 µs | 0.98x vs Base; Rustc -O3 faster |
 
 > **Honest Comparison Note**: Both NumLang-SC and LLVM-based compilers (`rustc -C opt-level=3`) collapse constant-bound arithmetic loops like Triangular Summation down to instantaneous $O(1)$ scalar answers at compile time using scalar evolution (SCEV). Entries marked `≤ 500 ns*` evaluate within the hardware performance counter quantization floor ($\le 500$ ns) and are classified transparently as ties rather than claimed as numeric wins.
 

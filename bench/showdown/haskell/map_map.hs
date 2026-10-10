@@ -16,10 +16,11 @@ runPass = sum (map double (map inc [0..19 :: Int64]))
 main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
-    let computeSum = sum [ runPass | _ <- [1..100000 :: Int] ]
+    let computeSum = runPass
     computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show computeSum)
     putStrLn $ "COMPUTE_NS: " ++ show ns
     let code = fromIntegral (computeSum `mod` 256)
     exitWith (ExitFailure code)

@@ -21,6 +21,7 @@ main = do
     res `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show res)
     putStrLn $ "COMPUTE_NS: " ++ show ns
     let code = fromIntegral (res `mod` 256)
     exitWith (ExitFailure code)

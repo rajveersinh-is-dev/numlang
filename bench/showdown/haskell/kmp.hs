@@ -35,6 +35,7 @@ main = do
     computeSum `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show computeSum)
     putStrLn $ "COMPUTE_NS: " ++ show ns
     let code = computeSum `mod` 256
     exitWith (ExitFailure code)

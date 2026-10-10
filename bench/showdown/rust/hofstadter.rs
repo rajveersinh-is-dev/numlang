@@ -20,6 +20,7 @@ fn main() {
     let t0 = std::time::Instant::now();
     let res = hofstadter_m(100);
     let elapsed = t0.elapsed();
+    println!("{}", res);
     println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit((res % 256) as i32);
 }

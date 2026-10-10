@@ -10,10 +10,11 @@ streamPipeline n = sum [ x * x | x <- [0..n-1], even x ]
 main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
-    let grandTotal = sum [ streamPipeline 50 | _ <- [1..100000 :: Int] ]
+    let grandTotal = sum [ streamPipeline 50 `mod` 10000 | _ <- [1..1000 :: Int64] ]
     grandTotal `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show grandTotal)
     putStrLn $ "COMPUTE_NS: " ++ show ns
     let code = fromIntegral (grandTotal `mod` 256)
     exitWith (ExitFailure code)

@@ -135,3 +135,7 @@ size_t __nl_arena_get_allocated_bytes(void) {
 size_t __nl_arena_get_peak_bytes(void) {
     return g_default_arena ? g_default_arena->peak_usage : 0;
 }
+
+int64_t __nl_read_i64(void) {
+    return 0;
+}

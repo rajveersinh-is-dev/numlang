@@ -932,6 +932,12 @@ impl CraneliftCompiler {
                                 let xored = builder.ins().bxor(arg_val, shift);
                                 builder.ins().isub(xored, shift)
                             }
+                        } else if callee == "read_i64" {
+                            let read_func = self
+                                .module
+                                .declare_func_in_func(self.read_i64_id, builder.func);
+                            let call_inst = builder.ins().call(read_func, &[]);
+                            builder.inst_results(call_inst)[0]
                         } else if callee == "print" || callee == "println" {
                             let is_nl = callee == "println";
                             if args.is_empty() {
