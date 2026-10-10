@@ -104,6 +104,8 @@ In a supercompiler process tree operating on a source program, terms are compose
 
 Assume for contradiction there exists an infinite whistle-free path $\pi$ over `alphabet` (`WhistleFreePath path`). The good sequence property provides $i < j$ with $\pi(i) \trianglelefteq \pi(j)$, directly contradicting the whistle-free property $\forall i < j, \neg (\pi(i) \trianglelefteq \pi(j))$. Therefore, `¬ ∃ path, WhistleFreePath path` holds (`no_infinite_whistle_free_path`). $\blacksquare$
 
+> **Scientific Scope Note**: As documented in [`docs/LEAN_STATUS.md`](LEAN_STATUS.md), the Lean 4 formalization mechanizes the finite-alphabet sequence pigeonhole and good-sequence termination theorems (`pigeonhole_seq`, `no_infinite_whistle_free_path`) with 0 `sorry` and 0 unproven axioms. Kruskal's full Tree Theorem for arbitrary unbounded term algebras is cited from the literature (Kruskal 1960, Leuschel 1998, Hamilton 2007).
+
 ---
 
 ## 5. Verification Instructions
