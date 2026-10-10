@@ -39,6 +39,11 @@ fn test_no_hardcoded_benchmark_names() {
         "== \"sum_list\"",
         "== \"invert\"",
         "== \"reverse\"",
+        "\"append\"",
+        "\"append3\"",
+        "\"sum_list\"",
+        "\"invert\"",
+        "\"tree_flip\"",
     ];
     let src_dir = Path::new("src");
     let violations = check_dir(src_dir, &bad_strings);

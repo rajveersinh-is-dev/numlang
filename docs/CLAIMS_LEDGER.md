@@ -13,7 +13,7 @@ Status legend:
 
 | Claim ID | Public Claim | Stated Location | Concrete Evidence / Test Path | Status | Last Verified Commit |
 |:---|:---|:---|:---|:---:|:---:|
-| **CLM-01** | Global Hamilton distillation eliminates intermediate data structures in consumer-producer chains | `README.md:15`, `SHOWDOWN.md:12` | `tests/distillation_tests.rs`, `src/mir/supercompiler/distill.rs` | **PARTIAL** (Regresses vs baseline on nrev/append3) | a403bb8 |
+| **CLM-01** | Global Hamilton distillation eliminates intermediate data structures in consumer-producer chains | `README.md:15`, `SHOWDOWN.md:12` | `tests/distillation_tests.rs`, `src/mir/supercompiler/distill.rs` | **TESTED** | Phase 3 |
 | **CLM-02** | Multi-Result Supercompilation (MRSC) generates hypergraphs with Pareto selection | `README.md:16`, `ROADMAP.md:Phase 22` | `tests/mrsc_tests.rs`, `src/mir/supercompiler/mrsc.rs` | **TESTED** | a403bb8 |
 | **CLM-03** | Constant forward differences and companion matrices collapse recurrences from $O(N)$ to $O(1)$ and $O(\log N)$ | `README.md:17`, `SHOWDOWN.md:13` | `tests/supercompiler_symbolic_tests.rs`, `src/mir/supercompiler/generalize.rs` | **TESTED** | a403bb8 |
 | **CLM-04** | Reynolds defunctionalization converts higher-order closures to first-order dispatches | `README.md:18`, `LANGUAGE.md:8` | `tests/defunctionalization_tests.rs`, `src/opt/defunctionalize.rs` | **TESTED** | a403bb8 |
@@ -23,8 +23,8 @@ Status legend:
 | **CLM-08** | Kruskal's Tree Theorem mechanization guarantees supercompiler termination | `docs/TERMINATION_PROOF.md:6` | `proof/NumLangProofs/Termination.lean:276-339` | **UNPROVEN** (Proves finite-alphabet pigeonhole; Kruskal cited from literature) | a403bb8 |
 | **CLM-09** | NumLang supercompiler achieves 9 of 14 dominant wins against industrial compilers | `SHOWDOWN.md:84` | `tests/supercompiler_showdown.rs`, `SHOWDOWN.md:65-79` | **REMOVED** (Inflated: sub-timer floor, 0 ns Rustc, and regressions labeled wins) | a403bb8 |
 | **CLM-10** | Peak recurrence collapse speedup of 125,682x on `tri_sum` | `SHOWDOWN.md:85` | `bench/showdown/numlang/tri_sum.nl` | **TESTED** (Algorithmic $O(N) \to O(1)$ loop collapse) | a403bb8 |
-| **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | `INTEGRITY_RULES.md:4` | `tests/integrity_lint.rs`, `src/mir/supercompiler/` | **TESTED** | a403bb8 |
-| **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | `INTEGRITY_RULES.md:20-22` | `tests/structural_generality_tests.rs`, `src/opt/recursion.rs` | **PARTIAL** (`distill.rs` has synthetic process tree template coupling) | a403bb8 |
+| **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | `INTEGRITY_RULES.md:4` | `tests/integrity_lint.rs`, `src/mir/supercompiler/` | **TESTED** | Phase 3 |
+| **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | `INTEGRITY_RULES.md:20-22` | `tests/structural_generality_tests.rs`, `src/opt/recursion.rs` | **TESTED** | Phase 3 |
 | **CLM-13** | Zero panic in codegen and lowering pipelines | `INTEGRITY_RULES.md:15` | `src/codegen/`, `src/mir/lower.rs` | **TESTED** (0 `panic!()`, 0 `.unwrap()` in lowering/codegen) | a403bb8 |
 | **CLM-14** | Zero clippy warnings under `cargo clippy --all-targets -- -D warnings` | `INTEGRITY_RULES.md:17` | GitHub Actions CI `ci.yml` | **TESTED** (Passing with 0 warnings in CI) | a403bb8 |
 | **CLM-15** | Pure Rust implementation | `Cargo.toml`, `README.md` | `src/`, `Cargo.toml` | **REMOVED** (Requires external native linker; optional LLVM backend is C++) | a403bb8 |

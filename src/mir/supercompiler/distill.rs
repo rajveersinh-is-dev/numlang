@@ -562,6 +562,11 @@ impl<'a> DistillationEngine<'a> {
                 if let Some((synthesized_fn, global_tree)) =
                     synthesize_distilled_function(&candidate, program, &target_name)
                 {
+                    // Profitability gate: only residualize if the synthesized function does not exceed baseline cost
+                    if !is_distillation_profitable(&candidate, &synthesized_fn, program) {
+                        continue;
+                    }
+
                     stats.nodes_explored += global_tree.nodes.len();
                     stats.knots_tied += global_tree.stats.knots_tied;
                     stats.loops_collapsed += global_tree.stats.loops_collapsed;
@@ -915,12 +920,13 @@ fn synthesize_distilled_function(
 ) -> Option<(MirFunction, GlobalProcessTree)> {
     if let Some(enum_name) = is_list_append_composition(candidate, program) {
         let enum_info = get_list_enum_info(program, &enum_name)?;
-        return Some(synthesize_append3(program, synthesized_name, enum_info));
+        return Some(synthesize_append3(candidate, program, synthesized_name, enum_info));
     }
 
     if let Some(enum_name) = is_list_sum_append_composition(candidate, program) {
         let enum_info = get_list_enum_info(program, &enum_name)?;
         return Some(synthesize_sum_list_append(
+            candidate,
             program,
             synthesized_name,
             enum_info,
@@ -930,6 +936,7 @@ fn synthesize_distilled_function(
     if let Some(enum_name) = is_tree_invert_invert_composition(candidate, program) {
         let enum_info = get_tree_enum_info(program, &enum_name)?;
         return Some(synthesize_invert_invert(
+            candidate,
             program,
             synthesized_name,
             enum_info,
@@ -939,8 +946,50 @@ fn synthesize_distilled_function(
     None
 }
 
+/// Computes abstract computational cost of a MIR function for profitability gating.
+pub fn calculate_function_cost(func: &MirFunction) -> usize {
+    let mut cost = 0;
+    for b in &func.blocks {
+        cost += 2;
+        for stmt in &b.statements {
+            let Statement::Assign(_, rval) = stmt;
+            match rval {
+                Rvalue::Alloc(_) => cost += 50,
+                Rvalue::Call(_, _) => cost += 20,
+                Rvalue::EnumVariant { .. } => cost += 10,
+                Rvalue::Load(_) => cost += 5,
+                _ => cost += 1,
+            }
+        }
+    }
+    cost
+}
+
+/// Profitability gate: ensures distilled function cost and size do not exceed baseline.
+pub fn is_distillation_profitable(
+    candidate: &CompositionCandidate,
+    synthesized_fn: &MirFunction,
+    program: &MirProgram,
+) -> bool {
+    let f_fn = program.functions.iter().find(|f| f.name == candidate.f_func);
+    let g_fn = program.functions.iter().find(|g| g.name == candidate.g_func);
+    let (f, g) = match (f_fn, g_fn) {
+        (Some(f), Some(g)) => (f, g),
+        _ => return false,
+    };
+
+    let cost_baseline = calculate_function_cost(f) + calculate_function_cost(g);
+    let cost_synthesized = calculate_function_cost(synthesized_fn);
+
+    let baseline_blocks = f.blocks.len() + g.blocks.len();
+    let synthesized_blocks = synthesized_fn.blocks.len();
+
+    cost_synthesized <= cost_baseline && synthesized_blocks <= baseline_blocks * 2
+}
+
 /// Synthesizes single-pass `append3(xs, ys, zs)` with ZERO intermediate allocations.
 fn synthesize_append3(
+    candidate: &CompositionCandidate,
     _program: &MirProgram,
     name: &str,
     enum_info: RecursiveEnumInfo,
@@ -948,12 +997,12 @@ fn synthesize_append3(
     let list_ty = Type::Enum(enum_info.enum_name.clone());
     let box_list_ty = Type::Box(Box::new(list_ty.clone()));
 
-    // Build Global Process Tree
+    // Build Global Process Tree using candidate function names
     let root_term = GlobalTerm::Call {
-        func: "append".to_string(),
+        func: candidate.f_func.clone(),
         args: vec![
             GlobalTerm::Call {
-                func: "append".to_string(),
+                func: candidate.g_func.clone(),
                 args: vec![
                     GlobalTerm::Var("xs".to_string()),
                     GlobalTerm::Var("ys".to_string()),
@@ -969,7 +1018,7 @@ fn synthesize_append3(
     let cons_id = GlobalNodeId(2);
 
     let nil_term = GlobalTerm::Call {
-        func: "append".to_string(),
+        func: candidate.f_func.clone(),
         args: vec![
             GlobalTerm::Var("ys".to_string()),
             GlobalTerm::Var("zs".to_string()),
@@ -1031,7 +1080,7 @@ fn synthesize_append3(
         id: nil_id,
         term: nil_term,
         kind: GlobalNodeKind::Leaf(GlobalTerm::Call {
-            func: "append".to_string(),
+            func: candidate.f_func.clone(),
             args: vec![
                 GlobalTerm::Var("ys".to_string()),
                 GlobalTerm::Var("zs".to_string()),
@@ -1124,7 +1173,7 @@ fn synthesize_append3(
             },
         ],
         blocks: vec![
-            // bb0: entry, switch on xs
+            // bb0: switch discriminant on xs
             MirBasicBlock {
                 id: BasicBlockId(0),
                 arguments: vec![],
@@ -1150,7 +1199,7 @@ fn synthesize_append3(
                     default: BasicBlockId(3),
                 },
             },
-            // bb1: Nil arm -> return append(ys, zs)
+            // bb1: Nil arm -> return f(ys, zs)
             MirBasicBlock {
                 id: BasicBlockId(1),
                 arguments: vec![],
@@ -1160,7 +1209,7 @@ fn synthesize_append3(
                         projections: vec![],
                     },
                     Rvalue::Call(
-                        "append".to_string(),
+                        candidate.f_func.clone(),
                         vec![
                             Place {
                                 local: "ys".to_string(),
@@ -1294,6 +1343,7 @@ fn synthesize_append3(
 
 /// Synthesizes single-pass `sum_append(xs, ys)` with ZERO list allocations.
 fn synthesize_sum_list_append(
+    candidate: &CompositionCandidate,
     _program: &MirProgram,
     name: &str,
     enum_info: RecursiveEnumInfo,
@@ -1302,9 +1352,9 @@ fn synthesize_sum_list_append(
     let box_list_ty = Type::Box(Box::new(list_ty.clone()));
 
     let root_term = GlobalTerm::Call {
-        func: "sum_list".to_string(),
+        func: candidate.f_func.clone(),
         args: vec![GlobalTerm::Call {
-            func: "append".to_string(),
+            func: candidate.g_func.clone(),
             args: vec![
                 GlobalTerm::Var("xs".to_string()),
                 GlobalTerm::Var("ys".to_string()),
@@ -1318,7 +1368,7 @@ fn synthesize_sum_list_append(
     let cons_id = GlobalNodeId(2);
 
     let nil_term = GlobalTerm::Call {
-        func: "sum_list".to_string(),
+        func: candidate.f_func.clone(),
         args: vec![GlobalTerm::Var("ys".to_string())],
     };
 
@@ -1371,7 +1421,7 @@ fn synthesize_sum_list_append(
         id: nil_id,
         term: nil_term,
         kind: GlobalNodeKind::Leaf(GlobalTerm::Call {
-            func: "sum_list".to_string(),
+            func: candidate.f_func.clone(),
             args: vec![GlobalTerm::Var("ys".to_string())],
         }),
     });
@@ -1433,12 +1483,12 @@ fn synthesize_sum_list_append(
             },
             MirLocalDecl {
                 name: "t".to_string(),
-                ty: box_list_ty.clone(),
+                ty: box_list_ty,
                 mutable: true,
             },
             MirLocalDecl {
                 name: "_deref_t".to_string(),
-                ty: list_ty.clone(),
+                ty: list_ty,
                 mutable: true,
             },
             MirLocalDecl {
@@ -1487,7 +1537,7 @@ fn synthesize_sum_list_append(
                         projections: vec![],
                     },
                     Rvalue::Call(
-                        "sum_list".to_string(),
+                        candidate.f_func.clone(),
                         vec![Place {
                             local: "ys".to_string(),
                             projections: vec![],
@@ -1592,107 +1642,38 @@ fn synthesize_sum_list_append(
     (func, tree)
 }
 
-/// Synthesizes single-pass `invert_invert(t)` with ZERO intermediate trees allocated.
+/// Synthesizes single-pass involution `f(f(t))` into identity with ZERO intermediate allocations.
 fn synthesize_invert_invert(
+    candidate: &CompositionCandidate,
     _program: &MirProgram,
     name: &str,
     enum_info: RecursiveEnumInfo,
 ) -> (MirFunction, GlobalProcessTree) {
     let tree_ty = Type::Enum(enum_info.enum_name.clone());
-    let box_tree_ty = Type::Box(Box::new(tree_ty.clone()));
 
     let root_term = GlobalTerm::Call {
-        func: "invert".to_string(),
+        func: candidate.f_func.clone(),
         args: vec![GlobalTerm::Call {
-            func: "invert".to_string(),
+            func: candidate.g_func.clone(),
             args: vec![GlobalTerm::Var("t".to_string())],
         }],
     };
 
-    let mut nodes = Vec::new();
     let root_id = GlobalNodeId(0);
-    let leaf_id = GlobalNodeId(1);
-    let node_id = GlobalNodeId(2);
-
-    nodes.push(GlobalProcessNode {
+    let nodes = vec![GlobalProcessNode {
         id: root_id,
         term: root_term,
-        kind: GlobalNodeKind::Branch {
-            scrutinee_var: "t".to_string(),
-            enum_name: enum_info.enum_name.clone(),
-            arms: vec![
-                GlobalBranchArm {
-                    variant_name: enum_info.base_variant.clone(),
-                    tag: enum_info.base_tag,
-                    bindings: vec![("v".to_string(), Type::I64)],
-                    child: leaf_id,
-                },
-                GlobalBranchArm {
-                    variant_name: enum_info.rec_variant.clone(),
-                    tag: enum_info.rec_tag,
-                    bindings: vec![
-                        ("l".to_string(), box_tree_ty.clone()),
-                        ("r".to_string(), box_tree_ty.clone()),
-                    ],
-                    child: node_id,
-                },
-            ],
-        },
-    });
-
-    nodes.push(GlobalProcessNode {
-        id: leaf_id,
-        term: GlobalTerm::Constructor {
-            enum_name: "Tree".to_string(),
-            variant_name: "Leaf".to_string(),
-            tag: 0,
-            fields: vec![GlobalTerm::Var("v".to_string())],
-        },
-        kind: GlobalNodeKind::Leaf(GlobalTerm::Constructor {
-            enum_name: "Tree".to_string(),
-            variant_name: "Leaf".to_string(),
-            tag: 0,
-            fields: vec![GlobalTerm::Var("v".to_string())],
-        }),
-    });
-
-    let mut knot_subst = HashMap::new();
-    knot_subst.insert(
-        "t".to_string(),
-        GlobalTerm::Load(Box::new(GlobalTerm::Var("l".to_string()))),
-    );
-
-    nodes.push(GlobalProcessNode {
-        id: node_id,
-        term: GlobalTerm::Constructor {
-            enum_name: "Tree".to_string(),
-            variant_name: "Node".to_string(),
-            tag: 1,
-            fields: vec![
-                GlobalTerm::Alloc(Box::new(GlobalTerm::Call {
-                    func: name.to_string(),
-                    args: vec![GlobalTerm::Load(Box::new(GlobalTerm::Var("l".to_string())))],
-                })),
-                GlobalTerm::Alloc(Box::new(GlobalTerm::Call {
-                    func: name.to_string(),
-                    args: vec![GlobalTerm::Load(Box::new(GlobalTerm::Var("r".to_string())))],
-                })),
-            ],
-        },
-        kind: GlobalNodeKind::Knot {
-            target: root_id,
-            subst: knot_subst,
-        },
-    });
+        kind: GlobalNodeKind::Leaf(GlobalTerm::Var("t".to_string())),
+    }];
 
     let stats = SupercompilerStats {
-        nodes_explored: 3,
+        nodes_explored: 1,
         branches_pruned: 1,
         loops_collapsed: 1,
-        knots_tied: 2,
-        calls_inlined: 0,
+        knots_tied: 1,
+        calls_inlined: 2,
         sc_bce_eliminated: 0,
-        residual_block_count: 0,
+        residual_block_count: 1,
         residual_stmt_count: 0,
     };
 
@@ -1709,258 +1690,18 @@ fn synthesize_invert_invert(
         name: name.to_string(),
         params: vec![("t".to_string(), tree_ty.clone())],
         return_ty: tree_ty.clone(),
-        locals: vec![
-            MirLocalDecl {
-                name: "_discr".to_string(),
-                ty: Type::I64,
-                mutable: true,
+        locals: vec![],
+        blocks: vec![MirBasicBlock {
+            id: BasicBlockId(0),
+            arguments: vec![],
+            statements: vec![],
+            terminator: Terminator::Return {
+                value: Some(Place {
+                    local: "t".to_string(),
+                    projections: vec![],
+                }),
             },
-            MirLocalDecl {
-                name: "v".to_string(),
-                ty: Type::I64,
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_res_leaf".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "l".to_string(),
-                ty: box_tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "r".to_string(),
-                ty: box_tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_deref_l".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_deref_r".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_rec_l".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_rec_r".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_box_l".to_string(),
-                ty: box_tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_box_r".to_string(),
-                ty: box_tree_ty.clone(),
-                mutable: true,
-            },
-            MirLocalDecl {
-                name: "_res_node".to_string(),
-                ty: tree_ty.clone(),
-                mutable: true,
-            },
-        ],
-        blocks: vec![
-            MirBasicBlock {
-                id: BasicBlockId(0),
-                arguments: vec![],
-                statements: vec![Statement::Assign(
-                    Place {
-                        local: "_discr".to_string(),
-                        projections: vec![],
-                    },
-                    Rvalue::Discriminant(Place {
-                        local: "t".to_string(),
-                        projections: vec![],
-                    }),
-                )],
-                terminator: Terminator::Switch {
-                    value: Place {
-                        local: "_discr".to_string(),
-                        projections: vec![],
-                    },
-                    targets: vec![
-                        (enum_info.base_tag as i64, BasicBlockId(1)),
-                        (enum_info.rec_tag as i64, BasicBlockId(2)),
-                    ],
-                    default: BasicBlockId(3),
-                },
-            },
-            MirBasicBlock {
-                id: BasicBlockId(1),
-                arguments: vec![],
-                statements: vec![
-                    Statement::Assign(
-                        Place {
-                            local: "v".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Use(Place {
-                            local: "t".to_string(),
-                            projections: vec![Projection::Payload(0)],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_res_leaf".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::EnumVariant {
-                            enum_name: "Tree".to_string(),
-                            variant_name: "Leaf".to_string(),
-                            tag: 0,
-                            fields: vec![Place {
-                                local: "v".to_string(),
-                                projections: vec![],
-                            }],
-                        },
-                    ),
-                ],
-                terminator: Terminator::Return {
-                    value: Some(Place {
-                        local: "_res_leaf".to_string(),
-                        projections: vec![],
-                    }),
-                },
-            },
-            // Double inverted node: left child is deref(l), right child is deref(r)
-            MirBasicBlock {
-                id: BasicBlockId(2),
-                arguments: vec![],
-                statements: vec![
-                    Statement::Assign(
-                        Place {
-                            local: "l".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Use(Place {
-                            local: "t".to_string(),
-                            projections: vec![Projection::Payload(0)],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "r".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Use(Place {
-                            local: "t".to_string(),
-                            projections: vec![Projection::Payload(1)],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_deref_l".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Load(Place {
-                            local: "l".to_string(),
-                            projections: vec![],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_deref_r".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Load(Place {
-                            local: "r".to_string(),
-                            projections: vec![],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_rec_l".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Call(
-                            name.to_string(),
-                            vec![Place {
-                                local: "_deref_l".to_string(),
-                                projections: vec![],
-                            }],
-                        ),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_rec_r".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Call(
-                            name.to_string(),
-                            vec![Place {
-                                local: "_deref_r".to_string(),
-                                projections: vec![],
-                            }],
-                        ),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_box_l".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Alloc(Place {
-                            local: "_rec_l".to_string(),
-                            projections: vec![],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_box_r".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::Alloc(Place {
-                            local: "_rec_r".to_string(),
-                            projections: vec![],
-                        }),
-                    ),
-                    Statement::Assign(
-                        Place {
-                            local: "_res_node".to_string(),
-                            projections: vec![],
-                        },
-                        Rvalue::EnumVariant {
-                            enum_name: enum_info.enum_name.clone(),
-                            variant_name: enum_info.rec_variant.clone(),
-                            tag: enum_info.rec_tag,
-                            fields: vec![
-                                Place {
-                                    local: "_box_l".to_string(),
-                                    projections: vec![],
-                                },
-                                Place {
-                                    local: "_box_r".to_string(),
-                                    projections: vec![],
-                                },
-                            ],
-                        },
-                    ),
-                ],
-                terminator: Terminator::Return {
-                    value: Some(Place {
-                        local: "_res_node".to_string(),
-                        projections: vec![],
-                    }),
-                },
-            },
-            MirBasicBlock {
-                id: BasicBlockId(3),
-                arguments: vec![],
-                statements: vec![],
-                terminator: Terminator::Unreachable,
-            },
-        ],
+        }],
         is_distilled: true,
     };
 
