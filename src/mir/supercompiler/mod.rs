@@ -188,11 +188,8 @@ pub fn supercompile_mir_program_with_cache(
                 } else {
                     sha256_str(&format!("{:?}", func))
                 };
-                let cache_key = CacheKey {
-                    function_name: func.name.clone(),
-                    function_source_hash: source_hash,
-                    argument_fingerprint: "generic".to_string(), // Phase 37: generic specialization only
-                };
+                let cache_key = CacheKey::new(&func.name, source_hash, "generic")
+                    .with_flags("mode=classic");
 
                 // 2. Cache lookup
                 if let Some(cache) = opt_cache {

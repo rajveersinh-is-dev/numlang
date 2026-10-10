@@ -116,3 +116,25 @@ fn test_differential_10k() {
         &divs[..5.min(divs.len())]
     );
 }
+
+#[test]
+fn test_differential_examples_directory() {
+    let examples_dir = std::path::Path::new("examples");
+    if !examples_dir.exists() {
+        return;
+    }
+    for entry in fs::read_dir(examples_dir).expect("read examples dir") {
+        let entry = entry.expect("valid entry");
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("nl") {
+            let code = fs::read_to_string(&path).expect("read example file");
+            let norm = run_numlang_code(&code, false);
+            let sc = run_numlang_code(&code, true);
+            assert_eq!(
+                norm, sc,
+                "Differential divergence on example file {}: baseline={:?}, sc={:?}",
+                path.display(), norm, sc
+            );
+        }
+    }
+}

@@ -116,7 +116,7 @@ pub struct Cli {
 
     #[arg(
         long = "supercompile",
-        help = "Supercompile MIR and compile directly via Cranelift"
+        help = "Supercompile MIR and compile via selected backend (Cranelift or LLVM)"
     )]
     pub supercompile: bool,
 
@@ -291,7 +291,7 @@ pub enum Commands {
 
         #[arg(
             long = "supercompile",
-            help = "Supercompile MIR and compile directly via Cranelift"
+            help = "Supercompile MIR and compile via selected backend (Cranelift or LLVM)"
         )]
         supercompile: bool,
 
@@ -394,7 +394,7 @@ pub enum Commands {
 
         #[arg(
             long = "supercompile",
-            help = "Supercompile MIR and compile directly via Cranelift"
+            help = "Supercompile MIR and compile via selected backend (Cranelift or LLVM)"
         )]
         supercompile: bool,
 

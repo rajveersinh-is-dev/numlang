@@ -230,7 +230,7 @@ numlang <COMMAND>
 - `check <file.nl>`: Perform full semantic analysis and type checking.
 - `fmt <file.nl> [--check] [--stdout]`: Format source code according to canonical NumLang style.
 - `doc <file.nl> [--output <path>]`: Generate Markdown API reference documentation from `///` doc-comments.
-- `explain <code>`: Provide detailed explanation and remediation advice for compiler diagnostic codes (`E001`–`E020`).
+- `explain <code>`: Provide detailed explanation and remediation advice for compiler diagnostic codes (`E001`â€“`E020`).
 
 ### Flags
 - `-o, --output <path>`: Specify destination binary path.
@@ -253,4 +253,90 @@ NumLang's optimization pipeline operates in multiple stages:
    - Replaces loop bodies with closed-form analytic expressions when applicable.
 3. **Loop Transformations**: While-loop unrolling, bounded invariant hoisting, and branchless select conversion.
 4. **Memory Optimization**: Scalar Replacement of Aggregates (SROA) and Bounds Check Elimination (BCE).
-5. **Cranelift Native Backend**: Generates optimized x86-64 machine instructions with host vector/AVX2 extensions.
+5. **Codegen Backends**:
+   - **Cranelift Native Backend**: Generates optimized x86-64 machine instructions with host vector/AVX2 extensions.
+   - **LLVM Backend**: Translates supercompiled MIR to LLVM 18 IR with full LTO and target-native vectorization.
+
+---
+
+## 9. Integer Semantics & Overflow Model
+
+NumLang mandates deterministic, architecture-independent **two's complement modular wrapping arithmetic** across all integer types:
+- `i64`, `i32`, `i16`, `i8`: signed two's complement wrapping in $\mathbb{Z} / 2^W \mathbb{Z}$ (e.g. `i64::MAX + 1 == i64::MIN`).
+- `u64`, `u32`, `u16`, `u8`, `usize`: unsigned modular arithmetic in $\mathbb{Z} / 2^W \mathbb{Z}$.
+- **Compiler Invariant**: All optimization passes (including loop recurrence collapse, Newton forward difference interpolation, and matrix exponentiation) preserve two's complement wrapping semantics exactly. Closed forms partition even factors before multiplication (parity-halving) to prevent intermediate overflow before division.
+
+---
+
+## 10. Memory Model & Pointer Semantics
+
+NumLang features a stratified memory model:
+1. **Stack Allocation**: All primitive scalars (`i64`, `f64`, `bool`), fixed-size arrays (`[T; N]`), and flat structs (`struct S { ... }`) are value-typed and allocated on the contiguous call stack without GC or reference counting.
+2. **Explicit Heap Box**: Dynamic inductive types (e.g., recursive algebraic data types, linked lists, trees) use `Box<T>`:
+```numlang
+enum List {
+    Nil,
+    Cons(i64, Box<List>),
+}
+
+fn sum_list(l: List) -> i64 {
+    match l {
+        Nil => 0,
+        Cons(h, t) => h + sum_list(deref(t)),
+    }
+}
+```
+   - `box(x)` allocates `x` on the runtime bump arena or heap and returns `Box<T>`.
+   - `deref(b)` retrieves the value referenced by `b`.
+3. **Bump Arena Allocator**: Program runs use a thread-local bump allocator with sub-nanosecond amortized allocation overhead, eliminated at compile-time by the deforestation engine whenever tree or list traversals fuse.
+
+---
+
+## 11. Higher-Order Functions & Closures
+
+First-class functions and closures are fully supported in NumLang:
+```numlang
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+    return f(x);
+}
+
+fn main() -> i64 {
+    let factor: i64 = 7;
+    let scale: fn(i64) -> i64 = |x: i64| x * factor;
+    return scale(6); // Returns 42
+}
+```
+- **Type Syntax**: `fn(T1, T2) -> Ret`.
+- **Lambda Expression**: `|arg1: T1, arg2: T2| expr` or `|arg: T| -> Ret { statements }`.
+- **Closure Defunctionalization**: Closures that escape or are passed to higher-order functions are defunctionalized into explicit sum-of-products dispatch types during supercompilation.
+
+---
+
+## 12. Parametric Polymorphism & Generics
+
+NumLang supports generic functions with monomorphization:
+```numlang
+fn id<T>(x: T) -> T {
+    return x;
+}
+
+fn select_first<T, U>(a: T, b: U) -> T {
+    return a;
+}
+
+fn main() -> i64 {
+    let val: i64 = id(42);
+    return select_first(val, 100);
+}
+```
+Monomorphization produces specialized monomorphic MIR functions before supercompilation.
+
+---
+
+## 13. Certified Translation Validation & SMT Verification
+
+NumLang includes an in-tree formal verification engine (`src/mir/supercompiler/validate.rs`) that certifies compiler transformations:
+- **QF_BV / QF_UFBV SMT Encoding**: Generates bit-vector verification conditions over bitwidths 1 to 64 with uninterpreted functions.
+- **Embedded CDCL Decision Procedure**: Solves bit-blasted CNF formulas directly within the compiler without external dependencies or third-party solver licenses.
+- **Simulation Preorder Certification**: Automatically proves that the residual CFG refines and simulates the original unoptimized MIR program.
+- **SMT-LIB2 Export**: Optionally exports generated verification condition formulas to standard SMT-LIB2 format for cross-checking against external solvers (Z3, CVC5).

@@ -329,3 +329,23 @@ fn test_supercompiled_exponential_power_execution() {
     let exit_code = compile_and_run_supercompiled(src, "test_exp_power_run");
     assert_eq!(exit_code, expected_exit(3072), "3 * 2^10 must be 3072");
 }
+
+#[test]
+fn test_recurrence_large_k_overflow_soundness() {
+    let mut interner = TermInterner::new();
+    let samples = vec![0, 1, 3, 6, 10, 15]; // triangular sequence s_k = k*(k+1)/2
+    let k_val = 4_000_000_000i64;
+    let k_term = interner.intern_int(k_val);
+    let sol = solve_recurrence(&samples, k_term, &mut interner)
+        .expect("solve recurrence");
+    let result = interner.get(sol).to_literal().expect("constant literal");
+    let result_val = match result {
+        numlang::typecheck::typed_ast::TypedLiteral::Int(v, _) => v,
+        _ => panic!("expected int"),
+    };
+    let expected = (k_val / 2) * (k_val + 1); // 8_000_000_002_000_000_000
+    assert_eq!(
+        result_val, expected,
+        "Recurrence must not overflow intermediate product before division!"
+    );
+}

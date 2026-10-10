@@ -186,11 +186,7 @@ fn test_coopt_04_specialization_cache_submillisecond_latency() {
 
     let cache = SpecializationCache::open(&test_dir);
 
-    let key = CacheKey {
-        function_name: "fibonacci_stream".to_string(),
-        function_source_hash: "abcd1234ef567890".to_string(),
-        argument_fingerprint: "const(100)".to_string(),
-    };
+    let key = CacheKey::new("fibonacci_stream", "abcd1234ef567890", "const(100)");
 
     let spec = CachedSpecialization {
         key: key.clone(),

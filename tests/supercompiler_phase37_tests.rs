@@ -5,16 +5,8 @@ use numlang::mir::supercompiler::cache::{CacheKey, CachedSpecialization, Special
 
 #[test]
 fn test_cache_key_deterministic() {
-    let key1 = CacheKey {
-        function_name: "test_fn".to_string(),
-        function_source_hash: "abcd1234ef012345".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
-    let key2 = CacheKey {
-        function_name: "test_fn".to_string(),
-        function_source_hash: "abcd1234ef012345".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
+    let key1 = CacheKey::new("test_fn", "abcd1234ef012345", "generic");
+    let key2 = CacheKey::new("test_fn", "abcd1234ef012345", "generic");
     let json1 = serde_json::to_string(&key1).expect("serialize key1");
     let json2 = serde_json::to_string(&key2).expect("serialize key2");
     assert_eq!(json1, json2);
@@ -30,11 +22,7 @@ fn test_cache_store_and_lookup() {
     let tmp = std::env::temp_dir().join(format!("numlang_cache_test_{}", std::process::id()));
     let cache = SpecializationCache::open(&tmp);
 
-    let key = CacheKey {
-        function_name: "fib".to_string(),
-        function_source_hash: "hash_123".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
+    let key = CacheKey::new("fib", "hash_123", "generic");
     let entry = CachedSpecialization {
         key: key.clone(),
         residual_json: r#"{"function": "fib", "residual": true}"#.to_string(),
@@ -62,13 +50,96 @@ fn test_cache_miss_returns_none() {
     let tmp = std::env::temp_dir().join(format!("numlang_cache_miss_{}", std::process::id()));
     let cache = SpecializationCache::open(&tmp);
 
-    let key = CacheKey {
-        function_name: "nonexistent".to_string(),
-        function_source_hash: "no_hash".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
+    let key = CacheKey::new("nonexistent", "no_hash", "generic");
     let result = cache.lookup(&key);
     assert!(result.is_none());
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_cache_key_invalidation_on_compiler_version() {
+    let mut key1 = CacheKey::new("fn_foo", "hash_123", "generic");
+    key1.compiler_version = "0.1.0".to_string();
+
+    let mut key2 = CacheKey::new("fn_foo", "hash_123", "generic");
+    key2.compiler_version = "0.2.0".to_string();
+
+    assert_ne!(key1, key2);
+
+    let tmp = std::env::temp_dir().join(format!("numlang_cache_ver_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let entry = CachedSpecialization {
+        key: key1.clone(),
+        residual_json: r#"{"v": 1}"#.to_string(),
+        stats_nodes_explored: 1,
+        stats_branches_pruned: 0,
+        stats_loops_collapsed: 0,
+        stats_knots_tied: 0,
+        stats_calls_inlined: 0,
+        stats_sc_bce_eliminated: 0,
+        stats_residual_block_count: 1,
+        stats_residual_stmt_count: 1,
+    };
+    cache.store(&entry).expect("store");
+
+    assert!(cache.lookup(&key1).is_some());
+    assert!(cache.lookup(&key2).is_none(), "Cache must invalidate across compiler versions");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_cache_key_invalidation_on_optimization_flags() {
+    let key1 = CacheKey::new("fn_foo", "hash_123", "generic").with_flags("opt=3");
+    let key2 = CacheKey::new("fn_foo", "hash_123", "generic").with_flags("opt=0");
+
+    assert_ne!(key1, key2);
+
+    let tmp = std::env::temp_dir().join(format!("numlang_cache_flags_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let entry = CachedSpecialization {
+        key: key1.clone(),
+        residual_json: r#"{"v": "opt3"}"#.to_string(),
+        stats_nodes_explored: 1,
+        stats_branches_pruned: 0,
+        stats_loops_collapsed: 0,
+        stats_knots_tied: 0,
+        stats_calls_inlined: 0,
+        stats_sc_bce_eliminated: 0,
+        stats_residual_block_count: 1,
+        stats_residual_stmt_count: 1,
+    };
+    cache.store(&entry).expect("store");
+
+    assert!(cache.lookup(&key1).is_some());
+    assert!(cache.lookup(&key2).is_none(), "Cache must invalidate across optimization flag changes");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_corrupted_disk_cache_fallback() {
+    let tmp = std::env::temp_dir().join(format!("numlang_cache_corrupt_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let key = CacheKey::new("corrupt_fn", "hash_corrupt", "generic");
+    let path = cache.key_to_path(&key);
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create parent");
+    }
+    // Write corrupted non-JSON bytes to cache path
+    fs::write(&path, b"NOT_VALID_JSON{{{").expect("write corrupt file");
+
+    let metrics_before = cache.metrics();
+    let result = cache.lookup(&key);
+    assert!(result.is_none(), "Corrupted cache file must not crash and must return None");
+
+    let metrics_after = cache.metrics();
+    assert_eq!(metrics_after.misses, metrics_before.misses + 1, "Must record a cache miss on corrupted disk cache");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -146,11 +217,7 @@ fn test_cache_invalidation_on_different_source() {
     let tmp = std::env::temp_dir().join(format!("numlang_cache_inv_{}", std::process::id()));
     let cache = SpecializationCache::open(&tmp);
 
-    let key_v1 = CacheKey {
-        function_name: "foo".to_string(),
-        function_source_hash: "hash_v1".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
+    let key_v1 = CacheKey::new("foo", "hash_v1", "generic");
     let entry = CachedSpecialization {
         key: key_v1.clone(),
         residual_json: r#"{"version": 1}"#.to_string(),
@@ -169,11 +236,7 @@ fn test_cache_invalidation_on_different_source() {
     assert!(cache.lookup(&key_v1).is_some());
 
     // Modified source produces a different hash: lookup must return None
-    let key_v2 = CacheKey {
-        function_name: "foo".to_string(),
-        function_source_hash: "hash_v2".to_string(),
-        argument_fingerprint: "generic".to_string(),
-    };
+    let key_v2 = CacheKey::new("foo", "hash_v2", "generic");
     assert!(cache.lookup(&key_v2).is_none());
 
     // Also verify invalidate_function removes entries for "foo"

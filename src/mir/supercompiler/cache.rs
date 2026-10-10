@@ -21,6 +21,10 @@ pub struct DependencyGraph {
     pub callees_to_callers: HashMap<String, Vec<String>>,
 }
 
+fn default_compiler_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Key uniquely identifying a specialization.
 /// Hashed to produce the cache filename.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -32,6 +36,45 @@ pub struct CacheKey {
     /// SHA-256 hex string of the symbolic argument fingerprint at the call site.
     /// Use the Debug repr of the initial SymbolicState env as the fingerprint input.
     pub argument_fingerprint: String,
+    /// Compiler version string (prevents stale residuals across compiler upgrades).
+    #[serde(default = "default_compiler_version")]
+    pub compiler_version: String,
+    /// Compiler optimization flags or mode (e.g. "opt_level=3;backend=cranelift;mode=classic").
+    #[serde(default)]
+    pub optimization_flags: String,
+}
+
+impl Default for CacheKey {
+    fn default() -> Self {
+        Self {
+            function_name: String::new(),
+            function_source_hash: String::new(),
+            argument_fingerprint: String::new(),
+            compiler_version: default_compiler_version(),
+            optimization_flags: String::new(),
+        }
+    }
+}
+
+impl CacheKey {
+    pub fn new(
+        function_name: impl Into<String>,
+        function_source_hash: impl Into<String>,
+        argument_fingerprint: impl Into<String>,
+    ) -> Self {
+        Self {
+            function_name: function_name.into(),
+            function_source_hash: function_source_hash.into(),
+            argument_fingerprint: argument_fingerprint.into(),
+            compiler_version: default_compiler_version(),
+            optimization_flags: String::new(),
+        }
+    }
+
+    pub fn with_flags(mut self, flags: impl Into<String>) -> Self {
+        self.optimization_flags = flags.into();
+        self
+    }
 }
 
 /// A cached specialization result.
@@ -94,8 +137,12 @@ impl SpecializationCache {
     pub fn key_to_path(&self, key: &CacheKey) -> PathBuf {
         let key_json = serde_json::to_string(key).unwrap_or_else(|_| {
             format!(
-                "{}:{}:{}",
-                key.function_name, key.function_source_hash, key.argument_fingerprint
+                "{}:{}:{}:{}:{}",
+                key.function_name,
+                key.function_source_hash,
+                key.argument_fingerprint,
+                key.compiler_version,
+                key.optimization_flags,
             )
         });
         let hex = sha256_str(&key_json);
@@ -217,8 +264,27 @@ impl SpecializationCache {
             return None;
         }
 
-        let content = fs::read_to_string(&path).ok()?;
-        let entry: CachedSpecialization = serde_json::from_str(&content).ok()?;
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                if let Ok(mut m) = self.metrics.write() {
+                    m.misses += 1;
+                }
+                return None;
+            }
+        };
+
+        let entry: CachedSpecialization = match serde_json::from_str(&content) {
+            Ok(e) => e,
+            Err(_) => {
+                // Gracefully treat corrupted cache JSON as a cache miss
+                if let Ok(mut m) = self.metrics.write() {
+                    m.misses += 1;
+                }
+                return None;
+            }
+        };
+
         if entry.key == *key {
             // Populate L1 cache for subsequent lookups
             if let Ok(mut l1) = self.l1_cache.write() {
