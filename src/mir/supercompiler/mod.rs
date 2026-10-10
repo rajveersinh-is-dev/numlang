@@ -429,7 +429,7 @@ fn func_is_impure(func: &MirFunction) -> bool {
                 crate::mir::lower::Rvalue::Call(callee, _),
             ) = stmt
             {
-                if callee == "print" || callee == "println" || callee == "exit" {
+                if callee == "print" || callee == "println" || callee == "exit" || callee == "read_i64" {
                     return true;
                 }
             }

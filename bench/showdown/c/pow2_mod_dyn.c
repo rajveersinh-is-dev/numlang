@@ -8,9 +8,18 @@
 #include <time.h>
 #endif
 
-int64_t square(int64_t x) { return x * x; }
+int64_t pow2(int64_t n) {
+    int64_t acc = 1;
+    int64_t i = 0;
+    while (i < n) {
+        acc = (acc * 2);
+        i++;
+    }
+    return acc % 256;
+}
 
-int main(void) {
+int main(int argc, char** argv) {
+    int64_t n = (argc > 1) ? atoll(argv[1]) : 100LL;
 #ifdef _WIN32
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
@@ -20,10 +29,7 @@ int main(void) {
     clock_gettime(CLOCK_MONOTONIC, &t0);
 #endif
 
-    int64_t total = 0;
-    for (int64_t i = 1; i <= 1000000; i++) {
-        total += square(i);
-    }
+    int64_t r = pow2(n);
 
 #ifdef _WIN32
     QueryPerformanceCounter(&t1);
@@ -33,7 +39,7 @@ int main(void) {
     int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
 #endif
 
-    printf("%lld\n", (long long)total);
+    printf("%lld\n", (long long)r);
     printf("COMPUTE_NS: %lld\n", (long long)ns);
-    return (int)(total % 256);
+    return (int)r;
 }

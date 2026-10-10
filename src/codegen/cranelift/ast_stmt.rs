@@ -173,6 +173,7 @@ pub(crate) struct FunctionTranslationState<'a> {
     pub(crate) log2_id: FuncId,
     pub(crate) log10_id: FuncId,
     pub(crate) pow_id: FuncId,
+    pub(crate) read_i64_id: FuncId,
     pub(crate) variables: HashMap<String, Storage>,
     pub(crate) loop_exit_blocks: Vec<cranelift_codegen::ir::Block>,
     pub(crate) loop_continue_blocks: Vec<cranelift_codegen::ir::Block>,

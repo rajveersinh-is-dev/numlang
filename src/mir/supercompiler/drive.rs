@@ -1877,7 +1877,6 @@ impl<'a> SupercompilerDriver<'a> {
         };
 
         let mut solved_places = std::collections::HashSet::new();
-        let mut had_branching_body = false;
         match self.try_solve_accumulator_loop(anc, curr, n_term) {
             AccumulatorLoopResult::Solved(solved_accs, iv_place) => {
                 for (acc_place, closed_form) in &solved_accs {
@@ -1904,7 +1903,7 @@ impl<'a> SupercompilerDriver<'a> {
                 any_solved = true;
             }
             AccumulatorLoopResult::BranchingBody => {
-                had_branching_body = true;
+                return RecurrenceResult::UnsolvableBranchingBody;
             }
             AccumulatorLoopResult::NotApplicable => {}
         }
@@ -2070,6 +2069,19 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
         }
+        // Also track any scalar place modified anywhere in the natural loop body
+        if let Some(blocks) = self.natural_loops.get(&curr.block) {
+            for b_id in blocks {
+                if let Some(b) = self.block_map.get(b_id) {
+                    for stmt in &b.statements {
+                        let Statement::Assign(dest, _) = stmt;
+                        if dest.projections.is_empty() && !mutating_places.contains(&&dest.local) {
+                            mutating_places.push(&dest.local);
+                        }
+                    }
+                }
+            }
+        }
 
         let all_mutating_solved = mutating_places
             .iter()
@@ -2077,8 +2089,6 @@ impl<'a> SupercompilerDriver<'a> {
 
         if any_solved && all_mutating_solved {
             RecurrenceResult::Solved(Box::new(solved_state))
-        } else if had_branching_body {
-            RecurrenceResult::UnsolvableBranchingBody
         } else {
             RecurrenceResult::UnsolvableNoPattern
         }

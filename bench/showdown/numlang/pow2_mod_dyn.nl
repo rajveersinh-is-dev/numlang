@@ -9,7 +9,11 @@ fn pow2(n: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    let res: i64 = pow2(100);
+    let mut n: i64 = read_i64();
+    if n <= 0 {
+        n = 100;
+    }
+    let res: i64 = pow2(n);
     println(res);
     return res;
 }

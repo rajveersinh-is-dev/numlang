@@ -350,6 +350,9 @@ impl<'a> OracleInterpreter<'a> {
                 if callee == "print_int" || callee == "print" || callee == "println" {
                     return Ok(OracleValue::Void);
                 }
+                if callee == "read_i64" {
+                    return Ok(OracleValue::Int(0));
+                }
                 if callee == "abs" && evaluated_args.len() == 1 {
                     if let Some(n) = evaluated_args[0].as_i64() {
                         return Ok(OracleValue::Int(n.wrapping_abs()));

@@ -14,6 +14,7 @@ main = do
     total `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show total)
     putStrLn $ "COMPUTE_NS: " ++ show ns
     let code = fromIntegral (total `mod` 256)
     exitWith (ExitFailure code)
