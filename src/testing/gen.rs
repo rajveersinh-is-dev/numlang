@@ -239,6 +239,8 @@ pub fn random_program_strategy(config: GenConfig) -> BoxedStrategy<String> {
 
 #[cfg(test)]
 mod tests {
+    // Justification: The following .expect() and panic!() invocations are test-only assertion
+    // failures inside #[cfg(test)]. They are strictly outside lowering, supercompilation, and codegen pipelines.
     use super::*;
     use crate::parser::parse;
     use crate::testing::oracle::{evaluate_program, OracleResult};
