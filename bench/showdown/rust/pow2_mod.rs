@@ -12,6 +12,7 @@ fn main() {
     let t0 = std::time::Instant::now();
     let r = pow2(100);
     let elapsed = t0.elapsed();
+    println!("{}", r);
     println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit(r as i32);
 }

@@ -47,6 +47,7 @@ pub struct CraneliftCompiler {
     pub(crate) log2_id: FuncId,
     pub(crate) log10_id: FuncId,
     pub(crate) pow_id: FuncId,
+    pub(crate) read_i64_id: FuncId,
     pub(crate) malloc_id: FuncId,
     pub(crate) loop_reset_id: FuncId,
     pub(crate) arena_alloc_id: FuncId,
@@ -236,6 +237,12 @@ impl CraneliftCompiler {
             .declare_function("pow", Linkage::Import, &sig_2f)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
+        let mut sig_read_i64 = module.make_signature();
+        sig_read_i64.returns.push(AbiParam::new(types::I64));
+        let read_i64_id = module
+            .declare_function("__nl_read_i64", Linkage::Import, &sig_read_i64)
+            .map_err(|e| CodegenError::BackendError(e.to_string()))?;
+
         let mut sig_malloc = module.make_signature();
         sig_malloc.params.push(AbiParam::new(types::I64));
         sig_malloc.returns.push(AbiParam::new(types::I64));
@@ -304,6 +311,7 @@ impl CraneliftCompiler {
             log2_id,
             log10_id,
             pow_id,
+            read_i64_id,
             malloc_id,
             loop_reset_id,
             arena_alloc_id,
@@ -645,6 +653,7 @@ impl CraneliftCompiler {
             log2_id: self.log2_id,
             log10_id: self.log10_id,
             pow_id: self.pow_id,
+            read_i64_id: self.read_i64_id,
             variables,
             loop_exit_blocks: Vec::new(),
             loop_continue_blocks: Vec::new(),

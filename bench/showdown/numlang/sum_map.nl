@@ -7,5 +7,6 @@ fn main() -> i64 {
     for i in 1..=1000000 {
         total = total + square(i);
     }
+    println(total);
     return total % 256;
 }

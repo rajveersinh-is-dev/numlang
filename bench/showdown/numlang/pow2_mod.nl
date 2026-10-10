@@ -9,5 +9,7 @@ fn pow2(n: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    return pow2(100);
+    let res: i64 = pow2(100);
+    println(res);
+    return res;
 }

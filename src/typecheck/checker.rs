@@ -1623,6 +1623,22 @@ impl TypeChecker {
             Expr::Call { callee, args, span } => {
                 // Built-in intrinsics
                 match callee.as_str() {
+                    "read_i64" => {
+                        if !args.is_empty() {
+                            return Err(TypeError::ArityMismatch {
+                                name: "read_i64".to_string(),
+                                expected: 0,
+                                found: args.len(),
+                                span: *span,
+                            });
+                        }
+                        return Ok(TypedExpr::Call {
+                            callee: callee.clone(),
+                            args: vec![],
+                            ty: Type::I64,
+                            span: *span,
+                        });
+                    }
                     "print" | "println" => {
                         if args.len() != 1 {
                             if callee == "println" && args.is_empty() {

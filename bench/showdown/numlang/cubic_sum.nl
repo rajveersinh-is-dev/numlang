@@ -9,5 +9,7 @@ fn cubic_sum(n: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    return cubic_sum(10000000) % 256;
+    let res: i64 = cubic_sum(10000000);
+    println(res);
+    return res % 256;
 }

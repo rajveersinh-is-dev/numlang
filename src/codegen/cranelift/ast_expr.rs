@@ -720,6 +720,13 @@ impl<'a> FunctionTranslationState<'a> {
                         let call_inst = builder.ins().call(malloc_func, &[size_val]);
                         return Ok(builder.inst_results(call_inst)[0]);
                     }
+                    "read_i64" => {
+                        let read_i64_func = self
+                            .module
+                            .declare_func_in_func(self.read_i64_id, builder.func);
+                        let call_inst = builder.ins().call(read_i64_func, &[]);
+                        return Ok(builder.inst_results(call_inst)[0]);
+                    }
                     "print" | "println" => {
                         let is_nl = callee == "println";
                         if args.is_empty() {

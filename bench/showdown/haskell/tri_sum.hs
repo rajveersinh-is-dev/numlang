@@ -14,10 +14,11 @@ triSum n = loop 0 1
 main :: IO ()
 main = do
     t0 <- getMonotonicTimeNSec
-    let r = triSum 50000000 `mod` 256
-    r `seq` return ()
+    let fullRes = triSum 50000000
+    fullRes `seq` return ()
     t1 <- getMonotonicTimeNSec
     let ns = t1 - t0
+    putStrLn (show fullRes)
     putStrLn $ "COMPUTE_NS: " ++ show ns
-    let code = fromIntegral ((r `mod` 256 + 256) `mod` 256)
+    let code = fromIntegral ((fullRes `mod` 256 + 256) `mod` 256)
     exitWith (ExitFailure code)

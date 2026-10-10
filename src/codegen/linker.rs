@@ -177,10 +177,33 @@ extern "system" {
         lpOverlapped: *mut core::ffi::c_void,
     ) -> i32;
     fn ExitProcess(uExitCode: u32) -> !;
+    fn GetCommandLineA() -> *const u8;
 }
 
 extern "C" {
     fn main() -> i64;
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn __nl_read_i64() -> i64 {
+    let mut p = GetCommandLineA();
+    if p.is_null() { return 0; }
+    if *p == b'"' {
+        p = p.add(1);
+        while *p != 0 && *p != b'"' { p = p.add(1); }
+        if *p == b'"' { p = p.add(1); }
+    } else {
+        while *p != 0 && *p != b' ' && *p != b'\t' { p = p.add(1); }
+    }
+    while *p == b' ' || *p == b'\t' { p = p.add(1); }
+    let mut neg = false;
+    if *p == b'-' { neg = true; p = p.add(1); }
+    let mut v: i64 = 0;
+    while *p >= b'0' && *p <= b'9' {
+        v = v.wrapping_mul(10).wrapping_add((*p - b'0') as i64);
+        p = p.add(1);
+    }
+    if neg { -v } else { v }
 }
 
 #[no_mangle]
@@ -289,7 +312,29 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
             }
         }
     } else {
-        None
+        let p = obj_path.with_file_name(format!("runtime_stub_{}.obj", std::process::id()));
+        let rs_path = obj_path.with_file_name(format!("runtime_stub_{}.rs", std::process::id()));
+        let _ = std::fs::write(&rs_path, "#![no_std]\n#![no_main]\n#[no_mangle]\npub extern \"C\" fn __nl_read_i64() -> i64 { 0 }\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n");
+        let ok = Command::new("rustc")
+            .args([
+                "-O",
+                "-C",
+                "panic=abort",
+                "--crate-type=staticlib",
+                "--emit=obj",
+            ])
+            .arg(&rs_path)
+            .arg("-o")
+            .arg(&p)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        let _ = std::fs::remove_file(&rs_path);
+        if ok {
+            Some(p)
+        } else {
+            None
+        }
     };
 
     let mut cmd = match linker {

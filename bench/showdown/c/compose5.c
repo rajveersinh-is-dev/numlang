@@ -41,6 +41,7 @@ int main(void) {
     int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
 #endif
 
+    printf("%lld\n", (long long)sum);
     printf("COMPUTE_NS: %lld\n", (long long)ns);
     return (int)(sum % 256);
 }
