@@ -136,10 +136,14 @@ fn test_makefile_targets_present() {
 #[test]
 fn test_rebuttal_objections_complete() {
     let root = get_repo_root();
-    let rebuttal_path = root.join("rebuttal").join("likely_objections.md");
+    let rebuttal_path = if root.join("docs/archive/rebuttal/likely_objections.md").is_file() {
+        root.join("docs/archive/rebuttal/likely_objections.md")
+    } else {
+        root.join("rebuttal/likely_objections.md")
+    };
     assert!(
         rebuttal_path.is_file(),
-        "Expected rebuttal/likely_objections.md to exist at {:?}",
+        "Expected rebuttal objections file to exist at {:?}",
         rebuttal_path
     );
 
