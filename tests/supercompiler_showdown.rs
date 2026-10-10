@@ -116,7 +116,7 @@ fn detect_competitors() -> BTreeMap<&'static str, CompetitorInfo> {
     let mut map = BTreeMap::new();
 
     // 1. Rust
-    map.insert("Rustc-O", detect_tool("Rustc-O", "rustc", "--version"));
+    map.insert("Rustc-O3", detect_tool("Rustc-O3", "rustc", "--version"));
 
     // 2. MSVC cl.exe
     if let Some(vcvars) = find_vcvars64() {
@@ -167,6 +167,8 @@ fn compile_numlang(
 
     if supercompile {
         cmd.arg("--supercompile");
+    } else {
+        cmd.arg("--use-mir");
     }
 
     let t0 = Instant::now();
@@ -191,7 +193,8 @@ fn compile_rust(src_file: &Path, exe_file: &Path) -> Result<Duration, String> {
     let t0 = Instant::now();
     let output = Command::new("rustc")
         .args([
-            "-O",
+            "-C",
+            "opt-level=3",
             "-o",
             exe_file.to_str().unwrap(),
             src_file.to_str().unwrap(),
@@ -351,7 +354,9 @@ fn format_status(status: &RunStatus) -> String {
     match status {
         RunStatus::Success { median, .. } => {
             let ns = median.as_nanos();
-            if ns < 1_000 {
+            if ns <= 500 {
+                "≤ 500 ns*".to_string()
+            } else if ns < 1_000 {
                 format!("{:>6} ns", ns)
             } else if ns < 1_000_000 {
                 format!("{:>6.2} µs", (ns as f64) / 1_000.0)
@@ -502,7 +507,7 @@ fn test_supercompiler_showdown() {
         BenchmarkSpec {
             id: "cubic_sum",
             group: "G2: Recurrences",
-            name: "Cubic Polynomial Sum (10M)",
+            name: "Sum of Squares 1^2+...+10M^2 (Degree-3)",
             algorithm: "Sum of squares 1^2 + ... + 10M^2",
             expected_exit: 192,
             nl_rel: "bench/showdown/numlang/cubic_sum.nl",
@@ -591,6 +596,7 @@ fn test_supercompiler_showdown() {
 
     let mut rows: Vec<BenchmarkRow> = Vec::new();
     let mut total_wins_sc = 0;
+    let mut total_ties_floor = 0;
     let mut total_evaluable = 0;
 
     for spec in &benchmarks {
@@ -628,8 +634,8 @@ fn test_supercompiler_showdown() {
             Err(e) => RunStatus::CompileFailed(e),
         };
 
-        // 3. Rust (rustc -O)
-        let rust_opt_status = if competitors["Rustc-O"].installed && rs_src.exists() {
+        // 3. Rust (rustc -C opt-level=3)
+        let rust_opt_status = if competitors["Rustc-O3"].installed && rs_src.exists() {
             let rs_exe = test_dir.join(format!("{}_rs.exe", spec.id));
             match compile_rust(&rs_src, &rs_exe) {
                 Ok(_) => measure_binary(&rs_exe, spec.expected_exit, warmup_rounds, measure_rounds),
@@ -671,8 +677,9 @@ fn test_supercompiler_showdown() {
         let hosc_sc_status = RunStatus::NotInstalled;
 
         // Tally wins against competing compilers
-        // A benchmark is won by NumLang-SC if it outperforms all external competitors,
-        // or ties in the instantaneous O(1) closed-form tier (<= 500 ns, within hardware counter quantization).
+        // A benchmark is won by NumLang-SC if it strictly outperforms all external competitors.
+        // If both NumLang-SC and the fastest competitor evaluate within the hardware timer floor (<= 500 ns),
+        // it is recorded as an instantaneous tie rather than an inflated win.
         if let Some(sc_ns) = get_median_ns(&nl_sc_status) {
             total_evaluable += 1;
             let best_comp_ns = [
@@ -684,13 +691,17 @@ fn test_supercompiler_showdown() {
             .flatten()
             .min();
 
-            let sc_wins = match best_comp_ns {
-                Some(comp_ns) => (sc_ns <= 500 && comp_ns <= 500) || sc_ns <= comp_ns,
-                None => true,
-            };
-
-            if sc_wins {
-                total_wins_sc += 1;
+            match best_comp_ns {
+                Some(comp_ns) if sc_ns <= 500 && comp_ns <= 500 => {
+                    total_ties_floor += 1;
+                }
+                Some(comp_ns) if sc_ns <= comp_ns => {
+                    total_wins_sc += 1;
+                }
+                None => {
+                    total_wins_sc += 1;
+                }
+                _ => {}
             }
         }
 
@@ -707,7 +718,7 @@ fn test_supercompiler_showdown() {
 
     // Print Markdown Showdown Table
     println!("\n### Supercompiler Showdown Results Table (In-Process Monotonic Compute Timings)\n");
-    println!("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O | MSVC-O2 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |");
+    println!("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |");
     println!("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
 
     for r in &rows {
@@ -722,7 +733,7 @@ fn test_supercompiler_showdown() {
         let sc_ns_opt = get_median_ns(&r.nl_sc);
         let mut comp_candidates: Vec<(&str, u64)> = Vec::new();
         if let Some(ns) = get_median_ns(&r.rust_opt) {
-            comp_candidates.push(("Rustc-O", ns));
+            comp_candidates.push(("Rustc-O3", ns));
         }
         if let Some(ns) = get_median_ns(&r.msvc_opt) {
             comp_candidates.push(("MSVC-O2", ns));
@@ -738,7 +749,7 @@ fn test_supercompiler_showdown() {
         let winner = match (sc_ns_opt, comp_candidates.first()) {
             (Some(sc_ns), Some(&(c_name, c_ns))) => {
                 if sc_ns <= 500 && c_ns <= 500 {
-                    "NumLang-SC*"
+                    "Tie (≤500ns)*"
                 } else if sc_ns <= c_ns {
                     "NumLang-SC"
                 } else {
@@ -775,9 +786,14 @@ fn test_supercompiler_showdown() {
     println!("\nShowdown Summary:");
     println!("  Total benchmarks evaluated : {}", total_evaluable);
     println!(
-        "  NumLang-SC dominant wins   : {} ({:.1}%)",
+        "  NumLang-SC outright wins   : {} ({:.1}%)",
         total_wins_sc,
         (total_wins_sc as f64) * 100.0 / (total_evaluable.max(1) as f64)
+    );
+    println!(
+        "  Sub-timer floor ties (≤500ns) : {} ({:.1}%)",
+        total_ties_floor,
+        (total_ties_floor as f64) * 100.0 / (total_evaluable.max(1) as f64)
     );
 
     // Write CSV Output
@@ -790,7 +806,7 @@ fn test_supercompiler_showdown() {
         let systems = [
             ("NumLang-SC", &r.nl_sc),
             ("NumLang-Base", &r.nl_base),
-            ("Rustc-O", &r.rust_opt),
+            ("Rustc-O3", &r.rust_opt),
             ("MSVC-O2", &r.msvc_opt),
             ("GHC-O2", &r.ghc_opt),
             ("HOSC-SC", &r.hosc_sc),
@@ -869,11 +885,12 @@ fn test_supercompiler_showdown() {
     println!("  Output written to: {}", csv_path.display());
     println!("  Sample written to: {}", sample_csv_path.display());
 
-    // Gate requirement: NumLang-SC must be fastest on >= 50% of the benchmarks
+    // Gate requirement: NumLang-SC must win or tie at least 50% of evaluated benchmarks
     assert!(
-        total_wins_sc >= total_evaluable / 2,
-        "NumLang-SC must win at least 50% of evaluated benchmarks! (Wins: {} / {})",
+        total_wins_sc + total_ties_floor >= total_evaluable / 2,
+        "NumLang-SC must win or tie at least 50% of evaluated benchmarks! (Wins: {}, Ties: {} / {})",
         total_wins_sc,
+        total_ties_floor,
         total_evaluable
     );
 }

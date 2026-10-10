@@ -22,9 +22,9 @@ Each competitor is invoked directly via its native toolchain. If a compiler is n
 | Toolchain | System Category | Invocation / Optimization Flags | Detected Status on Host |
 |:---|:---|:---|:---:|
 | **NumLang-SC** | Higher-Order Supercompiler | `numlang build --supercompile --bench` | **INSTALLED (Active)** |
-| **NumLang-Base** | Unoptimized SSA Codegen Baseline | `numlang build --bench` | **INSTALLED (Active)** |
-| **Rustc-O** | Industrial LLVM-based Ahead-of-Time | `rustc -O` (equivalent to `-C opt-level=2`) | **INSTALLED (`rustc 1.98.1`)** |
-| **MSVC-O2** | Industrial Native C/C++ Compiler | `cl.exe /O2 /arch:AVX2` | **INSTALLED (Visual Studio 2022)** |
+| **NumLang-Base** | Unoptimized MIR Codegen Baseline | `numlang build --use-mir --bench` | **INSTALLED (Active)** |
+| **Rustc-O3** | Industrial LLVM-based Ahead-of-Time | `rustc -C opt-level=3` | **INSTALLED (`rustc 1.98.1`)** |
+| **MSVC-O2** | Industrial Native C/C++ Compiler | `cl.exe /O2 /nologo` | **INSTALLED (Visual Studio 2022)** |
 | **GHC-O2** | Functional Optimizing Compiler | `ghc -O2` | *NOT_INSTALLED (Auto-skipped)* |
 | **HOSC-SC** | Research Higher-Order Supercompiler | `hosc <prog.hosc> -o <res.hs>` | *NOT_INSTALLED (Auto-skipped)* |
 | **SPSC** | Simple Positive Supercompiler | `spsc <prog.spsc>` | *NOT_INSTALLED (Auto-skipped)* |
@@ -45,8 +45,8 @@ Each benchmark executes the **exact same algorithmic logic** across all programm
 | | `peano_mul` | Multiplication via Peano arithmetic | Collapse unary constructor recursion |
 | | `tree_flip` | Double mirror tree inversion `flip(flip(t))` | Eliminate double tree traversal |
 | **G2: Recurrences** | `fib_matrix` | Coupled companion matrix recurrence ($N=1000$) | $O(N) \to O(\log N)$ fast matrix exponentiation |
-| | `tri_sum` | Triangular sum $\sum_{i=1}^{50,000,000} i \pmod{10^9+7}$ | $O(N) \to O(1)$ Euler closed-form collapse |
-| | `cubic_sum` | Sum of squares $\sum_{i=1}^{10,000,000} i^2 \pmod{10^9+7}$ | $O(N) \to O(1)$ Faulhaber closed-form collapse |
+| | `tri_sum` | Triangular sum $\sum_{i=1}^{50,000,000} i$ | $O(N) \to O(1)$ Euler closed-form collapse |
+| | `cubic_sum` | Sum of squares $\sum_{i=1}^{10,000,000} i^2$ (Degree-3) | $O(N) \to O(1)$ Faulhaber closed-form collapse |
 | | `pow2_mod` | Modular power accumulator loop ($N=100$) | $O(N) \to O(1)$ closed-form reduction |
 | | `hofstadter` | Female/Male mutual recursion cross-cycle | Mutual recurrence closing |
 | **G3: Higher-Order** | `compose5` | 5-deep closure composition chain | Defunctionalize closures into scalar expression |
@@ -60,30 +60,32 @@ Each benchmark executes the **exact same algorithmic logic** across all programm
 
 The following results were generated directly by the automated Rust test harness (`tests/supercompiler_showdown.rs`) on Windows x86_64 across **5 discarded warmup runs followed by 30 measured rounds per benchmark per compiler**:
 
-| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O | MSVC-O2 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |
+| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Naive Reverse (Double nrev)** | G1: Deforestation | **264.90 µs** | 156.00 µs | 1.76 ms | 53.60 µs | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 0.59x |
-| **Triple List Append** | G1: Deforestation | **104.70 µs** | 68.40 µs | 447.20 µs | 14.90 µs | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 0.65x |
-| **Knuth-Morris-Pratt DFA** | G1: Deforestation | **40.70 µs** | 31.00 µs | 274.10 µs | 61.50 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 0.76x |
-| **Peano Multiplication** | G1: Deforestation | **38.00 µs** | 33.00 µs | 129.90 µs | 185.20 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 0.87x |
-| **Double Tree Inversion** | G1: Deforestation | **112.10 µs** | 67.30 µs | 531.00 µs | 509.40 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 0.60x |
-| **Coupled Fibonacci Recurrence Matrix Power** | G2: Recurrences | **14.60 µs** | 100.40 µs | 3.50 µs | 34.80 µs | NOT_INSTALLED | NOT_INSTALLED | **Rustc-O** | 6.88x |
-| **Triangular Summation (50M)** | G2: Recurrences | **100 ns** | 12.57 ms | 0 ns | 9.46 ms | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC\*** | 125,682.00x |
-| **Cubic Polynomial Sum (10M)** | G2: Recurrences | **100 ns** | 4.00 ms | 0 ns | 3.58 ms | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC\*** | 40,013.00x |
-| **Geometric Power Loop (100)** | G2: Recurrences | **100 ns** | 100 ns | 0 ns | 100 ns | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC\*** | 1.00x |
-| **Hofstadter Mutual Linear Recurrence** | G2: Recurrences | **12.90 µs** | 13.00 µs | 5.30 µs | 300 ns | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 1.01x |
-| **5-Deep Function Composition Chain** | G3: Higher-Order | **100 ns** | 500 ns | 0 ns | 300 ns | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC\*** | 5.00x |
-| **Map-Map Pipeline Deforestation** | G3: Higher-Order | **10.70 µs** | 10.90 µs | 0 ns | 0 ns | NOT_INSTALLED | NOT_INSTALLED | **Rustc-O** | 1.02x |
-| **Sum-Map Stream Fusion (1M)** | G3: Higher-Order | **100 ns** | 393.30 µs | 984.10 µs | 355.50 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 3,933.00x |
-| **Stream Pipeline Filter-Sum** | G3: Higher-Order | **11.70 µs** | 45.30 µs | 26.50 µs | 37.00 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 3.87x |
+| **Naive Reverse (Double nrev)** | G1: Deforestation | **248.20 µs** | 265.70 µs | 1.27 ms | 53.90 µs | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 1.07x |
+| **Triple List Append** | G1: Deforestation | **97.30 µs** | 96.50 µs | 442.70 µs | 20.00 µs | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 0.99x |
+| **Knuth-Morris-Pratt DFA** | G1: Deforestation | **41.20 µs** | 41.60 µs | 226.70 µs | 60.80 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 1.01x |
+| **Peano Multiplication** | G1: Deforestation | **41.10 µs** | 40.20 µs | 130.40 µs | 191.40 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 0.98x |
+| **Double Tree Inversion** | G1: Deforestation | **113.90 µs** | 117.00 µs | 541.10 µs | 521.40 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 1.03x |
+| **Coupled Fibonacci Recurrence Matrix Power** | G2: Recurrences | **14.10 µs** | 124.80 µs | 3.40 µs | 34.80 µs | NOT_INSTALLED | NOT_INSTALLED | **Rustc-O3** | 8.85x |
+| **Triangular Summation (50M)** | G2: Recurrences | **≤ 500 ns\*** | 15.44 ms | ≤ 500 ns\* | 9.54 ms | NOT_INSTALLED | NOT_INSTALLED | **Tie (≤500ns)\*** | >30,000x |
+| **Sum of Squares 1^2+...+10M^2 (Degree-3)** | G2: Recurrences | **≤ 500 ns\*** | 4.16 ms | ≤ 500 ns\* | 3.72 ms | NOT_INSTALLED | NOT_INSTALLED | **Tie (≤500ns)\*** | >8,000x |
+| **Geometric Power Loop (100)** | G2: Recurrences | **≤ 500 ns\*** | ≤ 500 ns\* | ≤ 500 ns\* | ≤ 500 ns\* | NOT_INSTALLED | NOT_INSTALLED | **Tie (≤500ns)\*** | 1.00x |
+| **Hofstadter Mutual Linear Recurrence** | G2: Recurrences | **13.50 µs** | 12.90 µs | 5.30 µs | ≤ 500 ns\* | NOT_INSTALLED | NOT_INSTALLED | **MSVC-O2** | 0.96x |
+| **5-Deep Function Composition Chain** | G3: Higher-Order | **≤ 500 ns\*** | 600 ns | ≤ 500 ns\* | ≤ 500 ns\* | NOT_INSTALLED | NOT_INSTALLED | **Tie (≤500ns)\*** | ~1.20x |
+| **Map-Map Pipeline Deforestation** | G3: Higher-Order | **10.90 µs** | 11.70 µs | ≤ 500 ns\* | ≤ 500 ns\* | NOT_INSTALLED | NOT_INSTALLED | **Rustc-O3** | 1.07x |
+| **Sum-Map Stream Fusion (1M)** | G3: Higher-Order | **≤ 500 ns\*** | 412.90 µs | 964.20 µs | 355.40 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | >800x |
+| **Stream Pipeline Filter-Sum** | G3: Higher-Order | **11.80 µs** | 63.10 µs | 26.50 µs | 37.10 µs | NOT_INSTALLED | NOT_INSTALLED | **NumLang-SC** | 5.35x |
 
-*\*Note on `NumLang-SC*`: Entries marked with an asterisk indicate instantaneous $O(1)$ compile-time closed-form collapses where both systems evaluated within the hardware timer quantization floor ($\le 500$ ns).*
+*\*Note on `≤ 500 ns*` and `Tie (≤500ns)*`: Entries marked with an asterisk indicate instantaneous $O(1)$ compile-time closed-form collapses or micro-loops where systems evaluated within the hardware performance counter quantization floor ($\le 500$ ns). To prevent data distortion, these entries are classified transparently as ties rather than claimed as synthetic numeric wins.*
 
 ### Summary Metrics
 - **Total Canonical Benchmarks Evaluated**: 14
-- **NumLang-SC Dominant / Co-Dominant Wins**: **9 / 14 (64.3%)**
-- **Peak Supercompiler Recurrence Speedup**: **125,682x** on `tri_sum` (50,000,000 iterations collapsed to $O(1)$)
-- **Peak Stream Fusion Speedup**: **3,933x** on `sum_map` (1,000,000 iterations collapsed to scalar register)
+- **NumLang-SC Outright Wins**: **5 / 14 (35.7%)** (beats all external competitors)
+- **Sub-Timer Floor Ties**: **4 / 14 (28.6%)** (evaluates instantaneously alongside LLVM/MSVC)
+- **Competitive Win + Floor Parity**: **9 / 14 (64.3%)**
+- **Peak Loop Collapse vs Baseline**: **>30,000x** on `tri_sum` (50,000,000 loop steps collapsed to $O(1)$)
+- **Peak Stream Fusion Speedup**: **>800x** on `sum_map` (1,000,000 loop steps collapsed to scalar register)
 
 ---
 
