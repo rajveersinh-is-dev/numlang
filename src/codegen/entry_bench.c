@@ -32,6 +32,32 @@ void mainCRTStartup() {
     WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, len, &written, NULL);
     ExitProcess((UINT)ret);
 }
+
+long long __nl_read_i64(void) {
+    char* cmd = GetCommandLineA();
+    if (cmd) {
+        char* p = cmd;
+        if (*p == '"') {
+            p++;
+            while (*p && *p != '"') p++;
+            if (*p == '"') p++;
+        } else {
+            while (*p && *p != ' ' && *p != '\t') p++;
+        }
+        while (*p == ' ' || *p == '\t') p++;
+        if ((*p >= '0' && *p <= '9') || *p == '-') {
+            long long v = 0;
+            int neg = 0;
+            if (*p == '-') { neg = 1; p++; }
+            while (*p >= '0' && *p <= '9') {
+                v = v * 10 + (*p - '0');
+                p++;
+            }
+            return neg ? -v : v;
+        }
+    }
+    return 0;
+}
 #else
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +66,16 @@ void mainCRTStartup() {
 #include <unistd.h>
 
 extern long long numlang_main(void);
+
+long long __nl_read_i64(void) {
+    char buf[64];
+    ssize_t n = read(0, buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = '\0';
+        return atoll(buf);
+    }
+    return 0;
+}
 
 int main(void) {
     struct timespec t0, t1;

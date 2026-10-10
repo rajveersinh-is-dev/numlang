@@ -216,4 +216,63 @@ theorem generalization_equiv (E : FunEnv) (env : Env) (h : Heap)
   · intro ⟨va, h1, ha, hb⟩
     exact generalization_correctness E env h x a body va h1 v h2 ha hb
 
+/-- One unfolding (driving) step of a recursive function call redex. -/
+def unfoldCall (_f : String) (arg : Expr) (fdef : FunctionDef) : Expr :=
+  Expr.letIn fdef.param arg fdef.body
+
+/-- Function call unfolding correctness: unfolding a defined function call preserves big-step evaluation. -/
+theorem unfold_call_correctness (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vArg vRet : Val) (h1 h2 : Heap)
+    (harg : BigStep E env h arg vArg h1)
+    (hE : E f = some fdef)
+    (hbody : BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2) :
+    BigStep E env h (Expr.call f arg) vRet h2 :=
+  BigStep.call E env h h1 h2 f arg vArg vRet fdef harg hE hbody
+
+/-- Function call unfolding soundness: any evaluating call can be unfolded to its argument and body evaluation. -/
+theorem unfold_call_soundness (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vRet : Val) (h2 : Heap)
+    (hE : E f = some fdef)
+    (hcall : BigStep E env h (Expr.call f arg) vRet h2) :
+    ∃ (vArg : Val) (h1 : Heap), BigStep E env h arg vArg h1 ∧ BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2 := by
+  cases hcall
+  rename_i h1 vArg fdef' hEf harg hbody
+  rw [hE] at hEf
+  injection hEf with eq_fdef
+  subst eq_fdef
+  exact ⟨vArg, h1, harg, hbody⟩
+
+/-- Semantic Preservation Theorem 4: One-step recursive call unfolding preserves operational semantics. -/
+theorem unfold_call_equiv (E : FunEnv) (env : Env) (h : Heap)
+    (f : String) (arg : Expr) (fdef : FunctionDef) (vRet : Val) (h2 : Heap)
+    (hE : E f = some fdef) :
+    BigStep E env h (Expr.call f arg) vRet h2 ↔
+    ∃ (vArg : Val) (h1 : Heap), BigStep E env h arg vArg h1 ∧ BigStep E [(fdef.param, vArg)] h1 fdef.body vRet h2 := by
+  constructor
+  · exact unfold_call_soundness E env h f arg fdef vRet h2 hE
+  · intro ⟨vArg, h1, ha, hb⟩
+    exact unfold_call_correctness E env h f arg fdef vArg vRet h1 h2 ha hE hb
+
+/-- Small-Step Constant Folding Preservation: binary operator folding is a valid small-step reduction. -/
+theorem smallstep_const_fold (E : FunEnv) (op : Op) (n1 n2 n3 : Int)
+    (hop : evalOp op n1 n2 = some n3) :
+    SmallStep E (Expr.bin op (Expr.lit n1) (Expr.lit n2)) (Expr.lit n3) :=
+  SmallStep.bin_redex E op n1 n2 n3 hop
+
+/-- Small-Step Branch Pruning Preservation (True branch): static non-zero condition steps to true branch. -/
+theorem smallstep_branch_prune_true (E : FunEnv) (nc : Int) (h : nc ≠ 0) (t f : Expr) :
+    SmallStep E (Expr.cond (Expr.lit nc) t f) t :=
+  SmallStep.cond_true E nc t f h
+
+/-- Small-Step Branch Pruning Preservation (False branch): static zero condition steps to false branch. -/
+theorem smallstep_branch_prune_false (E : FunEnv) (t f : Expr) :
+    SmallStep E (Expr.cond (Expr.lit 0) t f) f :=
+  SmallStep.cond_false E t f
+
+/-- Small-Step Call Unfolding Preservation: call with constant argument steps to let-binding. -/
+theorem smallstep_call_unfold (E : FunEnv) (f : String) (n : Int) (fdef : FunctionDef)
+    (hE : E f = some fdef) :
+    SmallStep E (Expr.call f (Expr.lit n)) (Expr.letIn fdef.param (Expr.lit n) fdef.body) :=
+  SmallStep.call_unfold E f n fdef hE
+
 end NumLang

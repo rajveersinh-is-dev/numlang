@@ -9,5 +9,7 @@ fn tri_sum(n: i64) -> i64 {
 }
 
 fn main() -> i64 {
-    return tri_sum(50000000) % 256;
+    let res: i64 = tri_sum(50000000);
+    println(res);
+    return res % 256;
 }

@@ -7,6 +7,7 @@ fn main() {
         total = total.wrapping_add(square(i));
     }
     let elapsed = t0.elapsed();
+    println!("{}", total);
     println!("COMPUTE_NS: {}", elapsed.as_nanos());
     std::process::exit(((total % 256 + 256) % 256) as i32);
 }

@@ -131,7 +131,7 @@ fn test_differential_fuzz_smoke() {
 }
 
 #[test]
-#[ignore] // Run on demand: cargo test --test differential_fuzz_100k -- --ignored
+#[ignore = "100k fuzz test takes >10 minutes; executed in scheduled nightly CI workflow or with -- --ignored"]
 fn test_differential_fuzz_100k() {
     let cases = std::env::var("FUZZ_COUNT")
         .ok()

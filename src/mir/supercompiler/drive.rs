@@ -1877,7 +1877,6 @@ impl<'a> SupercompilerDriver<'a> {
         };
 
         let mut solved_places = std::collections::HashSet::new();
-        let mut had_branching_body = false;
         match self.try_solve_accumulator_loop(anc, curr, n_term) {
             AccumulatorLoopResult::Solved(solved_accs, iv_place) => {
                 for (acc_place, closed_form) in &solved_accs {
@@ -1904,7 +1903,7 @@ impl<'a> SupercompilerDriver<'a> {
                 any_solved = true;
             }
             AccumulatorLoopResult::BranchingBody => {
-                had_branching_body = true;
+                return RecurrenceResult::UnsolvableBranchingBody;
             }
             AccumulatorLoopResult::NotApplicable => {}
         }
@@ -2077,8 +2076,6 @@ impl<'a> SupercompilerDriver<'a> {
 
         if any_solved && all_mutating_solved {
             RecurrenceResult::Solved(Box::new(solved_state))
-        } else if had_branching_body {
-            RecurrenceResult::UnsolvableBranchingBody
         } else {
             RecurrenceResult::UnsolvableNoPattern
         }

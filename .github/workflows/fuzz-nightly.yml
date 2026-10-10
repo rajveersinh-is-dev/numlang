@@ -1,0 +1,19 @@
+name: Nightly Differential Fuzz
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Run nightly at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz_100k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run 100k Differential Fuzz Suite
+        run: cargo test --test differential_fuzz_100k -- --ignored

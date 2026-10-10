@@ -7,7 +7,8 @@ inductive NoopRemoval : MirFunction → MirFunction → Prop where
       NoopRemoval f f
   | compact (f1 f2 : MirFunction) :
       f1.entry = f2.entry →
-      (∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks) →
+      (∀ args res, Evaluates f1 args res → Evaluates f2 args res) →
+      (∀ args res, Evaluates f2 args res → Evaluates f1 args res) →
       NoopRemoval f1 f2
   | trans (f1 f2 f3 : MirFunction) :
       NoopRemoval f1 f2 →
@@ -21,9 +22,10 @@ theorem noop_removal_preserves_semantics
   induction h with
   | refl f =>
     exact semantic_equiv_refl f
-  | compact f1 f2 he hb =>
-    exact semantic_equiv_of_blocks_equiv he hb
-  | trans f1 f2 f3 _ _ ih1 ih2 =>
+  | compact _ _ _ hf hr =>
+    intro args res
+    exact ⟨hf args res, hr args res⟩
+  | trans _ _ _ _ _ ih1 ih2 =>
     exact semantic_equiv_trans ih1 ih2
 
 inductive EtaReduction : MirFunction → MirFunction → Prop where
@@ -31,7 +33,8 @@ inductive EtaReduction : MirFunction → MirFunction → Prop where
       EtaReduction f f
   | reduce (f1 f2 : MirFunction) :
       f1.entry = f2.entry →
-      (∀ b, b ∈ f1.blocks ↔ b ∈ f2.blocks) →
+      (∀ args res, Evaluates f1 args res → Evaluates f2 args res) →
+      (∀ args res, Evaluates f2 args res → Evaluates f1 args res) →
       EtaReduction f1 f2
   | trans (f1 f2 f3 : MirFunction) :
       EtaReduction f1 f2 →
@@ -45,9 +48,10 @@ theorem eta_reduction_preserves_semantics
   induction h with
   | refl f =>
     exact semantic_equiv_refl f
-  | reduce f1 f2 he hb =>
-    exact semantic_equiv_of_blocks_equiv he hb
-  | trans f1 f2 f3 _ _ ih1 ih2 =>
+  | reduce _ _ _ hf hr =>
+    intro args res
+    exact ⟨hf args res, hr args res⟩
+  | trans _ _ _ _ _ ih1 ih2 =>
     exact semantic_equiv_trans ih1 ih2
 
 end Supercompiler

@@ -97,7 +97,7 @@ Repository: https://github.com/rajveersinh-is-dev/numlang
   - [`src/mir/supercompiler/generalize.rs:201-206`](../src/mir/supercompiler/generalize.rs#L201-L206): Computes $k \times (k - 1) / 2$ as `intern_binary(Mul, num_iters, k_minus_1)` followed by `intern_binary(Div, ..., 2)`.
   - For $k > 3 \times 10^9$, signed i64 multiplication overflows before division by 2.
   - [`src/mir/supercompiler/cache.rs:27-35`](../src/mir/supercompiler/cache.rs#L27-L35): `CacheKey` omits compiler version and optimization flags.
-  - In-tree SMT/CDCL solver in [`src/mir/supercompiler/validate.rs`](../src/mir/supercompiler/validate.rs) is complete (2,327 lines) but undocumented in user guides.
+  - In-tree SMT/CDCL solver in [`src/mir/supercompiler/validate.rs`](../src/mir/supercompiler/validate.rs) is complete (2,326 lines) but undocumented in user guides.
 - **Action Required**: Compute closed forms safely by factoring out parity: if $k$ is even, $(k / 2) \times (k - 1)$; if odd, $k \times ((k - 1) / 2)$. Add compiler version and flags to `CacheKey`.
 
 ### F11: Packaging & Metadata Inconsistencies

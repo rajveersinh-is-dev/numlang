@@ -57,12 +57,15 @@ Every finding identified during the baseline audit was systematically resolved a
 
 | Gate | Command | Result | Evidence File / Output |
 |:---|:---|:---:|:---|
-| **Full Test Suite** | `cargo test` | **100% PASSED** (0 failures, 0 errors) | In-process execution log |
-| **Clippy Linting** | `cargo clippy --all-targets -- -D warnings` | **0 errors, 0 warnings** | Clean compiler exit code 0 |
-| **Claims & Badge Linter** | `python scripts/claims_lint.py` | **100% PASSED** | Zero dead links, zero bad badges, zero `sorry`/`axiom` |
-| **Lean Formalization Build** | `cd lean && lake build`<br>`cd proof && lake build` | **100% PASSED** (16 jobs clean) | Clean Lake exit code 0 |
+| **Full Test Suite** | `cargo test` | **100% PASSED** (0 failures, 0 errors) | `docs/evidence/2026-10-10/cargo_test.log` |
+| **Clippy Linting** | `cargo clippy --all-targets -- -D warnings` | **0 errors, 0 warnings** | `docs/evidence/2026-10-10/clippy.log` |
+| **Code Formatting** | `cargo fmt --check` | **0 formatting discrepancies** | `docs/evidence/2026-10-10/fmt.log` |
+| **Claims & Badge Linter** | `python scripts/claims_lint.py` | **100% PASSED** | `docs/evidence/2026-10-10/claims_lint.log` |
+| **Lean Formalization Build** | `cd lean && lake build`<br>`cd proof && lake build` | **100% PASSED** (16 jobs clean) | `docs/evidence/2026-10-10/lean_build.log`<br>`docs/evidence/2026-10-10/proof_build.log` |
+| **Lean Axiom Audit** | `python scripts/check_lean_axioms.py` | **0 sorry, 0 custom axioms** | `docs/evidence/2026-10-10/lean_axioms.log` |
 | **Packaging Verification** | `cargo package --allow-dirty` | **100% PASSED** | Verified tarball compiled cleanly |
-| **Empirical Showdown** | `cargo test --test supercompiler_showdown` | **100% PASSED** | 14 canonical benchmarks, 30 rounds + 5 warmups |
+| **Translation Validation** | `cargo test --test translation_validation_smt_tests` | **100% PASSED** | `src/mir/supercompiler/validate.rs` (2,326 lines, opt-in via `--verify-equivalence` / `--verify`) |
+| **Empirical Showdown** | `cargo test --test supercompiler_showdown` | **100% PASSED** | 18 canonical benchmarks (including 4 dynamic variants), 30 rounds + 5 warmups, verified against full-stdout Python oracle |
 
 ---
 
@@ -70,8 +73,8 @@ Every finding identified during the baseline audit was systematically resolved a
 
 All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are verified and classified honestly:
 - **PROVEN**: CLM-07 (Lean 4 formal operational models, 0 `sorry`, 0 custom axioms).
-- **TESTED**: CLM-01, CLM-02, CLM-03, CLM-04, CLM-05, CLM-06, CLM-09, CLM-10, CLM-11, CLM-12, CLM-13, CLM-14, CLM-16, CLM-17, CLM-18.
-- **PARTIAL**: CLM-08 (Mechanizes sequence pigeonhole; Kruskal cited from literature), CLM-20 (30 literature benchmarks compile and pass test; 14 in SHOWDOWN).
+- **TESTED**: CLM-01, CLM-02, CLM-03, CLM-04, CLM-05, CLM-06, CLM-09, CLM-10, CLM-11, CLM-12, CLM-13, CLM-14, CLM-16, CLM-17 (In-tree translation validation engine, 2,326 lines), CLM-18.
+- **PARTIAL**: CLM-08 (Mechanizes sequence pigeonhole; Kruskal cited from literature), CLM-20 (30 literature benchmarks compile and pass test; 18 in SHOWDOWN with Python reference oracle).
 - **REMOVED**: CLM-15 (Clarified external linker/LLVM C++ requirement), CLM-19 (CLBG removed; not implemented).
 
 ---

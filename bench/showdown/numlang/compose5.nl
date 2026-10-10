@@ -28,5 +28,6 @@ fn main() -> i64 {
         let val: i64 = run_chain(i);
         sum = sum + val;
     }
+    println(sum);
     return sum % 256;
 }

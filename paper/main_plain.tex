@@ -18,10 +18,10 @@
 \begin{abstract}
 Supercompilation, introduced by Valentin Turchin in 1986, is a powerful program transformation technique capable of global algorithmic optimizations, cross-boundary function fusion, and deforestation. However, practical adoption in optimizing systems compilers has been hindered by three historic challenges: (1) state explosion and unpredictable compilation time, (2) the absence of formal mechanical guarantees of semantic soundness and guaranteed termination on imperative control-flow graphs, and (3) difficulties in realizing self-application and automated compiler generation (the 2nd and 3rd Futamura projections) in the presence of typed memory.
 
-In this paper, we present \textbf{NumLang}, a systems programming language and optimizing compiler featuring a formally verified, SSA-based process-tree supercompiler. NumLang bridges metacomputation and native systems performance through three key contributions:
-First, it formalizes symbolic driving directly over a Mid-Level Intermediate Representation (MIR) in Static Single Assignment (SSA) form, enforcing branch-pruning path constraints and size-filtered homeomorphic embedding whistles to guarantee termination via Kruskal's Tree Theorem.
+In this paper, we present \textbf{NumLang}, a systems programming language and optimizing compiler featuring an SSA-based process-tree supercompiler and mechanized Lean 4 operational models. NumLang bridges metacomputation and native systems performance through three key contributions:
+First, it formalizes symbolic driving directly over a Mid-Level Intermediate Representation (MIR) in Static Single Assignment (SSA) form, enforcing branch-pruning path constraints and size-filtered homeomorphic embedding whistles to guarantee termination (grounded in Kruskal's Tree Theorem in the literature, with finite-configuration whistle termination mechanized in Lean 4).
 Second, it incorporates an automated algebraic recurrence solver that analyzes process-tree iteration cycles, deriving closed-form polynomial solutions and coupled linear recurrences via $O(k^3 \log N)$ matrix exponentiation, asymptotically transforming $O(N)$ recursive algorithms into $O(1)$ native instructions.
-Third, we mechanize the entire formal driving semantics, value-preservation soundness, and termination theorems in the \textbf{Lean 4} proof assistant.
+Third, we mechanize operational semantics models, value-preservation soundness, and termination lemmas in the \textbf{Lean 4} proof assistant.
 Finally, we demonstrate the successful realization of all three Futamura projections, self-applying the supercompiler to synthesize an automated standalone compiler generator (\textit{cogen}).
 Empirical evaluation across 10 canonical literature benchmarks against GHC 9.8, Rustc 1.81 (LLVM -O3), and Clang 17 demonstrates that NumLang achieves up to asymptotic speedups over native loops while maintaining sub-second supercompilation throughput (12,000--85,000 lines/second).
 \end{abstract}
@@ -32,7 +32,7 @@ Modern optimizing compilers rely predominantly on local transformations: peephol
 Despite its theoretical elegance and subsequent advances in functional settings (such as S{\o}rensen and Gl{\"u}ck's positive supercompilation, Bolingbroke and Peyton Jones's Supero, and Klyuchnikov's MRSC), supercompilation has rarely been deployed in mainstream systems programming languages. Three long-standing barriers have prevented its adoption:
 \begin{enumerate}
     \item \textbf{Termination vs. Optimization Trade-off}: Existing homeomorphic embedding whistles often fire too aggressively on realistic loops or allow uncontrolled explosion on non-linear recurrences, leading to intractable compile times.
-    \item \textbf{Absence of Machine-Checked Proofs}: Unlike verified compilers such as CompCert, previous supercompilers lacked end-to-end formal machine proofs verifying that symbolic driving preserves exact operational semantics and terminates on all inputs.
+    \item \textbf{Absence of Machine-Checked Proofs}: Unlike verified compilers such as CompCert, previous supercompilers lacked formal machine proofs verifying that symbolic driving preserves exact operational semantics and terminates on all inputs.
     \item \textbf{The Self-Application Barrier}: While the three Futamura projections predict that supercompiling an interpreter yields a compiled program and supercompiling the specializer itself yields a compiler generator (\textit{cogen}), achieving this on typed, memory-aware representations without manual binding-time annotations has remained elusive.
 \end{enumerate}
 
@@ -41,7 +41,7 @@ Despite its theoretical elegance and subsequent advances in functional settings 
     \item \textbf{SSA Process-Tree Driving}: We formalize symbolic driving over an explicit Mid-Level Intermediate Representation (MIR) in Static Single Assignment form.
     \item \textbf{Automated Recurrence Solving}: We extend generalization with an algebraic difference engine that detects linear and polynomial recurrences, directly synthesizing closed-form formulas and $O(k^3 \log N)$ matrix exponentiation routines.
     \item \textbf{Realization of the Three Futamura Projections}: We verify all three Futamura projections without user annotations, automatically deriving compilers and a standalone \textit{cogen}.
-    \item \textbf{Formal Verification in Lean 4}: We formalize the operational semantics, the symbolic driving simulation relation, and Kruskal tree termination guarantees in Lean 4.
+    \item \textbf{Formal Verification in Lean 4}: We formalize operational semantics, driving simulation, and finite-configuration whistle termination guarantees in Lean 4 (citing Kruskal's tree theorem from the literature for unbounded terms).
     \item \textbf{Empirical Evaluation}: We evaluate NumLang against GHC 9.8, Rustc 1.81, and Clang 17 on 10 canonical benchmarks.
 \end{itemize}
 

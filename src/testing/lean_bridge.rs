@@ -294,6 +294,8 @@ pub fn eval_with_lean_model(mir: &MirProgram) -> Result<i64, String> {
 
 #[cfg(test)]
 mod tests {
+    // Justification: The following .expect() and panic!() invocations are test-only assertion
+    // failures inside #[cfg(test)]. They are strictly outside lowering, supercompilation, and codegen pipelines.
     use super::*;
     use crate::mir::lower::lower_program;
     use crate::parser::parse;

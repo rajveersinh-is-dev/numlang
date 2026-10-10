@@ -93,4 +93,65 @@ theorem bigStep_lit_inv (E : FunEnv) (env : Env) (h : Heap) (n : Int) (v : Val) 
   cases H
   exact ⟨rfl, rfl⟩
 
+/-- Syntactic substitution: substitute variable `x` by expression `v` in `e`. -/
+def subst (x : String) (v : Expr) : Expr → Expr
+  | Expr.lit n => Expr.lit n
+  | Expr.var y => if x = y then v else Expr.var y
+  | Expr.bin op e1 e2 => Expr.bin op (subst x v e1) (subst x v e2)
+  | Expr.cond c t f => Expr.cond (subst x v c) (subst x v t) (subst x v f)
+  | Expr.letIn y val body =>
+    if x = y then Expr.letIn y (subst x v val) body
+    else Expr.letIn y (subst x v val) (subst x v body)
+  | Expr.call f arg => Expr.call f (subst x v arg)
+  | Expr.box e => Expr.box (subst x v e)
+  | Expr.deref e => Expr.deref (subst x v e)
+  | Expr.assign p val => Expr.assign (subst x v p) (subst x v val)
+
+/-- Small-step operational semantics reduction relation for core NumLang expressions. -/
+inductive SmallStep : FunEnv → Expr → Expr → Prop where
+  | bin_redex (E : FunEnv) (op : Op) (n1 n2 n3 : Int) :
+      evalOp op n1 n2 = some n3 →
+      SmallStep E (Expr.bin op (Expr.lit n1) (Expr.lit n2)) (Expr.lit n3)
+  | bin_step_l (E : FunEnv) (op : Op) (e1 e1' e2 : Expr) :
+      SmallStep E e1 e1' →
+      SmallStep E (Expr.bin op e1 e2) (Expr.bin op e1' e2)
+  | bin_step_r (E : FunEnv) (op : Op) (n1 : Int) (e2 e2' : Expr) :
+      SmallStep E e2 e2' →
+      SmallStep E (Expr.bin op (Expr.lit n1) e2) (Expr.bin op (Expr.lit n1) e2')
+  | cond_true (E : FunEnv) (nc : Int) (t f : Expr) :
+      nc ≠ 0 →
+      SmallStep E (Expr.cond (Expr.lit nc) t f) t
+  | cond_false (E : FunEnv) (t f : Expr) :
+      SmallStep E (Expr.cond (Expr.lit 0) t f) f
+  | cond_step (E : FunEnv) (c c' t f : Expr) :
+      SmallStep E c c' →
+      SmallStep E (Expr.cond c t f) (Expr.cond c' t f)
+  | let_step_val (E : FunEnv) (x : String) (val val' body : Expr) :
+      SmallStep E val val' →
+      SmallStep E (Expr.letIn x val body) (Expr.letIn x val' body)
+  | let_redex (E : FunEnv) (x : String) (n : Int) (body : Expr) :
+      SmallStep E (Expr.letIn x (Expr.lit n) body) (subst x (Expr.lit n) body)
+  | call_step_arg (E : FunEnv) (f : String) (arg arg' : Expr) :
+      SmallStep E arg arg' →
+      SmallStep E (Expr.call f arg) (Expr.call f arg')
+  | call_unfold (E : FunEnv) (f : String) (n : Int) (fdef : FunctionDef) :
+      E f = some fdef →
+      SmallStep E (Expr.call f (Expr.lit n)) (Expr.letIn fdef.param (Expr.lit n) fdef.body)
+
+/-- Multi-step reflexive transitive closure of small-step reduction. -/
+inductive SmallStepStar (E : FunEnv) : Expr → Expr → Prop where
+  | refl (e : Expr) : SmallStepStar E e e
+  | step (e1 e2 e3 : Expr) :
+      SmallStep E e1 e2 → SmallStepStar E e2 e3 → SmallStepStar E e1 e3
+
+theorem smallstepstar_trans {E : FunEnv} {e1 e2 e3 : Expr}
+    (h1 : SmallStepStar E e1 e2) (h2 : SmallStepStar E e2 e3) : SmallStepStar E e1 e3 := by
+  induction h1 with
+  | refl _ => exact h2
+  | step _ _ _ hstep _ ih => exact SmallStepStar.step _ _ _ hstep (ih h2)
+
+theorem smallstepstar_single {E : FunEnv} {e1 e2 : Expr}
+    (h : SmallStep E e1 e2) : SmallStepStar E e1 e2 :=
+  SmallStepStar.step e1 e2 e2 h (SmallStepStar.refl e2)
+
 end NumLang
