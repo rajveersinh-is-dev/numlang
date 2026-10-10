@@ -33,7 +33,7 @@ pub enum Type {
     Closure(Box<ClosureType>),
     /// Type parameter, used in generic function signatures
     Param(String),
-    /// Owned heap allocation: Box<T>
+    /// Owned heap allocation: `Box<T>`
     Box(Box<Type>),
 }
 

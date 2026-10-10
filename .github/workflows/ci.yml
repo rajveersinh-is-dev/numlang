@@ -36,3 +36,11 @@ jobs:
 
       - name: Run Integrity Lint Test
         run: cargo test --test integrity_lint
+
+      - name: Build Documentation (Zero Warnings)
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+      - name: Run Hostile Claims Linter
+        run: python scripts/claims_lint.py

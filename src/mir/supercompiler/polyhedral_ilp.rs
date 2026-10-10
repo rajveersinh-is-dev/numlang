@@ -29,7 +29,7 @@ impl fmt::Display for ConstraintOp {
     }
 }
 
-/// A linear constraint: sum(coeffs[j] * x[j]) (op) rhs.
+/// A linear constraint: `sum(coeffs[j] * x[j]) (op) rhs`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinearConstraint {
     pub coeffs: Vec<i64>,
@@ -93,7 +93,7 @@ impl BareissSimplex {
         self.pivot_count
     }
 
-    /// Adds a linear constraint: sum(coeffs[j] * x[j]) (op) rhs.
+    /// Adds a linear constraint: `sum(coeffs[j] * x[j]) (op) rhs`.
     pub fn add_constraint(&mut self, coeffs: &[i64], op: ConstraintOp, rhs: i64) {
         let mut row_coeffs = coeffs.to_vec();
         if row_coeffs.len() < self.num_vars {
@@ -108,7 +108,7 @@ impl BareissSimplex {
         });
     }
 
-    /// Sets the linear objective function: sum(coeffs[j] * x[j]).
+    /// Sets the linear objective function: `sum(coeffs[j] * x[j])`.
     pub fn set_objective(&mut self, coeffs: &[i64], minimize: bool) {
         let mut obj = coeffs.to_vec();
         if obj.len() < self.num_vars {
@@ -408,8 +408,8 @@ impl BareissSimplex {
         }
     }
 
-    /// Performs one fraction-free Bareiss pivoting step on tableau[p][q].
-    /// T'[i][j] = (P * T[i][j] - T[i][q] * T[p][j]) / prev_D
+    /// Performs one fraction-free Bareiss pivoting step on `tableau[p][q]`.
+    /// `T'[i][j] = (P * T[i][j] - T[i][q] * T[p][j]) / prev_D`
     fn bareiss_pivot(
         &mut self,
         tableau: &mut [Vec<i128>],
@@ -454,7 +454,7 @@ impl BareissSimplex {
 // 3. Pluto-style Loop Permutability & Scheduling Constraints
 // ============================================================================
 
-/// Represents a multidimensional schedule vector: theta(i) = sum(coeffs[k] * i_k).
+/// Represents a multidimensional schedule vector: `theta(i) = sum(coeffs[k] * i_k)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduleVector {
     pub coeffs: Vec<i64>,

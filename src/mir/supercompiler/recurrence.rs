@@ -8,8 +8,8 @@ use crate::typecheck::typed_ast::TypedLiteral;
 use crate::typecheck::types::Type;
 
 /// A detected N-way linear recurrence system.
-/// Variables x_i(k) = sum_j A[i][j] * x_j(k-1)          (homogeneous)
-/// or         x_i(k) = sum_j A[i][j] * x_j(k-1) + c_i  (affine)
+/// Variables `x_i(k) = sum_j A[i][j] * x_j(k-1)`          (homogeneous)
+/// or         `x_i(k) = sum_j A[i][j] * x_j(k-1) + c_i`  (affine)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NWayLinearSystem {
     pub n: usize,

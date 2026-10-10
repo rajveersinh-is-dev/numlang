@@ -109,6 +109,8 @@ pub fn reconstruct_interpreter_frame(
 }
 
 /// Runtime deoptimization handler called when a speculative type guard fails.
+// SAFETY: FFI export symbol required by compiled machine code for deoptimization trampoline.
+#[allow(unsafe_code)]
 #[no_mangle]
 pub extern "C" fn __nl_deopt(deopt_id: u64, _frame_ptr: *const u8) -> i64 {
     GLOBAL_DEOPT_COUNTER.fetch_add(1, Ordering::SeqCst);

@@ -9,7 +9,9 @@
 //! - Loops with countdown termination
 //! - Dynamic variable environments synthesized bottom-up
 
+#[cfg(test)]
 use proptest::prelude::*;
+#[cfg(test)]
 use proptest::strategy::BoxedStrategy;
 
 /// Configuration parameters for random program generation.
@@ -228,6 +230,7 @@ pub fn generate_well_typed_program(seed: u64, config: &GenConfig) -> String {
 }
 
 /// Proptest strategy for generating well-typed NumLang programs.
+#[cfg(test)]
 pub fn random_program_strategy(config: GenConfig) -> BoxedStrategy<String> {
     any::<u64>()
         .prop_map(move |seed| generate_well_typed_program(seed, &config))
