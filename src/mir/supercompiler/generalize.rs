@@ -151,11 +151,7 @@ fn msg_helper(
 /// If coeff is even, factors (coeff / 2) to eliminate division completely: k * (k - 1) * (coeff / 2).
 /// If coeff is odd, checks parity of k so the division by 2 is performed on the even factor
 /// before multiplication: (k / 2) * (k - 1) when k is even, or k * ((k - 1) / 2) when k is odd.
-pub fn build_triangular_term(
-    interner: &mut TermInterner,
-    k: SymTermId,
-    coeff: i64,
-) -> SymTermId {
+pub fn build_triangular_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> SymTermId {
     let one_term = interner.intern_int(1);
     let two_term = interner.intern_int(2);
     let k_minus_1 = interner.intern_binary(BinaryOp::Sub, k, one_term, Type::I64);
@@ -355,7 +351,12 @@ pub fn solve_recurrence(
                     interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
                 let k_times_k1_k2_k3 =
                     interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
-                interner.intern_binary(BinaryOp::Mul, k_times_k1_k2_k3, twentyfourth_term, Type::I64)
+                interner.intern_binary(
+                    BinaryOp::Mul,
+                    k_times_k1_k2_k3,
+                    twentyfourth_term,
+                    Type::I64,
+                )
             } else {
                 let k_times_k1 =
                     interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
@@ -363,8 +364,12 @@ pub fn solve_recurrence(
                     interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
                 let k_times_k1_k2_k3 =
                     interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
-                let quartic_binom =
-                    interner.intern_binary(BinaryOp::Div, k_times_k1_k2_k3, twentyfour_term, Type::I64);
+                let quartic_binom = interner.intern_binary(
+                    BinaryOp::Div,
+                    k_times_k1_k2_k3,
+                    twentyfour_term,
+                    Type::I64,
+                );
                 interner.intern_binary(BinaryOp::Mul, quartic_binom, d4_term, Type::I64)
             };
 

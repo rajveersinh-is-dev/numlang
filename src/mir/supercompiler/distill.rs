@@ -920,7 +920,12 @@ fn synthesize_distilled_function(
 ) -> Option<(MirFunction, GlobalProcessTree)> {
     if let Some(enum_name) = is_list_append_composition(candidate, program) {
         let enum_info = get_list_enum_info(program, &enum_name)?;
-        return Some(synthesize_append3(candidate, program, synthesized_name, enum_info));
+        return Some(synthesize_append3(
+            candidate,
+            program,
+            synthesized_name,
+            enum_info,
+        ));
     }
 
     if let Some(enum_name) = is_list_sum_append_composition(candidate, program) {
@@ -971,8 +976,14 @@ pub fn is_distillation_profitable(
     synthesized_fn: &MirFunction,
     program: &MirProgram,
 ) -> bool {
-    let f_fn = program.functions.iter().find(|f| f.name == candidate.f_func);
-    let g_fn = program.functions.iter().find(|g| g.name == candidate.g_func);
+    let f_fn = program
+        .functions
+        .iter()
+        .find(|f| f.name == candidate.f_func);
+    let g_fn = program
+        .functions
+        .iter()
+        .find(|g| g.name == candidate.g_func);
     let (f, g) = match (f_fn, g_fn) {
         (Some(f), Some(g)) => (f, g),
         _ => return false,

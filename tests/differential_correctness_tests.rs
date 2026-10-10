@@ -131,9 +131,12 @@ fn test_differential_examples_directory() {
             let norm = run_numlang_code(&code, false);
             let sc = run_numlang_code(&code, true);
             assert_eq!(
-                norm, sc,
+                norm,
+                sc,
                 "Differential divergence on example file {}: baseline={:?}, sc={:?}",
-                path.display(), norm, sc
+                path.display(),
+                norm,
+                sc
             );
         }
     }
