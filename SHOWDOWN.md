@@ -90,8 +90,8 @@ The following results were generated directly by the automated Rust test harness
 ## 5. Machine-Readable Logs
 
 Full empirical logs containing all 30 individual round measurements per benchmark and compiler are saved automatically on each run:
-- Detailed CSV: [`bench/data/showdown_results.csv`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/bench/data/showdown_results.csv) (gitignored)
-- Sample Reference CSV: [`bench/data/showdown_results_sample.csv`](file:///c:/Users/davea/.gemini/antigravity/scratch/numlang/bench/data/showdown_results_sample.csv) (version-controlled)
+- Detailed CSV: `bench/data/showdown_results.csv` (generated locally on test run, gitignored)
+- Sample Reference CSV: [`bench/data/showdown_results_sample.csv`](bench/data/showdown_results_sample.csv) (version-controlled)
 
 ---
 
