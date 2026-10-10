@@ -95,5 +95,5 @@ To maintain computational honesty and avoid overclaims:
 
 ### What Is Verified via Translation Validation & Testing (Model vs. Implementation)
 1. **Lean Models vs. Rust Code**: The Lean 4 formalization models the algorithms in abstract operational semantics. The Rust compiler binary is **not** extracted from Lean.
-2. **In-Tree Translation Validation Engine (`src/mir/supercompiler/validate.rs`, 2,326 lines)**: Verifies simulation equivalence between original MIR and residual CFG via an in-tree CDCL SAT solver when invoked with the `--verify` flag.
+2. **In-Tree Translation Validation Engine (`src/mir/supercompiler/validate.rs`, 2,326 lines)**: Verifies simulation equivalence between original MIR and residual CFG via an in-tree CDCL SAT solver when invoked with the `--verify-equivalence` (or `--verify`) flag.
 3. **Differential Correctness Suite (`tests/differential_correctness_tests.rs`)**: Runs extensive test programs against the reference interpreter to test empirical correctness.

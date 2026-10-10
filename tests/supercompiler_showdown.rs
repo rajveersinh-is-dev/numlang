@@ -743,9 +743,9 @@ fn test_supercompiler_showdown() {
             spec.id, spec.name, spec.group
         );
 
-        let expected_output = oracle_outputs
-            .get(spec.id)
-            .unwrap_or_else(|| panic!("Oracle missing expected stdout for benchmark '{}'", spec.id));
+        let expected_output = oracle_outputs.get(spec.id).unwrap_or_else(|| {
+            panic!("Oracle missing expected stdout for benchmark '{}'", spec.id)
+        });
 
         let nl_src = root.join(spec.nl_rel);
         let rs_src = root.join(spec.rs_rel);
@@ -1086,10 +1086,10 @@ fn test_supercompiler_showdown() {
 fn test_showdown_oracle_negative() {
     // 1. Verify that when stdout has a +256 residual despite identical exit code (64 % 256 == (64 + 256) % 256 == 64),
     // verify_output REJECTS it.
-    #[cfg(windows)]
-    use std::os::windows::process::ExitStatusExt;
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
 
     #[cfg(windows)]
     let status_320 = std::process::ExitStatus::from_raw(320);
@@ -1127,4 +1127,3 @@ fn test_showdown_oracle_negative() {
         "Oracle gate must accept matching output and exit code"
     );
 }
-

@@ -77,7 +77,7 @@ The formal model proofs rely on:
 To validate transformations in the real Rust compiler implementation, NumLang contains an in-tree **Translation Validation Engine** (`src/mir/supercompiler/validate.rs`, 2,326 lines):
 
 ### Operational Status: Opt-In Pass
-- **Opt-In Flag**: Translation validation is **not enabled by default** in standard compilation (`numlang compile file.nl`). It is an **opt-in pass** invoked when the `--verify` command-line flag is passed (e.g. `numlang compile --supercompile --verify file.nl`).
+- **Opt-In Flag**: Translation validation is **not enabled by default** in standard compilation (`numlang compile file.nl`). It is an **opt-in pass** invoked when the `--verify-equivalence` (or `--verify`) command-line flag is passed (e.g. `numlang compile --supercompile --verify-equivalence file.nl`).
 - **Rationale**: Full bit-level SAT checking adds compilation overhead. Making it opt-in allows developers to run rigorous verification when certifying code without slowing down everyday compilation.
 
 ### Architecture

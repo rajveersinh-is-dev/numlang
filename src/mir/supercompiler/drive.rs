@@ -2069,19 +2069,6 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
         }
-        // Also track any scalar place modified anywhere in the natural loop body
-        if let Some(blocks) = self.natural_loops.get(&curr.block) {
-            for b_id in blocks {
-                if let Some(b) = self.block_map.get(b_id) {
-                    for stmt in &b.statements {
-                        let Statement::Assign(dest, _) = stmt;
-                        if dest.projections.is_empty() && !mutating_places.contains(&&dest.local) {
-                            mutating_places.push(&dest.local);
-                        }
-                    }
-                }
-            }
-        }
 
         let all_mutating_solved = mutating_places
             .iter()
