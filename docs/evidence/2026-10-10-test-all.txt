@@ -1,0 +1,1176 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.91s
+     Running unittests src\lib.rs (target\debug\deps\numlang-91736c835aef4f27.exe)
+
+running 7 tests
+test runtime::arena::tests::test_arena_basic_lifecycle ... ok
+test runtime::arena::tests::test_default_loop_arena ... ok
+test typecheck::symtab::tests::test_scope_and_shadowing ... ok
+test typecheck::symtab::tests::test_function_registration ... ok
+test testing::gen::tests::test_generated_programs_well_typed_and_evaluable ... ok
+test testing::lean_bridge::tests::test_lean_bridge_simple_eval ... ok
+test testing::lean_bridge::tests::test_lean_and_oracle_agreement ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running unittests src\bin\minspec_cogen.rs (target\debug\deps\minspec_cogen-50fec2f756a84a2a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\numlang-f4d056bd741fe94c.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\algebraic_reduction_tests.rs (target\debug\deps\algebraic_reduction_tests-60c29bf782a00504.exe)
+
+running 12 tests
+test test_boolean_identities ... ok
+test test_bitwise_and_shift_identities ... ok
+test test_comparison_on_identical_terms ... ok
+test test_canonical_commutative_ordering ... ok
+test test_constant_reassociation ... ok
+test test_division_and_modulo_identities ... ok
+test test_additive_identities ... ok
+test test_math_intrinsic_constant_folding ... ok
+test test_select_canonicalization ... ok
+test test_subtractive_identities ... ok
+test test_multiplicative_identities ... ok
+test test_unary_double_negation_and_inversion ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\array_math_tests.rs (target\debug\deps\array_math_tests-6f1f6acbca004ba9.exe)
+
+running 8 tests
+test test_array_declaration_and_indexing ... ok
+test test_vector_sum_and_vec_add ... ok
+test test_math_intrinsic_sqrt ... ok
+test test_array_element_mutation ... ok
+test test_array_loop_accumulation ... ok
+test test_math_intrinsic_abs ... ok
+test test_array_runtime_bounds_check ... ok
+test test_vector_dot_product ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+
+     Running tests\bce_tests.rs (target\debug\deps\bce_tests-3a8cba4f6e7e9de1.exe)
+
+running 6 tests
+test test_constant_index_bce ... ok
+test test_bce_modulo_and_bitand_safety ... ok
+test test_unbounded_index_retains_checks ... ok
+test test_loop_induction_variable_bce ... ok
+test test_bce_multi_variable_affine_safety ... ok
+test test_compiled_bce_loop_execution ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests\benchmark_correctness_tests.rs (target\debug\deps\benchmark_correctness_tests-9bcf5011d75bae48.exe)
+
+running 5 tests
+test test_canonical_power_spec ... ok
+test test_canonical_kmp ... ok
+test test_canonical_nrev ... ok
+test test_canonical_double_nrev ... ok
+test test_canonical_peano_mul ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+     Running tests\benchmark_harness.rs (target\debug\deps\benchmark_harness-db75dcd147e0c453.exe)
+
+running 1 test
+test test_comparative_benchmarks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.76s
+
+     Running tests\bit_intrinsics_tests.rs (target\debug\deps\bit_intrinsics_tests-880d70f9ffa1f2c2.exe)
+
+running 7 tests
+test test_dual_trailing_zero_loop_recognition ... ok
+test test_kernighan_popcount_loop_recognition ... ok
+test test_shift_popcount_loop_recognition ... ok
+test test_single_trailing_zero_loop_recognition ... ok
+test test_rotate_idiom_recognition ... ok
+test test_stein_gcd_computation ... ok
+test test_intrinsics_direct_calls ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+     Running tests\bitwise_tests.rs (target\debug\deps\bitwise_tests-0d28add50cb88835.exe)
+
+running 4 tests
+test test_bitwise_typecheck_rejection_for_floats ... ok
+test test_bitwise_ir_lowering ... ok
+test test_native_kernighan_popcount ... ok
+test test_native_bitwise_operations ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running tests\box_tests.rs (target\debug\deps\box_tests-e5e8ee3b08a9de18.exe)
+
+running 2 tests
+test test_box_roundtrip ... ok
+test test_box_in_enum ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests\branchless_pred_tests.rs (target\debug\deps\branchless_pred_tests-963f90f988eced7e.exe)
+
+running 2 tests
+test test_branchless_bsearch_kernel_execution ... ok
+test test_branchless_conditional_swap_execution ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests\break_tests.rs (target\debug\deps\break_tests-c8ca73b9d10a115f.exe)
+
+running 2 tests
+test rejects_break_outside_loop ... ok
+test exits_only_the_innermost_loop ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests\bsearch_bce_tests.rs (target\debug\deps\bsearch_bce_tests-f8eaeaf34aa4012a.exe)
+
+running 2 tests
+test test_while_true_loop_execution ... ok
+test test_binary_search_bce_midpoint_is_safe ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests\clbg_correctness_tests.rs (target\debug\deps\clbg_correctness_tests-b4edc2af33779f7a.exe)
+
+running 6 tests
+test test_clbg_fasta_correctness ... ok
+test test_clbg_pidigits_correctness ... ok
+test test_clbg_nbody_correctness ... ok
+test test_clbg_binary_trees_correctness ... ok
+test test_clbg_spectral_norm_correctness ... ok
+test test_clbg_fannkuch_redux_correctness ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+
+     Running tests\cli_driver_tests.rs (target\debug\deps\cli_driver_tests-5d40f36e6be8cb99.exe)
+
+running 4 tests
+test test_cli_subcommand_check ... ok
+test test_cli_subcommand_build_default_output ... ok
+test test_cli_subcommand_run ... ok
+test test_cli_subcommand_build_with_output ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests\cli_tests.rs (target\debug\deps\cli_tests-362985b4e53b2cca.exe)
+
+running 6 tests
+test test_cli_type_error_diagnostic ... ok
+test test_cli_emit_ast ... ok
+test test_cli_syntax_error_diagnostic ... ok
+test test_cli_check_success ... ok
+test test_cli_emit_tokens ... ok
+test test_cli_emit_typed_ast ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\codata_supercompilation_tests.rs (target\debug\deps\codata_supercompilation_tests-fd4e36b9fde2b177.exe)
+
+running 6 tests
+test test_direct_mir_thunk_loop_fusion ... ok
+test test_thunk_rvalue_mir_structure ... ok
+test test_demand_analysis_fully_demanded ... ok
+test test_demand_analysis_guard_demanded ... ok
+test test_iterate_take_fuses_to_zero_allocations ... ok
+test test_zipwith_iterate_fuses ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\codegen_tests.rs (target\debug\deps\codegen_tests-aeffbdc1640f9b63.exe)
+
+running 6 tests
+test test_ir_lowering_arithmetic ... ok
+test test_ir_lowering_control_flow ... ok
+test test_cli_emit_ir ... ok
+test test_compile_to_obj ... ok
+test test_compile_and_execute_loop_binary ... ok
+test test_compile_and_execute_native_binary ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests\const_args_tests.rs (target\debug\deps\const_args_tests-b8c257cf23710224.exe)
+
+running 3 tests
+test propagates_shared_literal_arguments_into_non_recursive_function ... ok
+test does_not_specialize_recursive_function ... ok
+test propagates_immutable_local_literal_into_call_argument ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\constructive_lean4_phase42_tests.rs (target\debug\deps\constructive_lean4_phase42_tests-e58cfa3aebc720de.exe)
+
+running 5 tests
+test test_evaluates_is_constructive_with_stepstar ... ok
+test test_no_circular_tautology_premises_in_theorems ... ok
+test test_no_sorry_in_entire_lean_codebase ... ok
+test test_no_unproven_axioms_in_supercompiler ... ok
+Build completed successfully (10 jobs).
+test test_lake_build_zero_errors ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 48.20s
+
+     Running tests\control_flow_tests.rs (target\debug\deps\control_flow_tests-8b4f9563a40079da.exe)
+
+running 6 tests
+test test_continue_outside_loop_rejected ... ok
+test test_for_loop_exclusive_sum ... ok
+test test_for_loop_inclusive_sum ... ok
+test test_continue_skipping_evens ... ok
+test test_nested_for_loops ... ok
+test test_loop_infinite_break ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests\coupled_recurrence_and_fusion_tests.rs (target\debug\deps\coupled_recurrence_and_fusion_tests-736e6653c4e856d5.exe)
+
+running 9 tests
+test test_order3_recurrence_tribonacci ... ok
+test test_order2_recurrence_fibonacci_direct ... ok
+test test_order2_recurrence_integer_roots_symbolic ... ok
+test test_coupled_2var_recurrence_direct ... ok
+test test_coupled_fibonacci_native_execution ... ok
+test test_interprocedural_inlining_and_folding ... ok
+test test_interprocedural_triangular_loop_fusion ... ok
+test test_coupled_2var_linear_recurrence ... ok
+test test_coupled_fibonacci_symbolic_recurrence ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests\deep_recursion_safety_tests.rs (target\debug\deps\deep_recursion_safety_tests-3dfef814fe16631a.exe)
+
+running 6 tests
+test test_cps_binary_branching_tree ... ok
+test test_cps_loop_knot_and_whistle_under_trampoline ... ok
+test test_cps_ancestor_dag_reconstruction ... ok
+test test_work_stealing_parallel_supercompiler ... ok
+test test_work_stealing_dynamic_distribution ... ok
+test test_cps_linear_deep_recursion_depth_1200 ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.43s
+
+     Running tests\deforestation_tests.rs (target\debug\deps\deforestation_tests-f8f5de86ffaffa33.exe)
+
+running 7 tests
+test test_deforestation_struct_construction_and_field_access ... ok
+test test_deforestation_chained_function_passing ... ok
+test test_array_map_fusion ... ok
+test test_accumulator_fold_cubic_closed_form ... ok
+test test_accumulator_fold_closed_form ... ok
+test test_fold_over_map ... ok
+test test_filter_map_fusion ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests\defunctionalize_deforestation_tests.rs (target\debug\deps\defunctionalize_deforestation_tests-e1f22ac397cc1f85.exe)
+
+running 5 tests
+test test_defun_02_captured_environment_payload_unpacking ... ok
+test test_defun_01_synthetic_enums_and_closure_rewriting ... ok
+test test_defun_04_execution_captured_environment ... ok
+test test_defun_03_execution_direct_multiple_closures ... ok
+test test_defun_05_higher_order_deforestation_supercompilation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests\diagnostics_tests.rs (target\debug\deps\diagnostics_tests-ac342e9bdd8f47b6.exe)
+
+running 9 tests
+test test_all_error_codes_e001_to_e020_have_explanations ... ok
+test test_explain_printing_and_lookup ... ok
+test test_parser_recovery_multiple_statements ... ok
+test test_parse_error_missing_arrow_hint ... ok
+test test_parse_error_let_hint ... ok
+test test_type_error_type_mismatch_with_secondary_label ... ok
+test test_type_error_arity_mismatch_with_secondary_label ... ok
+test test_all_type_error_variants_diagnostics_coverage ... ok
+test test_cli_explain_flag_and_subcommand ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\differential_correctness_tests.rs (target\debug\deps\differential_correctness_tests-f170be627d2c5d85.exe)
+
+running 2 tests
+test test_differential_10k ... ok
+test test_differential_random_programs_small ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.14s
+
+     Running tests\differential_fuzz_100k.rs (target\debug\deps\differential_fuzz_100k-38e65e8c5844a5a5.exe)
+
+running 2 tests
+test test_differential_fuzz_100k ... ignored
+test test_differential_fuzz_smoke ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.45s
+
+     Running tests\differential_validation_tests.rs (target\debug\deps\differential_validation_tests-56aff04cbf68bf00.exe)
+
+running 4 tests
+test test_lean_model_cross_validation_1k ... ok
+test test_regression_modular_recurrence_paths_a_to_e ... ok
+test test_differential_cross_validation_10k ... ok
+test test_differential_proptest_shrinking ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.10s
+
+     Running tests\distillation_and_mrsc_tests.rs (target\debug\deps\distillation_and_mrsc_tests-0afb142f2718a3e5.exe)
+
+running 4 tests
+test test_distillation_nested_tree_inversion ... ok
+test test_distillation_double_zip ... ok
+test test_mrsc_optimal_code_size ... ok
+test test_cli_mode_flags ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running tests\distillation_tests.rs (target\debug\deps\distillation_tests-d5de1710a7916409.exe)
+
+running 5 tests
+test test_distillation_callsite_in_main_rewriting ... ok
+test test_distillation_tree_invert_deforestation ... ok
+test test_distillation_chained_append ... ok
+test test_distillation_sum_list_append_deforestation ... ok
+test test_append3_single_pass_zero_intermediate_allocations ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests\doc_tests.rs (target\debug\deps\doc_tests-61d6db017f68598b.exe)
+
+running 2 tests
+test test_doc_comments_on_functions_and_structs ... ok
+test test_doc_cli_stdout_and_file_output ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\enum_tests.rs (target\debug\deps\enum_tests-b13fa003be49c019.exe)
+
+running 10 tests
+test test_enum_typecheck_errors ... ok
+test test_returning_enum_err_from_function ... ok
+test test_single_payload_variant_option ... ok
+test test_none_variant_matching ... ok
+test test_multiple_payload_variants ... ok
+test test_nested_enums ... ok
+test test_unit_variants_matching ... ok
+test test_returning_enum_from_function ... ok
+test test_enum_state_machine_loop ... ok
+test test_unqualified_variant_matching_and_constructors ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
+     Running tests\fast_div_mod_tests.rs (target\debug\deps\fast_div_mod_tests-2f01cf0ee0dae1fd.exe)
+
+running 4 tests
+test test_horner_constant_mod_7 ... ok
+test test_nonneg_power_of_two_mod_and_div ... ok
+test test_nonneg_constant_modulo_prime ... ok
+test test_signed_negative_modulo_and_div ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests\fast_whistle_tests.rs (target\debug\deps\fast_whistle_tests-6736095377b0d4ce.exe)
+
+running 6 tests
+test test_structural_fx_hash ... ok
+test test_whistle_size_depth_filters ... ok
+test test_canonical_hash_consing_identity ... ok
+test test_dag_depth_and_size_caches ... ok
+test test_whistle_50_variables_state_embedding ... ok
+test test_whistle_throughput_speedup_benchmark ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+
+     Running tests\fmt_tests.rs (target\debug\deps\fmt_tests-c62cfad2c301ae69.exe)
+
+running 6 tests
+test test_fmt_type_inference_for_let ... ok
+test test_fmt_match_expression ... ok
+test test_fmt_struct_and_functions ... ok
+test test_fmt_already_formatted_unchanged ... ok
+test test_fmt_idempotent ... ok
+test test_fmt_cli_check_and_stdout ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\futamura2_binary_tests.rs (target\debug\deps\futamura2_binary_tests-417ed6dbb4a691fc.exe)
+
+running 13 tests
+test test_ast_stream_serialization ... ok
+test test_2nd_futamura_mir_specialization_invariants ... ok
+test test_futamura2_cli_flag_generation ... ok
+test test_prog02_conditionals_nested ... ok
+test test_prog10_state_accumulator ... ok
+test test_prog03_sequential_lets ... ok
+test test_prog06_boolean_logic ... ok
+test test_prog05_fibonacci ... ok
+test test_prog01_arithmetic_precedence ... ok
+test test_prog08_polynomial ... ok
+test test_prog04_loops_recursion ... ok
+test test_prog09_multi_call_env ... ok
+test test_prog07_power_loop ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.07s
+
+     Running tests\futamura_projection_tests.rs (target\debug\deps\futamura_projection_tests-85b922c35893a019.exe)
+
+running 7 tests
+test test_1st_futamura_boolean_tree_evaluator ... ok
+test test_negative_discriminant_propagation ... ok
+test test_partial_specialization_symbolic_arg ... ok
+test test_1st_futamura_arithmetic_ast_interpreter ... ok
+test test_mir_switch_and_discriminant_supercompilation ... ok
+test test_1st_futamura_peano_inductive_numbers ... ok
+test test_2nd_futamura_projection ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+     Running tests\futamura_projections_tests.rs (target\debug\deps\futamura_projections_tests-d209ccac175a956c.exe)
+
+running 4 tests
+test test_no_identical_function_bodies_in_minspec ... ok
+test test_cogen_produces_compiler_which_produces_specialized_code ... ok
+test test_projections_structural_disparity ... ok
+test test_all_programs_parity_across_projections ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+
+     Running tests\general_recurrence_tests.rs (target\debug\deps\general_recurrence_tests-d750b25b75bcb2ec.exe)
+
+running 3 tests
+test test_order2_recurrence_constant_evaluation ... ok
+test test_order2_recurrence_solver_symbolic_emission ... ok
+test test_order2_recurrence_cranelift_execution ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests\generic_tests.rs (target\debug\deps\generic_tests-913bb7cf9fba042b.exe)
+
+running 4 tests
+test test_generic_identity ... ok
+test test_generic_multiple_instantiations ... ok
+test test_generic_swap_pair ... ok
+test test_generic_higher_order_apply ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests\heap_supercompile_tests.rs (target\debug\deps\heap_supercompile_tests-168cd9fc802255e6.exe)
+
+running 9 tests
+test test_textbook_msg_differing_subterms ... ok
+test test_textbook_msg_identical_terms ... ok
+test test_textbook_anti_unify_interface ... ok
+test test_textbook_msg_recursive_adts ... ok
+test test_textbook_msg_variable_sharing ... ok
+test test_supercompiled_peano_mul ... ok
+test test_supercompiled_nrev ... ok
+test test_supercompiled_append3 ... ok
+test test_supercompiled_tree_flip ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests\higher_order_tests.rs (target\debug\deps\higher_order_tests-b20120f062748d6c.exe)
+
+running 3 tests
+test test_lambda_inline_fold ... ok
+test test_closure_captures_constant ... ok
+test test_higher_order_supercompile_constant ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests\ho_ast_distillation_tests.rs (target\debug\deps\ho_ast_distillation_tests-cbdb6e0ffc1ee2f1.exe)
+
+running 5 tests
+test test_process_tree_representation_and_alpha_equivalence ... ok
+test test_compiler_pipeline_with_ho_distill_flag ... ok
+test test_zero_intermediate_closure_returning_applications ... ok
+test test_mutual_recursion_distillation ... ok
+test test_compose_5_deep_chain_deforestation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests\incremental_cache_tests.rs (target\debug\deps\incremental_cache_tests-47ba8d68991d48b6.exe)
+
+running 7 tests
+test test_composite_hash_propagation ... ok
+test test_dependency_graph_tracking ... ok
+test test_cycle_safe_dependency_handling ... ok
+test test_deps_json_persistence ... ok
+test test_transitive_invalidation_dag ... ok
+test test_incremental_cache_reuse_70_percent ... ok
+test test_cli_incremental_flag ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests\inlining_tests.rs (target\debug\deps\inlining_tests-c9c3ced4a00ccf7d.exe)
+
+running 4 tests
+test inlines_single_return_function ... ok
+test does_not_inline_recursive_functions ... ok
+test inlines_early_return_function ... ok
+test inlines_while_loop_with_early_return ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\integrity_lint.rs (target\debug\deps\integrity_lint-71797fdb09a26d11.exe)
+
+running 1 test
+test test_no_hardcoded_benchmark_names ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\io_tests.rs (target\debug\deps\io_tests-1c50980f21110ffa.exe)
+
+running 6 tests
+test test_println_string_literal ... ok
+test test_print_i64_and_negatives ... ok
+test test_print_loop_concatenation ... ok
+test test_print_floats ... ok
+test test_print_booleans ... ok
+test test_print_verification_example ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
+     Running tests\lexer_tests.rs (target\debug\deps\lexer_tests-bd1f8f01e0c0788b.exe)
+
+running 5 tests
+test test_spans ... ok
+test test_tokenize_bitwise_operators ... ok
+test test_tokenize_keywords ... ok
+test test_tokenize_literals_and_identifiers ... ok
+test test_tokenize_math_operators ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\llvm_vs_cranelift_benchmarks.rs (target\debug\deps\llvm_vs_cranelift_benchmarks-75a0ec5f40b71d7d.exe)
+
+running 1 test
+test test_llvm_vs_cranelift_comparative_benchmarks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
+
+     Running tests\loop_unrolling_tests.rs (target\debug\deps\loop_unrolling_tests-e6b96f121b6f346d.exe)
+
+running 5 tests
+test test_vector_operations_8way_unrolling ... ok
+test test_general_induction_loop_with_cleanup_remainder ... ok
+test test_general_induction_loop_exact_multiple_of_four ... ok
+test test_small_fixed_loop_full_unroll ... ok
+test test_fma_float_dot_8way_unrolling ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests\match_tests.rs (target\debug\deps\match_tests-e33498457c40d624.exe)
+
+running 7 tests
+test test_match_non_exhaustive_error ... ok
+test test_match_integer_basic ... ok
+test test_match_negative_patterns ... ok
+test test_match_as_expression_assignment ... ok
+test test_match_boolean ... ok
+test test_match_wildcard_catch_unmatched ... ok
+test test_match_or_patterns ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests\math_advanced_tests.rs (target\debug\deps\math_advanced_tests-f392c597aac91ecf.exe)
+
+running 8 tests
+test test_transcendentals ... ok
+test test_vec_operator_overloading ... ok
+test test_cooley_tukey_fft8_and_fft16 ... ok
+test test_mat_inv3_and_solve3 ... ok
+test test_complex_numbers ... ok
+test test_type_conversions ... ok
+test test_mat_inv4_and_solve4 ... ok
+test test_mat_inv2_and_solve2 ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+     Running tests\math_primitives_tests.rs (target\debug\deps\math_primitives_tests-12c3cb1a75ff20bf.exe)
+
+running 14 tests
+test test_matrix_det2 ... ok
+test test_math_rounding_intrinsics ... ok
+test test_math_gcd_lcm ... ok
+test test_math_fma_hypot_lerp ... ok
+test test_math_min_max_clamp_float ... ok
+test test_math_signum ... ok
+test test_math_min_max_clamp_int ... ok
+test test_nested_array_type_parsing ... ok
+test test_isqrt_tzcnt ... ok
+test test_matrix_det3 ... ok
+test test_loop_opt_stein_gcd_and_newton ... ok
+test test_matrix_operations_4x4 ... ok
+test test_nested_vector_expressions ... ok
+test test_vector_algebra ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s
+
+     Running tests\memory_leak_tests.rs (target\debug\deps\memory_leak_tests-4719ebefbac88f50.exe)
+
+running 6 tests
+test test_default_arena_loop_reset_runtime ... ok
+test test_scoped_arena_runtime_lifecycle ... ok
+test test_scoped_arena_growth_and_reclamation ... ok
+test test_loop_escaping_allocation_preserved ... ok
+test test_tree_flip_50k_iterations_zero_leak ... ok
+test test_nrev_50k_iterations_zero_leak ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests\memory_ssa_tests.rs (target\debug\deps\memory_ssa_tests-2bfb99cff03b850d.exe)
+
+running 5 tests
+test test_integration_struct_field_alias_precision ... ok
+test test_integration_mem2reg_full_pipeline ... ok
+test test_integration_multi_branch_memory_ssa ... ok
+test test_integration_nested_loops_memory_ssa ... ok
+test test_cli_emit_memory_ssa ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\mir_codegen_tests.rs (target\debug\deps\mir_codegen_tests-0a66482827020214.exe)
+
+running 6 tests
+test test_mir_supercompiler_explicit_pipeline ... ok
+test test_mir_supercompiled_triangular_closed_form ... ok
+test test_mir_codegen_loop_accumulation ... ok
+test test_mir_codegen_simple_arithmetic ... ok
+test test_mir_codegen_conditional_branch ... ok
+test test_mir_supercompiled_direct_execution ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests\mir_tests.rs (target\debug\deps\mir_tests-8af8e0eec0807994.exe)
+
+running 13 tests
+test test_dse_dead_store_elimination ... ok
+test test_mem2reg_scalar_promotion ... ok
+test test_mir_cfg_basic_block ... ok
+test test_mir_place_projection_lowering ... ok
+test test_memory_ssa_branch_phi ... ok
+test test_memory_ssa_linear_versioning ... ok
+test test_mir_loop_headers_detection ... ok
+test test_mir_ssa_correctness ... ok
+test test_memory_ssa_while_loop_phi ... ok
+test test_mem2reg_candidate_identification_and_idf ... ok
+test test_rle_redundant_load_elimination ... ok
+test test_alias_distinct_locals_and_struct_fields ... ok
+test test_alias_array_constant_and_dynamic_indices ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mrsc_lattice_tests.rs (target\debug\deps\mrsc_lattice_tests-0915f647df850cc2.exe)
+
+running 5 tests
+test test_mrsc_pareto_dominance_mathematical_properties ... ok
+test test_mrsc_hypergraph_construction_and_alternative_paths ... ok
+test test_mrsc_competing_objectives_selection_and_divergence ... ok
+test test_mrsc_custom_weighted_objective ... ok
+test test_mrsc_end_to_end_execution_parity ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests\mrsc_oracle_tests.rs (target\debug\deps\mrsc_oracle_tests-888fda9268cd4ba2.exe)
+
+running 7 tests
+test test_pareto_dominance_4d ... ok
+test test_4d_cost_model_evaluation ... ok
+test test_iddfs_reaches_depth_20_and_reduces_steps ... ok
+test test_pareto_objective_selection_deterministic ... ok
+test test_l2_cache_integration_bypasses_driving ... ok
+test test_mrsc_exhaustive_program_supercompilation ... ok
+test test_e2e_executable_execution_with_mrsc_exhaustive ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests\multi_language_benchmarks.rs (target\debug\deps\multi_language_benchmarks-dffdaa91822c4e5e.exe)
+
+running 1 test
+test test_comprehensive_multi_language_benchmarks ... ignored, comprehensive multi-language benchmark suite takes several minutes; run with -- --ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mutual_recursion_collapse_tests.rs (target\debug\deps\mutual_recursion_collapse_tests-ae1905e52695cf1b.exe)
+
+running 5 tests
+test test_hofstadter_style_mutual_linear_recurrence ... ok
+test test_even_odd_mutual_recursion_collapse ... ok
+test test_two_variable_mutual_linear_recurrence ... ok
+test test_three_function_cyclic_recurrence ... ok
+test test_mutual_recursion_benchmark_integrity ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests\parser_tests.rs (target\debug\deps\parser_tests-4446020433d45985.exe)
+
+running 6 tests
+test test_pratt_bitwise_operators ... ok
+test test_pratt_exponentiation_right_associativity ... ok
+test test_pratt_operator_precedence ... ok
+test test_pratt_grouped_precedence ... ok
+test test_parse_function_and_statements ... ok
+test test_parse_mut_and_assignment ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\platform_portability_tests.rs (target\debug\deps\platform_portability_tests-67e5919169a1d2a3.exe)
+
+running 6 tests
+test test_entry_bench_c_is_cross_platform ... ok
+test test_linker_handles_posix_bench_mode ... ok
+test test_llvm_backend_abstracts_win32_symbols ... ok
+test test_cranelift_backend_abstracts_win32_symbols ... ok
+test test_cranelift_code_emission_on_current_host ... ok
+test test_c_benchmarks_are_cross_platform ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests\polyhedral_and_validation_tests.rs (target\debug\deps\polyhedral_and_validation_tests-fd9962ca5ab16986.exe)
+
+running 5 tests
+test test_translation_validation_detects_unsoundness ... ok
+test test_translation_validation_equivalence ... ok
+test test_cli_verify_equivalence ... ok
+test test_polyhedral_stencil_fusion ... ok
+test test_parallel_supercompilation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests\polyhedral_ilp_tests.rs (target\debug\deps\polyhedral_ilp_tests-4447702228248e41.exe)
+
+running 6 tests
+test test_pluto_skewing_for_wavefront_dependence ... ok
+test test_pluto_permutability_matrix_multiply_3d ... ok
+test test_bareiss_simplex_fraction_free_pivoting ... ok
+test test_simplex_pivot_bound_for_8_dimensions ... ok
+test test_tiled_loop_vectorization_fork_emission ... ok
+test test_polyhedral_loop_tiling_3d_matmul_and_buffer_contraction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests\polyhedral_stencil_tests.rs (target\debug\deps\polyhedral_stencil_tests-f1a91f87c8d0c03c.exe)
+
+running 5 tests
+test test_polyhedral_dependence_distance_vectors ... ok
+test test_polyhedral_affine_algebra_and_inequalities ... ok
+test test_polyhedral_horizontal_vertical_2d_stencil_deforestation ... ok
+test test_polyhedral_single_pass_elementwise_fusion_and_buffer_elimination ... ok
+test test_polyhedral_multi_stage_3pass_deforestation ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests\polynomial_recurrence_tests.rs (target\debug\deps\polynomial_recurrence_tests-ea61db556e46d587.exe)
+
+running 10 tests
+test test_detect_geometric_series_sum ... ok
+test test_detect_cubic_sum_closed_form ... ok
+test test_detect_exponential_power_loop ... ok
+test test_detect_square_pyramid_sum_closed_form ... ok
+test test_symbolic_generalization_preserves_structure ... ok
+test test_detect_power_tower_recurrence ... ok
+test test_supercompiled_square_pyramid_execution ... ok
+test test_supercompiled_geometric_series_execution ... ok
+test test_supercompiled_cubic_sum_execution ... ok
+test test_supercompiled_exponential_power_execution ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests\recursion_opt_tests.rs (target\debug\deps\recursion_opt_tests-6356ea4062f222fa.exe)
+
+running 2 tests
+test test_recursion_opt_ast_transform ... ok
+test test_recursion_opt_execution_values ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+
+     Running tests\simd_feature_tests.rs (target\debug\deps\simd_feature_tests-1f028e46c61c59c7.exe)
+
+running 6 tests
+test test_host_cpu_feature_compilation ... ok
+test test_fma_vector_dot_product_execution ... ok
+test test_unrolled_vector_sum_and_add ... ok
+test test_bitwise_rule110_automaton ... ok
+test test_simd_large_array_copy ... ok
+test test_simd_large_vec_add ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests\speculative_deopt_tests.rs (target\debug\deps\speculative_deopt_tests-7f58f26fc7ba2d94.exe)
+
+running 7 tests
+test test_osr_transition_slot_activation ... ok
+test test_collect_function_type_profiles_helper ... ok
+test test_deopt_metadata_and_frame_reconstruction ... ok
+test test_speculative_fast_path_and_deopt_execution ... ok
+test test_type_guard_mir_construction_and_validation ... ok
+test test_speculative_guard_insertion_high_confidence ... ok
+test test_type_profile_confidence_calculation ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\sroa_dynamic_tests.rs (target\debug\deps\sroa_dynamic_tests-515d41b9437b28a8.exe)
+
+running 3 tests
+test test_dynamic_indexed_array_mutation_and_read ... ok
+test test_mixed_static_and_dynamic_arrays ... ok
+test test_nqueens_diagonal_conflict_kernel ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests\sroa_tests.rs (target\debug\deps\sroa_tests-b8c57396fcfbc242.exe)
+
+running 4 tests
+test test_sroa_dynamic_indexing ... ok
+test test_sroa_promoted_array_indexing_and_mutation ... ok
+test test_sroa_vector_dot_and_sum ... ok
+test test_sroa_vector_add_promoted ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests\stdlib_tests.rs (target\debug\deps\stdlib_tests-71c9c17eee252989.exe)
+
+running 9 tests
+test test_stdlib_exp_log ... ok
+test test_stdlib_conversions ... ok
+test test_stdlib_min_max ... ok
+test test_stdlib_abs ... ok
+test test_stdlib_bswap ... ok
+test test_stdlib_sqrt ... ok
+test test_stdlib_trig ... ok
+test test_stdlib_pow ... ok
+test test_stdlib_rounding ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests\strength_reduce_tests.rs (target\debug\deps\strength_reduce_tests-787bf0a693d0551c.exe)
+
+running 10 tests
+test test_classify_div_const_power_of_two ... ok
+test test_classify_mul_const_near_powers_of_two ... ok
+test test_classify_mul_const_power_of_two ... ok
+test test_mir_power_of_two_division_reduced ... ok
+test test_strassen_4x4_correctness ... ok
+test test_mir_power_of_two_multiplication_reduced ... ok
+test test_mir_near_power_of_two_multiplication_reduced_diff ... ok
+test test_mir_near_power_of_two_multiplication_reduced_sum ... ok
+test test_strassen_matrix_exponentiation ... ok
+test test_strassen_arbitrary_dimension ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\struct_tests.rs (target\debug\deps\struct_tests-e7b12c664965c3d0.exe)
+
+running 7 tests
+test test_struct_type_errors ... ok
+test test_struct_returned_from_function ... ok
+test test_struct_field_mutation ... ok
+test test_basic_struct_literal_and_field_read ... ok
+test test_nested_structs ... ok
+test test_array_of_structs ... ok
+test test_struct_pass_by_value ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests\structural_generality_tests.rs (target\debug\deps\structural_generality_tests-2d0ec2f5536a5783.exe)
+
+running 7 tests
+test test_distilled_flag_metadata_propagation ... ok
+test test_structural_permutation_recurrence_detection ... ok
+test test_structural_nested_hyper_recurrence_detection ... ok
+test test_structural_deforestation_arbitrary_names ... ok
+test test_structural_nested_hyper_recurrence_execution ... ok
+test test_arbitrary_struct_field_layout_execution ... ok
+test test_structural_permutation_recurrence_execution ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests\supercompiler_head_to_head.rs (target\debug\deps\supercompiler_head_to_head-e7ca87cdd8986860.exe)
+
+running 1 test
+test test_run_supercompiler_head_to_head_benchmarks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.31s
+
+     Running tests\supercompiler_llvm_dominance_tests.rs (target\debug\deps\supercompiler_llvm_dominance_tests-064939f12d13486c.exe)
+
+running 5 tests
+test test_coopt_05_head_to_head_dominance_matrix ... ok
+test test_coopt_03_vectorized_recurrence_matrix_powers ... ok
+test test_coopt_02_loop_vectorization_unroll_metadata ... ok
+test test_coopt_01_tbaa_trees_and_noalias_emission ... ok
+test test_coopt_04_specialization_cache_submillisecond_latency ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\supercompiler_phase30_tests.rs (target\debug\deps\supercompiler_phase30_tests-f71db7443878d6d7.exe)
+
+running 4 tests
+test test_ast_inliner_precomputed_has_loop_behavior ... ok
+test test_msg_knot_materializes_gen_node ... ok
+test test_budget_overflow_leaf_is_unreachable ... ok
+test test_unified_profitability_gate_consistency ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\supercompiler_phase31_tests.rs (target\debug\deps\supercompiler_phase31_tests-c2bc40a2f179787c.exe)
+
+running 4 tests
+test test_termination_witness_fib ... ok
+test test_order3_recurrence_symbolic_n ... ok
+test test_termination_witness_kmp ... ok
+test test_termination_witness_all_benchmarks ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\supercompiler_phase32_tests.rs (target\debug\deps\supercompiler_phase32_tests-32708ac8a47fa6f2.exe)
+
+running 5 tests
+test test_detect_nway_system_unit ... ok
+test test_hofstadter_male_female_recurrence ... ok
+test test_existing_coupled_still_works ... ok
+test test_3way_linear_recurrence_closed_form ... ok
+test test_tribonacci_closed_form ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\supercompiler_phase33_tests.rs (target\debug\deps\supercompiler_phase33_tests-1ebb33679cf857bc.exe)
+
+running 5 tests
+test test_refinement_interval_propagation_add ... ok
+test test_refinement_regression_no_spurious_prune ... ok
+test test_refinement_dead_branch_elimination ... ok
+test test_refinement_callsite_propagation ... ok
+test test_refinement_bce_loop ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\supercompiler_phase34_tests.rs (target\debug\deps\supercompiler_phase34_tests-d8cf6ea850fd1634.exe)
+
+running 6 tests
+test test_two_closure_composition ... ok
+test test_closure_inline_in_loop ... ok
+test test_closure_driving_constant_fold ... ok
+test test_fn_ptr_driving ... ok
+test test_closure_captures_variable_fold ... ok
+test test_closure_with_refinement_interaction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests\supercompiler_phase35_tests.rs (target\debug\deps\supercompiler_phase35_tests-be24060df857286c.exe)
+
+running 5 tests
+test test_eta_reduction_copy_binding ... ok
+test test_code_size_metric_populated ... ok
+test test_dead_node_elimination ... ok
+test test_noop_assignment_removal ... ok
+test test_compaction_preserves_correctness ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests\supercompiler_phase36_tests.rs (target\debug\deps\supercompiler_phase36_tests-8f06dbb1cb6d151d.exe)
+
+running 5 tests
+test test_fork_terminator_successors ... ok
+test test_independence_conflicting_write ... ok
+test test_independence_disjoint_sets ... ok
+test test_parallel_residualize_sequential_fallback ... ok
+test test_parallel_residualize_correctness ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests\supercompiler_phase37_tests.rs (target\debug\deps\supercompiler_phase37_tests-267a6aea8906808e.exe)
+
+running 5 tests
+test test_cache_key_deterministic ... ok
+test test_cache_miss_returns_none ... ok
+test test_cache_store_and_lookup ... ok
+test test_cache_invalidation_on_different_source ... ok
+test test_cache_warm_compilation_faster ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests\supercompiler_phase38_tests.rs (target\debug\deps\supercompiler_phase38_tests-e7d29535e94df41e.exe)
+
+running 5 tests
+test test_distillation_theorem_present ... ok
+test test_end_to_end_theorem_present ... ok
+test test_lean_no_sorry ... ok
+test test_lean_no_unproven_axiom ... ok
+Build completed successfully (10 jobs).
+test test_lean_build_succeeds ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+
+     Running tests\supercompiler_phase39_tests.rs (target\debug\deps\supercompiler_phase39_tests-ce5846391e443278.exe)
+
+running 5 tests
+test test_fusion_benchmarks_produce_single_loop ... ok
+test test_new_numerical_benchmarks_correctness ... ok
+test test_new_sort_benchmarks_correctness ... ok
+test test_new_string_benchmarks_correctness ... ok
+test test_all_30_benchmarks_compile ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.93s
+
+     Running tests\supercompiler_phase40_tests.rs (target\debug\deps\supercompiler_phase40_tests-0b60e0e73c3c65fa.exe)
+
+running 5 tests
+test test_dockerfile_exists_and_is_valid ... ignored, Skip when docker is not installed
+test test_paper_compiles_pdflatex ... ignored, Skip when pdflatex is not installed
+test test_makefile_targets_present ... ok
+test test_rebuttal_objections_complete ... ok
+test test_paper_sections_exist ... ok
+
+test result: ok. 3 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\supercompiler_regression_fix_tests.rs (target\debug\deps\supercompiler_regression_fix_tests-0c23c90a031f760c.exe)
+
+running 4 tests
+test test_power_spec_profitability_gate ... ok
+test test_ackermann_supercompile_no_blowup ... ok
+numlang: generated executable: C:\Users\davea\AppData\Local\Temp\numlang_fib_coupled_test\fib_base.exe
+numlang: generated executable: C:\Users\davea\AppData\Local\Temp\numlang_stream_fusion_test\stream_base.exe
+numlang: generated executable: C:\Users\davea\AppData\Local\Temp\numlang_fib_coupled_test\fib_super.exe
+numlang: generated executable: C:\Users\davea\AppData\Local\Temp\numlang_stream_fusion_test\stream_super.exe
+test test_fib_coupled_supercompile_no_slowdown ... ok
+test test_stream_fusion_supercompile_correct_and_fast ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
+
+     Running tests\supercompiler_showdown.rs (target\debug\deps\supercompiler_showdown-b8e5190663f7b34b.exe)
+
+running 1 test
+test test_supercompiler_showdown ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.27s
+
+     Running tests\supercompiler_symbolic_tests.rs (target\debug\deps\supercompiler_symbolic_tests-25741192c84fb0f4.exe)
+
+running 10 tests
+test test_symbolic_term_simplification_and_hashcons ... ok
+test test_path_constraint_propagation ... ok
+test test_symbolic_closed_form_helpers ... ok
+test test_recurrence_solver_cubic_and_geometric ... ok
+test test_recurrence_solver_linear_and_triangular ... ok
+test test_homeomorphic_embedding_growth_detection ... ok
+test test_mir_supercompile_program_execution ... ok
+test test_cli_emit_process_tree ... ok
+test test_cli_emit_supercompiled_mir ... ok
+test test_cli_supercompile_stats ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\supercompiler_tests.rs (target\debug\deps\supercompiler_tests-00a717ebd8869344.exe)
+
+running 5 tests
+test test_novel_program_1_triangular_sum ... ok
+test test_novel_program_2_power_of_two ... ok
+test test_novel_program_4_cubic_sum ... ok
+test test_novel_program_3_xor_period ... ok
+test test_novel_program_5_fibonacci_coupled ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+
+     Running tests\third_futamura_tests.rs (target\debug\deps\third_futamura_tests-f14be4d57fc14774.exe)
+
+running 3 tests
+test test_1st_futamura_interpreter_specialization ... ok
+test test_2nd_futamura_compiler_generation ... ok
+test test_3rd_futamura_cogen_generation ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s
+
+     Running tests\tiered_jit_tests.rs (target\debug\deps\tiered_jit_tests-6e8ec68c0d9ac989.exe)
+
+running 6 tests
+test test_sequence_similarity_metric_90_percent ... ok
+test test_normalized_block_content_addressed_hashing ... ok
+test test_block_outlining_extraction_and_call_replacement ... ok
+test test_tier1_background_upgrade_at_hot_threshold ... ok
+test test_tier0_cold_start_latency_10_functions ... ok
+test test_outlined_binary_size_reduction_and_bit_identical_execution ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running tests\translation_validation_smt_tests.rs (target\debug\deps\translation_validation_smt_tests-aa5826c19fd6c33e.exe)
+
+running 9 tests
+test test_smt_smtlib2_export_verification ... ok
+test test_smt_mutation_detection_operator_swap ... ok
+test test_smt_relational_path_vc_conditional_branches ... ok
+test test_smt_mutation_detection_off_by_one_and_branch_boundary ... ok
+test test_smt_cli_verify_equivalence_with_mutations ... ok
+test test_k_induction_loop_validation ... ok
+test test_smt_uninterpreted_functions_and_congruence ... ok
+test test_smt_bitvector_algebra_and_decision_procedure ... ok
+test test_smt_loop_unrolling_and_closed_form_equivalence ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.85s
+
+     Running tests\true_futamura_projections_tests.rs (target\debug\deps\true_futamura_projections_tests-16e21a8e5b33bc6c.exe)
+
+running 4 tests
+test test_minspec_exits_42 ... ok
+test test_verify_soundness_all_programs ... ok
+test test_first_futamura_eval_correctness ... ok
+test test_first_futamura_prog1_specialization ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+
+     Running tests\typecheck_tests.rs (target\debug\deps\typecheck_tests-25baf7e5ca79ec69.exe)
+
+running 9 tests
+test test_condition_must_be_bool ... ok
+test test_function_return_mismatch ... ok
+test test_strict_rejection_of_mixed_arithmetic ... ok
+test test_undeclared_variable ... ok
+test test_immutability_enforcement ... ok
+test test_block_scoping_and_shadowing ... ok
+test test_function_arity_mismatch ... ok
+test test_mutability_success ... ok
+test test_typecheck_valid_program ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\unsigned_type_tests.rs (target\debug\deps\unsigned_type_tests-ab57b97d5c3eb152.exe)
+
+running 7 tests
+test test_signed_i8_and_i16_types ... ok
+test test_i8_i16_arithmetic_and_print ... ok
+test test_unsigned_division_and_modulo ... ok
+test test_unsigned_logical_shift ... ok
+test test_structured_panic_bounds_check ... ok
+test test_unsigned_types_and_suffixed_literals ... ok
+test test_signed_i8_i16_overflow_wrapping ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests\while_unroll_tests.rs (target\debug\deps\while_unroll_tests-4cc14c42de6798fa.exe)
+
+running 5 tests
+test test_bounded_while_div2_unrolling ... ok
+test test_dead_branch_elimination_in_unrolled_loop ... ok
+test test_nested_matrix_loop_unrolling ... ok
+test test_mat4_pow_unrolling ... ok
+test test_modular_exponentiation_compile_and_execute ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+   Doc-tests numlang
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
