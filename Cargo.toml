@@ -10,7 +10,18 @@ license = "MIT"
 keywords = ["compiler", "supercompiler", "deforestation", "optimization", "cranelift"]
 categories = ["compilers", "development-tools"]
 rust-version = "1.82.0"
-exclude = ["paper/", "rebuttal/", "scratch/", ".planning/", "graphify-out/"]
+exclude = [
+    "paper/",
+    "rebuttal/",
+    "scratch/",
+    ".planning/",
+    "graphify-out/",
+    "lean/.lake/",
+    "proof/.lake/",
+    ".numlang_cache/",
+    "*.obj",
+    "*.exe",
+]
 
 [dependencies]
 logos = "0.14"
