@@ -1,0 +1,23 @@
+import Supercompiler.Semantics
+import Supercompiler.Preservation
+import Supercompiler.Distillation
+import Supercompiler.MRSC
+import Supercompiler.Refinement
+import Supercompiler.Compaction
+import Supercompiler.Main
+
+namespace Supercompiler
+
+#print axioms const_fold_stmt_equiv
+#print axioms drive_step_preserves_semantics
+#print axioms driving_preserves_semantics
+#print axioms fold_step_preserves_semantics
+#print axioms distillation_preserves_semantics
+#print axioms refinement_pruning_sound
+#print axioms mrsc_selection_preserves_semantics
+#print axioms noop_removal_preserves_semantics
+#print axioms eta_reduction_preserves_semantics
+#print axioms function_transformed_preserves_semantics
+#print axioms supercompiler_sound
+
+end Supercompiler

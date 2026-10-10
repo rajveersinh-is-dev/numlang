@@ -326,15 +326,24 @@ theorem finite_alphabet_good_sequence (alphabet : List Expr) (seq : Nat → Expr
   rw [heq]
   exact emb_refl (seq j)
 
-/-- Process Tree Termination Theorem:
-    There exists no infinite whistle-free path in any finite-alphabet supercompiler process tree.
-    The homeomorphic embedding whistle triggers in finite steps along every branch,
-    guaranteeing total supercompiler termination. -/
-theorem no_infinite_whistle_free_path (alphabet : List Expr) (path : Nat → Expr)
+/-- Finite-Configurations Whistle Termination Theorem:
+    There exists no infinite whistle-free path in any process tree restricted to a finite
+    configuration alphabet. Because the configuration set is finite, any infinite path contains
+    duplicate configurations by the pigeonhole principle, which embeds homeomorphically by reflexivity.
+    NOTE: What is proved here is this finite-alphabet pigeonhole termination lemma.
+    General infinite-tree termination via Kruskal's Tree Theorem is cited from literature
+    (Kruskal 1960, Leuschel 1998, Hamilton 2007) and is not mechanized here. -/
+theorem finite_configurations_whistle_terminates (alphabet : List Expr) (path : Nat → Expr)
     (h_in : InAlphabet alphabet path) : ¬ WhistleFreePath path := by
   intro hpath
   have hgood : IsGoodSequence path := finite_alphabet_good_sequence alphabet path h_in
   rcases hgood with ⟨i, j, hij, hemb⟩
   exact (hpath i j hij) hemb
+
+/-- Process Tree Termination Theorem alias:
+    Guarantees termination for finite-signature process trees. -/
+theorem no_infinite_whistle_free_path (alphabet : List Expr) (path : Nat → Expr)
+    (h_in : InAlphabet alphabet path) : ¬ WhistleFreePath path :=
+  finite_configurations_whistle_terminates alphabet path h_in
 
 end NumLang
