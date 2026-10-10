@@ -24,14 +24,14 @@ Given two states $s_1 = \langle b_1, \rho_1, h_1, \Pi_1 \rangle$ and $s_2 = \lan
 \end{enumerate}
 \end{definition}
 
-\subsection{Well-Quasi-Ordering Theorem}
-By Kruskal's Tree Theorem, the homeomorphic embedding relation over a finite alphabet of term and heap constructors constitutes a well-quasi-order:
-\begin{theorem}[Termination of Process-Tree Driving]
+\subsection{Termination over Finite Alphabets and Literature WQO}
+For process-tree expansion restricted to a finite alphabet of configuration symbols, termination is proved via the sequence pigeonhole principle. In general term algebras with unbounded terms, well-quasi-ordering is grounded in Kruskal's Tree Theorem \cite{kruskal1960well}:
+\begin{theorem}[Whistle Termination on Finite Alphabets]
 \label{thm:termination}
-Let $s_0, s_1, s_2, \dots$ be any infinite sequence of symbolic states generated along a branch of a process tree. There exist indices $i < j$ such that $s_i \le_{\text{state}} s_j$.
+Let $s_0, s_1, s_2, \dots$ be any infinite sequence of symbolic configurations generated along a branch of a process tree over an assumed finite alphabet $\Sigma$. There exist indices $i < j$ such that $s_i \trianglelefteq s_j$.
 \end{theorem}
 \begin{proof}
-Formally verified in Lean 4 (\texttt{lean/Supercompiler/Termination.lean}). The signature alphabet of MIR operators and heap constructors is finite. By Higman's Lemma and Kruskal's Theorem, $(\mathcal{S}, \le_{\text{state}})$ is a WQO; hence every infinite sequence contains an embedded pair, ensuring that no branch can expand infinitely without triggering a whistle.
+Mechanized in Lean 4 (\texttt{proof/NumLangProofs/Termination.lean}, \texttt{finite\_configurations\_whistle\_terminates}). Over a finite alphabet of size $N$, by the sequence pigeonhole principle (\texttt{pigeonhole\_seq}), any sequence of length $N+1$ contains duplicate configurations $s_i = s_j$ for $i < j$. By reflexivity of homeomorphic embedding (\texttt{emb\_refl}), $s_i \trianglelefteq s_j$, triggering the whistle and ruling out infinite whistle-free branches (\texttt{no\_infinite\_whistle\_free\_path}). For infinite sequences of growing terms over unbounded term algebras, WQO is cited from Kruskal's Tree Theorem in the literature \cite{kruskal1960well,leuschel1998homeomorphic}.
 \end{proof}
 
 \subsection{Termination Witnesses and Rank Decrease}

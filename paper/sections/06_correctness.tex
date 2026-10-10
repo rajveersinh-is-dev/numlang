@@ -1,43 +1,42 @@
 \section{Mechanized Correctness in Lean 4}
 \label{sec:correctness}
 
-Compiler correctness is paramount when applying aggressive global transformations. NumLang is the first supercompiler whose end-to-end semantic preservation and termination theorems are completely formalized and machine-checked in the \textbf{Lean 4} interactive theorem prover (Phase 38).
+Compiler correctness is critical when applying aggressive global transformations. NumLang maintains machine-checked operational models and semantic preservation proofs in the \textbf{Lean 4} interactive theorem prover.
 
 \subsection{Proof Architecture}
-The formal proof codebase is structured modularly in \texttt{lean/Supercompiler/}, comprising 10 verified modules totaling over 3,200 lines of Lean 4 definitions and proofs:
+The formal proof codebase is organized across two Lake packages comprising 17 Lean 4 files totaling 1,699 lines:
 \begin{itemize}
-    \item \texttt{AST.lean}: Formal inductive syntax of SSA Mid-Level IR, basic blocks, instructions, terminators, and expressions.
-    \item \texttt{Semantics.lean}: Big-step operational semantics $(p, \sigma) \Downarrow v$ defining configuration transitions and heap updates.
-    \item \texttt{Whistle.lean}: Homeomorphic embedding relation $\trianglelefteq$ and size-bounded filtering lemmas.
-    \item \texttt{Generalize.lean}: Soundness of Most Specific Generalization (MSG) and state anti-unification.
-    \item \texttt{Distillation.lean}: Soundness of global process-tree folding across distinct function boundaries.
-    \item \texttt{MRSC.lean}: Soundness of configuration hypergraph expansion and Pareto-optimal lattice extraction.
-    \item \texttt{Refinement.lean}: Soundness of interval-based path-sensitive branch pruning and bounds check removal.
-    \item \texttt{Compaction.lean}: Soundness of dead-node elimination, $\eta$-reduction, and copy propagation.
-    \item \texttt{Termination.lean}: Mechanization of Kruskal's Tree Theorem and guaranteed termination of driving.
-    \item \texttt{Main.lean}: The top-level composition theorem linking all transformation passes.
+    \item \texttt{lean/Supercompiler/Semantics.lean}: Mid-Level IR (MIR) execution states, statement evaluation, and multi-step execution (\texttt{StepStar}).
+    \item \texttt{lean/Supercompiler/Preservation.lean}: Multi-step driving transformation relations and evaluation preservation (\texttt{driving\_preserves\_semantics}).
+    \item \texttt{lean/Supercompiler/Distillation.lean}: Global process-tree fold simulation and distillation relations (\texttt{distillation\_preserves\_semantics}).
+    \item \texttt{lean/Supercompiler/MRSC.lean}: Pareto-optimal candidate selection preservation (\texttt{mrsc\_selection\_preserves\_semantics}).
+    \item \texttt{lean/Supercompiler/Refinement.lean}: Path-sensitive interval pruning validity (\texttt{refinement\_pruning\_sound}).
+    \item \texttt{lean/Supercompiler/Compaction.lean}: Control flow compaction and $\eta$-reduction (\texttt{noop\_removal\_preserves\_semantics}, \texttt{eta\_reduction\_preserves\_semantics}).
+    \item \texttt{lean/Supercompiler/Main.lean}: Top-level composition theorem linking transformation passes (\texttt{supercompiler\_sound}).
+    \item \texttt{proof/NumLangProofs/Driving.lean}: Core expression reduction, constant folding, branch pruning, and call unfolding (\texttt{smallstep\_const\_fold}, \texttt{smallstep\_call\_unfold}).
+    \item \texttt{proof/NumLangProofs/Termination.lean}: Homeomorphic embedding preorder properties and finite-alphabet sequence pigeonhole termination (\texttt{finite\_configurations\_whistle\_terminates}).
 \end{itemize}
 
 \subsection{Main Correctness Theorem}
-The central verification result establishes full observational equivalence between the input program and the supercompiled residual program:
+The central verification result in the MIR model establishes semantic preservation between the input program and the residual program:
 
 \begin{theorem}[End-to-End Semantic Soundness (\texttt{supercompiler\_sound})]
 \label{thm:soundness}
-For any well-typed NumLang program $p$, initial execution state $\sigma$, and resulting value $v$:
+For any well-formed MIR program $p_1$ and transformed residual program $p_2$, if the supercompiler transformation sequence holds, evaluation outcomes are preserved:
 \begin{equation}
-(p, \sigma) \Downarrow v \iff (\text{supercompile}(p), \sigma) \Downarrow v
+\forall \text{args } \text{res}, \quad \text{Evaluates}(p_1, \text{args}, \text{res}) \leftrightarrow \text{Evaluates}(p_2, \text{args}, \text{res})
 \end{equation}
 \end{theorem}
 
-\begin{proof}[Proof Sketch]
-The proof proceeds by forward and backward simulation induction over the process-tree driving steps. 
+\begin{proof}[Proof Structure]
+The proof decomposes into inductive composition of verified phase relations:
 \begin{enumerate}
-    \item \textbf{Driving Step Simulation}: Each symbolic driving rule (assignment evaluation, branch splitting, heap allocation) preserves the operational valuation under all concretizations $\rho \models \Pi$.
-    \item \textbf{Knot Tying \& Folding}: When a knot edge connects node $N_j$ to ancestor $N_i$, state remapping lemma (\texttt{fold\_sound}) establishes that evaluation along the cyclic residual basic block matches the fixpoint of the original loop.
-    \item \textbf{Generalization}: The anti-unification lemma (\texttt{generalize\_sound}) proves that abstracting divergent subterms into fresh registers introduces no spurious behaviors.
-    \item \textbf{Compaction \& Refinement}: Dead configuration pruning and bounds-check removal lemmas (\texttt{compaction\_sound}, \texttt{refinement\_sound}) guarantee that deleted instructions had no observable semantic side effects.
+    \item \textbf{Driving}: \texttt{driving\_preserves\_semantics} establishes that multi-step driving sequences preserve evaluation.
+    \item \textbf{Folding \& Distillation}: \texttt{distillation\_preserves\_semantics} proves bidirectional simulation for knot-folding steps.
+    \item \textbf{Compaction}: \texttt{noop\_removal\_preserves\_semantics} and \texttt{eta\_reduction\_preserves\_semantics} verify CFG compaction.
+    \item \textbf{Path Refinement}: \texttt{refinement\_pruning\_sound} guarantees impossible interval branches cannot be taken.
 \end{enumerate}
-Composing these inductive lemmas in \texttt{Main.lean} yields the bidirectional equivalence $(p, \sigma) \Downarrow v \iff (\text{supercompile}(p), \sigma) \Downarrow v$.
+Composing these phase lemmas in \texttt{Main.lean} yields the top-level equivalence \texttt{supercompiler\_sound}.
 \end{proof}
 
 \subsection{Certified Integrity Guarantees}
@@ -50,19 +49,19 @@ Table~\ref{tab:lean_lemmas} summarizes the core mechanized theorems verified by 
 \small
 \begin{tabular}{llr}
 \toprule
-\textbf{Module} & \textbf{Theorem Name} & \textbf{Formal Guarantee} \\
+\textbf{Module} & \textbf{Theorem Identifier} & \textbf{Formal Guarantee} \\
 \midrule
-\texttt{Semantics} & \texttt{step\_deterministic} & Deterministic operational semantics \\
-\texttt{Whistle} & \texttt{embedding\_wqo} & Well-quasi-order of $\trianglelefteq$ on terms \\
-\texttt{Generalize} & \texttt{msg\_sound} & Soundness of anti-unification \\
-\texttt{Distillation} & \texttt{fold\_sound} & Semantic preservation of global knots \\
-\texttt{MRSC} & \texttt{lattice\_sound} & Soundness of Pareto lattice selection \\
-\texttt{Refinement} & \texttt{refinement\_sound} & Bounds-check elimination validity \\
-\texttt{Compaction} & \texttt{compaction\_sound} & Equivalence under copy propagation \\
-\texttt{Termination} & \texttt{driving\_terminates} & Process-tree construction terminates \\
-\texttt{Main} & \texttt{supercompiler\_sound} & \textbf{End-to-end observational equivalence} \\
+\texttt{Semantics.lean} & \texttt{stepstar\_trans} & Transitivity of multi-step execution \\
+\texttt{Preservation.lean} & \texttt{driving\_preserves\_semantics} & Driving step semantic preservation \\
+\texttt{Distillation.lean} & \texttt{distillation\_preserves\_semantics} & Distillation fold simulation \\
+\texttt{MRSC.lean} & \texttt{mrsc\_selection\_preserves\_semantics} & Candidate selection preservation \\
+\texttt{Refinement.lean} & \texttt{refinement\_pruning\_sound} & Path constraint branch pruning \\
+\texttt{Compaction.lean} & \texttt{noop\_removal\_preserves_semantics} & Dead block elimination soundness \\
+\texttt{Driving.lean} & \texttt{smallstep\_const\_fold} & Small-step constant folding preservation \\
+\texttt{Termination.lean} & \texttt{finite\_configurations\_whistle\_terminates} & Finite-alphabet whistle termination \\
+\texttt{Main.lean} & \texttt{supercompiler\_sound} & \textbf{End-to-end semantic preservation} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Critically, the entire proof compiles cleanly under Lean 4 (\texttt{lake build}) with \textbf{zero unproven axioms} (\texttt{axiom}) and \textbf{zero unproven goals} (\texttt{sorry}). This provides mathematical certainty that NumLang's supercompiler cannot introduce semantic bugs, crashes, or incorrect computations into optimized binaries.
+All proofs compile cleanly under Lean 4 (\texttt{lake build}) with zero custom axioms and zero \texttt{sorry} placeholders. As detailed in the documentation, these formal theorems verify abstract mathematical models of the compiler algorithms; the Rust executable itself is not extracted from Lean, and in-tree translation validation (\texttt{validate.rs}) is provided as an opt-in pass via the \texttt{--verify} flag.
