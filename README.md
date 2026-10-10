@@ -18,7 +18,7 @@
 - **Reynolds Defunctionalization**: Type-directed whole-program closure conversion mapping higher-order lambdas into first-order tagged variants with static dispatches.
 - **Lazy Thunk / Codata Supercompilation**: Demand-driven symbolic forcing over SSA MIR converting lazy producer-consumer stream pipelines into scalar register loops.
 - **Self-Applicable Specialization**: A subset specializer (`src/stdlib/minspec.nl`) structured for Futamura projections (specializing interpreters into compiled residuals).
-- **Lean 4 Mechanized Operational Models**: Formal machine-checked small-step operational semantics and semantic preservation proofs with **zero `sorry`** and **zero unproven axioms** (`lean/`).
+- **Lean 4 Mechanized Operational Models**: Formal machine-checked small-step operational semantics and semantic preservation proofs with **zero `sorry`** and **zero unproven axioms** (see [`docs/LEAN_STATUS.md`](docs/LEAN_STATUS.md)).
 
 ---
 
@@ -77,15 +77,15 @@ cargo run --bin numlang -- run --supercompile examples/sum_of_squares.nl
 
 ## 4. Claims and Evidence
 
-Every optimization capability in NumLang is verifiable with specific automated commands and regression tests:
+Every optimization capability in NumLang is verifiable with specific automated commands and regression tests. All public claims are tracked in the [`docs/CLAIMS_LEDGER.md`](docs/CLAIMS_LEDGER.md):
 
 | Architectural Claim | Verifying Test / Command | Expected Output | Status |
 |:---|:---|:---|:---:|
 | **Zero Production Invariant Shortcuts** | `cargo clippy --all-targets -- -D warnings` | 0 errors, 0 warnings across all targets | Verified |
 | **Algorithmic Generality (No Name Matching)** | `cargo test --test integrity_lint`<br>`cargo test --test structural_generality_tests` | 7 passed, 0 failed; no string matches on benchmark identifiers | Verified |
 | **Arbitrary Order-2 Linear Recurrences** | `cargo test --test general_recurrence_tests` | 3 passed; Fib, Lucas, Pell, Jacobsthal symbolic & execution | Verified |
-| **Differential Correctness vs Oracle** | `cargo test --test differential_correctness_tests` | 2 passed; 0 divergences across generated programs | Verified |
-| **Machine-Checked Lean 4 Proofs** | `cd lean && lake build` | Clean build, 0 `sorry`, 0 unproven `axiom` | Verified |
+| **Differential Correctness vs Oracle** | `cargo test --test differential_correctness_tests` | 3 passed; 0 divergences across examples and test suites | Verified |
+| **Machine-Checked Lean 4 Proofs** | `cd lean && lake build`<br>`cd proof && lake build` | Clean build, 0 `sorry`, 0 unproven `axiom` (see [`docs/LEAN_STATUS.md`](docs/LEAN_STATUS.md)) | Verified |
 | **Monograph Compilation & Cross-References** | `python paper/book/audit_pdf.py` | 374 pages, 0 broken cross-refs (`??`), 0 broken cites (`[?]`) | Verified |
 | **Multi-Stage Futamura Specialization** | `cargo test --test third_futamura_tests` | All projections produce executable residual binaries | Verified |
 
@@ -106,22 +106,22 @@ NumLang builds on decades of foundational research in metacomputation, supercomp
 
 ## 6. Empirical Benchmark Results
 
-All timings are collected using in-process hardware performance counters (`QueryPerformanceCounter` on Windows, `clock_gettime` on Linux) over **at least 5 discarded warmups followed by 30 measured rounds per cell**:
+Full empirical benchmark evaluation against industrial compilers is documented in [`SHOWDOWN.md`](SHOWDOWN.md). All timings are collected using in-process hardware performance counters (`QueryPerformanceCounter` on Windows, `clock_gettime` on Linux) over **5 discarded warmups followed by 30 measured rounds per cell**:
 
-| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc -O | MSVC /O2 | Note |
+| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc -O3 | MSVC /O2 | Result |
 |:---|:---|:---:|:---:|:---:|:---:|:---|
-| Naive Reverse (`nrev`) | Deforestation | 264.9 µs | 156.0 µs | 1.76 ms | 53.6 µs | List allocation dominates |
-| Triple Append (`append3`) | Deforestation | 104.7 µs | 68.4 µs | 447.2 µs | 14.9 µs | List allocation dominates |
-| Knuth-Morris-Pratt (KMP) | Specialization | 40.7 µs | 31.0 µs | 274.1 µs | 61.5 µs | Specialized DFA matching |
-| Peano Multiplication | Specialization | 38.0 µs | 33.0 µs | 129.9 µs | 185.2 µs | Unfolded Peano arithmetic |
-| Double Tree Inversion | Deforestation | 112.1 µs | 67.3 µs | 531.0 µs | 509.4 µs | Intermediate tree pruned |
-| Fibonacci Matrix Power | Recurrences | 14.6 µs | 100.4 µs | 3.5 µs | 34.8 µs | $O(N) \to O(\log N)$ exponentiation |
-| Triangular Summation (50M) | Recurrences | ~100 ns | 12.57 ms | ~0 ns | 9.46 ms | Collapsed algebraically to $O(1)$ |
-| Cubic Polynomial Sum (10M) | Recurrences | ~100 ns | 4.00 ms | ~0 ns | 3.58 ms | Collapsed algebraically to $O(1)$ |
-| Sum-Map Stream Fusion (1M) | Stream Fusion | ~100 ns | 393.3 µs | 984.1 µs | 355.5 µs | Fused single-pass loop |
-| Filter-Sum Stream Pipeline | Stream Fusion | 11.7 µs | 45.3 µs | 26.5 µs | 37.0 µs | Deforested intermediate buffer |
+| Naive Reverse (`nrev`) | Deforestation | **248.2 µs** | 265.7 µs | 1.27 ms | 53.9 µs | 1.07x vs Base; list alloc in C faster |
+| Triple Append (`append3`) | Deforestation | **97.3 µs** | 96.5 µs | 442.7 µs | 20.0 µs | 0.99x vs Base; list alloc in C faster |
+| Knuth-Morris-Pratt (`kmp`) | Specialization | **41.2 µs** | 41.6 µs | 226.7 µs | 60.8 µs | **NumLang-SC Wins** (Specialized DFA) |
+| Peano Multiplication | Specialization | **41.1 µs** | 40.2 µs | 130.4 µs | 191.4 µs | **NumLang-SC Wins** (Unfolded Peano) |
+| Double Tree Inversion | Deforestation | **113.9 µs** | 117.0 µs | 541.1 µs | 521.4 µs | **NumLang-SC Wins** (Tree traversal pruned) |
+| Fibonacci Matrix Power | Recurrences | **14.1 µs** | 124.8 µs | 3.4 µs | 34.8 µs | 8.85x vs Base ($O(N) \to O(\log N)$) |
+| Triangular Summation (50M) | Recurrences | **≤ 500 ns\*** | 15.44 ms | ≤ 500 ns\* | 9.54 ms | **Tie (≤500ns)\*** (Both collapse to $O(1)$) |
+| Sum of Squares (10M) | Recurrences | **≤ 500 ns\*** | 4.16 ms | ≤ 500 ns\* | 3.72 ms | **Tie (≤500ns)\*** (Both collapse to $O(1)$) |
+| Sum-Map Stream Fusion (1M) | Stream Fusion | **≤ 500 ns\*** | 412.9 µs | 964.2 µs | 355.4 µs | **NumLang-SC Wins** (>800x loop fusion) |
+| Filter-Sum Stream Pipeline | Stream Fusion | **11.8 µs** | 63.1 µs | 26.5 µs | 37.1 µs | **NumLang-SC Wins** (5.35x vs Base) |
 
-> **Honest Comparison Note**: Both NumLang-SC and LLVM-based compilers (such as `rustc -O`) collapse constant-bound arithmetic loops like Triangular Summation down to instantaneous $O(1)$ scalar answers at compile time using scalar evolution (SCEV). NumLang performs this transformation at the SSA process tree level via difference recurrence solving, independent of backend codegen.
+> **Honest Comparison Note**: Both NumLang-SC and LLVM-based compilers (`rustc -C opt-level=3`) collapse constant-bound arithmetic loops like Triangular Summation down to instantaneous $O(1)$ scalar answers at compile time using scalar evolution (SCEV). Entries marked `≤ 500 ns*` evaluate within the hardware performance counter quantization floor ($\le 500$ ns) and are classified transparently as ties rather than claimed as numeric wins.
 
 ---
 
