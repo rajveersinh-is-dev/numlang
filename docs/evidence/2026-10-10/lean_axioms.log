@@ -1,0 +1,30 @@
+--- Axiom output for C:\Users\davea\.gemini\antigravity\scratch\numlang\lean/AxiomCheck.lean ---
+'Supercompiler.const_fold_stmt_equiv' depends on axioms: [propext, Quot.sound]
+'Supercompiler.drive_step_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.driving_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.fold_step_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.distillation_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.refinement_pruning_sound' depends on axioms: [propext]
+'Supercompiler.mrsc_selection_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.noop_removal_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.eta_reduction_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.function_transformed_preserves_semantics' depends on axioms: [propext, Quot.sound]
+'Supercompiler.supercompiler_sound' depends on axioms: [propext, Quot.sound]
+--- Axiom output for C:\Users\davea\.gemini\antigravity\scratch\numlang\proof/AxiomCheck.lean ---
+'NumLang.driving_correctness' depends on axioms: [propext]
+'NumLang.driving_soundness' depends on axioms: [propext]
+'NumLang.driving_equiv' depends on axioms: [propext]
+'NumLang.unfold_call_equiv' depends on axioms: [propext]
+'NumLang.folding_equiv' depends on axioms: [propext]
+'NumLang.generalization_equiv' depends on axioms: [propext]
+'NumLang.smallstep_const_fold' does not depend on any axioms
+'NumLang.smallstep_branch_prune_true' does not depend on any axioms
+'NumLang.smallstep_call_unfold' does not depend on any axioms
+'NumLang.emb_refl' does not depend on any axioms
+'NumLang.emb_trans' does not depend on any axioms
+'NumLang.pigeonhole_seq' depends on axioms: [propext, Classical.choice, Quot.sound]
+'NumLang.finite_alphabet_good_sequence' depends on axioms: [propext, Classical.choice, Quot.sound]
+'NumLang.finite_configurations_whistle_terminates' depends on axioms: [propext, Classical.choice, Quot.sound]
+'NumLang.no_infinite_whistle_free_path' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+AXIOM CHECK PASSED: All headline theorems depend only on foundational Lean axioms.

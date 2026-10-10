@@ -170,6 +170,7 @@ pub struct Cli {
 
     #[arg(
         long = "verify-equivalence",
+        alias = "verify",
         help = "Perform formal translation validation verifying semantic equivalence"
     )]
     pub verify_equivalence: bool,

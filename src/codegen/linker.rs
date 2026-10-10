@@ -263,34 +263,22 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 "#;
 
-pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
-    let linker = find_windows_linker().ok_or(LinkerError::LinkerNotFound)?;
-    let sdk_dirs = find_windows_sdk_lib_dirs();
-    if sdk_dirs.is_empty() {
-        return Err(LinkerError::WindowsSdkNotFound);
-    }
-
-    let bench_mode = std::env::var("NUMLANG_BENCH").is_ok();
-    let bench_obj_path = if bench_mode {
-        let p = obj_path.with_file_name(format!("entry_bench_{}.obj", std::process::id()));
-        let c_path = obj_path.with_file_name(format!("entry_bench_{}.c", std::process::id()));
-        let _ = std::fs::write(&c_path, ENTRY_BENCH_C);
-        let ok = Command::new("clang")
-            .args(["-c", "-O2"])
-            .arg(&c_path)
-            .arg("-o")
-            .arg(&p)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        let _ = std::fs::remove_file(&c_path);
-        if ok {
-            Some(p)
-        } else {
-            // Fallback: compile Rust equivalent with rustc (guaranteed to exist in any rust toolchain)
-            let rs_path = obj_path.with_file_name(format!("entry_bench_{}.rs", std::process::id()));
-            let _ = std::fs::write(&rs_path, ENTRY_BENCH_RS);
-            let rustc_ok = Command::new("rustc")
+fn get_runtime_stub_obj() -> Option<&'static Path> {
+    static STUB_PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    STUB_PATH
+        .get_or_init(|| {
+            let temp_dir = std::env::temp_dir();
+            let p = temp_dir.join(format!("numlang_runtime_stub_{}.obj", std::process::id()));
+            let rs_path = temp_dir.join(format!("numlang_runtime_stub_{}.rs", std::process::id()));
+            if std::fs::write(
+                &rs_path,
+                "#![no_std]\n#![no_main]\n#[no_mangle]\npub extern \"C\" fn __nl_read_i64() -> i64 { 0 }\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n",
+            )
+            .is_err()
+            {
+                return None;
+            }
+            let ok = Command::new("rustc")
                 .args([
                     "-O",
                     "-C",
@@ -305,36 +293,76 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
                 .map(|s| s.success())
                 .unwrap_or(false);
             let _ = std::fs::remove_file(&rs_path);
-            if rustc_ok {
+            if ok && p.exists() {
                 Some(p)
             } else {
                 None
             }
-        }
-    } else {
-        let p = obj_path.with_file_name(format!("runtime_stub_{}.obj", std::process::id()));
-        let rs_path = obj_path.with_file_name(format!("runtime_stub_{}.rs", std::process::id()));
-        let _ = std::fs::write(&rs_path, "#![no_std]\n#![no_main]\n#[no_mangle]\npub extern \"C\" fn __nl_read_i64() -> i64 { 0 }\n#[panic_handler]\nfn panic(_: &core::panic::PanicInfo) -> ! { loop {} }\n");
-        let ok = Command::new("rustc")
-            .args([
-                "-O",
-                "-C",
-                "panic=abort",
-                "--crate-type=staticlib",
-                "--emit=obj",
-            ])
-            .arg(&rs_path)
-            .arg("-o")
-            .arg(&p)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        let _ = std::fs::remove_file(&rs_path);
-        if ok {
-            Some(p)
-        } else {
+        })
+        .as_deref()
+}
+
+fn get_entry_bench_obj() -> Option<&'static Path> {
+    static BENCH_PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    BENCH_PATH
+        .get_or_init(|| {
+            let temp_dir = std::env::temp_dir();
+            let p = temp_dir.join(format!("numlang_entry_bench_{}.obj", std::process::id()));
+            let c_path = temp_dir.join(format!("numlang_entry_bench_{}.c", std::process::id()));
+            if std::fs::write(&c_path, ENTRY_BENCH_C).is_ok() {
+                let ok = Command::new("clang")
+                    .args(["-c", "-O2"])
+                    .arg(&c_path)
+                    .arg("-o")
+                    .arg(&p)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                let _ = std::fs::remove_file(&c_path);
+                if ok && p.exists() {
+                    return Some(p);
+                }
+            }
+
+            let rs_path = temp_dir.join(format!("numlang_entry_bench_{}.rs", std::process::id()));
+            if std::fs::write(&rs_path, ENTRY_BENCH_RS).is_ok() {
+                let rustc_ok = Command::new("rustc")
+                    .args([
+                        "-O",
+                        "-C",
+                        "panic=abort",
+                        "--crate-type=staticlib",
+                        "--emit=obj",
+                    ])
+                    .arg(&rs_path)
+                    .arg("-o")
+                    .arg(&p)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                let _ = std::fs::remove_file(&rs_path);
+                if rustc_ok && p.exists() {
+                    return Some(p);
+                }
+            }
+
             None
-        }
+        })
+        .as_deref()
+}
+
+pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError> {
+    let linker = find_windows_linker().ok_or(LinkerError::LinkerNotFound)?;
+    let sdk_dirs = find_windows_sdk_lib_dirs();
+    if sdk_dirs.is_empty() {
+        return Err(LinkerError::WindowsSdkNotFound);
+    }
+
+    let bench_mode = std::env::var("NUMLANG_BENCH").is_ok();
+    let runtime_obj_path = if bench_mode {
+        get_entry_bench_obj()
+    } else {
+        get_runtime_stub_obj()
     };
 
     let mut cmd = match linker {
@@ -353,8 +381,8 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     cmd.arg("/opt:icf");
     cmd.arg("/incremental:no");
     cmd.arg("/STACK:16777216,1048576");
-    if let Some(ref bp) = bench_obj_path {
-        cmd.arg(bp);
+    if let Some(ro) = runtime_obj_path {
+        cmd.arg(ro);
     }
     cmd.arg(obj_path);
     cmd.arg(format!("/out:{}", exe_path.display()));
@@ -369,10 +397,6 @@ pub fn link_windows(obj_path: &Path, exe_path: &Path) -> Result<(), LinkerError>
     let output = cmd.output().map_err(|e| LinkerError::LinkFailed {
         message: e.to_string(),
     })?;
-
-    if let Some(bp) = bench_obj_path {
-        let _ = std::fs::remove_file(bp);
-    }
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
