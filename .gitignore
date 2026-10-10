@@ -15,3 +15,6 @@ _panic.nl
 graphify-out/
 bench/data/showdown_results.csv
 !bench/data/showdown_results_sample.csv
+.planning/
+scratch/
+rebuttal/
