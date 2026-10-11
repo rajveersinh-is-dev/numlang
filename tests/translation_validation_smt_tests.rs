@@ -6,14 +6,14 @@ use numlang::mir::supercompiler::validate::{
     check_satisfiability, verify_formula_validity, BoolFormula, BvExpr, KInductionValidator,
     LoopInductionCandidate, SmtLib2Printer, SmtResult, TranslationValidator, ValidationError,
 };
-use numlang::mir::Terminator;
-use numlang::typecheck::typed_ast::TypedLiteral;
 use numlang::mir::supercompiler::{
     supercompile_mir_program_with_mode, verify_program_equivalence, SupercompileMode,
 };
+use numlang::mir::Terminator;
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
+use numlang::typecheck::typed_ast::TypedLiteral;
 
 fn get_mir(source: &str) -> MirProgram {
     let tokens = tokenize(source).expect("Tokenize failed");
@@ -545,7 +545,10 @@ fn test_translation_validator_catches_10_distinct_mutations() {
         .unwrap();
 
     let mut self_validator = TranslationValidator::new(orig_func, orig_func);
-    assert!(self_validator.verify().is_ok(), "Self-equivalence must hold");
+    assert!(
+        self_validator.verify().is_ok(),
+        "Self-equivalence must hold"
+    );
 
     let mut mutations_caught = 0;
 
@@ -747,4 +750,3 @@ fn test_translation_validator_catches_10_distinct_mutations() {
     );
     println!("TranslationValidator successfully caught all 10 distinct mutations!");
 }
-
