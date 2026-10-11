@@ -226,3 +226,25 @@ ghcup install cabal
 cabal update && cabal install hosc
 ```
 Once installed on the system PATH, the test harness will automatically detect them, compile the `.hs` and `.hosc` files, and include them in the live showdown table.
+
+---
+
+## 7. Primary Literature References
+
+The canonical benchmarks and transformation algorithms in this showdown originate from foundational literature:
+
+1. **Deforestation & Program Transformation**:
+   - Wadler, P. (1990). "Deforestation: Transforming Programs without Creating Trees." *Theoretical Computer Science*, 73(2), 231–248. [Canonical `nrev`, `append3`, `tree_flip` benchmarks]
+   - Turchin, V. F. (1986). "The Concept of a Supercompiler." *ACM Transactions on Programming Languages and Systems (TOPLAS)*, 8(3), 292–325. [Driving, knot tying, residual program extraction]
+2. **Program Distillation**:
+   - Hamilton, G. W. (2007). "Distillation: Extracting the Essence of Programs." In *Proceedings of the 2007 ACM SIGPLAN Symposium on Partial Evaluation and Program Manipulation (PEPM '07)*, pp. 61–70. ACM. [Distillation across distinct call paths]
+3. **Multi-Result Supercompilation (MRSC)**:
+   - Glück, R., & Sørensen, M. H. (1995). "An Algorithm of Generalization in the Presence of Free Variables in Positive Supercompilation." In *Logic Programming*, pp. 465–479. MIT Press.
+   - Klimov, A. V. (2008). "Generalization and Generalization Strategies in Supercompilation." In *Proc. First Int. Workshop on Metacomputation*, pp. 83–104.
+   - Klyuchnikov, I. G., & Romanenko, S. (2012). "MRSC: A Generic Supercompiler Framework." In *Proc. 4th Int. Workshop on Metacomputation*, pp. 114–129. [Multi-result graph generators and configuration search]
+4. **Well-Quasi-Orderings & Termination Whistles**:
+   - Higman, G. (1952). "Ordering by Divisibility in Abstract Algebras." *Proceedings of the London Mathematical Society*, s3-2(1), 326–336.
+   - Kruskal, J. B. (1960). "Well-quasi-ordering, the Tree Theorem, and Vazsonyi's Conjecture." *Transactions of the American Mathematical Society*, 95(2), 210–225. [Homeomorphic embedding preorders for termination guarantees]
+5. **Practical Supercompilation & Stream Fusion**:
+   - Mitchell, N. (2010). "Rethinking Supercompilation." In *Proc. 15th ACM SIGPLAN Int. Conf. on Functional Programming (ICFP '10)*, pp. 259–270. ACM.
+   - Coutts, D., Leshchinskiy, R., & Stewart, D. (2007). "Stream Fusion: From Lists to Streams to Nothing at All." In *Proc. 12th ACM SIGPLAN Int. Conf. on Functional Programming (ICFP '07)*, pp. 315–326. ACM. [`sum_map`, `stream_take` benchmarks]
