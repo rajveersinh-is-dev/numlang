@@ -135,7 +135,31 @@ def check_claims_ledger():
                 check=False
             )
             if res.returncode != 0 or res.stdout.strip() != "commit":
-                errors.append(f"{cid}: commit '{commit_hash}' not found as a commit object in git repository")
+                # In shallow CI clones, attempt to fetch if commit object is missing
+                is_shallow = subprocess.run(
+                    ["git", "rev-parse", "--is-shallow-repository"],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False
+                ).stdout.strip() == "true"
+                if is_shallow:
+                    subprocess.run(
+                        ["git", "fetch", "--depth=50", "origin", commit_hash],
+                        cwd=REPO_ROOT,
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    res = subprocess.run(
+                        ["git", "cat-file", "-t", commit_hash],
+                        cwd=REPO_ROOT,
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                if res.returncode != 0 or res.stdout.strip() != "commit":
+                    errors.append(f"{cid}: commit '{commit_hash}' not found as a commit object in git repository")
 
         # Check CLM-07 status
         if cid == "CLM-07":
