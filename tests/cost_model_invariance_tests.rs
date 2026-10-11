@@ -17,23 +17,71 @@ fn compile_to_mir(source: &str) -> numlang::mir::lower::MirProgram {
 fn test_cost_model_never_worse_than_baseline_invariant() {
     let benchmarks = [
         ("nrev", include_str!("../bench/showdown/numlang/nrev.nl")),
-        ("append3", include_str!("../bench/showdown/numlang/append3.nl")),
+        (
+            "append3",
+            include_str!("../bench/showdown/numlang/append3.nl"),
+        ),
         ("kmp", include_str!("../bench/showdown/numlang/kmp.nl")),
-        ("peano_mul", include_str!("../bench/showdown/numlang/peano_mul.nl")),
-        ("tree_flip", include_str!("../bench/showdown/numlang/tree_flip.nl")),
-        ("fib_matrix", include_str!("../bench/showdown/numlang/fib_matrix.nl")),
-        ("tri_sum", include_str!("../bench/showdown/numlang/tri_sum.nl")),
-        ("cubic_sum", include_str!("../bench/showdown/numlang/cubic_sum.nl")),
-        ("pow2_mod", include_str!("../bench/showdown/numlang/pow2_mod.nl")),
-        ("hofstadter", include_str!("../bench/showdown/numlang/hofstadter.nl")),
-        ("tri_sum_dyn", include_str!("../bench/showdown/numlang/tri_sum_dyn.nl")),
-        ("cubic_sum_dyn", include_str!("../bench/showdown/numlang/cubic_sum_dyn.nl")),
-        ("fib_matrix_dyn", include_str!("../bench/showdown/numlang/fib_matrix_dyn.nl")),
-        ("pow2_mod_dyn", include_str!("../bench/showdown/numlang/pow2_mod_dyn.nl")),
-        ("compose5", include_str!("../bench/showdown/numlang/compose5.nl")),
-        ("map_map", include_str!("../bench/showdown/numlang/map_map.nl")),
-        ("sum_map", include_str!("../bench/showdown/numlang/sum_map.nl")),
-        ("stream_take", include_str!("../bench/showdown/numlang/stream_take.nl")),
+        (
+            "peano_mul",
+            include_str!("../bench/showdown/numlang/peano_mul.nl"),
+        ),
+        (
+            "tree_flip",
+            include_str!("../bench/showdown/numlang/tree_flip.nl"),
+        ),
+        (
+            "fib_matrix",
+            include_str!("../bench/showdown/numlang/fib_matrix.nl"),
+        ),
+        (
+            "tri_sum",
+            include_str!("../bench/showdown/numlang/tri_sum.nl"),
+        ),
+        (
+            "cubic_sum",
+            include_str!("../bench/showdown/numlang/cubic_sum.nl"),
+        ),
+        (
+            "pow2_mod",
+            include_str!("../bench/showdown/numlang/pow2_mod.nl"),
+        ),
+        (
+            "hofstadter",
+            include_str!("../bench/showdown/numlang/hofstadter.nl"),
+        ),
+        (
+            "tri_sum_dyn",
+            include_str!("../bench/showdown/numlang/tri_sum_dyn.nl"),
+        ),
+        (
+            "cubic_sum_dyn",
+            include_str!("../bench/showdown/numlang/cubic_sum_dyn.nl"),
+        ),
+        (
+            "fib_matrix_dyn",
+            include_str!("../bench/showdown/numlang/fib_matrix_dyn.nl"),
+        ),
+        (
+            "pow2_mod_dyn",
+            include_str!("../bench/showdown/numlang/pow2_mod_dyn.nl"),
+        ),
+        (
+            "compose5",
+            include_str!("../bench/showdown/numlang/compose5.nl"),
+        ),
+        (
+            "map_map",
+            include_str!("../bench/showdown/numlang/map_map.nl"),
+        ),
+        (
+            "sum_map",
+            include_str!("../bench/showdown/numlang/sum_map.nl"),
+        ),
+        (
+            "stream_take",
+            include_str!("../bench/showdown/numlang/stream_take.nl"),
+        ),
     ];
 
     let cost_model = MrscCostModel::new();
@@ -69,5 +117,8 @@ fn test_cost_model_never_worse_than_baseline_invariant() {
         "Expected at least 18 functions checked, got {}",
         total_funcs_checked
     );
-    println!("Verified cost model invariant across all {} benchmark functions.", total_funcs_checked);
+    println!(
+        "Verified cost model invariant across all {} benchmark functions.",
+        total_funcs_checked
+    );
 }

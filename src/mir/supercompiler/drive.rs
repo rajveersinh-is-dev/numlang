@@ -1763,7 +1763,12 @@ impl<'a> SupercompilerDriver<'a> {
         let mut bound_term = None;
         let mut exit_target = None;
         if let Some(block) = self.block_map.get(&curr.block) {
-            if let Terminator::BranchIf { condition, else_target, .. } = &block.terminator {
+            if let Terminator::BranchIf {
+                condition,
+                else_target,
+                ..
+            } = &block.terminator
+            {
                 exit_target = Some(else_target.clone());
                 // First look for the statement defining condition in this block
                 for stmt in &block.statements {
