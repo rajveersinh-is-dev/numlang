@@ -1,0 +1,74 @@
+=== PHASE A BENCHMARK EVIDENCE LOG ===
+
+BENCHMARK: tri_sum (bench/showdown/numlang/tri_sum.nl)
+Base stdout:
+1250000025000000
+COMPUTE_NS: 21126300
+Base exit: 64
+SC stdout:
+1250000025000000
+COMPUTE_NS: 10600
+SC exit: 64
+Timing: Base = 21126300 ns (21126.3 us), SC = 10600 ns (10.6 us), Speedup = 1993.05x
+--------------------------------------------------
+
+BENCHMARK: tri_sum_dyn (bench/showdown/numlang/tri_sum_dyn.nl)
+Base stdout:
+1250000025000000
+COMPUTE_NS: 20968300
+Base exit: 64
+SC stdout:
+1250000025000000
+COMPUTE_NS: 20867400
+SC exit: 64
+Timing: Base = 20968300 ns (20968.3 us), SC = 20867400 ns (20867.4 us), Speedup = 1.00x
+--------------------------------------------------
+
+BENCHMARK: cubic_sum (bench/showdown/numlang/cubic_sum.nl)
+Base stdout:
+1291990006563070912
+COMPUTE_NS: 4536200
+Base exit: 192
+SC stdout:
+1291990006563070912
+COMPUTE_NS: 12500
+SC exit: 192
+Timing: Base = 4536200 ns (4536.2 us), SC = 12500 ns (12.5 us), Speedup = 362.90x
+--------------------------------------------------
+
+BENCHMARK: sum_map (bench/showdown/numlang/sum_map.nl)
+Base stdout:
+333333833333500000
+COMPUTE_NS: 464900
+Base exit: 96
+SC stdout:
+333333833333500000
+COMPUTE_NS: 11300
+SC exit: 96
+Timing: Base = 464900 ns (464.9 us), SC = 11300 ns (11.3 us), Speedup = 41.14x
+--------------------------------------------------
+
+BENCHMARK: fib_matrix (bench/showdown/numlang/fib_matrix.nl)
+Base stdout:
+334154286
+COMPUTE_NS: 147300
+Base exit: 46
+SC stdout:
+334154286
+COMPUTE_NS: 14000
+SC exit: 46
+Timing: Base = 147300 ns (147.3 us), SC = 14000 ns (14.0 us), Speedup = 10.52x
+--------------------------------------------------
+
+BENCHMARK: stream_take (bench/showdown/numlang/stream_take.nl)
+Base stdout:
+9600000
+COMPUTE_NS: 60100
+Base exit: 0
+SC stdout:
+9600000
+COMPUTE_NS: 69700
+SC exit: 0
+Timing: Base = 60100 ns (60.1 us), SC = 69700 ns (69.7 us), Speedup = 0.86x
+--------------------------------------------------
+

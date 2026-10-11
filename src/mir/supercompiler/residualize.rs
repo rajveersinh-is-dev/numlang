@@ -78,6 +78,17 @@ pub fn residualize_process_tree_parallel(
         let mut stmts = Vec::new();
         let phi_remap = node_preds.get(&node.id).cloned().unwrap_or_default();
 
+        for &effect in &node.side_effects {
+            emit_term_eval(
+                effect,
+                &tree.interner,
+                &mut stmts,
+                &mut new_locals,
+                &mut next_temp_id,
+                &phi_remap,
+            );
+        }
+
         // If this is a return node
         if let Some(ret_term) = node.return_term {
             let ret_place = emit_term_eval(

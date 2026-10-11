@@ -46,6 +46,7 @@ pub struct ProcessNode {
     pub edges: Vec<ProcessEdge>,
     pub return_term: Option<SymTermId>,
     pub overflow: bool,
+    pub side_effects: Vec<SymTermId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -399,6 +400,7 @@ impl<'a> SupercompilerDriver<'a> {
             edges: Vec::new(),
             return_term: None,
             overflow: false,
+            side_effects: Vec::new(),
         });
         self.parents.push(None);
         id
@@ -417,6 +419,7 @@ impl<'a> SupercompilerDriver<'a> {
             edges: Vec::new(),
             return_term: None,
             overflow: false,
+            side_effects: Vec::new(),
         });
         self.parents.push(Some(parent_id));
         id
@@ -481,7 +484,19 @@ impl<'a> SupercompilerDriver<'a> {
         // Step 1: Drive all statements in current block sequentially
         let mut working_state = current_state;
         for stmt in &statements {
+            let is_impure = match stmt {
+                Statement::Assign(_, Rvalue::Call(callee, _)) => {
+                    callee == "println" || callee == "print" || callee == "exit"
+                }
+                _ => false,
+            };
             self.drive_statement(stmt, &mut working_state);
+            if is_impure {
+                let Statement::Assign(dest, _) = stmt;
+                if let Some(t) = working_state.get_value(dest) {
+                    self.nodes[node_id.0].side_effects.push(t);
+                }
+            }
         }
 
         // Step 2: Handle block terminator
@@ -1746,8 +1761,10 @@ impl<'a> SupercompilerDriver<'a> {
         let mut any_solved = false;
 
         let mut bound_term = None;
+        let mut exit_target = None;
         if let Some(block) = self.block_map.get(&curr.block) {
-            if let Terminator::BranchIf { condition, .. } = &block.terminator {
+            if let Terminator::BranchIf { condition, else_target, .. } = &block.terminator {
+                exit_target = Some(else_target.clone());
                 // First look for the statement defining condition in this block
                 for stmt in &block.statements {
                     if let Statement::Assign(dest, Rvalue::BinaryOp(op, l, r)) = stmt {
@@ -1940,33 +1957,6 @@ impl<'a> SupercompilerDriver<'a> {
                     this_solved = true;
                     solved_places.insert(place.local.clone());
                 }
-            } else if let (Some(t_anc), Some(t_curr)) =
-                (anc.get_value(place), curr.get_value(place))
-            {
-                if t_anc != t_curr {
-                    if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
-                        (self.interner.get(t_anc), self.interner.get(t_curr))
-                    {
-                        let step = v1 - v0;
-                        if step != 0 {
-                            let samples = vec![
-                                *v0,
-                                *v1,
-                                v1 + step,
-                                v1 + step + step,
-                                v1 + step + step + step,
-                            ];
-                            if let Some(closed_form) =
-                                solve_recurrence(&samples, n_term, &mut self.interner)
-                            {
-                                solved_state.set_value(place.clone(), closed_form);
-                                any_solved = true;
-                                this_solved = true;
-                                solved_places.insert(place.local.clone());
-                            }
-                        }
-                    }
-                }
             }
 
             if !this_solved && history.len() >= 4 {
@@ -2063,6 +2053,9 @@ impl<'a> SupercompilerDriver<'a> {
 
         let mut mutating_places = Vec::new();
         for place in &self.active_places {
+            if place.local.starts_with("_t") || place.local.starts_with("_sc") {
+                continue;
+            }
             if let (Some(t_anc), Some(t_curr)) = (anc.get_value(place), curr.get_value(place)) {
                 if t_anc != t_curr {
                     mutating_places.push(&place.local);
@@ -2075,6 +2068,9 @@ impl<'a> SupercompilerDriver<'a> {
             .all(|local| solved_places.contains(*local));
 
         if any_solved && all_mutating_solved {
+            if let Some(exit_bb) = exit_target {
+                solved_state.block = exit_bb;
+            }
             RecurrenceResult::Solved(Box::new(solved_state))
         } else {
             RecurrenceResult::UnsolvableNoPattern
@@ -2303,11 +2299,8 @@ impl<'a> SupercompilerDriver<'a> {
                                             }
                                         }
                                         BinaryOp::Mod => {
-                                            if rv != 0 {
-                                                Some(lv % rv)
-                                            } else {
-                                                None
-                                            }
+                                            sim_success = false;
+                                            break;
                                         }
                                         BinaryOp::BitAnd => Some(lv & rv),
                                         BinaryOp::BitOr => Some(lv | rv),
