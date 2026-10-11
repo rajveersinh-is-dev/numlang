@@ -202,7 +202,7 @@ pub fn supercompile_mir_program_with_cache(
                     }
                 }
 
-                let (new_func, stats) = supercompile_mir_function_with_program_options(
+                let (new_func, mut stats) = supercompile_mir_function_with_program_options(
                     func,
                     &funcs_snapshot,
                     parallel_residualize,
@@ -222,17 +222,23 @@ pub fn supercompile_mir_program_with_cache(
                     .blocks
                     .iter()
                     .any(|b| matches!(b.terminator, Terminator::Unreachable));
-                let mut stats = stats;
+
+                let cost_model = MrscCostModel::new();
+                let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+                let sc_cost = cost_model.evaluate_function(&new_func, &stats);
+                let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
+                let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
+                let cost_regression = sc_score > base_score;
+
                 if !has_uncollapsed_array_loops
                     && !code_size_bloat
                     && !uncollapsed_knot
                     && !has_unreachable
+                    && !cost_regression
                 {
                     *func = new_func;
                 } else {
-                    stats.residual_block_count = func.blocks.len();
-                    stats.residual_stmt_count =
-                        func.blocks.iter().map(|b| b.statements.len()).sum();
+                    reset_reverted_stats(&mut stats, func);
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -278,9 +284,17 @@ pub fn supercompile_mir_program_with_cache(
                     .blocks
                     .iter()
                     .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let cost_model = MrscCostModel::new();
+                let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+                let sc_cost = cost_model.evaluate_function(&new_func, &stats);
+                let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
+                let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
+                let cost_regression = sc_score > base_score;
+
                 if !has_uncollapsed_array_loops
                     && !uncollapsed_knot
                     && !has_unreachable
+                    && !cost_regression
                     && (is_profitable(&stats, budget, &tree)
                         || (tree.nodes.len() < budget && folds > 0))
                 {
@@ -294,9 +308,7 @@ pub fn supercompile_mir_program_with_cache(
                         new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
                 } else {
-                    stats.residual_block_count = func.blocks.len();
-                    stats.residual_stmt_count =
-                        func.blocks.iter().map(|b| b.statements.len()).sum();
+                    reset_reverted_stats(&mut stats, func);
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -323,9 +335,17 @@ pub fn supercompile_mir_program_with_cache(
                     .blocks
                     .iter()
                     .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let cost_model = MrscCostModel::new();
+                let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+                let sc_cost = cost_model.evaluate_function(&best_res, &stats);
+                let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
+                let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
+                let cost_regression = sc_score > base_score;
+
                 if !has_uncollapsed_array_loops
                     && !uncollapsed_knot
                     && !has_unreachable
+                    && !cost_regression
                     && is_profitable(&stats, budget, &best_tree)
                 {
                     let mut new_func = best_res;
@@ -339,9 +359,7 @@ pub fn supercompile_mir_program_with_cache(
                         new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
                 } else {
-                    stats.residual_block_count = func.blocks.len();
-                    stats.residual_stmt_count =
-                        func.blocks.iter().map(|b| b.statements.len()).sum();
+                    reset_reverted_stats(&mut stats, func);
                 }
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
@@ -393,7 +411,14 @@ pub fn supercompile_mir_program_with_cache(
                     .blocks
                     .iter()
                     .any(|b| matches!(b.terminator, Terminator::Unreachable));
-                if !has_unreachable {
+                let cost_model = MrscCostModel::new();
+                let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+                let sc_cost = cost_model.evaluate_function(&best_res, &stats);
+                let base_score = cost_model.score(&base_cost, mrsc_obj);
+                let sc_score = cost_model.score(&sc_cost, mrsc_obj);
+                let cost_regression = sc_score > base_score;
+
+                if !has_unreachable && !cost_regression {
                     let mut new_func = best_res;
                     let _stmts_removed = compact_mir_function(&mut new_func);
                     let _sr = strength_reduce_mir_function(&mut new_func);
@@ -405,9 +430,7 @@ pub fn supercompile_mir_program_with_cache(
                         new_func.blocks.iter().map(|b| b.statements.len()).sum();
                     *func = new_func;
                 } else {
-                    stats.residual_block_count = func.blocks.len();
-                    stats.residual_stmt_count =
-                        func.blocks.iter().map(|b| b.statements.len()).sum();
+                    reset_reverted_stats(&mut stats, func);
                 }
 
                 total_stats.nodes_explored += stats.nodes_explored;
@@ -438,6 +461,16 @@ fn is_profitable(stats: &SupercompilerStats, budget: usize, tree: &ProcessTree) 
             || stats.knots_tied > 0
             || stats.calls_inlined > 0
             || stats.sc_bce_eliminated > 0)
+}
+
+fn reset_reverted_stats(stats: &mut SupercompilerStats, func: &MirFunction) {
+    stats.residual_block_count = func.blocks.len();
+    stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
+    stats.knots_tied = 0;
+    stats.loops_collapsed = 0;
+    stats.branches_pruned = 0;
+    stats.calls_inlined = 0;
+    stats.sc_bce_eliminated = 0;
 }
 
 fn func_is_impure(func: &MirFunction) -> bool {
@@ -493,8 +526,7 @@ pub fn supercompile_mir_function_with_stats(
     let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
     if !is_profitable(&stats, budget, &tree) || uncollapsed_knot {
-        stats.residual_block_count = func.blocks.len();
-        stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
+        reset_reverted_stats(&mut stats, func);
         return (func.clone(), stats);
     }
     let (_dead, _deduped) = compact_process_tree(&mut tree);
@@ -503,6 +535,15 @@ pub fn supercompile_mir_function_with_stats(
     let _sr = strength_reduce_mir_function(&mut new_func);
     if _sr > 0 {
         compact_mir_function(&mut new_func);
+    }
+    let cost_model = MrscCostModel::new();
+    let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+    let sc_cost = cost_model.evaluate_function(&new_func, &stats);
+    let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
+    let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
+    if sc_score > base_score {
+        reset_reverted_stats(&mut stats, func);
+        return (func.clone(), stats);
     }
     stats.residual_block_count = new_func.blocks.len();
     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();
@@ -530,8 +571,7 @@ pub fn supercompile_mir_function_with_program_options(
     let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
     if !is_profitable(&stats, budget, &tree) || uncollapsed_knot {
-        stats.residual_block_count = func.blocks.len();
-        stats.residual_stmt_count = func.blocks.iter().map(|b| b.statements.len()).sum();
+        reset_reverted_stats(&mut stats, func);
         return (func.clone(), stats);
     }
     let (_dead, _deduped) = compact_process_tree(&mut tree);
@@ -540,6 +580,15 @@ pub fn supercompile_mir_function_with_program_options(
     let _sr = strength_reduce_mir_function(&mut new_func);
     if _sr > 0 {
         compact_mir_function(&mut new_func);
+    }
+    let cost_model = MrscCostModel::new();
+    let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
+    let sc_cost = cost_model.evaluate_function(&new_func, &stats);
+    let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
+    let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
+    if sc_score > base_score {
+        reset_reverted_stats(&mut stats, func);
+        return (func.clone(), stats);
     }
     stats.residual_block_count = new_func.blocks.len();
     stats.residual_stmt_count = new_func.blocks.iter().map(|b| b.statements.len()).sum();

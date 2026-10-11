@@ -702,6 +702,15 @@ impl MrscCostModel {
 
     /// Compute the 4-dimensional cost vector for a candidate residual and its process tree.
     pub fn evaluate(&self, residual: &MirFunction, tree: &ProcessTree) -> MrscCostVector {
+        self.evaluate_function(residual, &tree.stats)
+    }
+
+    /// Compute the 4-dimensional cost vector for any MIR function given supercompiler stats.
+    pub fn evaluate_function(
+        &self,
+        residual: &MirFunction,
+        stats: &crate::mir::supercompiler::drive::SupercompilerStats,
+    ) -> MrscCostVector {
         let mut allocation_count = 0;
         let mut max_live_registers = 0;
 
@@ -756,8 +765,8 @@ impl MrscCostModel {
                 _ => {}
             }
         }
-        dynamic_steps += (tree.stats.knots_tied * 10) as f64;
-        if tree.stats.loops_collapsed > 0 {
+        dynamic_steps += (stats.knots_tied * 10) as f64;
+        if stats.loops_collapsed > 0 {
             dynamic_steps = 1.0;
         }
 
