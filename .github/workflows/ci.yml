@@ -44,3 +44,6 @@ jobs:
 
       - name: Run Hostile Claims Linter
         run: python scripts/claims_lint.py
+
+      - name: Run CI Runtime Regression Guard
+        run: python scripts/ci_regression_guard.py
