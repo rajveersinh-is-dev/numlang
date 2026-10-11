@@ -1,0 +1,38 @@
+<USER_REQUEST>
+/goal NUMLANG ROUND 2: RECONCILE CLAIMS WITH EVIDENCE
+Repository: https://github.com/rajveersinh-is-dev/numlang
+
+You are the ORCHESTRATOR again. Round 1 added CI, CLAIMS_LEDGER.md, LEAN_STATUS.md, INTEGRITY_RULES.md and softened several claims. A hostile re-audit of the new README, ledger and Lean status found the problems below. They come from external reading only (no access to src/, tests/, Actions runs, or the possibly stale SHOWDOWN.md), so treat each as a hypothesis: verify first (confirmed / refuted / partial, with file:line or command-output evidence), then fix.
+
+RULES (unchanged from Round 1, restated)
+- Tag every fact [READ path:line] / [RAN output saved to docs/evidence/] / [FETCHED url] / [UNVERIFIED]. [UNVERIFIED] never appears in public docs as fact.
+- Never invent numbers, versions, Lean names, paths, citations. All numbers in README/SHOWDOWN come from scripts reading raw CSVs.
+- Never green a check by weakening it (no ignored tests, loosened tolerances, #[allow], sorry, new axioms, edited expected outputs). Reproduce before fixing: failing test, fix, passing test.
+- No optimization may match names, benchmark names, or the exact AST shape of one benchmark; no behavior switches on env/cfg/benchmark mode.
+- Done = failing-then-passing test + clean-checkout fmt/clippy -D warnings/test/lake build + differential check (interpreter vs baseline vs SC) + mutation check on touched code + no-cheating grep + docs and ledger updated. Otherwise Partial.
+- Sub-agents with owned files and separate worktrees: Auditor (read-only), Compiler agents, Test/Fuzz, Lean, Benchmark (ONLY agent producing timings; runs alone on an idle machine), Docs (never types a number), Adversarial Reviewer (not the author; read-only). The orchestrator re-runs commands itself and never trusts summaries. Disagreements are settled by experiment.
+- After each phase write docs/audits/round2-phase-N.md: 5 weakest points of your own diff each attacked by an experiment, unverified items, assumptions, tempting shortcut
+<truncated 7955 bytes>
+r, a name-matched optimization. Diff their findings against the ledger; every mismatch is a bug. Publish docs/FINAL_REPORT.md (confirmed/refuted/fixed/open, claims removed or downgraded, exact reproduction commands, what is NOT done). Finish only with zero unresolved critical findings.
+
+OUTPUT FORMAT
+Per phase: short plan, diff summary, commands run with results (or evidence paths), claims removed/downgraded, self-audit, and Done/Partial/Not done with reasons. Never mark anything complete without a test, CI job or generated artifact proving it.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-11T16:02:56+05:30.
+
+The user's current state is as follows:
+Active Document: c:\Users\davea\.gemini\antigravity\scratch\numlang\paper\book\audit_pdf.py (LANGUAGE_PYTHON)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\Cargo.toml (LANGUAGE_TOML)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\codegen\cranelift\deopt.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\tests\simd_feature_tests.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\codegen\llvm_backend.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\ir\lower.rs (LANGUAGE_RUST)
+
+The user has mentioned some items in the form @[ITEM]. Here is extra information about the items that were mentioned by the user, in the order that they appear:
+
+/goal is a [Slash Command]:
+The user has marked this task with /goal, indicating that this task is intended to run for a long time without user input, e.g. overnight. You should be extra thorough and only stop when you are confident the goal has been completely fulfilled. The system will force you to continue execution, prompting you to audit your work until completion. Once complete, include <!-- GOAL_COMPLETE --> in your response. If the user explicitly asked to stop or cancel this goal, include <!-- GOAL_CANCELLED --> in your response to cancel the goal.
+</ADDITIONAL_METADATA>

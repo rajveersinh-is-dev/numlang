@@ -1,0 +1,88 @@
+<USER_REQUEST>
+/goal NUMLANG ROUND 2: RECONCILE CLAIMS WITH EVIDENCE
+Repository: https://github.com/rajveersinh-is-dev/numlang
+
+You are the ORCHESTRATOR again. Round 1 added CI, CLAIMS_LEDGER.md, LEAN_STATUS.md, INTEGRITY_RULES.md and softened several claims. A hostile re-audit of the new README, ledger and Lean status found the problems below. They come from external reading only (no access to src/, tests/, Actions runs, or the possibly stale SHOWDOWN.md), so treat each as a hypothesis: verify first (confirmed / refuted / partial, with file:line or command-output evidence), then fix.
+
+RULES (unchanged from Round 1, restated)
+- Tag every fact [READ path:line] / [RAN output saved to docs/evidence/] / [FETCHED url] / [UNVERIFIED]. [UNVERIFIED] never appears in public docs as fact.
+- Never invent numbers, versions, Lean names, paths, citations. All numbers in README/SHOWDOWN come from scripts reading raw CSVs.
+- Never green a check by weakening it (no ignored tests, loosened tolerances, #[allow], sorry, new axioms, edited expected outputs). Reproduce before fixing: failing test, fix, passing test.
+- No optimization may match names, benchmark names, or the exact AST shape of one benchmark; no behavior switches on env/cfg/benchmark mode.
+- Done = failing-then-passing test + clean-checkout fmt/clippy -D warnings/test/lake build + differential check (interpreter vs baseline vs SC) + mutation check on touched code + no-cheating grep + docs and ledger updated. Otherwise Partial.
+- Sub-agents with owned files and separate worktrees: Auditor (read-only), Compiler agents, Test/Fuzz, Lean, Benchmark (ONLY agent producing timings; runs alone on an idle machine), Docs (never types a number), Adversarial Reviewer (not the author; read-only). The orchestrator re-runs commands itself and never trusts summaries. Disagreements are settled by experiment.
+- After each phase write docs/audits/round2-phase-N.md: 5 weakest points of your own diff each attacked by an experiment, unverified items, assumptions, tempting shortcuts, confidence per deliverable, regression check of closed findings.
+
+CANDIDATE FINDINGS TO VERIFY
+R1. The big speedups from the old README/SHOWDOWN (tri_sum 125,682x; cubic_sum 40,013x; sum_map 3,933x; stream_take 3.87x; fib_matrix 6.9x) are gone: the new README shows ~1.00x on every recurrence and higher-order row. Explain why.
+R2. CLAIMS_LEDGER contradicts the README: CLM-10 (">30,000x on tri_sum", TESTED), CLM-09 ("5 outright wins" vs 3 "Wins" rows), CLM-01/03/04/05 TESTED while runtime shows no gain.
+R3. The README note says NumLang-SC collapses constant-bound loops at compile time, but the tri_sum row shows 21.98 ms vs 21.54 ms baseline.
+R4. No variance/CI; SC is within noise of baseline on most rows and slower on nrev 0.89x, append3 0.89x, peano_mul ~0.90x (labelled "Wins"), fib_matrix_dyn 0.91x, pow2_mod 0.97x. The profitability gate does not guarantee SC >= baseline.
+R5. NumLang-Base got slower between runs (nrev 156->300.7 us, tri_sum 12.57->21.54 ms, kmp 31->59.2 us) while Rustc/MSVC stayed flat.
+R6. "Allocator overhead" cannot explain SC < Base (same backend); the MSVC/Rustc gap is unattributed.
+R7. Lean: relations like DriveStep/FoldStep may embed semantic equivalence as a hypothesis (circular soundness); triplicate theorems (driving_correctness/soundness/equiv etc.) may be restatements; no theorems for recurrence collapse, defunctionalization, lazy thunks, Futamura; no pass-coverage matrix; no #print axioms output in docs; CLM-07 says PROVEN without "abstract model only".
+R8. validate.rs (2,326 lines, hand-written CDCL) is an unverified TCB, runs only with --verify, and its description varies (Horn vs QF_BV).
+R9. Ledger "Last Verified Commit" holds "Phase N", not hashes; statuses were set by the implementing agent; README contains hand-typed expected outputs ("7 passed", "374 pages").
+R10. Related-work item 6 ("SPSC mechanization in Coq/Lean") and other citations are unverified.
+R11. Minor: Rustc -O3 (README) vs -O (SHOWDOWN); 18 README rows vs "14 canonical"; "LLVM 18+" vs inkwell feature; check whether scratch/, .planning/, rebuttal/, bench/ vs benches/, lean/ vs proof/ still exist; confirm the CI runs referenced actually pass on all three OSes.
+
+PHASE A: ROOT-CAUSE THE DISAPPEARING WINS (Auditor + Compiler + Benchmark)
+1. git-bisect between the commit that produced the old SHOWDOWN numbers and HEAD. For each of the five big wins, identify the exact commit that removed it and why (name-matching removed? benchmark changed? pass disabled? profitability gate rejecting? bug fix for unsoundness?). Save the bisect log.
+2. Classify each old win: (a) genuine general optimization that regressed, (b) artifact of a benchmark whose answer was foldable/dead-code-eliminated or timed at the floor, (c) name/shape-specific overfitting. State evidence.
+3. For (a): restore it as a general pass. Required: recurrence collapse must fire on loops with static AND runtime-opaque bounds, arbitrary start/step, accumulators with several statement forms, and be proven equal to the naive loop by property tests including overflow-triggering inputs. Show MIR before/after and benchmark the dynamic variants.
+4. For (b)/(c): delete the code, and downgrade every public claim that depended on it.
+5. If after honest work a feature gives no measured benefit, label it "implemented, not yet profitable" everywhere. Do not hide it and do not inflate it.
+
+PHASE B: MEASUREMENT AND STATISTICS (Benchmark agent only)
+- Explain the baseline slowdown (R5): run the old commit and HEAD back-to-back on the same idle machine; record CPU model, OS, toolchains, power plan. Add a per-commit perf-history CSV.
+- Report median, MAD, min, 95% CI for every cell from raw CSVs. Define "win vs baseline" as: CI of the ratio excludes 1.0 AND effect >= 5%. Everything else is a tie. Generate the Result column from this rule only. Remove bolding of the SC column.
+- Treat <= timer-floor cells as INVALID/"folded", never as ties or wins; scale N so every cell >= 100x timer resolution.
+- Same compiler flags everywhere (resolve -O vs -O3 vs target-cpu); README, SHOWDOWN and CSV must name identical flags.
+- Allocator attribution (R6): add Rust and C arena variants for nrev/append3/tree_flip; compare SC vs Base under the SAME allocator; rewrite the Limitations text to say only what the experiment shows.
+
+PHASE C: PROFITABILITY GATE
+- Make "SC never worse than baseline by the cost model" a tested invariant, and add a runtime regression guard in CI (SC/Base ratio on the benchmark suite must stay >= 1.0 within the noise threshold, else CI fails with a report). Fix nrev, append3, peano_mul, fib_matrix_dyn, pow2_mod. Add per-pass ablation showing which pass causes each regression.
+
+PHASE D: SINGLE SOURCE OF TRUTH (Docs agent)
+- One generator reads bench CSVs and produces README table, SHOWDOWN.md tables, win counts and the benchmark rows of the ledger. claims_lint.py must FAIL CI if any of these disagree, if a ledger status contradicts measured results, if "Last Verified Commit" is not a real hash, or if README contains hand-typed test counts/page counts (generate them or remove them).
+- Rewrite ledger statuses by rule: TESTED requires a test that checks the claim itself (runtime effect claims require benchmark evidence), PARTIAL otherwise. Fix CLM-01, 03, 04, 05, 09, 10 accordingly; CLM-07 becomes "PROVEN (abstract model only)". Add ledger rows for integer-overflow semantics, Cranelift/LLVM backend correctness, the translation validator, and every README table.
+- An independent agent (not the implementer) signs off each ledger status change in docs/agents/.
+- Reconcile README row count with SHOWDOWN/ledger (18 vs 14 vs 30), and make the benchmark registry the single list.
+
+PHASE E: LEAN HONESTY AND COVERAGE (Lean agent)
+- Inspect every relation (DriveStep, FoldStep, DistillationRelation, NoopRemoval, EtaReduction, MRSC selection). If a constructor assumes semantic equivalence, the corresponding theorem is circular: either prove equivalence from the structural rule or relabel it as an assumed interface. Document each decision.
+- Check the triplicate theorem families for non-trivial content; merge or justify.
+- Add docs/LEAN_COVERAGE.md: every supercompiler pass vs {proven in Lean, modelled but unproven, tested only, no formal model}. Add proofs for at least recurrence collapse (closed forms vs loop semantics) and defunctionalization correctness, or state plainly they are not covered. Include real `#print axioms` output per headline theorem in docs.
+- Export test vectors from the Lean model and check the Rust implementation against them in CI.
+
+PHASE F: TRANSLATION VALIDATOR
+- Document the TCB. Mutation-test the validator: inject deliberate miscompiles into residual MIR (wrong constant, swapped branch, dropped store, off-by-one loop bound) and assert it rejects each. Run `--verify` in CI on every example and on the random program corpus; record validator time per program. Reconcile the Horn/QF_BV description.
+
+PHASE G: CITATIONS AND HYGIENE
+- Verify every related-work item by retrieving the actual paper or page; drop anything unretrievable (start with item 6). Cite authors, year and venue exactly.
+- Confirm Actions runs for ci.yml and lean.yml: link specific green run IDs for ubuntu, windows, macos in docs/evidence/. Confirm Cargo.toml features vs README LLVM versions. Confirm repository hygiene (scratch/, .planning/, rebuttal/, duplicate bench/benches, lean/proof) and finish Phase 7 items from Round 1 that are still open (spec, strings/stdlib, diagnostics, tooling, examples, docs site, release v0.1.0).
+
+PHASE H: FINAL ADVERSARIAL PASS (fresh agents)
+- A fresh Auditor and Adversarial Reviewer, with no access to prior summaries or the ledger, rebuild from a clean container; rerun tests, benchmarks, Lean builds, anti-cheat/metamorphic suite and fuzzers; try to find a miscompile, an unbacked claim, a non-reproducible number, a name-matched optimization. Diff their findings against the ledger; every mismatch is a bug. Publish docs/FINAL_REPORT.md (confirmed/refuted/fixed/open, claims removed or downgraded, exact reproduction commands, what is NOT done). Finish only with zero unresolved critical findings.
+
+OUTPUT FORMAT
+Per phase: short plan, diff summary, commands run with results (or evidence paths), claims removed/downgraded, self-audit, and Done/Partial/Not done with reasons. Never mark anything complete without a test, CI job or generated artifact proving it.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-11T16:02:56+05:30.
+
+The user's current state is as follows:
+Active Document: c:\Users\davea\.gemini\antigravity\scratch\numlang\paper\book\audit_pdf.py (LANGUAGE_PYTHON)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\Cargo.toml (LANGUAGE_TOML)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\codegen\cranelift\deopt.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\tests\simd_feature_tests.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\codegen\llvm_backend.rs (LANGUAGE_RUST)
+- c:\Users\davea\.gemini\antigravity\scratch\numlang\src\ir\lower.rs (LANGUAGE_RUST)
+
+The user has mentioned some items in the form @[ITEM]. Here is extra information about the items that were mentioned by the user, in the order that they appear:
+
+/goal is a [Slash Command]:
+The user has marked this task with /goal, indicating that this task is intended to run for a long time without user input, e.g. overnight. You should be extra thorough and only stop when you are confident the goal has been completely fulfilled. The system will force you to continue execution, prompting you to audit your work until completion. Once complete, include <!-- GOAL_COMPLETE --> in your response. If the user explicitly asked to stop or cancel this goal, include <!-- GOAL_CANCELLED --> in your response to cancel the goal.
+</ADDITIONAL_METADATA>

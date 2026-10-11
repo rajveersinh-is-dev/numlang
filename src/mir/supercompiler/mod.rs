@@ -72,6 +72,7 @@ pub use validate::{
 pub use whistle::{is_embedded, is_instance_of, state_embeds};
 
 use crate::mir::lower::{MirFunction, MirProgram};
+use crate::mir::Terminator;
 
 /// Operating mode for the supercompiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -159,16 +160,6 @@ pub fn supercompile_mir_program_with_cache(
     }
 
     for func in &mut program.functions {
-        if func_is_impure(func) {
-            total_stats.residual_block_count += func.blocks.len();
-            total_stats.residual_stmt_count += func
-                .blocks
-                .iter()
-                .map(|b| b.statements.len())
-                .sum::<usize>();
-            continue;
-        }
-
         // Functions synthesized or transformed by global distillation are already in optimal single-pass form
         if mode == SupercompileMode::Distill && func.is_distilled {
             total_stats.residual_block_count += func.blocks.len();
@@ -226,9 +217,17 @@ pub fn supercompile_mir_program_with_cache(
                     && residual_blocks > 3 * baseline_blocks
                     && baseline_blocks > 4; // only guard non-trivial functions
 
-                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
+                let uncollapsed_knot = stats.knots_tied > 0;
+                let has_unreachable = new_func
+                    .blocks
+                    .iter()
+                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
                 let mut stats = stats;
-                if !has_uncollapsed_array_loops && !code_size_bloat && !uncollapsed_knot {
+                if !has_uncollapsed_array_loops
+                    && !code_size_bloat
+                    && !uncollapsed_knot
+                    && !has_unreachable
+                {
                     *func = new_func;
                 } else {
                     stats.residual_block_count = func.blocks.len();
@@ -271,15 +270,20 @@ pub fn supercompile_mir_program_with_cache(
                 let mut stats = tree.stats.clone();
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
-                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
+                let uncollapsed_knot = stats.knots_tied > 0;
+                let (_dead, _deduped) = compact_process_tree(&mut tree);
+                let mut new_func =
+                    residualize_process_tree_parallel(&tree, func, parallel_residualize);
+                let has_unreachable = new_func
+                    .blocks
+                    .iter()
+                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
                 if !has_uncollapsed_array_loops
                     && !uncollapsed_knot
+                    && !has_unreachable
                     && (is_profitable(&stats, budget, &tree)
                         || (tree.nodes.len() < budget && folds > 0))
                 {
-                    let (_dead, _deduped) = compact_process_tree(&mut tree);
-                    let mut new_func =
-                        residualize_process_tree_parallel(&tree, func, parallel_residualize);
                     let _stmts_removed = compact_mir_function(&mut new_func);
                     let _sr = strength_reduce_mir_function(&mut new_func);
                     if _sr > 0 {
@@ -314,9 +318,14 @@ pub fn supercompile_mir_program_with_cache(
                 let budget = SupercompilerDriver::new(func).config.max_inline_nodes;
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
-                let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
+                let uncollapsed_knot = stats.knots_tied > 0;
+                let has_unreachable = best_res
+                    .blocks
+                    .iter()
+                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
                 if !has_uncollapsed_array_loops
                     && !uncollapsed_knot
+                    && !has_unreachable
                     && is_profitable(&stats, budget, &best_tree)
                 {
                     let mut new_func = best_res;
@@ -380,16 +389,26 @@ pub fn supercompile_mir_program_with_cache(
                     let stats = winner.tree.stats.clone();
                     (winner.residual, stats)
                 };
-                let mut new_func = best_res;
-                let _stmts_removed = compact_mir_function(&mut new_func);
-                let _sr = strength_reduce_mir_function(&mut new_func);
-                if _sr > 0 {
-                    compact_mir_function(&mut new_func);
+                let has_unreachable = best_res
+                    .blocks
+                    .iter()
+                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                if !has_unreachable {
+                    let mut new_func = best_res;
+                    let _stmts_removed = compact_mir_function(&mut new_func);
+                    let _sr = strength_reduce_mir_function(&mut new_func);
+                    if _sr > 0 {
+                        compact_mir_function(&mut new_func);
+                    }
+                    stats.residual_block_count = new_func.blocks.len();
+                    stats.residual_stmt_count =
+                        new_func.blocks.iter().map(|b| b.statements.len()).sum();
+                    *func = new_func;
+                } else {
+                    stats.residual_block_count = func.blocks.len();
+                    stats.residual_stmt_count =
+                        func.blocks.iter().map(|b| b.statements.len()).sum();
                 }
-                stats.residual_block_count = new_func.blocks.len();
-                stats.residual_stmt_count =
-                    new_func.blocks.iter().map(|b| b.statements.len()).sum();
-                *func = new_func;
 
                 total_stats.nodes_explored += stats.nodes_explored;
                 total_stats.branches_pruned += stats.branches_pruned;
