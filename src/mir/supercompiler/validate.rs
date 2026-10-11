@@ -6,6 +6,35 @@
 //! 2. SMT bit-vector (QF_BV / QF_UFBV) encoding with uninterpreted function congruence.
 //! 3. Certified CDCL / DPLL bit-blasting decision procedure with model extraction.
 //! 4. SMT-LIB2 format generation for external solver interoperability.
+//!
+//! # Trusted Computing Base (TCB) Disclosure
+//!
+//! Translation validation verifies that an unverified transformation (the supercompiler)
+//! preserves the input program's semantics on a per-compilation basis. To maintain
+//! computational honesty, the boundary between trusted and checked components is explicitly defined:
+//!
+//! ## 1. What is IN the Trusted Computing Base (Trusted Components):
+//! - **Source MIR Frontend**: The AST parser, typechecker, and AST-to-MIR lowering
+//!   pipeline are trusted to faithfully represent the programmer's intended source semantics.
+//! - **Bit-Blasting Logic & SAT Engine**: The CDCL / DPLL solver (`CdclSolver`), Tseitin
+//!   transformation, and two's complement bit-vector arithmetic circuits (`bvadd`, `bvsub`,
+//!   `bvmul`, `bvdiv`, etc.) are trusted to correctly decide satisfiability of QF_BV formulas.
+//! - **Operational Memory Model**: The translation validator models 64-bit scalar registers
+//!   as exact 64-bit words with two's complement wrapping. Uninterpreted functions represent
+//!   opaque external function calls preserving congruence ($x = y \implies f(x) = f(y)$).
+//! - **The Host Execution Environment**: Hardware, OS kernel, and the Rust standard library
+//!   executing this validator.
+//!
+//! ## 2. What is NOT in the Trusted Computing Base (Untrusted / Checked Components):
+//! - **The Supercompiler**: All supercompilation passes (symbolic driving, call inlining,
+//!   knot tying, generalization, distillation, MRSC multi-result search, and process-tree compaction)
+//!   are completely UNTRUSTED. If any pass introduces an incorrect instruction, drops a statement,
+//!   inverts a branch condition, or computes an incorrect closed-form recurrence, the validator
+//!   extracts a relational verification condition (VC) and refutes equivalence with a counterexample.
+//! - **Control Flow Restructuring**: Loop unrolling, block reordering, and branch elimination
+//!   are untrusted. Equivalence is verified along all symbolic path conditions.
+//! - **Recurrence Collapse Rules**: Mathematical closed forms derived by polynomial difference
+//!   engines or matrix powering are validated bit-for-bit against unrolled operational paths.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -1450,6 +1479,21 @@ pub fn check_satisfiability(formula: &BoolFormula) -> SmtResult {
         }
         if simplified.eval_concrete(&env) == Some(true) {
             return SmtResult::Sat(env);
+        }
+    }
+
+    // Portfolio asymmetric corner-case testing for multi-variable formulas
+    if vars.len() > 1 {
+        for &c1 in &corner_inputs {
+            for &c2 in &[0, 1, 2, 3, 5, 8, 10, 16, 42, 100, u64::MAX] {
+                let mut env = HashMap::new();
+                for (idx, v) in vars.keys().enumerate() {
+                    env.insert(v.clone(), if idx % 2 == 0 { c1 } else { c2 });
+                }
+                if simplified.eval_concrete(&env) == Some(true) {
+                    return SmtResult::Sat(env);
+                }
+            }
         }
     }
 

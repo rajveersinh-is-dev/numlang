@@ -6,6 +6,8 @@ use numlang::mir::supercompiler::validate::{
     check_satisfiability, verify_formula_validity, BoolFormula, BvExpr, KInductionValidator,
     LoopInductionCandidate, SmtLib2Printer, SmtResult, TranslationValidator, ValidationError,
 };
+use numlang::mir::Terminator;
+use numlang::typecheck::typed_ast::TypedLiteral;
 use numlang::mir::supercompiler::{
     supercompile_mir_program_with_mode, verify_program_equivalence, SupercompileMode,
 };
@@ -516,3 +518,233 @@ fn test_k_induction_loop_validation() {
     assert!(cert.postcondition_proved);
     assert_eq!(cert.k_depth, 1);
 }
+
+#[test]
+fn test_translation_validator_catches_10_distinct_mutations() {
+    let base_code = r#"
+    fn target(x: i64, y: i64) -> i64 {
+        let a: i64 = x + y;
+        let b: i64 = a * 2;
+        let c: i64 = b & 255;
+        let d: i64 = c ^ y;
+        if x < 10 {
+            let res: i64 = d - y;
+            return res;
+        } else {
+            let res2: i64 = d << 1;
+            return res2 + 10;
+        }
+    }
+    "#;
+
+    let base_mir = get_mir(base_code);
+    let orig_func = base_mir
+        .functions
+        .iter()
+        .find(|f| f.name == "target")
+        .unwrap();
+
+    let mut self_validator = TranslationValidator::new(orig_func, orig_func);
+    assert!(self_validator.verify().is_ok(), "Self-equivalence must hold");
+
+    let mut mutations_caught = 0;
+
+    // 1. Operator Swap: Add -> Sub
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Add {
+                        *op = numlang::ast::BinaryOp::Sub;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(err.is_err(), "Validator must catch Mutation 1 (Add -> Sub)");
+        mutations_caught += 1;
+    }
+
+    // 2. Operator Swap: Mul -> Div
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Mul {
+                        *op = numlang::ast::BinaryOp::Div;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(err.is_err(), "Validator must catch Mutation 2 (Mul -> Div)");
+        mutations_caught += 1;
+    }
+
+    // 3. Bitwise Operator Swap: BitAnd -> BitOr
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::BitAnd {
+                        *op = numlang::ast::BinaryOp::BitOr;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(
+            err.is_err(),
+            "Validator must catch Mutation 3 (BitAnd -> BitOr)"
+        );
+        mutations_caught += 1;
+    }
+
+    // 4. Shift Operator Swap: Shl -> Shr
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Shl {
+                        *op = numlang::ast::BinaryOp::Shr;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(err.is_err(), "Validator must catch Mutation 4 (Shl -> Shr)");
+        mutations_caught += 1;
+    }
+
+    // 5. Comparison Operator Swap: Lt -> Gt
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Lt {
+                        *op = numlang::ast::BinaryOp::Gt;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(err.is_err(), "Validator must catch Mutation 5 (Lt -> Gt)");
+        mutations_caught += 1;
+    }
+
+    // 6. Boundary Condition Mutation: Lt -> Le
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Lt {
+                        *op = numlang::ast::BinaryOp::Le;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(err.is_err(), "Validator must catch Mutation 6 (Lt -> Le)");
+        mutations_caught += 1;
+    }
+
+    // 7. Constant Literal Mutation: 10 -> 11
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::Constant(TypedLiteral::Int(v, _))) = stmt {
+                    if *v == 10 {
+                        *v = 11;
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(
+            err.is_err(),
+            "Validator must catch Mutation 7 (Constant 10 -> 11)"
+        );
+        mutations_caught += 1;
+    }
+
+    // 8. Non-commutative Operand Swap: (d - y) -> (y - d)
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            for stmt in &mut b.statements {
+                if let Statement::Assign(_, Rvalue::BinaryOp(op, p1, p2)) = stmt {
+                    if *op == numlang::ast::BinaryOp::Sub {
+                        std::mem::swap(p1, p2);
+                        break;
+                    }
+                }
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(
+            err.is_err(),
+            "Validator must catch Mutation 8 (Operand swap)"
+        );
+        mutations_caught += 1;
+    }
+
+    // 9. Branch Target Swap: then_target <-> else_target
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            if let Terminator::BranchIf {
+                then_target,
+                else_target,
+                ..
+            } = &mut b.terminator
+            {
+                std::mem::swap(then_target, else_target);
+                break;
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(
+            err.is_err(),
+            "Validator must catch Mutation 9 (Branch target inversion)"
+        );
+        mutations_caught += 1;
+    }
+
+    // 10. Statement Deletion / Return Substitution: return None instead of return Some(place)
+    {
+        let mut mut_func = orig_func.clone();
+        for b in &mut mut_func.blocks {
+            if let Terminator::Return { value } = &mut b.terminator {
+                *value = None;
+                break;
+            }
+        }
+        let err = TranslationValidator::new(orig_func, &mut_func).verify();
+        assert!(
+            err.is_err(),
+            "Validator must catch Mutation 10 (Return value corrupted)"
+        );
+        mutations_caught += 1;
+    }
+
+    assert_eq!(
+        mutations_caught, 10,
+        "Must successfully inject and catch all 10 distinct mutations"
+    );
+    println!("TranslationValidator successfully caught all 10 distinct mutations!");
+}
+
