@@ -18,9 +18,9 @@ This guide provides step-by-step instructions to reproduce all empirical claims,
 - **Option B (Bare Metal)**:
   - **OS**: Linux (Debian 12, Ubuntu 22.04+), macOS 13+, or Windows 10/11 (MSVC 2019/2022).
   - **Rust**: `rustc` and `cargo` 1.80+ (tested on 1.81.0 and 1.98.1).
-  - **C/C++**: `clang-17` / `gcc-12+` (or MSVC `cl.exe` on Windows).
+  - **C/C++**: `clang-18` / `gcc-12+` (or MSVC `cl.exe` on Windows).
   - **Haskell**: `ghc 9.4+` and `cabal 3.10+`.
-  - **Proof Assistant**: `lean 4` (`v4.11.0`) with `elan` and `lake`.
+  - **Proof Assistant**: `lean 4` (`v4.34.1`) with `elan` and `lake`.
   - **Python**: Python 3.10+ with `numpy`, `scipy`, `matplotlib`, and `pandas`.
 
 ---
@@ -31,10 +31,10 @@ To run the complete automated evaluation pipeline in a hermetic container:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/davea/numlang.git
+git clone https://github.com/rajveersinh-is-dev/numlang.git
 cd numlang
 
-# 2. Build the Docker image (installs Rust 1.81, LLVM 17, GHC, Lean 4, Python)
+# 2. Build the Docker image (installs Rust 1.85, LLVM 18, GHC, Lean 4, Python)
 docker build -t numlang-artifact -f docker/Dockerfile .
 
 # 3. Execute all verification gates, benchmarks, and figure generation
@@ -44,7 +44,7 @@ docker run --rm -v $(pwd)/bench/figures:/numlang/bench/figures numlang-artifact
 This single command:
 1. Executes all 46+ compiler unit and integration test suites (`cargo test --tests --release`).
 2. Type-checks and verifies all formal machine proofs in Lean 4 (`lake build`).
-3. Executes the multi-compiler empirical harness across all 10 canonical literature benchmarks (5 warmups + 30 timed iterations pinned to CPU 0).
+3. Executes the multi-compiler empirical harness across all 18 canonical literature benchmarks (5 warmups + 30 timed iterations pinned to CPU 0).
 4. Generates publication-ready vector figures (`bench/figures/speedup.pdf`, `throughput.pdf`, `codesize.pdf`).
 5. Prints the complete empirical summary table comparing NumLang, Rustc, and Clang.
 
@@ -79,7 +79,7 @@ cd ..
 - `Driving.lean`: Full simulation and semantic soundness of symbolic driving.
 - `Termination.lean`: Well-founded termination via Kruskal's Tree Theorem and homeomorphic embedding.
 
-### Step 4: Execute the 10 Literature Benchmarks
+### Step 4: Execute the 18 Literature Benchmarks
 ```bash
 # Run statistical benchmark runner (pinned to CPU 0, 5 warmups, 30 timed rounds)
 python bench/harness/runner.py
@@ -107,13 +107,13 @@ python bench/plot.py
 | **Claim 5: 1st Futamura Projection (Specialization)** | `tests/third_futamura_tests.rs` (`test_1st_futamura...`) | Specializing a bytecode interpreter with respect to static bytecode generates compiled code. |
 | **Claim 6: 2nd & 3rd Futamura Projections (Cogen)** | `tests/third_futamura_tests.rs` (`test_2nd_...`, `test_3rd_...`) | Supercompiling the specializer itself yields an automated compiler and standalone `cogen`. |
 | **Claim 7: Sub-Second Supercompilation Throughput** | `benches/supercompiler_benchmarks.rs`<br>`bench/figures/throughput.pdf` | Measured at 12,000–85,000 lines/sec on consumer x86-64 hardware. |
-| **Claim 8: Competitiveness with Clang/Rustc** | `bench/harness/runner.py`<br>`bench/figures/speedup.pdf` | Empirical execution across 10 literature benchmarks within 1.0–1.1x of Clang/Rustc, with $O(1)$ asymptotic wins. |
+| **Claim 8: Competitiveness with Clang/Rustc** | `bench/harness/runner.py`<br>`bench/figures/speedup.pdf` | Empirical execution across 18 literature benchmarks within 1.0–1.1x of Clang/Rustc, with $O(1)$ asymptotic wins. |
 
 ---
 
 ## 5. Benchmark Suite Catalog
 
-The 10 literature benchmarks located in `bench/numlang/*.nl`, `bench/rust/*.rs`, `bench/c/*.c`, and `bench/haskell/*.hs`:
+The 18 literature benchmarks located in `bench/numlang/*.nl`, `bench/rust/*.rs`, `bench/c/*.c`, and `bench/haskell/*.hs`:
 1. `nrev`: Naive reverse of singly linked lists ($O(N^2) \to O(N)$ deforestation).
 2. `append3`: Triple list concatenation flattening and associative fusion.
 3. `stream_fusion`: Chained map/filter pipeline intermediate buffer elimination.
