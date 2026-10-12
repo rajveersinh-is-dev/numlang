@@ -11,11 +11,11 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ## 2. Milestone & Phase Tracker
 
-### Completed Foundation (Phases 1–19)
+### Completed Foundation (Phases 1-19)
 
 | Phase | Description | Status | Commit / Artifact |
 | :--- | :--- | :---: | :--- |
-| **Phases 1–9** | **Core Language & AOT Compiler**<br>Lexer, Pratt parser, type system, Cranelift & LLVM backends, MemorySSA, Mem2Reg, BCE, SROA, formatter (`numlang fmt`), doc generator (`numlang doc`). | **Completed** | Full compiler v1.0, 40+ test suites |
+| **Phases 1-9** | **Core Language & AOT Compiler**<br>Lexer, Pratt parser, type system, Cranelift & LLVM backends, MemorySSA, Mem2Reg, BCE, SROA, formatter (`numlang fmt`), doc generator (`numlang doc`). | **Completed** | Full compiler v1.0, 40+ test suites |
 | **Phase 10** | **Turchin Supercompilation & 1st Futamura**<br>AST ADTs, pattern matching, branch pruning, $O(N) \to O(1)$ recurrence solver, 1st Futamura interpreter specialization. | **Completed** | Commit `b22d64a` |
 | **Phase 11** | **Higher-Order Functions & Closures**<br>Lambdas, environment capture, indirect calls, higher-order deforestation. | **Completed** | Commit `f540057` |
 | **Phase 12** | **Polymorphic Types & Generics**<br>Type parameters `<T, U>`, monomorphization pass, generic standard library. | **Completed** | Commit `8463a6b` |
@@ -29,7 +29,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Remediation & Frontier Roadmap (Phases 20–40)
+### Remediation & Frontier Roadmap (Phases 20-40)
 
 *Formulated to systematically resolve all findings from the comprehensive audit (`honest_review.md`).*
 
@@ -59,7 +59,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Adversarial Remediation & System Soundness Roadmap (Phases 41–45) [ACTIVE]
+### Adversarial Remediation & System Soundness Roadmap (Phases 41-45) [ACTIVE]
 
 *Governed by [`docs/audits/round2-phase-H.md`](docs/audits/round2-phase-H.md) and [`INTEGRITY_RULES.md`](INTEGRITY_RULES.md).*
 
@@ -75,7 +75,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Global Dominance & Algorithmic Generality Roadmap (Phases 48–50) [PLANNED]
+### Global Dominance & Algorithmic Generality Roadmap (Phases 48-50) [PLANNED]
 
 *Engineered to systematically outclass all competitors (GHC, HOSC, Clang, GCC, Rustc) across algorithmic generality, higher-order deforestation, and low-level code generation.*
 
@@ -88,7 +88,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Total Unconditional Dominance Roadmap (Phases 51–56) [ACTIVE]
+### Total Unconditional Dominance Roadmap (Phases 51-56) [ACTIVE]
 
 *Closes every remaining competitive gap against GHC Supercompiler, GraalVM Truffle, MRSC prototype, Hamilton Distiller, LLVM Polly/Pluto, and GCC/LuaJIT. Derived from competitive gap analysis (2026-10-03).*
 
@@ -105,7 +105,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### World's Fastest General Supercompiler (Phases 59–66) [COMPLETE]
+### World's Fastest General Supercompiler (Phases 59-66) [COMPLETE]
 
 | Phase | Description | Status | Target Deliverables |
 | :--- | :--- | :---: | :--- |
@@ -120,7 +120,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ---
 
-### Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67–70) [COMPLETE]
+### Milestone 5: Total Compiler Invariant Hardening, Differential Supremacy & Algorithmic Generality (Phases 67-70) [COMPLETE]
 
 | Phase | Description | Status | Target Deliverables |
 | :--- | :--- | :---: | :--- |
