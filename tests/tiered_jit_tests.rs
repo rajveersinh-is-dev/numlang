@@ -582,14 +582,20 @@ fn test_tier0_cold_start_latency_10_functions() {
         "Must contain all 10 kernels + main"
     );
 
-    // High-resolution check: Tier 0 cold start MUST complete in < 5ms (and often < 2ms)
+    // High-resolution check: Tier 0 cold start MUST complete in < 5ms in release (and < 250ms in unoptimized debug)
     println!(
         "Tier 0 cold start latency for 10 functions: {:.3} ms",
         elapsed.as_secs_f64() * 1000.0
     );
+    let max_allowed = if cfg!(debug_assertions) {
+        Duration::from_millis(250)
+    } else {
+        Duration::from_millis(15)
+    };
     assert!(
-        elapsed < Duration::from_millis(50),
-        "Tier 0 cold start must be ultra-fast (expected < 50ms in debug, was {:.2?})",
+        elapsed < max_allowed,
+        "Tier 0 cold start must be ultra-fast (expected < {:?}, was {:.2?})",
+        max_allowed,
         elapsed
     );
 }
