@@ -64,6 +64,13 @@ def check_local_markdown_links():
             # Ignore web URLs, mailto, and anchor-only links
             if target.startswith(("http://", "https://", "mailto:", "#")):
                 continue
+            # Reject absolute file:// links — they are always machine-specific and forbidden
+            if target.startswith("file://"):
+                errors.append(
+                    f"Absolute file:// link in {md_rel}: '{target}' "
+                    f"— use relative paths only (absolute paths break on other machines and CI)"
+                )
+                continue
             # Strip anchors
             target_file = target.split("#")[0]
             if not target_file:
