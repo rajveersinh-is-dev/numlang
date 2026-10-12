@@ -35,8 +35,20 @@ def check_local_markdown_links():
         "README.md",
         "SHOWDOWN.md",
         "INTEGRITY_RULES.md",
+        "CONTRIBUTING.md",
+        "REPRODUCIBILITY.md",
+        "BACKENDS.md",
+        "LLVM_SETUP.md",
+        "CHANGELOG.md",
         "docs/CLAIMS_LEDGER.md",
         "docs/AUDIT_FINDINGS.md",
+        "docs/LEAN_STATUS.md",
+        "docs/LEAN_COVERAGE.md",
+        "docs/LEAN_INVENTORY.md",
+        "docs/ROUND2_REPORT.md",
+        "docs/FINAL_REPORT.md",
+        "docs/TERMINATION_PROOF.md",
+        "docs/FORMAL_VERIFICATION.md",
     ]
     link_pattern = re.compile(r'\[([^\]]+)\]\(([^)]+)\)')
 
