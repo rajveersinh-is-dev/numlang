@@ -2,7 +2,7 @@
 
 **Defined:** 2026-09-25  
 **Updated:** 2026-10-04  
-**Governing Standard:** [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md)  
+**Governing Standard:** [`INTEGRITY_RULES.md`](../../../INTEGRITY_RULES.md)  
 **Core Value:** Mathematically sound, independently reproducible, world-class supercompilation with zero benchmark cheats, zero fake stubs, zero unproven formal axioms, and 100% genuine algorithmic implementations.
 
 ---

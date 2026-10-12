@@ -13,7 +13,7 @@ Achieve verifiable bare-metal performance, algebraic program transformation, and
 ## Completed Milestones
 
 ### Remediation & Frontier (Phases 20–28) [COMPLETE]
-Systematically resolved all 10 findings from [`honest_review.md`](file:///C:/Users/davea/.gemini/antigravity/brain/d21c1850-b996-4958-951d-ea34362faef0/honest_review.md) under [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md):
+Systematically resolved all 10 findings from [`docs/AUDIT_FINDINGS.md`](../../AUDIT_FINDINGS.md) under [`INTEGRITY_RULES.md`](../../../INTEGRITY_RULES.md):
 - Fixed residualization knot transfers & MSG (Phase 20)
 - Real Hamilton global distillation (Phase 21)
 - Real Mitchell & Klyuchnikov MRSC hypergraph search (Phase 22)
@@ -25,7 +25,7 @@ Systematically resolved all 10 findings from [`honest_review.md`](file:///C:/Use
 - Paper rewrite and 1-click Docker reproduction package (Phase 28)
 
 ### Adversarial Remediation & System Soundness (Phases 41–45) [COMPLETE]
-Systematically resolved all defect classes identified during adversarial audit [`ADVERSARIAL_AUDIT.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md):
+Systematically resolved all defect classes identified during adversarial audit [`docs/audits/round2-phase-H.md`](../../audits/round2-phase-H.md):
 - Decoupled Win32 & implemented true POSIX native codegen (Phase 41)
 - Replaced vacuous Lean 4 tautologies with constructive small-step `StepStar` proofs (Phase 42)
 - Implemented real self-applicable specializer with distinct Futamura projections 1, 2, 3 (Phase 43)
@@ -115,4 +115,4 @@ Systematic architectural upgrades to outperform all functional (GHC, HOSC) and s
 ---
 
 ## Evolution & Governance
-All changes strictly enforce [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md). No data may be manually entered into paper tables; all results must be cryptographically hashed from automated execution.
+All changes strictly enforce [`INTEGRITY_RULES.md`](../../../INTEGRITY_RULES.md). No data may be manually entered into paper tables; all results must be cryptographically hashed from automated execution.
