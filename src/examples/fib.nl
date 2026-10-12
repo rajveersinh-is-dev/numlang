@@ -15,5 +15,6 @@ fn main() -> i64 {
     for i in 0..10 {
         sum = sum + fib(i);
     }
-    return sum;
+    println(sum);
+    return 0;
 }
