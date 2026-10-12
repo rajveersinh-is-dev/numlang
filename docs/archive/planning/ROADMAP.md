@@ -2,7 +2,7 @@
 
 ## Overview
 
-NumLang combines Cranelift and LLVM code generation with a first-of-its-kind SSA Mid-level IR (MIR) supercompiler. This roadmap tracks all historical milestones and the active **Remediation & Frontier Milestone (Phases 20â€“28)** established to resolve all findings from [`honest_review.md`](file:///C:/Users/davea/.gemini/antigravity/brain/d21c1850-b996-4958-951d-ea34362faef0/honest_review.md).
+NumLang combines Cranelift and LLVM code generation with a first-of-its-kind SSA Mid-level IR (MIR) supercompiler. This roadmap tracks all historical milestones and the active **Remediation & Frontier Milestone (Phases 20–28)** established to resolve all findings from [`docs/AUDIT_FINDINGS.md`](../../AUDIT_FINDINGS.md).
 
 ---
 
@@ -34,7 +34,7 @@ NumLang combines Cranelift and LLVM code generation with a first-of-its-kind SSA
 
 ## Remediation & Frontier Roadmap (Phases 20â€“28) [ACTIVE]
 
-*Governed by [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).*
+*Governed by [`INTEGRITY_RULES.md`](../../../INTEGRITY_RULES.md).*
 
 ### Phase 20: Fix Core Residualization, Knot Transfers & Textbook MSG [PLANNED]
 - **Goal**: Fix crashing loop and heap binaries; replace curve-fitting heuristic with textbook anti-unification.

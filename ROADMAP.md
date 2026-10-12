@@ -5,7 +5,7 @@
 NumLang is engineered to become a **genuinely state-of-the-art supercompiler**.
 Unlike classical supercompilers (Turchin's Refal, Bolingbroke/Jones's GHC Supercompiler, SPSC, HOSC) which operate strictly on pure functional expression trees and suffer severe code blowup on state transitions, NumLang operates on **SSA Mid-Level IR (MIR)** with explicit heap modeling, polyhedral iteration spaces, and direct native code generation via Cranelift and LLVM.
 
-All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).
+All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`](INTEGRITY_RULES.md).
 
 ---
 
@@ -61,7 +61,7 @@ All ongoing and future development adheres strictly to the [`INTEGRITY_RULES.md`
 
 ### Adversarial Remediation & System Soundness Roadmap (Phases 41–45) [ACTIVE]
 
-*Governed by [`ADVERSARIAL_AUDIT.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/ADVERSARIAL_AUDIT.md) and [`INTEGRITY_RULES.md`](file:///C:/Users/davea/.gemini/antigravity/scratch/numlang/INTEGRITY_RULES.md).*
+*Governed by [`docs/audits/round2-phase-H.md`](docs/audits/round2-phase-H.md) and [`INTEGRITY_RULES.md`](INTEGRITY_RULES.md).*
 
 | Phase | Description | Status | Target Deliverables |
 | :--- | :--- | :---: | :--- |
