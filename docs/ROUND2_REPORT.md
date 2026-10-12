@@ -43,7 +43,7 @@ All empirical benchmarks and local evidence logs were generated on the following
 
 ### Task 1: Lean Documentation Reality
 - **Automated Inventory & Verification Scripts**:
-  - Authored [`scripts/generate_lean_inventory.py`](../scripts/generate_lean_inventory.py) to extract definitions, theorems, and line counts from both `lean/` and `proof/`.
+  - Authored [`scripts/lean_inventory.py`](../scripts/lean_inventory.py) to extract definitions, theorems, and line counts from both `lean/` and `proof/`.
   - Authored [`scripts/check_lean_docs.py`](../scripts/check_lean_docs.py) as an automated CI check that parses Lean status documentation and verifies referenced files, theorems, and line counts against the filesystem.
 - **Accurate Mathematical Scoping**:
   - Clarified the scope of Kruskal's Tree Theorem in [`docs/LEAN_STATUS.md`](LEAN_STATUS.md) and [`docs/TERMINATION_PROOF.md`](TERMINATION_PROOF.md): the mechanized proof covers the finite-alphabet sequence pigeonhole termination argument; Kruskal's general theorem on unbounded term algebras is cited from the literature (Leuschel 1998, Hamilton 2007).
