@@ -81,17 +81,36 @@ jobs:
           export GIT_COMMITTER_NAME="rajveersinh-is-dev" GIT_COMMITTER_EMAIL="daveaddams91@gmail.com"
 
           git fetch origin "$HEAD_REF" "$BASE_REF"
+
+          # Bring in the PR's commits and re-author them to me (content unchanged).
+          MB=$(git merge-base "origin/$BASE_REF" "origin/$HEAD_REF")
           git checkout -B automerge-pr "origin/$HEAD_REF"
+          git rebase --exec 'git commit --amend --no-edit --reset-author' "$MB"
 
-          # Rewrite the PR's own commits so everything lands authored by me.
-          git rebase "origin/$BASE_REF" --exec 'git commit --amend --no-edit --reset-author'
-
-          # Push the rewritten branch back so GitHub still records the PR as merged.
+          # Update the PR head to the re-authored commits so GitHub records the PR as merged.
           git push --force origin "automerge-pr:$HEAD_REF"
 
-          # Merge with a merge commit authored by me.
+          # Merge into the base branch.
           git checkout "$BASE_REF"
-          git merge --no-ff -m "Merge pull request #$PR from $HEAD_REF" automerge-pr
+          git fetch origin "$BASE_REF"
+          git reset --hard "origin/$BASE_REF"
+          git merge --no-ff -m "Merge pull request #$PR from $HEAD_REF" automerge-pr || true
+
+          # On any conflict, prefer the PR's version of the whole file.
+          if [ -e "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+            for f in $(git diff --name-only --diff-filter=U); do
+              if git cat-file -e "automerge-pr:$f" 2>/dev/null; then
+                git checkout automerge-pr -- "$f"; git add -- "$f"
+              else
+                git rm -f -- "$f"
+              fi
+            done
+            if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+              echo "Unresolved conflicts remain; aborting."; exit 1
+            fi
+            git commit --no-edit
+          fi
+
           git push origin "$BASE_REF"
 
           # Delete the head branch.
