@@ -21,11 +21,10 @@ jobs:
   automerge:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.state == 'open' &&
-       startsWith(github.event.pull_request.head.ref, 'jules'))
+      github.event.pull_request.state == 'open'
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve PR
+      - name: Resolve PR and detect Jules
         id: pr
         env:
           GH_TOKEN: ${{ secrets.AUTOMERGE_PAT }}
@@ -37,15 +36,30 @@ jobs:
             PR="${{ github.event.pull_request.number }}"
           fi
           gh api "repos/${{ github.repository }}/pulls/$PR" \
-            --jq '{num:.number,state:.state,head:.head.ref,base:.base.ref}' > /tmp/pr.json
+            --jq '{num:.number,state:.state,head:.head.ref,base:.base.ref,draft:.draft}' > /tmp/pr.json
           cat /tmp/pr.json
-          echo "num=$(jq -r .num /tmp/pr.json)"   >> "$GITHUB_OUTPUT"
-          echo "head=$(jq -r .head /tmp/pr.json)" >> "$GITHUB_OUTPUT"
-          echo "base=$(jq -r .base /tmp/pr.json)" >> "$GITHUB_OUTPUT"
-          echo "state=$(jq -r .state /tmp/pr.json)" >> "$GITHUB_OUTPUT"
+          NUM=$(jq -r .num /tmp/pr.json)
+          HEAD=$(jq -r .head /tmp/pr.json)
+
+          # A Jules PR is one whose branch mentions jules, or that carries a
+          # commit authored by the Jules bot.
+          BR_JULES=false
+          case "$HEAD" in *jules*) BR_JULES=true ;; esac
+          COMMIT_JULES=$(gh api "repos/${{ github.repository }}/pulls/$NUM/commits" \
+            --jq '[.[] | select((.commit.author.email // "") | test("jules"; "i"))] | length' 2>/dev/null || echo 0)
+          IS_JULES=false
+          if [ "$BR_JULES" = "true" ] || [ "${COMMIT_JULES:-0}" -gt 0 ]; then IS_JULES=true; fi
+          echo "detected: branch_jules=$BR_JULES jules_commits=$COMMIT_JULES is_jules=$IS_JULES"
+
+          echo "num=$NUM"                                >> "$GITHUB_OUTPUT"
+          echo "head=$HEAD"                              >> "$GITHUB_OUTPUT"
+          echo "base=$(jq -r .base /tmp/pr.json)"        >> "$GITHUB_OUTPUT"
+          echo "state=$(jq -r .state /tmp/pr.json)"      >> "$GITHUB_OUTPUT"
+          echo "draft=$(jq -r .draft /tmp/pr.json)"      >> "$GITHUB_OUTPUT"
+          echo "is_jules=$IS_JULES"                      >> "$GITHUB_OUTPUT"
 
       - name: Checkout base
-        if: steps.pr.outputs.state == 'open'
+        if: steps.pr.outputs.is_jules == 'true' && steps.pr.outputs.state == 'open' && steps.pr.outputs.draft == 'false'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.base }}
@@ -53,7 +67,7 @@ jobs:
           token: ${{ secrets.AUTOMERGE_PAT }}
 
       - name: Merge as me and delete branch
-        if: steps.pr.outputs.state == 'open'
+        if: steps.pr.outputs.is_jules == 'true' && steps.pr.outputs.state == 'open' && steps.pr.outputs.draft == 'false'
         env:
           GH_TOKEN: ${{ secrets.AUTOMERGE_PAT }}
           HEAD_REF: ${{ steps.pr.outputs.head }}
