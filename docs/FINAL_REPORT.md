@@ -134,8 +134,8 @@ All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly valida
 | **CLM-06** | Self-applicable specializer `minspec.nl` structures Futamura 1, 2, and 3 projections | **TESTED** | `0aa6825` |
 | **CLM-07** | Lean 4 mechanized operational models have zero `sorry` and zero unproven axioms | **PROVEN (abstract model only)** | `0aa6825` |
 | **CLM-08** | Process tree termination formalization via homeomorphic embedding and sequence pigeonhole | **PARTIAL** | `0aa6825` |
-| **CLM-09** | NumLang supercompiler achieves 7 outright wins, 15 ties, and 0 regressions out of 22 benchmarks against industrial compilers | **TESTED** | `e2b129c` |
-| **CLM-10** | Peak recurrence collapse speedup of 2168.84x on `tri_sum` (Euler closed form) | **TESTED** | `e2b129c` |
+| **CLM-09** | NumLang supercompiler achieves 8 outright wins, 14 ties, and 0 regressions out of 22 benchmarks against industrial compilers | **TESTED** | `12b1d86` |
+| **CLM-10** | Peak recurrence collapse speedup of 1994.35x on `tri_sum` (Euler closed form) | **TESTED** | `12b1d86` |
 | **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | **TESTED** | `0aa6825` |
 | **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | **TESTED** | `0aa6825` |
 | **CLM-13** | Zero panic in codegen and lowering pipelines | **TESTED** | `0aa6825` |

@@ -818,6 +818,7 @@ fn remap_rval_var(rval: &mut Rvalue, from: &str, to: &str) {
 /// contracting intermediate array buffers into scalar registers.
 pub fn fuse_polyhedral_stencils(func: &mut MirFunction) -> usize {
     let mut total_fusions = 0;
+    let _ = super::strength_reduce::const_propagate_mir_function(func);
 
     // Loop until fixed point (up to 8 rounds of fusion for multi-stage pipelines)
     for _ in 0..8 {
@@ -854,6 +855,7 @@ pub fn fuse_polyhedral_stencils(func: &mut MirFunction) -> usize {
         total_fusions += round_fusions;
     }
 
+    let _ = super::strength_reduce::const_propagate_mir_function(func);
     total_fusions
 }
 

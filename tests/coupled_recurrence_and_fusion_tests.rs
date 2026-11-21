@@ -8,7 +8,7 @@ use numlang::mir::lower::{lower_program, Rvalue, Statement};
 use numlang::mir::supercompiler::generalize::{
     solve_coupled_2var_recurrence, solve_order2_recurrence, solve_order3_recurrence,
 };
-use numlang::mir::supercompiler::supercompile_mir_program;
+use numlang::mir::supercompiler::{supercompile_mir_program, supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::supercompiler::term::{SymTerm, TermInterner};
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -549,4 +549,44 @@ fn test_fib_matrix_static_collapse_and_dynamic_correctness() {
         46,
         "dynamic fib_matrix must exit 46 for its runtime bound"
     );
+}
+
+#[test]
+fn test_constant_array_store_load_fold_generic() {
+    // Generic renamed kernel: constant arrays with constant-index stores/loads
+    // should be folded away by const propagation + DCE.
+    let src = r#"
+    fn compute() -> i64 {
+        let mut buf: [i64; 4] = [0, 0, 0, 0];
+        let mut i: i64 = 0;
+        while i < 4 {
+            buf[i] = (i + 1) * (i + 2);
+            i = i + 1;
+        }
+        let mut acc: i64 = 0;
+        let mut j: i64 = 0;
+        while j < 4 {
+            acc = acc + buf[j];
+            j = j + 1;
+        }
+        return acc;
+    }
+    fn main() -> i64 { return compute() % 256; }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let mut typed = typecheck(&ast).unwrap();
+    typed.desugar_for_loops();
+    let mut mir = lower_program(&typed);
+    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    let func = mir.functions.iter().find(|f| f.name == "compute").unwrap();
+    let stmt_count: usize = func.blocks.iter().map(|b| b.statements.len()).sum();
+    assert!(
+        stmt_count <= 16,
+        "constant array kernel should fold to small MIR, got {} stmts",
+        stmt_count
+    );
+
+    assert_eq!(compile_and_run_supercompiled(src, "const_array_fold_generic"), 40);
 }

@@ -8,7 +8,7 @@ use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::polyhedral::{
     fuse_polyhedral_stencils, AffineExpr, DependenceDistance, Inequality, IterationDomain,
 };
-use numlang::mir::supercompiler::SupercompileMode;
+use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::BasicBlockId;
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -378,4 +378,63 @@ fn test_polyhedral_2d_stencil_execution() {
     let res = compile_and_run(code, "test_polyhedral_2d_stencil_exec");
     // i=1,j=1: idx=4, xs[1]+xs[4]+xs[7] = 2+5+8 = 15
     assert_eq!(res, expected_exit(15), "2D stencil execution must be 15");
+}
+
+#[test]
+fn test_constant_array_pipeline_folds_to_constant() {
+    // Generic constant-index array pipeline: all indices/values are compile-time
+    // constants. Const propagation + DCE should collapse it to near-constant MIR.
+    let code = r#"
+    struct Item { a: i64, b: i64, c: i64, d: i64 }
+    fn compute() -> i64 {
+        let items: [Item; 4] = [
+            Item { a: 0, b: 10, c: 2, d: 1 },
+            Item { a: 1, b: 20, c: 3, d: 2 },
+            Item { a: 2, b: 30, c: 1, d: 0 },
+            Item { a: 3, b: 40, c: 4, d: 3 },
+        ];
+        let mut xs: [i64; 4] = [0, 0, 0, 0];
+        let mut i: i64 = 0;
+        while i < 4 {
+            let it: Item = items[i];
+            xs[i] = (it.b % 7) * it.c;
+            i = i + 1;
+        }
+        let mut ys: [i64; 2] = [0, 0];
+        i = 0;
+        while i < 4 {
+            let it: Item = items[i];
+            let slot: i64 = it.a % 2;
+            ys[slot] = ys[slot] + xs[i] + it.d;
+            i = i + 1;
+        }
+        let mut total: i64 = 0;
+        let mut k: i64 = 0;
+        while k < 2 {
+            let mut w: i64 = k * 3;
+            if k == 0 { w = 5; }
+            total = total + ys[k] * w;
+            k = k + 1;
+        }
+        return total;
+    }
+    fn main() -> i64 { return compute() % 256; }
+    "#;
+
+    let mut mir = get_mir(code);
+    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    let main_func = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let main_stmts: usize = main_func.blocks.iter().map(|b| b.statements.len()).sum();
+    assert!(
+        main_stmts <= 20,
+        "constant array pipeline should fold main to small MIR, got {} stmts in {} blocks",
+        main_stmts,
+        main_func.blocks.len()
+    );
+
+    let res = compile_and_run(code, "test_const_array_pipeline_fold");
+    // compute: xs = [(10%7)*2=6, (20%7)*3=18, (30%7)*1=2, (40%7)*4=20]
+    // ys[0]+=xs[0]+1=7, ys[1]+=xs[1]+2=20, ys[0]+=xs[2]+0=9, ys[1]+=xs[3]+3=43
+    // total = ys[0]*5 + ys[1]*3 = 45 + 129 = 174
+    assert_eq!(res, expected_exit(174), "constant array pipeline result mismatch");
 }
