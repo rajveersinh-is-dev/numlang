@@ -180,6 +180,11 @@ fn collect_reads_for_alias(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         }
         Rvalue::UnaryOp(_, p) => reads.push(p.clone()),
         Rvalue::Constant(_) => {}
+        Rvalue::Select(c, t, e) => {
+            reads.push(c.clone());
+            reads.push(t.clone());
+            reads.push(e.clone());
+        }
         Rvalue::Call(_, args) => {
             reads.extend(args.iter().cloned());
         }

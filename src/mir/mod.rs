@@ -167,6 +167,12 @@ impl MirPrinter {
             }
             lower::Rvalue::UnaryOp(op, p) => format!("{:?} {}", op, Self::print_place(p)),
             lower::Rvalue::Constant(c) => format!("{:?}", c),
+            lower::Rvalue::Select(c, t, e) => format!(
+                "select {}, {}, {}",
+                Self::print_place(c),
+                Self::print_place(t),
+                Self::print_place(e)
+            ),
             lower::Rvalue::Call(name, args) => {
                 let arg_strs: Vec<_> = args.iter().map(Self::print_place).collect();
                 format!("{}({})", name, arg_strs.join(", "))

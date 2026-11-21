@@ -285,6 +285,12 @@ fn get_rvalue_reads(rval: &Rvalue) -> Vec<String> {
             r.extend(get_place_reads(p2));
             r
         }
+        Rvalue::Select(c, t, e) => {
+            let mut r = get_place_reads(c);
+            r.extend(get_place_reads(t));
+            r.extend(get_place_reads(e));
+            r
+        }
         Rvalue::Constant(_) | Rvalue::FnPtr(_) => vec![],
         Rvalue::Call(_, args) => args.iter().flat_map(get_place_reads).collect(),
         Rvalue::Array(elems) => elems.iter().flat_map(get_place_reads).collect(),
@@ -675,6 +681,11 @@ fn substitute_stmt_locals(stmt: &mut Statement, subst: &HashMap<String, String>)
                 Rvalue::BinaryOp(_, p1, p2) => {
                     substitute_place_local(p1, subst);
                     substitute_place_local(p2, subst);
+                }
+                Rvalue::Select(c, t, e) => {
+                    substitute_place_local(c, subst);
+                    substitute_place_local(t, subst);
+                    substitute_place_local(e, subst);
                 }
                 Rvalue::Call(_, args) | Rvalue::Array(args) => {
                     for a in args {

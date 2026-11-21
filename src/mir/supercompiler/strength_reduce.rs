@@ -502,6 +502,7 @@ fn count_local_reads(func: &MirFunction) -> HashMap<String, usize> {
                 Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Discriminant(p)
                 | Rvalue::Alloc(p) | Rvalue::Load(p) => bump(p),
                 Rvalue::BinaryOp(_, l, r) => { bump(l); bump(r); }
+                Rvalue::Select(c, t, e) => { bump(c); bump(t); bump(e); }
                 Rvalue::Call(_, args) | Rvalue::Array(args) => { for a in args { bump(a); } }
                 Rvalue::Struct(_, fields) => { for (_, p) in fields { bump(p); } }
                 Rvalue::EnumVariant { fields, .. } => { for p in fields { bump(p); } }
@@ -565,12 +566,117 @@ pub fn dce_mir_function(func: &mut MirFunction) -> usize {
     removed
 }
 
+/// Count the number of CFG edges targeting `target`.
+fn count_predecessors(func: &MirFunction, target: crate::mir::BasicBlockId) -> usize {
+    func.blocks
+        .iter()
+        .flat_map(|b| b.terminator.successors())
+        .filter(|t| *t == target)
+        .count()
+}
+
+/// Turn a simple value-producing Rvalue into a place available at the branch block.
+fn select_operand(
+    func: &mut MirFunction,
+    block_idx: usize,
+    rv: &Rvalue,
+    ty: &Type,
+    counter: &mut usize,
+) -> Option<Place> {
+    match rv {
+        Rvalue::Use(p) => Some(p.clone()),
+        Rvalue::Constant(lit) => {
+            let name = loop {
+                let candidate = format!("__sel_const_{}_{}", block_idx, *counter);
+                *counter += 1;
+                if !func.locals.iter().any(|l| l.name == candidate) {
+                    break candidate;
+                }
+            };
+            func.locals.push(MirLocalDecl {
+                name: name.clone(),
+                ty: ty.clone(),
+                mutable: true,
+            });
+            let place = Place { local: name, projections: vec![] };
+            func.blocks[block_idx]
+                .statements
+                .push(Statement::Assign(place.clone(), Rvalue::Constant(lit.clone())));
+            Some(place)
+        }
+        _ => None,
+    }
+}
+
+/// Replace safe compare/assign diamonds with a branchless `Rvalue::Select`.
+/// Conditions: both arms contain exactly one assignment to the same plain local,
+/// values are a simple `Use` or constant, both arms branch to the same successor,
+/// and neither arm has any other predecessor. No name matching is involved.
+fn fold_simple_diamonds_to_select(func: &mut MirFunction) -> usize {
+    let mut transformed = 0usize;
+    let mut counter = 0usize;
+    let mut block_idx = 0usize;
+    while block_idx < func.blocks.len() {
+        let (condition, then_target, else_target) = match &func.blocks[block_idx].terminator {
+            crate::mir::Terminator::BranchIf { condition, then_target, else_target } => {
+                (condition.clone(), then_target.clone(), else_target.clone())
+            }
+            _ => { block_idx += 1; continue; }
+        };
+        let then_idx = func.blocks.iter().position(|b| b.id == then_target);
+        let else_idx = func.blocks.iter().position(|b| b.id == else_target);
+        let (Some(ti), Some(ei)) = (then_idx, else_idx) else { block_idx += 1; continue; };
+        if ti == ei || ti == block_idx || ei == block_idx { block_idx += 1; continue; }
+        if func.blocks[ti].statements.len() != 1 || func.blocks[ei].statements.len() != 1 {
+            block_idx += 1; continue;
+        }
+        if count_predecessors(func, then_target) != 1 || count_predecessors(func, else_target) != 1 {
+            block_idx += 1; continue;
+        }
+        let common = match (&func.blocks[ti].terminator, &func.blocks[ei].terminator) {
+            (crate::mir::Terminator::Branch { target: a }, crate::mir::Terminator::Branch { target: b }) if a == b => a.clone(),
+            _ => { block_idx += 1; continue; }
+        };
+        let tstmt = func.blocks[ti].statements[0].clone();
+        let estmt = func.blocks[ei].statements[0].clone();
+        let (Statement::Assign(tdest, trval), Statement::Assign(edest, erval)) = (&tstmt, &estmt);
+        if tdest.local != edest.local || !tdest.projections.is_empty() || !edest.projections.is_empty() {
+            block_idx += 1; continue;
+        }
+        let dest_ty = func
+            .locals
+            .iter()
+            .find(|l| l.name == tdest.local)
+            .map(|l| l.ty.clone())
+            .unwrap_or(Type::I64);
+        let Some(tplace) = select_operand(func, block_idx, trval, &dest_ty, &mut counter) else {
+            block_idx += 1; continue;
+        };
+        let Some(eplace) = select_operand(func, block_idx, erval, &dest_ty, &mut counter) else {
+            block_idx += 1; continue;
+        };
+        func.blocks[block_idx].statements.push(Statement::Assign(
+            tdest.clone(),
+            Rvalue::Select(condition.clone(), tplace, eplace),
+        ));
+        func.blocks[block_idx].terminator = crate::mir::Terminator::Branch { target: common };
+        func.blocks[ti].statements.clear();
+        func.blocks[ti].terminator = crate::mir::Terminator::Unreachable;
+        func.blocks[ei].statements.clear();
+        func.blocks[ei].terminator = crate::mir::Terminator::Unreachable;
+        transformed += 1;
+        block_idx += 1;
+    }
+    transformed
+}
+
 /// Performs strength reduction across all basic blocks of a MirFunction.
 /// Returns the number of operations reduced.
 pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
     let mut reductions = 0;
     reductions += const_propagate_mir_function(func);
     reductions += dce_mir_function(func);
+    reductions += fold_simple_diamonds_to_select(func);
     let global_consts = collect_single_assignment_constants(func);
 
     let mut local_types: HashMap<String, Type> = HashMap::new();

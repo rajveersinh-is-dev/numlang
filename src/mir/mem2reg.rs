@@ -87,6 +87,11 @@ fn collect_all_places(rv: &Rvalue) -> Vec<Place> {
         }
         Rvalue::UnaryOp(_, p) => places.push(p.clone()),
         Rvalue::Constant(_) => {}
+        Rvalue::Select(c, t, e) => {
+            places.push(c.clone());
+            places.push(t.clone());
+            places.push(e.clone());
+        }
         Rvalue::Call(_, args) => places.extend(args.iter().cloned()),
         Rvalue::Array(elems) => places.extend(elems.iter().cloned()),
         Rvalue::Struct(_, fields) => {
@@ -390,6 +395,13 @@ fn rewrite_statement_places(stmt: &mut Statement, replacements: &HashMap<Place, 
             }
             if let Some(r) = replacements.get(p2) {
                 *p2 = r.clone();
+            }
+        }
+        Rvalue::Select(c, t, e) => {
+            for p in [c, t, e] {
+                if let Some(r) = replacements.get(p) {
+                    *p = r.clone();
+                }
             }
         }
         Rvalue::UnaryOp(_, p) => {

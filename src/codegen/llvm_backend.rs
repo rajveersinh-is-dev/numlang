@@ -853,6 +853,21 @@ impl LlvmCompiler {
                             Some(global_str.as_basic_value_enum())
                         }
                     },
+                    Rvalue::Select(c, t, e) => {
+                        let cv = self
+                            .eval_place_val(c, builder, struct_types, local_allocas)?
+                            .into_int_value();
+                        let tv = self
+                            .eval_place_val(t, builder, struct_types, local_allocas)?
+                            .into_int_value();
+                        let ev = self
+                            .eval_place_val(e, builder, struct_types, local_allocas)?
+                            .into_int_value();
+                        let selected = builder
+                            .build_select(cv, tv, ev, "select")
+                            .unwrap_or_err()?;
+                        Some(selected)
+                    }
                     Rvalue::BinaryOp(op, left_p, right_p) => {
                         let l_val =
                             self.eval_place_val(left_p, builder, struct_types, local_allocas)?;
@@ -1712,6 +1727,34 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
                             );
                         }
                     },
+                    Rvalue::Select(c, t, e) => {
+                        let stem = format!("sel_{}_{}", block.id.0, dest.local);
+                        let _ = writeln!(
+                            out,
+                            "  %{}_c = load i1, ptr %{}, align 1",
+                            stem, c.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  %{}_t = load i64, ptr %{}, align 8",
+                            stem, t.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  %{}_e = load i64, ptr %{}, align 8",
+                            stem, e.local
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  %{}_v = select i1 %{}_c, i64 %{}_t, i64 %{}_e",
+                            stem, stem, stem, stem
+                        );
+                        let _ = writeln!(
+                            out,
+                            "  store i64 %{}_v, ptr %{}, align 8, !tbaa !1",
+                            stem, dest.local
+                        );
+                    }
                     Rvalue::BinaryOp(op, l, r) => {
                         let op_str = match op {
                             crate::ast::BinaryOp::Add => "add",

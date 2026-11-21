@@ -14,6 +14,10 @@ pub enum Rvalue {
     BinaryOp(BinaryOp, Place, Place),
     UnaryOp(UnaryOp, Place),
     Constant(TypedLiteral),
+    /// Branchless conditional: `condition ? then_value : else_value`.
+    /// All three operands are places whose values are available where the
+    /// assignment executes (no arm-local definitions).
+    Select(Place, Place, Place),
     Call(String, Vec<Place>),
     Array(Vec<Place>),
     Struct(String, Vec<(String, Place)>),

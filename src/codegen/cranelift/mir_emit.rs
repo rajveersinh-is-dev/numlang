@@ -73,6 +73,14 @@ impl CraneliftCompiler {
                             return false;
                         }
                     }
+                    crate::mir::lower::Rvalue::Select(c, t, e) => {
+                        if place_uses_local(c, dest_local)
+                            || place_uses_local(t, dest_local)
+                            || place_uses_local(e, dest_local)
+                        {
+                            return false;
+                        }
+                    }
                     crate::mir::lower::Rvalue::Call(_, args) => {
                         if args.iter().any(|p| place_uses_local(p, dest_local)) {
                             return false;
@@ -546,6 +554,45 @@ impl CraneliftCompiler {
                         &self.struct_layouts,
                         p,
                     ),
+                    crate::mir::lower::Rvalue::Select(c, t, e) => {
+                        let cv = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            c,
+                        );
+                        let mut tv = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            t,
+                        );
+                        let mut ev = get_place_value(
+                            &mut builder,
+                            &var_map,
+                            &array_slots,
+                            &aliases,
+                            &local_types,
+                            &self.struct_layouts,
+                            e,
+                        );
+                        let tt = builder.func.dfg.value_type(tv);
+                        let et = builder.func.dfg.value_type(ev);
+                        if tt.is_int() && et.is_int() && tt != et {
+                            if tt.bits() > et.bits() {
+                                ev = builder.ins().uextend(tt, ev);
+                            } else {
+                                tv = builder.ins().uextend(et, tv);
+                            }
+                        }
+                        builder.ins().select(cv, tv, ev)
+                    }
                     crate::mir::lower::Rvalue::BinaryOp(op, l, r) => {
                         let mut lv = get_place_value(
                             &mut builder,

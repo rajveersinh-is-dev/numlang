@@ -90,6 +90,7 @@ fn rvalue_places(rv: &Rvalue) -> Vec<&Place> {
         | Rvalue::Alloc(p)
         | Rvalue::Load(p) => vec![p],
         Rvalue::BinaryOp(_, a, b) => vec![a, b],
+        Rvalue::Select(c, t, e) => vec![c, t, e],
         Rvalue::UnaryOp(_, p) => vec![p],
         Rvalue::Call(_, args) => args.iter().collect(),
         Rvalue::Array(elems) => elems.iter().collect(),

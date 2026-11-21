@@ -1160,6 +1160,11 @@ impl MrscCostModel {
                         add_place_locals(l, &mut block_locals);
                         add_place_locals(r, &mut block_locals);
                     }
+                    Rvalue::Select(c, t, e) => {
+                        add_place_locals(c, &mut block_locals);
+                        add_place_locals(t, &mut block_locals);
+                        add_place_locals(e, &mut block_locals);
+                    }
                     Rvalue::Load(p) => add_place_locals(p, &mut block_locals),
                     Rvalue::Array(places) => {
                         for place in places {

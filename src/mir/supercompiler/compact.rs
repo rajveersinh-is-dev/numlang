@@ -466,6 +466,11 @@ fn record_rvalue_uses(rvalue: &Rvalue, uses: &mut HashMap<String, usize>) {
                 record_place_uses(p, uses);
             }
         }
+        Rvalue::Select(c, t, e) => {
+            record_place_uses(c, uses);
+            record_place_uses(t, uses);
+            record_place_uses(e, uses);
+        }
         Rvalue::Constant(_) | Rvalue::FnPtr(_) => {}
         Rvalue::Thunk { env, .. } => {
             for e in env {

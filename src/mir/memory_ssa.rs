@@ -462,6 +462,11 @@ fn collect_reads(rv: &Rvalue, dest: &Place) -> Vec<Place> {
         }
         Rvalue::UnaryOp(_, p) => reads.push(p.clone()),
         Rvalue::Constant(_) => {}
+        Rvalue::Select(c, t, e) => {
+            reads.push(c.clone());
+            reads.push(t.clone());
+            reads.push(e.clone());
+        }
         Rvalue::Call(_, args) => {
             reads.extend(args.iter().cloned());
         }
@@ -567,6 +572,12 @@ fn format_rvalue(rv: &Rvalue) -> String {
         }
         Rvalue::UnaryOp(op, p) => format!("{:?} {}", op, format_place(p)),
         Rvalue::Constant(c) => format!("{:?}", c),
+        Rvalue::Select(c, t, e) => format!(
+            "select {} ? {} : {}",
+            format_place(c),
+            format_place(t),
+            format_place(e)
+        ),
         Rvalue::Call(name, args) => {
             let args_str: Vec<String> = args.iter().map(format_place).collect();
             format!("{}({})", name, args_str.join(", "))
