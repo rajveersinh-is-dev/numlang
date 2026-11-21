@@ -180,12 +180,14 @@ impl CraneliftCompiler {
 
         let mut print_i64_sig = module.make_signature();
         print_i64_sig.params.push(AbiParam::new(types::I64));
+        print_i64_sig.params.push(AbiParam::new(types::I32)); // append '\n' when non-zero
         let print_i64_id = module
             .declare_function("__nl_print_i64", Linkage::Local, &print_i64_sig)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;
 
         let mut print_u64_sig = module.make_signature();
         print_u64_sig.params.push(AbiParam::new(types::I64));
+        print_u64_sig.params.push(AbiParam::new(types::I32)); // append '\n' when non-zero
         let print_u64_id = module
             .declare_function("__nl_print_u64", Linkage::Local, &print_u64_sig)
             .map_err(|e| CodegenError::BackendError(e.to_string()))?;

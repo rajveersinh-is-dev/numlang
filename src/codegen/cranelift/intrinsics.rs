@@ -489,6 +489,7 @@ impl CraneliftCompiler {
     ) -> Result<(), CodegenError> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
         ctx.func.signature = sig;
         let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
 
@@ -505,8 +506,9 @@ impl CraneliftCompiler {
         builder.seal_block(entry_block);
 
         let val = builder.block_params(entry_block)[0];
+        let with_nl = builder.block_params(entry_block)[1];
         let slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32, 8));
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 40, 8));
         let slot_base = builder.ins().stack_addr(types::I64, slot, 0);
 
         let zero64 = builder.ins().iconst(types::I64, 0);
@@ -523,11 +525,21 @@ impl CraneliftCompiler {
         builder
             .ins()
             .store(MemFlagsData::trusted(), char_zero, addr_31, 0);
+        let zero32 = builder.ins().iconst(types::I32, 0);
         let one32 = builder.ins().iconst(types::I32, 1);
+        let two32 = builder.ins().iconst(types::I32, 2);
+        let has_nl = builder.ins().icmp(IntCC::NotEqual, with_nl, zero32);
+        let nl_char = builder.ins().iconst(types::I8, 10); // '\n'
+        let addr_32 = builder.ins().iadd_imm_s(slot_base, 32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), nl_char, addr_32, 0);
+        let start_addr_z = addr_31;
+        let len_z = builder.ins().select(has_nl, two32, one32);
         let print_str_func_z = self
             .module
             .declare_func_in_func(self.print_str_id, builder.func);
-        builder.ins().call(print_str_func_z, &[addr_31, one32]);
+        builder.ins().call(print_str_func_z, &[start_addr_z, len_z]);
         builder.ins().jump(ret_block, &[]);
 
         // non-zero block
@@ -578,10 +590,23 @@ impl CraneliftCompiler {
         let start_addr = builder.ins().iadd(slot_base, final_idx64);
         let thirty_two = builder.ins().iconst(types::I32, 32);
         let len = builder.ins().isub(thirty_two, final_idx);
+        let zero32_nz = builder.ins().iconst(types::I32, 0);
+        let one32_nz = builder.ins().iconst(types::I32, 1);
+        let has_nl_nz = builder.ins().icmp(IntCC::NotEqual, with_nl, zero32_nz);
+        let nl_char_nz = builder.ins().iconst(types::I8, 10); // '\n'
+        let nl_addr_nz = builder.ins().iadd_imm_s(slot_base, 32);
+        builder
+            .ins()
+            .store(MemFlagsData::trusted(), nl_char_nz, nl_addr_nz, 0);
+        let start_final = start_addr;
+        let len_with_nl = builder.ins().iadd(len, one32_nz);
+        let len_final = builder.ins().select(has_nl_nz, len_with_nl, len);
         let print_str_func_nz = self
             .module
             .declare_func_in_func(self.print_str_id, builder.func);
-        builder.ins().call(print_str_func_nz, &[start_addr, len]);
+        builder
+            .ins()
+            .call(print_str_func_nz, &[start_final, len_final]);
         builder.ins().jump(ret_block, &[]);
 
         // ret block
@@ -607,6 +632,7 @@ impl CraneliftCompiler {
     ) -> Result<(), CodegenError> {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(types::I64));
+        sig.params.push(AbiParam::new(types::I32));
         ctx.func.signature = sig;
         let mut builder = FunctionBuilder::new(&mut ctx.func, fn_builder_ctx);
 
@@ -619,6 +645,7 @@ impl CraneliftCompiler {
         builder.seal_block(entry_block);
 
         let val = builder.block_params(entry_block)[0];
+        let with_nl = builder.block_params(entry_block)[1];
         let zero64 = builder.ins().iconst(types::I64, 0);
         let is_neg = builder.ins().icmp(IntCC::SignedLessThan, val, zero64);
         let neg_val = builder.ins().ineg(val);
@@ -646,7 +673,27 @@ impl CraneliftCompiler {
         let print_u64_func = self
             .module
             .declare_func_in_func(self.print_u64_id, builder.func);
-        builder.ins().call(print_u64_func, &[u_val]);
+        let zero32_i = builder.ins().iconst(types::I32, 0);
+        let nl_for_u64 = builder.ins().select(is_neg, zero32_i, with_nl);
+        builder.ins().call(print_u64_func, &[u_val, nl_for_u64]);
+        // For negatives the '-' was written separately, so the newline must
+        // follow the digits as its own write.
+        let has_nl_flag = builder.ins().icmp(IntCC::NotEqual, with_nl, zero32_i);
+        let need_trailing_nl = builder.ins().band(is_neg, has_nl_flag);
+        let trailing_nl_block = builder.create_block();
+        let ret2_block = builder.create_block();
+        builder
+            .ins()
+            .brif(need_trailing_nl, trailing_nl_block, &[], ret2_block, &[]);
+        builder.switch_to_block(trailing_nl_block);
+        builder.seal_block(trailing_nl_block);
+        let print_nl_func = self
+            .module
+            .declare_func_in_func(self.print_newline_id, builder.func);
+        builder.ins().call(print_nl_func, &[]);
+        builder.ins().jump(ret2_block, &[]);
+        builder.switch_to_block(ret2_block);
+        builder.seal_block(ret2_block);
         builder.ins().return_(&[]);
 
         let config = self.module.target_config();
@@ -770,7 +817,8 @@ impl CraneliftCompiler {
         let print_u64_func = self
             .module
             .declare_func_in_func(self.print_u64_id, builder.func);
-        builder.ins().call(print_u64_func, &[int_part]);
+        let no_nl = builder.ins().iconst(types::I32, 0);
+        builder.ins().call(print_u64_func, &[int_part, no_nl]);
 
         // print '.'
         let slot_dot =

@@ -750,6 +750,7 @@ impl<'a> FunctionTranslationState<'a> {
                             return Ok(builder.ins().iconst(types::I32, 0));
                         }
                         let arg_ty = arg.ty();
+                        let mut nl_emitted = false;
                         if arg_ty == Type::Str {
                             return Ok(builder.ins().iconst(types::I32, 0));
                         } else if arg_ty == Type::Bool {
@@ -780,7 +781,8 @@ impl<'a> FunctionTranslationState<'a> {
                             let print_u64_func = self
                                 .module
                                 .declare_func_in_func(self.print_u64_id, builder.func);
-                            builder.ins().call(print_u64_func, &[val_u64]);
+                            let zero_flag = builder.ins().iconst(types::I32, 0);
+                            builder.ins().call(print_u64_func, &[val_u64, zero_flag]);
                         } else {
                             let val = self.translate_expr(arg, builder)?;
                             let val_i64 = match arg_ty {
@@ -792,9 +794,11 @@ impl<'a> FunctionTranslationState<'a> {
                             let print_i64_func = self
                                 .module
                                 .declare_func_in_func(self.print_i64_id, builder.func);
-                            builder.ins().call(print_i64_func, &[val_i64]);
+                            let nl_flag = builder.ins().iconst(types::I32, if is_nl { 1 } else { 0 });
+                            builder.ins().call(print_i64_func, &[val_i64, nl_flag]);
+                            nl_emitted = true;
                         }
-                        if is_nl {
+                        if is_nl && !nl_emitted {
                             let print_nl_func = self
                                 .module
                                 .declare_func_in_func(self.print_newline_id, builder.func);
