@@ -585,10 +585,9 @@ impl CraneliftCompiler {
             .or_else(|| crate::opt::recursion::try_lower_tail_calls(func))
             .unwrap_or_else(|| func.body.clone());
         let dynamically_indexed_arrays = collect_dynamically_indexed_arrays(&body_to_translate);
-        let known_non_negative_vars = collect_known_non_negative_vars(&body_to_translate);
-        let known_u32_vars = collect_known_u32_vars(&body_to_translate, &known_non_negative_vars);
-        let known_var_bounds =
-            collect_known_var_upper_bounds(&body_to_translate, &known_non_negative_vars);
+        let known_non_negative_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let known_u32_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let known_var_bounds: HashMap<String, i64> = HashMap::new();
         let mut const_pool = HashMap::new();
         let mut f64_pool = HashMap::new();
         let mut f32_pool = HashMap::new();

@@ -407,19 +407,42 @@ def check_benchmark_numbers_single_source_of_truth():
     showdown_md = (REPO_ROOT / "SHOWDOWN.md").read_text(encoding="utf-8", errors="replace")
     readme_md = (REPO_ROOT / "README.md").read_text(encoding="utf-8", errors="replace")
 
+    # Derive expected counts from the live raw CSV so re-runs never leave stale
+    # hardcoded win/tie numbers in this linter (the old 6/12 were from a prior
+    # snapshot and broke after the fresh full benchmark run).
+    import sys as _sys
+    _sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from make_bench_table import calc_ratio_stats, determine_result, load_benchmark_data  # noqa: E402
+
+    benchmarks = load_benchmark_data()
+    expected_wins = 0
+    expected_ties = 0
+    for _bid, data in benchmarks.items():
+        systems = data.get("systems", {})
+        sc = systems.get("NumLang-SC")
+        base = systems.get("NumLang-Base")
+        if not sc or not base:
+            continue
+        ratio_stats = calc_ratio_stats(base.get("raw_rounds"), sc.get("raw_rounds"))
+        verdict = determine_result(sc, sc.get("stats"), ratio_stats)
+        if verdict.startswith("NumLang-SC Win"):
+            expected_wins += 1
+        elif verdict.startswith("Tie"):
+            expected_ties += 1
+
     sd_wins = len(re.findall(r'\*\*NumLang-SC Win', showdown_md))
     sd_ties = len(re.findall(r'\*\*Tie', showdown_md))
     rm_wins = len(re.findall(r'\*\*NumLang-SC Win', readme_md))
     rm_ties = len(re.findall(r'\*\*Tie', readme_md))
 
-    if sd_wins != 6:
-        errors.append(f"SHOWDOWN.md table has {sd_wins} wins, expected exactly 6")
-    if sd_ties != 12:
-        errors.append(f"SHOWDOWN.md table has {sd_ties} ties, expected exactly 12")
-    if rm_wins != 6:
-        errors.append(f"README.md table has {rm_wins} wins, expected exactly 6")
-    if rm_ties != 12:
-        errors.append(f"README.md table has {rm_ties} ties, expected exactly 12")
+    if sd_wins != expected_wins:
+        errors.append(f"SHOWDOWN.md table has {sd_wins} wins, expected {expected_wins} from raw CSV")
+    if sd_ties != expected_ties:
+        errors.append(f"SHOWDOWN.md table has {sd_ties} ties, expected {expected_ties} from raw CSV")
+    if rm_wins != expected_wins:
+        errors.append(f"README.md table has {rm_wins} wins, expected {expected_wins} from raw CSV")
+    if rm_ties != expected_ties:
+        errors.append(f"README.md table has {rm_ties} ties, expected {expected_ties} from raw CSV")
 
     return errors
 

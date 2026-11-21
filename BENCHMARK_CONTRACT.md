@@ -20,8 +20,10 @@ are produced, compared, validated, and published. All scripts (`scripts/make_ben
 
 ## 2. Workload Set
 
-The frozen canonical literature benchmark set consists of **18 benchmarks** across three groups,
-as registered in `bench/showdown/benchmarks.toml` and executed by `tests/supercompiler_showdown.rs`:
+The frozen canonical literature benchmark set consists of **18 benchmarks** across four groups
+(G1, G2, G2-Dyn, G3), as registered in `bench/showdown/benchmarks.toml` for G1, G2, and G3 and in
+the `group` column of `bench/data/showdown_results.csv` for G2-Dyn, and executed by
+`tests/supercompiler_showdown.rs`:
 
 - **Group 1 — Classical Functional Deforestation (Wadler 1990, Hamilton 2007)**: `nrev` (Naive
   Reverse / Double nrev), `append3` (Triple List Append), `kmp` (Knuth-Morris-Pratt DFA),
@@ -29,6 +31,13 @@ as registered in `bench/showdown/benchmarks.toml` and executed by `tests/superco
 - **Group 2 — Arithmetic Recurrences**: `fib_matrix` (Coupled Fibonacci Matrix Power),
   `tri_sum` (Triangular Summation, 50M iterations), `cubic_sum` (Cubic Polynomial Sum, 10M),
   `pow2_mod` (Geometric Power Loop, 100), `hofstadter` (Hofstadter Mutual Linear Recurrence).
+- **Group 2D — Dynamic Recurrences (Runtime)**: `tri_sum_dyn` (Dynamic Triangular Summation,
+  50M), `cubic_sum_dyn` (Dynamic Sum of Squares, 10M), `fib_matrix_dyn` (Dynamic Fibonacci
+  Matrix Power, 1000), `pow2_mod_dyn` (Dynamic Geometric Power Loop, 100). These are the `*_dyn`
+  variants registered in `bench/data/showdown_results.csv` under the `G2-Dyn: Recurrences
+  (Runtime)` group value (CSV `name` values: `Dynamic Triangular Summation (50M)`,
+  `Dynamic Sum of Squares (10M)`, `Dynamic Fibonacci Matrix Power (1000)`,
+  `Dynamic Geometric Power Loop (100)`).
 - **Group 3 — Higher-Order & Codata**: `compose5` (5-Deep Function Composition Chain),
   `map_map` (Map-Map Pipeline Deforestation), `sum_map` (Sum-Map Stream Fusion, 1M),
   `stream_take` (Stream Pipeline Filter-Sum).

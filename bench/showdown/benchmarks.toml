@@ -212,3 +212,59 @@ haskell = "bench/showdown/haskell/stream_take.hs"
 hosc = ""
 c = "bench/showdown/c/stream_take.c"
 rust = "bench/showdown/rust/stream_take.rs"
+
+[[benchmark]]
+id = "expr_eval"
+group = "G4: Extended Realistic"
+name = "Bytecode Expression Evaluator"
+algorithm = "Stack-machine interpreter over 11-instruction bytecode with header-driven bound"
+transformation = "N/A - control-flow/data-dependent interpreter probe"
+expected_gain = "N/A (realism probe; no predicted supercompiler win)"
+expected_exit = 14
+numlang = "bench/showdown/extended/numlang/expr_eval.nl"
+haskell = ""
+hosc = ""
+c = "bench/showdown/extended/c/expr_eval.c"
+rust = "bench/showdown/extended/rust/expr_eval.rs"
+
+[[benchmark]]
+id = "window_stats"
+group = "G4: Extended Realistic"
+name = "Sliding-Window Sensor Statistics"
+algorithm = "Data-derived window/min/max/sum over 24-sample telemetry stream"
+transformation = "N/A - branchy data-dependent window reduction"
+expected_gain = "N/A (realism probe; no predicted supercompiler win)"
+expected_exit = 248
+numlang = "bench/showdown/extended/numlang/window_stats.nl"
+haskell = ""
+hosc = ""
+c = "bench/showdown/extended/c/window_stats.c"
+rust = "bench/showdown/extended/rust/window_stats.rs"
+
+[[benchmark]]
+id = "record_pipeline"
+group = "G4: Extended Realistic"
+name = "Struct Record Transform Pipeline"
+algorithm = "Normalise/bucket/boost 10 struct records into 4 weighted buckets"
+transformation = "N/A - SROA/array-of-struct multi-pass pipeline"
+expected_gain = "N/A (realism probe; no predicted supercompiler win)"
+expected_exit = 42
+numlang = "bench/showdown/extended/numlang/record_pipeline.nl"
+haskell = ""
+hosc = ""
+c = "bench/showdown/extended/c/record_pipeline.c"
+rust = "bench/showdown/extended/rust/record_pipeline.rs"
+
+[[benchmark]]
+id = "nested_stencil"
+group = "G4: Extended Realistic"
+name = "Multi-Pass Clamped 2D Stencil"
+algorithm = "3-pass 6x6 nine-point stencil with clamped halo and control weights"
+transformation = "N/A - memory-bound grid kernel, no collapse claimed"
+expected_gain = "N/A (realism probe; no predicted supercompiler win)"
+expected_exit = 62
+numlang = "bench/showdown/extended/numlang/nested_stencil.nl"
+haskell = ""
+hosc = ""
+c = "bench/showdown/extended/c/nested_stencil.c"
+rust = "bench/showdown/extended/rust/nested_stencil.rs"

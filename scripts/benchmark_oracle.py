@@ -208,6 +208,92 @@ def compute_stream_take(iters: int = 1000, n: int = 50) -> int:
         grand_total += p
     return grand_total
 
+def compute_expr_eval() -> int:
+    code = [22, 1, 7, 1, 5, 2, 0, 1, 3, 3, 0, 1, 11, 4, 0, 1, 2, 1, 9, 2, 0, 5, 0]
+    stack = []
+    pc = 1
+    end = 1 + code[0]
+    executed = 0
+    while pc < end:
+        op = code[pc]
+        arg = code[pc + 1]
+        if op == 1:
+            stack.append(arg)
+        elif op == 2:
+            b = stack.pop(); a = stack.pop(); stack.append(wrap_i64(a + b))
+        elif op == 3:
+            b = stack.pop(); a = stack.pop(); stack.append(wrap_i64(a * b))
+        elif op == 4:
+            b = stack.pop(); a = stack.pop(); stack.append(wrap_i64(a - b))
+        elif op == 5:
+            b = stack.pop(); a = stack.pop()
+            stack.append(0 if b == 0 else a % b)
+        pc += 2
+        executed += 1
+    return wrap_i64(stack[-1] + executed)
+
+
+def compute_window_stats() -> int:
+    window, n, stride = [6, 24, 3]
+    samples = [4, 9, 2, 17, 6, 11, 3, 20, 8, 14, 1, 7,
+               19, 5, 12, 10, 16, 2, 13, 6, 18, 4, 9, 15]
+    acc = 0
+    start = 0
+    while start + window <= n:
+        chunk = samples[start:start + window]
+        score = (max(chunk) - min(chunk)) + sum(chunk) % 7
+        if start % stride == 0:
+            acc = wrap_i64(acc + score)
+        else:
+            acc = wrap_i64(acc + score // 2)
+        start += 1
+    return acc
+
+
+def compute_record_pipeline() -> int:
+    records = [
+        (0, 137, 3, 2), (1, 89, 5, 1), (2, 204, 2, 3), (3, 45, 7, 0),
+        (4, 176, 4, 2), (5, 63, 6, 1), (6, 151, 3, 3), (7, 28, 8, 0),
+        (8, 199, 2, 2), (9, 112, 5, 1),
+    ]
+    norm = [(raw % 101) * weight for (_id, raw, weight, _bucket) in records]
+    buckets = [0] * 4
+    for (id_, _raw, _weight, bucket), nv in zip(records, norm):
+        b = id_ % 4
+        buckets[b] = wrap_i64(buckets[b] + nv + bucket)
+    total = 0
+    for k in range(4):
+        boost = k * 2
+        if k == 0:
+            boost = 3
+        total = wrap_i64(total + buckets[k] * boost)
+    return total
+
+
+def compute_nested_stencil() -> int:
+    passes, dim, w0, w1 = [3, 6, 1, 2]
+    grid = [0, 7, 14, 21, 28, 6, 13, 20, 0, 8, 16, 19,
+            26, 6, 15, 19, 28, 3, 10, 20, 25, 6, 11, 16,
+            23, 5, 11, 17, 23, 0, 7, 14, 21, 28, 6, 13]
+    out = [0] * (dim * dim)
+    for _ in range(passes):
+        for r in range(dim):
+            for c in range(dim):
+                acc = 0
+                for k in range(9):
+                    dr = k // 3 - 1
+                    dc = k % 3 - 1
+                    rr = min(max(r + dr, 0), dim - 1)
+                    cc = min(max(c + dc, 0), dim - 1)
+                    coeff = 4 if dr * dr + dc * dc == 0 else (
+                        w0 if (dr + dc + 4) % 2 == 0 else w1
+                    )
+                    acc = wrap_i64(acc + grid[rr * dim + cc] * coeff)
+                out[r * dim + c] = (acc + 8) // 10
+        grid = out[:]
+    return grid[2 * dim + 3]
+
+
 # --- Registry Dispatcher ---
 
 DISPATCH = {
@@ -225,6 +311,10 @@ DISPATCH = {
     "map_map": lambda args: compute_map_map(),
     "sum_map": lambda args: compute_sum_map(),
     "stream_take": lambda args: compute_stream_take(),
+    "expr_eval": lambda args: compute_expr_eval(),
+    "window_stats": lambda args: compute_window_stats(),
+    "record_pipeline": lambda args: compute_record_pipeline(),
+    "nested_stencil": lambda args: compute_nested_stencil(),
 
     # Runtime-input variants
     "tri_sum_dyn": lambda args: compute_tri_sum(int(args[0]) if args else 50000000),
