@@ -545,6 +545,53 @@ pub fn solve_recurrence(
         );
     }
 
+    // Linear-mod recurrence: s_k = (s0 + k * C) mod M
+    // Appears as constant difference C with periodic wraps by -M.
+    if samples.len() >= 6 {
+        let diffs: Vec<i64> = samples.windows(2).map(|w| w[1].wrapping_sub(w[0])).collect();
+        let mut pos_d = None;
+        let mut neg_d = None;
+        let mut ok = true;
+        for &d in &diffs {
+            if d >= 0 {
+                if pos_d.is_none() { pos_d = Some(d); }
+                else if pos_d != Some(d) { ok = false; break; }
+            } else {
+                if neg_d.is_none() { neg_d = Some(d); }
+                else if neg_d != Some(d) { ok = false; break; }
+            }
+        }
+        if ok {
+            if let (Some(c), Some(c_minus_m)) = (pos_d, neg_d) {
+                let m = c.wrapping_sub(c_minus_m);
+                if m > 0 && c >= 0 && c < m {
+                    // Verify all samples
+                    let mut valid = true;
+                    for (k, &sv) in samples.iter().enumerate() {
+                        let expected = ((s0 as i128 + (k as i128) * (c as i128)).rem_euclid(m as i128)) as i64;
+                        if sv != expected { valid = false; break; }
+                    }
+                    if valid {
+                        let s0_term = interner.intern_int(s0);
+                        let c_term = interner.intern_int(c);
+                        let m_term = interner.intern_int(m);
+                        let k_times_c = interner.intern_binary(BinaryOp::Mul, num_iters, c_term, Type::I64);
+                        let sum = interner.intern_binary(BinaryOp::Add, s0_term, k_times_c, Type::I64);
+                        // Use rem_euclid semantics for safety: ((sum % m) + m) % m
+                        let rem = interner.intern_binary(BinaryOp::Mod, sum, m_term, Type::I64);
+                        let rem_plus_m = interner.intern_binary(BinaryOp::Add, rem, m_term, Type::I64);
+                        let result = interner.intern_binary(BinaryOp::Mod, rem_plus_m, m_term, Type::I64);
+                        return Some(result);
+                    }
+                }
+            } else if let Some(c) = pos_d {
+                // Pure linear with no wrap observed - but differences_constant already handled.
+                // Still, if all diffs same, it's linear (handled above). No-op here.
+                let _ = c;
+            }
+        }
+    }
+
     // Order-2 linear recurrence: s_k = c1 * s_{k-1} + c2 * s_{k-2} (Fibonacci, Lucas, coupled systems)
     if let Some(res) = solve_order2_recurrence(samples, num_iters, interner) {
         return Some(res);
@@ -645,19 +692,8 @@ pub fn solve_order2_recurrence(
         }
     }
 
-    // Case 3: Arbitrary order-2 linear recurrence s_{k+1} = c1 * s_k + c2 * s_{k-1} with initial values (s0, s1)
-    if c1 != 0 || c2 != 0 {
-        let c1_term = interner.intern_int(c1);
-        let c2_term = interner.intern_int(c2);
-        let s0_term = interner.intern_int(s0);
-        let s1_term = interner.intern_int(s1);
-        return Some(interner.intern_call(
-            "__numlang_linear_rec2".to_string(),
-            vec![c1_term, c2_term, s0_term, s1_term, num_iters],
-            Type::I64,
-        ));
-    }
-
+    // No codegen handler exists for symbolic order-2 recurrence intrinsics.
+    // Fall back to the loop instead of emitting an unhandleable call.
     None
 }
 
@@ -806,24 +842,9 @@ pub fn solve_coupled_2var_recurrence(
         return Some((interner.intern_int(a_n), interner.intern_int(b_n)));
     }
 
-    // Symbolic number of iterations -> emit intrinsics __coupled_a and __coupled_b
-    let p_term = interner.intern_int(p);
-    let q_term = interner.intern_int(q);
-    let ca_term = interner.intern_int(ca);
-    let r_term = interner.intern_int(r);
-    let s_term = interner.intern_int(s);
-    let cb_term = interner.intern_int(cb);
-    let a0_term = interner.intern_int(a0);
-    let b0_term = interner.intern_int(b0);
-
-    let args = vec![
-        p_term, q_term, ca_term, r_term, s_term, cb_term, a0_term, b0_term, num_iters,
-    ];
-
-    let term_a = interner.intern_call("__coupled_a".to_string(), args.clone(), Type::I64);
-    let term_b = interner.intern_call("__coupled_b".to_string(), args, Type::I64);
-
-    Some((term_a, term_b))
+    // No codegen handler exists for symbolic coupled recurrence intrinsics.
+    // Fall back to the loop instead of emitting unhandleable calls.
+    None
 }
 
 fn mat_pow_2x2(mut m: [[i64; 2]; 2], mut exp: i64) -> [[i64; 2]; 2] {

@@ -1694,7 +1694,7 @@ impl<'a> SupercompilerDriver<'a> {
                             return;
                         }
                         RecurrenceResult::UnsolvableNoPattern => {
-                            if header_visits >= 12 {
+                            if header_visits >= 48 {
                                 // Repeated visits but recurrence solver failed: tie knot without partial unrolling
                                 for &a_id in ancestor_stack.iter().rev() {
                                     let a_st = &self.nodes[a_id.0].state;
@@ -1751,65 +1751,129 @@ impl<'a> SupercompilerDriver<'a> {
                 if state_embeds(&anc_state, &next_state, &self.active_places, &self.interner) {
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
-                    if let RecurrenceResult::Solved(solved_state) =
-                        self.try_solve_loop_recurrence(&anc_state, &next_state, &ancestor_stack)
-                    {
-                        self.stats.loops_collapsed += 1;
-                        let next_node = self.alloc_child_node(from_id, *solved_state);
-                        self.nodes[from_id.0]
-                            .edges
-                            .push(ProcessEdge::Step(next_node));
-                        work_queue.push_back(DriveTask::ProcessNode {
-                            node_id: next_node,
-                            depth: depth + 1,
-                        });
-                        return;
-                    } else {
-                        // Whistle blew but recurrence solver failed (coupled / modular recurrence)
-                        for &a_id in ancestor_stack.iter().rev() {
-                            let a_st = &self.nodes[a_id.0].state;
-                            if is_instance_of(a_st, &next_state, &self.active_places) {
+                    let first_header_anc = ancestor_stack
+                        .iter()
+                        .find(|&&a| self.nodes[a.0].state.block == next_state.block)
+                        .copied()
+                        .unwrap_or(anc_id);
+                    let first_header_state = self.nodes[first_header_anc.0].state.clone();
+                    match self.try_solve_loop_recurrence(&first_header_state, &next_state, &ancestor_stack) {
+                        RecurrenceResult::Solved(solved_state) => {
+                            self.stats.loops_collapsed += 1;
+                            let next_node = self.alloc_child_node(from_id, *solved_state);
+                            self.nodes[from_id.0]
+                                .edges
+                                .push(ProcessEdge::Step(next_node));
+                            work_queue.push_back(DriveTask::ProcessNode {
+                                node_id: next_node,
+                                depth: depth + 1,
+                            });
+                            return;
+                        }
+                        RecurrenceResult::UnsolvableBranchingBody => {
+                            for &a_id in ancestor_stack.iter().rev() {
+                                let a_st = &self.nodes[a_id.0].state;
+                                if is_instance_of(a_st, &next_state, &self.active_places) {
+                                    self.stats.knots_tied += 1;
+                                    self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                    self.witness.firings.push(WhistleFiring {
+                                        from_id,
+                                        ancestor_id: a_id,
+                                        kind: WhistleKind::HomeomorphicEmbedding,
+                                    });
+                                    return;
+                                }
+                            }
+                            let mut gen_state = anc_state.clone();
+                            let mut next_var_id = self.interner.len();
+                            for place in &self.active_places {
+                                if let (Some(t_anc), Some(t_curr)) =
+                                    (anc_state.get_value(place), next_state.get_value(place))
+                                {
+                                    if t_anc != t_curr {
+                                        let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                            t_anc,
+                                            t_curr,
+                                            &mut self.interner,
+                                            &mut next_var_id,
+                                        );
+                                        gen_state.set_value(place.clone(), gen_res.common_term);
+                                    }
+                                }
+                            }
+                            let gen_node_id = self.alloc_child_node(from_id, gen_state);
+                            self.nodes[gen_node_id.0]
+                                .edges
+                                .push(ProcessEdge::Step(anc_id));
+                            self.stats.knots_tied += 1;
+                            self.nodes[from_id.0]
+                                .edges
+                                .push(ProcessEdge::Knot(gen_node_id));
+                            self.witness.firings.push(WhistleFiring {
+                                from_id,
+                                ancestor_id: gen_node_id,
+                                kind: WhistleKind::HomeomorphicEmbedding,
+                            });
+                            return;
+                        }
+                        RecurrenceResult::UnsolvableNoPattern => {
+                            // Homeomorphic embedding fired before the recurrence solver
+                            // had enough header-visit samples (needs >=3).  Do not knot
+                            // yet — let driving continue so the next header visit can
+                            // collect a longer history.  The header-visit guard and the
+                            // global depth/node budget prevent unbounded unrolling.
+                            let header_visits = ancestor_stack
+                                .iter()
+                                .filter(|&&a| self.nodes[a.0].state.block == next_state.block)
+                                .count();
+                            if header_visits >= 48 {
+                                for &a_id in ancestor_stack.iter().rev() {
+                                    let a_st = &self.nodes[a_id.0].state;
+                                    if is_instance_of(a_st, &next_state, &self.active_places) {
+                                        self.stats.knots_tied += 1;
+                                        self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                        self.witness.firings.push(WhistleFiring {
+                                            from_id,
+                                            ancestor_id: a_id,
+                                            kind: WhistleKind::HomeomorphicEmbedding,
+                                        });
+                                        return;
+                                    }
+                                }
+                                let mut gen_state = anc_state.clone();
+                                let mut next_var_id = self.interner.len();
+                                for place in &self.active_places {
+                                    if let (Some(t_anc), Some(t_curr)) =
+                                        (anc_state.get_value(place), next_state.get_value(place))
+                                    {
+                                        if t_anc != t_curr {
+                                            let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
+                                                t_anc,
+                                                t_curr,
+                                                &mut self.interner,
+                                                &mut next_var_id,
+                                            );
+                                            gen_state.set_value(place.clone(), gen_res.common_term);
+                                        }
+                                    }
+                                }
+                                let gen_node_id = self.alloc_child_node(from_id, gen_state);
+                                self.nodes[gen_node_id.0]
+                                    .edges
+                                    .push(ProcessEdge::Step(anc_id));
                                 self.stats.knots_tied += 1;
-                                self.nodes[from_id.0].edges.push(ProcessEdge::Knot(a_id));
+                                self.nodes[from_id.0]
+                                    .edges
+                                    .push(ProcessEdge::Knot(gen_node_id));
                                 self.witness.firings.push(WhistleFiring {
                                     from_id,
-                                    ancestor_id: a_id,
+                                    ancestor_id: gen_node_id,
                                     kind: WhistleKind::HomeomorphicEmbedding,
                                 });
                                 return;
                             }
+                            // else: fall through to normal step to collect more samples
                         }
-                        let mut gen_state = anc_state.clone();
-                        let mut next_var_id = self.interner.len();
-                        for place in &self.active_places {
-                            if let (Some(t_anc), Some(t_curr)) =
-                                (anc_state.get_value(place), next_state.get_value(place))
-                            {
-                                if t_anc != t_curr {
-                                    let gen_res = crate::mir::supercompiler::generalize::most_specific_generalization(
-                                        t_anc,
-                                        t_curr,
-                                        &mut self.interner,
-                                        &mut next_var_id,
-                                    );
-                                    gen_state.set_value(place.clone(), gen_res.common_term);
-                                }
-                            }
-                        }
-                        let gen_node_id = self.alloc_child_node(from_id, gen_state);
-                        self.nodes[gen_node_id.0]
-                            .edges
-                            .push(ProcessEdge::Step(anc_id));
-                        self.stats.knots_tied += 1;
-                        self.nodes[from_id.0]
-                            .edges
-                            .push(ProcessEdge::Knot(gen_node_id));
-                        self.witness.firings.push(WhistleFiring {
-                            from_id,
-                            ancestor_id: gen_node_id,
-                            kind: WhistleKind::HomeomorphicEmbedding,
-                        });
-                        return;
                     }
                 }
             }
@@ -1833,6 +1897,7 @@ impl<'a> SupercompilerDriver<'a> {
         ancestor_stack: &[ProcessNodeId],
     ) -> RecurrenceResult {
         // If the loop contains array writes, we cannot collapse it to a scalar closed form
+        let mut loop_has_mod = false;
         if let Some(blocks) = self.natural_loops.get(&curr.block) {
             let loop_has_array_writes = blocks.iter().any(|b_id| {
                 if let Some(b) = self.block_map.get(b_id) {
@@ -1849,6 +1914,18 @@ impl<'a> SupercompilerDriver<'a> {
             if loop_has_array_writes {
                 return RecurrenceResult::UnsolvableNoPattern;
             }
+            loop_has_mod = blocks.iter().any(|b_id| {
+                if let Some(b) = self.block_map.get(b_id) {
+                    b.statements.iter().any(|stmt| {
+                        matches!(
+                            stmt,
+                            Statement::Assign(_, Rvalue::BinaryOp(BinaryOp::Mod, _, _))
+                        )
+                    })
+                } else {
+                    false
+                }
+            });
         }
 
         let mut solved_state = curr.clone();
@@ -2049,7 +2126,19 @@ impl<'a> SupercompilerDriver<'a> {
             }
 
             let mut this_solved = false;
-            if history.len() >= 3 {
+            let bound_val = match self.interner.get(n_term) {
+                SymTerm::ConstInt(v, _) => Some(*v),
+                _ => None,
+            };
+            let min_samples = if loop_has_mod {
+                match bound_val {
+                    Some(b) if b >= 0 => ((b as usize) + 1).clamp(12, 32),
+                    _ => 12,
+                }
+            } else {
+                3
+            };
+            if history.len() >= min_samples {
                 if let Some(closed_form) = solve_recurrence(&history, n_term, &mut self.interner) {
                     solved_state.set_value(place.clone(), closed_form);
                     any_solved = true;
@@ -2058,7 +2147,7 @@ impl<'a> SupercompilerDriver<'a> {
                 }
             }
 
-            if !this_solved && history.len() >= 4 {
+            if !this_solved && history.len() >= min_samples.max(4) {
                 unsolved_places.push((place.clone(), history));
             }
         }
@@ -2190,6 +2279,21 @@ impl<'a> SupercompilerDriver<'a> {
             Some(b) => b,
             None => return AccumulatorLoopResult::NotApplicable,
         };
+
+        // A modular accumulator (e.g. `sum = (sum + f) % M`) cannot be solved from
+        // the fixed 8-step simulation below: if the first wrap happens after those
+        // samples the sequence looks purely linear and `solve_recurrence` emits an
+        // unbounded `s0 + n*C` closed form that is wrong for large/opaque bounds.
+        let loop_has_mod = blocks.iter().any(|b_id| {
+            self.block_map.get(b_id).is_some_and(|b| {
+                b.statements.iter().any(|stmt| {
+                    matches!(
+                        stmt,
+                        Statement::Assign(_, Rvalue::BinaryOp(BinaryOp::Mod, _, _))
+                    )
+                })
+            })
+        });
 
         // If the loop contains internal branches (e.g. if-statements where all branch targets remain in loop),
         // body execution cannot be simulated as a linear sequence of statements.
@@ -2340,27 +2444,13 @@ impl<'a> SupercompilerDriver<'a> {
             0
         };
 
-        let iv_step =
-            if let (Some(t_anc), Some(t_curr)) = (base_state.get_value(&iv), curr.get_value(&iv)) {
-                if let (SymTerm::ConstInt(v0, _), SymTerm::ConstInt(v1, _)) =
-                    (self.interner.get(t_anc), self.interner.get(t_curr))
-                {
-                    let s = v1 - v0;
-                    if s != 0 {
-                        s
-                    } else {
-                        1
-                    }
-                } else {
-                    1
-                }
-            } else {
-                1
-            };
+        let iv_step = 1i64;
+
+        let sim_steps = 8usize;
 
         let mut histories: HashMap<String, Vec<i64>> = HashMap::new();
         for cand in &mutating_candidates {
-            histories.insert(cand.local.clone(), Vec::with_capacity(9));
+            histories.insert(cand.local.clone(), Vec::with_capacity(sim_steps + 1));
             if let Some(&init_val) = env.get(&cand.local) {
                 if let Some(h) = histories.get_mut(&cand.local) {
                     h.push(init_val);
@@ -2369,7 +2459,7 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         let mut sim_success = true;
-        for k in 0..8 {
+        for k in 0..sim_steps {
             env.insert(iv.local.clone(), initial_iv + (k as i64) * iv_step);
 
             for b_id in &body_order {
@@ -2398,8 +2488,12 @@ impl<'a> SupercompilerDriver<'a> {
                                             }
                                         }
                                         BinaryOp::Mod => {
-                                            sim_success = false;
-                                            break;
+                                            if rv != 0 {
+                                                Some(lv % rv)
+                                            } else {
+                                                sim_success = false;
+                                                break;
+                                            }
                                         }
                                         BinaryOp::BitAnd => Some(lv & rv),
                                         BinaryOp::BitOr => Some(lv | rv),
@@ -2475,6 +2569,22 @@ impl<'a> SupercompilerDriver<'a> {
         for cand in &mutating_candidates {
             if let Some(samples) = histories.get(&cand.local) {
                 if samples.len() >= 4 {
+                    // A modular accumulator whose short simulated history shows a
+                    // pure linear progression is a trap: the first wrap may happen
+                    // after the 8 simulated steps (e.g. `sum = (sum + 102334155) %
+                    // 1_000_000_007` wraps at k=10). `solve_recurrence` would then
+                    // emit an unbounded `s0 + n*C` closed form that drops the modulus
+                    // entirely. Defer such candidates to the history-based solver,
+                    // which samples enough iterations to observe wraps and uses the
+                    // verified linear-mod closed form.
+                    let looks_purely_linear = loop_has_mod
+                        && samples.windows(2).all(|w| {
+                            w[1].wrapping_sub(w[0])
+                                == samples[1].wrapping_sub(samples[0])
+                        });
+                    if looks_purely_linear {
+                        continue;
+                    }
                     if let Some(closed_form) = solve_recurrence(samples, n_term, &mut self.interner)
                     {
                         solved_accs.push((cand.clone(), closed_form));

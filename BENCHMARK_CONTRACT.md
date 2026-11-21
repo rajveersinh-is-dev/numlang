@@ -20,8 +20,8 @@ are produced, compared, validated, and published. All scripts (`scripts/make_ben
 
 ## 2. Workload Set
 
-The frozen canonical literature benchmark set consists of **18 benchmarks** across four groups
-(G1, G2, G2-Dyn, G3), as registered in `bench/showdown/benchmarks.toml` for G1, G2, and G3 and in
+The frozen benchmark set consists of **22 benchmarks** across five groups
+(G1, G2, G2-Dyn, G3, G4), as registered in `bench/showdown/benchmarks.toml` for G1, G2, G3 and G4 and in
 the `group` column of `bench/data/showdown_results.csv` for G2-Dyn, and executed by
 `tests/supercompiler_showdown.rs`:
 
@@ -41,6 +41,10 @@ the `group` column of `bench/data/showdown_results.csv` for G2-Dyn, and executed
 - **Group 3 — Higher-Order & Codata**: `compose5` (5-Deep Function Composition Chain),
   `map_map` (Map-Map Pipeline Deforestation), `sum_map` (Sum-Map Stream Fusion, 1M),
   `stream_take` (Stream Pipeline Filter-Sum).
+- **Group 4 — Extended Realistic Workloads**: `expr_eval` (bytecode interpreter),
+  `window_stats` (sliding-window statistics), `record_pipeline` (array-of-struct transform),
+  `nested_stencil` (nine-point stencil). Registered in `bench/showdown/benchmarks.toml`
+  under `G4: Extended Realistic`, with sources under `bench/showdown/extended/`.
 
 Input sizes are those recorded in the canonical benchmark registry / sources
 (e.g., `tri_sum` accumulates 50,000,000 iterations; `cubic_sum` evaluates 10,000,000 terms;

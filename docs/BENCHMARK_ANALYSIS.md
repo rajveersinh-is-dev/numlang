@@ -8,7 +8,7 @@ measurement CSV, under the frozen `BENCHMARK_CONTRACT.md` v1.0 decision rule.
 | Item | Value |
 |:---|:---|
 | CSV analyzed | `bench/data/showdown_results.csv` (gitignored — `.gitignore:16`) |
-| **Live CSV SHA-256 (current vintage)** | `3d41d7d119bb00f6880ef1e1adde31b712391a70b2f77a27da6cb6800ccee80a` |
+| **Live CSV SHA-256 (current vintage)** | `3b1ada010300971af3190ed30a7408ea1126fbd135b328f2974aa51ee2f5b22e` (22-benchmark full run after restoring the `fib_matrix` collapse; 6 wins / 16 ties / 0 regressions) |
 | **CSV SHA-256 (superseded vintage — used for the §2 table)** | `D11F063C8EC37A5A1B59B482E3212B7979FD9BF6D8E4AA189750AE8099BECB24` (superseded: the live CSV was re-run after the audit snapshot) |
 | Snapshot used for all numbers here | `C:\Users\davea\AppData\Local\Temp\opencode\agentG_showdown_results_snapshot.csv` (identical hash to the superseded vintage; copied **before** analysis because agent F may rewrite the live files) |
 | `README.md` snapshot SHA-256 | `D009A681FFE3BA941A03888277ACC83A77818F16798A1A079C9D69CAA10C4A92` |
@@ -16,10 +16,12 @@ measurement CSV, under the frozen `BENCHMARK_CONTRACT.md` v1.0 decision rule.
 | Pre-change vintage (`git show HEAD:bench/data/showdown_results_sample.csv`) | SHA-256 `14145D544EB078BAE6269C77CC6D45F8482EBD3FE94E764D5AD78E9A99B6089F` |
 | Analysis script | `scripts/analyze_results.py` — run with `python scripts/analyze_results.py` (accepts `--csv PATH`, `--verbose`) |
 
-**Live-CSV re-run note (vintage labeling).** The live `bench/data/showdown_results.csv` was
-re-run after this audit snapshot (agent F post-change full run): its current SHA-256 is
-`3d41d7d119bb00f6880ef1e1adde31b712391a70b2f77a27da6cb6800ccee80a`; the earlier
-`D11F063C8EC37A5A1B59B482E3212B7979FD9BF6D8E4AA189750AE8099BECB24` vintage is superseded.
+**Live-CSV re-run note (vintage labeling).** The live `bench/data/showdown_results.csv` has been
+re-run twice since this audit snapshot. Its current SHA-256 is
+`3b1ada010300971af3190ed30a7408ea1126fbd135b328f2974aa51ee2f5b22e` — a full 22-benchmark run
+after the coupled-Fibonacci collapse was restored (`fib_matrix` 12.93x, `tri_sum` 2266.13x,
+6 wins / 16 ties / 0 regressions). The earlier `3d41d7d1…` and
+`D11F063C8EC37A5A1B59B482E3212B7979FD9BF6D8E4AA189750AE8099BECB24` vintages are superseded.
 Current-vintage spot checks via the live CSV and the `scripts/make_bench_table.py` functions:
 `nrev` — NumLang-SC `median_ns` 223400 ns; `tri_sum` — NumLang-SC `median_ns` 11400, ratio stats
 `1766.36x [1004.70-2624.35]` (matches `README.md:122` / `SHOWDOWN.md:71`). The §2 table below is

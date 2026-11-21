@@ -263,30 +263,17 @@ fn test_coupled_2var_recurrence_direct() {
         panic!("Expected ConstInt for b_4");
     }
 
-    // Symbolic test
+    // Symbolic recurrence has no codegen handler; solver must not emit unhandleable intrinsics.
     let place = numlang::mir::Place {
         local: "n".to_string(),
         projections: vec![],
     };
     let n_sym = interner.intern_var(place, Type::I64);
-    let (sol_sym_a, sol_sym_b) =
-        solve_coupled_2var_recurrence(&samples_a, &samples_b, n_sym, &mut interner)
-            .expect("Failed to solve coupled 2-variable recurrence symbolically");
-
-    match interner.get(sol_sym_a) {
-        SymTerm::Call(callee, args, _) => {
-            assert_eq!(callee, "__coupled_a");
-            assert_eq!(args.len(), 9);
-        }
-        other => panic!("Expected Call to __coupled_a, found: {:?}", other),
-    }
-    match interner.get(sol_sym_b) {
-        SymTerm::Call(callee, args, _) => {
-            assert_eq!(callee, "__coupled_b");
-            assert_eq!(args.len(), 9);
-        }
-        other => panic!("Expected Call to __coupled_b, found: {:?}", other),
-    }
+    let sym = solve_coupled_2var_recurrence(&samples_a, &samples_b, n_sym, &mut interner);
+    assert!(
+        sym.is_none(),
+        "Symbolic coupled recurrence should fall back (no codegen handler) rather than emit __coupled_* intrinsics"
+    );
 }
 
 #[test]
@@ -348,29 +335,17 @@ fn test_affine_coupled_recurrence_direct() {
         panic!("Expected ConstInt for b_4");
     }
 
-    // Symbolic emission check
+    // Symbolic recurrence has no codegen handler; solver must not emit unhandleable intrinsics.
     let place = numlang::mir::Place {
         local: "n".to_string(),
         projections: vec![],
     };
     let n_sym = interner.intern_var(place, Type::I64);
-    let (sym_a, sym_b) =
-        solve_coupled_2var_recurrence(&sa, &sb, n_sym, &mut interner)
-            .expect("Failed to solve affine coupled recurrence symbolically");
-    match interner.get(sym_a) {
-        SymTerm::Call(callee, args, _) => {
-            assert_eq!(callee, "__coupled_a");
-            assert_eq!(args.len(), 9);
-        }
-        other => panic!("Expected Call to __coupled_a, found: {:?}", other),
-    }
-    match interner.get(sym_b) {
-        SymTerm::Call(callee, args, _) => {
-            assert_eq!(callee, "__coupled_b");
-            assert_eq!(args.len(), 9);
-        }
-        other => panic!("Expected Call to __coupled_b, found: {:?}", other),
-    }
+    let sym = solve_coupled_2var_recurrence(&sa, &sb, n_sym, &mut interner);
+    assert!(
+        sym.is_none(),
+        "Symbolic coupled recurrence should fall back (no codegen handler) rather than emit __coupled_* intrinsics"
+    );
 }
 
 #[test]
@@ -412,4 +387,166 @@ fn test_nway_affine_matrix_recurrence_large_n() {
     } else {
         panic!("Expected ConstInt");
     }
+}
+
+#[test]
+fn test_fib_matrix_coupled_recurrence_collapses() {
+    let src = r#"
+        fn fib_coupled() -> i64 {
+            let mut a: i64 = 0;
+            let mut b: i64 = 1;
+            let mut i: i64 = 0;
+            while i < 40 {
+                let next_a: i64 = b;
+                let next_b: i64 = (a + b) % 1000000007;
+                a = next_a;
+                b = next_b;
+                i = i + 1;
+            }
+            return a;
+        }
+
+        fn main() -> i64 {
+            let mut sum: i64 = 0;
+            for i in 0..1000 {
+                sum = (sum + fib_coupled()) % 1000000007;
+            }
+            println(sum);
+            return sum % 256;
+        }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let typed = typecheck(&ast).unwrap();
+    let mut mir = lower_program(&typed);
+
+    let stats = supercompile_mir_program(&mut mir);
+
+    let fib = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "fib_coupled")
+        .expect("fib_coupled should exist");
+    let has_loop = fib.blocks.iter().any(|b| {
+        matches!(
+            b.terminator,
+            numlang::mir::Terminator::BranchIf { .. } | numlang::mir::Terminator::Switch { .. }
+        )
+    });
+
+    // The coupled Fibonacci matrix recurrence must collapse to a closed form.
+    assert!(
+        !has_loop,
+        "fib_coupled loop should be collapsed by coupled recurrence solver"
+    );
+    assert!(
+        stats.loops_collapsed >= 1,
+        "expected at least one loop collapse, got {:?}",
+        stats
+    );
+
+    let code = compile_and_run_supercompiled(src, "fib_matrix_collapse");
+    assert_eq!(code, 46);
+}
+
+/// Regression: enabling `Mod` in the accumulator simulator made the dynamic-bound
+/// matrix loop collapse to the unmodded value `1000 * fib(40) == 102334155000`
+/// (exit 248) instead of the correct `334154286` (exit 46). The static variant
+/// must keep its closed-form collapse while the runtime-opaque-bound variant is
+/// kept correct (its modular loop must not be folded into a constant).
+#[test]
+fn test_fib_matrix_static_collapse_and_dynamic_correctness() {
+    let static_src = r#"
+        fn fib_coupled(n: i64) -> i64 {
+            let mut a: i64 = 0;
+            let mut b: i64 = 1;
+            let mut i: i64 = 0;
+            while i < n {
+                let next_a: i64 = b;
+                let next_b: i64 = (a + b) % 1000000007;
+                a = next_a;
+                b = next_b;
+                i = i + 1;
+            }
+            return a;
+        }
+
+        fn main() -> i64 {
+            let mut sum: i64 = 0;
+            for i in 0..1000 {
+                sum = (sum + fib_coupled(40)) % 1000000007;
+            }
+            println(sum);
+            return sum % 256;
+        }
+    "#;
+
+    let dynamic_src = r#"
+        fn fib_coupled(n: i64) -> i64 {
+            let mut a: i64 = 0;
+            let mut b: i64 = 1;
+            let mut i: i64 = 0;
+            while i < n {
+                let next_a: i64 = b;
+                let next_b: i64 = (a + b) % 1000000007;
+                a = next_a;
+                b = next_b;
+                i = i + 1;
+            }
+            return a;
+        }
+
+        fn main() -> i64 {
+            let mut iters: i64 = read_i64();
+            if iters <= 0 {
+                iters = 1000;
+            }
+            let f40: i64 = fib_coupled(40);
+            let mut sum: i64 = 0;
+            let mut j: i64 = 0;
+            while j < iters {
+                sum = (sum + f40) % 1000000007;
+                j = j + 1;
+            }
+            println(sum);
+            return sum % 256;
+        }
+    "#;
+
+    // Static variant: fib_coupled's loop must collapse to a closed form.
+    let mut static_mir = lower_program(&typecheck(&parse(&tokenize(static_src).unwrap()).unwrap()).unwrap());
+    let static_stats = supercompile_mir_program(&mut static_mir);
+    assert!(
+        static_stats.loops_collapsed >= 1,
+        "static fib_matrix must collapse its coupled loop, got {:?}",
+        static_stats
+    );
+    assert_eq!(
+        compile_and_run_supercompiled(static_src, "fib_matrix_static_regression"),
+        46,
+        "static fib_matrix must exit 46"
+    );
+
+    // Dynamic variant: the runtime-opaque-bound modular loop must NOT be folded
+    // into the unmodded constant. Detect the regression signature directly.
+    let mut dynamic_mir = lower_program(&typecheck(&parse(&tokenize(dynamic_src).unwrap()).unwrap()).unwrap());
+    supercompile_mir_program(&mut dynamic_mir);
+    for func in &dynamic_mir.functions {
+        for block in &func.blocks {
+            for stmt in &block.statements {
+                if let Statement::Assign(_, Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(v, _))) = stmt {
+                    assert_ne!(
+                        *v, 102334155000i64,
+                        "dynamic fib_matrix must not collapse the modular loop to the unmodded value"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        compile_and_run_supercompiled(dynamic_src, "fib_matrix_dynamic_regression"),
+        46,
+        "dynamic fib_matrix must exit 46 for its runtime bound"
+    );
 }
