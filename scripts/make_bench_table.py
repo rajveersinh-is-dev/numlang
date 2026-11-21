@@ -60,7 +60,7 @@ REGRESSION_BOUND = 1.0 - WIN_EFFECT_PCT / 100.0  # SC slower than baseline by >=
 TRACEABILITY_RTOL = 0.05  # Relative tolerance when tracing published medians back to raw rounds.
 TRACEABILITY_ATOL = 1.0  # Absolute tolerance (ns) for order statistics.
 
-HEADLINE_SYSTEMS = ["NumLang-SC", "NumLang-Base", "Rustc-O3", "MSVC-O2", "GHC-O2", "HOSC-SC"]
+HEADLINE_SYSTEMS = ["NumLang-SC", "NumLang-Base", "Rustc-O3", "MSVC-O2", "Clang-O3", "GCC-O3", "GHC-O2", "HOSC-SC"]
 
 
 def get_cmd_output(cmd_args):
@@ -268,8 +268,8 @@ def load_benchmark_data():
 
 def build_showdown_table(benchmarks):
     lines = []
-    lines.append("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | GHC-O2 | HOSC-SC | Result vs Base (95% CI) | Speedup vs Base |")
-    lines.append("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
+    lines.append("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Clang-O3 | GCC-O3 | GHC-O2 | HOSC-SC | Result vs Base (95% CI) | Speedup vs Base |")
+    lines.append("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
 
     total_evaluable = 0
     total_wins_sc = 0
@@ -288,6 +288,8 @@ def build_showdown_table(benchmarks):
         base = sys_map.get("NumLang-Base")
         rust = sys_map.get("Rustc-O3")
         msvc = sys_map.get("MSVC-O2")
+        clang = sys_map.get("Clang-O3")
+        gcc = sys_map.get("GCC-O3")
         ghc = sys_map.get("GHC-O2")
         hosc = sys_map.get("HOSC-SC")
 
@@ -299,6 +301,8 @@ def build_showdown_table(benchmarks):
             base_str = format_ns(base["median_ns"], base["status"])
             rust_str = format_ns(rust["median_ns"], rust["status"]) if rust else "N/A"
             msvc_str = format_ns(msvc["median_ns"], msvc["status"]) if msvc else "N/A"
+            clang_str = format_ns(clang["median_ns"], clang["status"]) if clang else "N/A"
+            gcc_str = format_ns(gcc["median_ns"], gcc["status"]) if gcc else "N/A"
             ghc_str = format_ns(ghc["median_ns"], ghc["status"]) if ghc else "N/A"
             hosc_str = format_ns(hosc["median_ns"], hosc["status"]) if hosc else "N/A"
 
@@ -327,6 +331,8 @@ def build_showdown_table(benchmarks):
             base_str = "N/A"
             rust_str = format_ns(rust["median_ns"], rust["status"]) if rust else "N/A"
             msvc_str = format_ns(msvc["median_ns"], msvc["status"]) if msvc else "N/A"
+            clang_str = format_ns(clang["median_ns"], clang["status"]) if clang else "N/A"
+            gcc_str = format_ns(gcc["median_ns"], gcc["status"]) if gcc else "N/A"
             ghc_str = format_ns(ghc["median_ns"], ghc["status"]) if ghc else "N/A"
             hosc_str = format_ns(hosc["median_ns"], hosc["status"]) if hosc else "N/A"
             result_str = "N/A"
@@ -337,9 +343,9 @@ def build_showdown_table(benchmarks):
             for sys_name in HEADLINE_SYSTEMS:
                 entry = sys_map.get(sys_name)
                 compile_str += f" | {format_compile_time(entry.get('compile_time_ns') if entry else None, entry.get('status') if entry else 'NOT_INSTALLED')}"
-            row = f"| **{data['name']}** | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | {ghc_str} | {hosc_str} | **{result_str}** | {speedup_str} |{compile_str} |"
+            row = f"| **{data['name']}** | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | {clang_str} | {gcc_str} | {ghc_str} | {hosc_str} | **{result_str}** | {speedup_str} |{compile_str} |"
         else:
-            row = f"| **{data['name']}** | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | {ghc_str} | {hosc_str} | **{result_str}** | {speedup_str} |"
+            row = f"| **{data['name']}** | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | {clang_str} | {gcc_str} | {ghc_str} | {hosc_str} | **{result_str}** | {speedup_str} |"
 
         lines.append(row)
 
@@ -358,7 +364,7 @@ def build_stats_table(benchmarks):
     lines.append("| Benchmark | System | Median | MAD | Min | 95% CI Range | Status |")
     lines.append("|:---|:---|:---:|:---:|:---:|:---:|:---:|")
 
-    active_systems = ["NumLang-SC", "NumLang-Base", "Rustc-O3", "MSVC-O2"]
+    active_systems = ["NumLang-SC", "NumLang-Base", "Rustc-O3", "MSVC-O2", "Clang-O3", "GCC-O3", "GHC-O2", "HOSC-SC"]
     for bid, data in benchmarks.items():
         sys_map = data["systems"]
         for sys_name in active_systems:
@@ -413,8 +419,8 @@ def build_allocator_table():
 
 def build_readme_table(benchmarks):
     lines = []
-    lines.append("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Result vs Base (95% CI) |")
-    lines.append("|:---|:---|:---:|:---:|:---:|:---:|:---|")
+    lines.append("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Clang-O3 | GCC-O3 | GHC-O2 | Result vs Base (95% CI) |")
+    lines.append("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
 
     for bid, data in benchmarks.items():
         sys_map = data["systems"]
@@ -422,6 +428,9 @@ def build_readme_table(benchmarks):
         nl_base = sys_map.get("NumLang-Base", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
         rust = sys_map.get("Rustc-O3", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
         msvc = sys_map.get("MSVC-O2", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
+        clang = sys_map.get("Clang-O3", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
+        gcc = sys_map.get("GCC-O3", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
+        ghc = sys_map.get("GHC-O2", {"median_ns": 0, "status": "NOT_INSTALLED", "raw_rounds": []})
 
         sc_eval = is_evaluable(nl_sc) and is_evaluable(nl_base)
         if sc_eval:
@@ -429,6 +438,9 @@ def build_readme_table(benchmarks):
             base_str = format_ns(nl_base["median_ns"], nl_base["status"])
             rust_str = format_ns(rust["median_ns"], rust["status"])
             msvc_str = format_ns(msvc["median_ns"], msvc["status"])
+            clang_str = format_ns(clang["median_ns"], clang["status"])
+            gcc_str = format_ns(gcc["median_ns"], gcc["status"])
+            ghc_str = format_ns(ghc["median_ns"], ghc["status"])
             ratio_stats = calc_ratio_stats(nl_base["raw_rounds"], nl_sc["raw_rounds"])
             result_str = determine_result(nl_sc, nl_sc["stats"], ratio_stats)
         else:
@@ -436,10 +448,13 @@ def build_readme_table(benchmarks):
             base_str = "N/A"
             rust_str = format_ns(rust["median_ns"], rust["status"])
             msvc_str = format_ns(msvc["median_ns"], msvc["status"])
+            clang_str = format_ns(clang["median_ns"], clang["status"])
+            gcc_str = format_ns(gcc["median_ns"], gcc["status"])
+            ghc_str = format_ns(ghc["median_ns"], ghc["status"])
             result_str = "N/A"
 
         lines.append(
-            f"| {data['name']} (`{data['id']}`) | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | **{result_str}** |"
+            f"| {data['name']} (`{data['id']}`) | {data['group']} | {sc_str} | {base_str} | {rust_str} | {msvc_str} | {clang_str} | {gcc_str} | {ghc_str} | **{result_str}** |"
         )
 
     return "\n".join(lines)
@@ -576,7 +591,10 @@ def validate_benchmarks(benchmarks):
             if stats.get("median") is not None and stats["median"] <= FOLDED_NS_THRESHOLD:
                 continue
             sorted_r = sorted(raw)
-            med = statistics.median(sorted_r)
+            # The Rust harness stores the upper order statistic sorted[n//2] in median_ns;
+            # older vintages stored the standard median. Both are real order statistics of
+            # the raw rounds, so traceability accepts either (never an invented value).
+            med_candidates = (statistics.median(sorted_r), sorted_r[len(sorted_r) // 2])
             p95 = sorted_r[int(0.95 * len(sorted_r))] if len(sorted_r) > 1 else sorted_r[-1]
             positive = [x for x in raw if x > 0]
             geomean = math.exp(sum(math.log(x) for x in positive) / len(positive)) if positive else None
@@ -585,8 +603,10 @@ def validate_benchmarks(benchmarks):
                 errors.append(f"{bid} ({data['name']}) [{sys_name}]: min_ns {entry['min_ns']} not traceable to raw rounds min {sorted_r[0]}.")
             if abs(p95 - entry["p95_ns"]) > TRACEABILITY_ATOL:
                 errors.append(f"{bid} ({data['name']}) [{sys_name}]: p95_ns {entry['p95_ns']} not traceable to raw rounds p95 {p95}.")
-            if abs(med - entry["median_ns"]) > max(TRACEABILITY_ATOL, TRACEABILITY_RTOL * abs(entry["median_ns"])):
-                errors.append(f"{bid} ({data['name']}) [{sys_name}]: median_ns {entry['median_ns']} not traceable to raw rounds median {med}.")
+            med_tol = max(TRACEABILITY_ATOL, TRACEABILITY_RTOL * abs(entry["median_ns"]))
+            med_best = min(med_candidates, key=lambda m: abs(m - entry["median_ns"]))
+            if abs(med_best - entry["median_ns"]) > med_tol:
+                errors.append(f"{bid} ({data['name']}) [{sys_name}]: median_ns {entry['median_ns']} not traceable to any raw-round median {med_candidates}.")
             if geomean is not None and abs(geomean - entry["geomean_ns"]) > max(TRACEABILITY_ATOL, TRACEABILITY_RTOL * abs(entry["geomean_ns"])):
                 errors.append(f"{bid} ({data['name']}) [{sys_name}]: geomean_ns {entry['geomean_ns']} not traceable to raw rounds geometric mean {geomean}.")
     return errors

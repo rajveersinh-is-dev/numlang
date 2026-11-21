@@ -60,6 +60,8 @@ pub struct BenchmarkRow {
     pub nl_base: RunStatus,
     pub rust_opt: RunStatus,
     pub msvc_opt: RunStatus,
+    pub clang_opt: RunStatus,
+    pub gcc_opt: RunStatus,
     pub ghc_opt: RunStatus,
     pub hosc_sc: RunStatus,
 }
@@ -255,6 +257,34 @@ fn compile_ghc(src_file: &Path, exe_file: &Path) -> Result<Duration, String> {
         ])
         .output()
         .map_err(|e| format!("Failed to run ghc: {}", e))?;
+    let elapsed = t0.elapsed();
+
+    if output.status.success() && exe_file.exists() {
+        Ok(elapsed)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Compile a C benchmark with a native C compiler using identical optimization flags.
+/// Both `clang` and `gcc` accept `-O3 -march=native -o <exe> <src>`; success is
+/// checked the same way as the MSVC path (compiler exit status + executable existence).
+fn compile_c_native(
+    src_file: &Path,
+    exe_file: &Path,
+    compiler: &'static str,
+) -> Result<Duration, String> {
+    let t0 = Instant::now();
+    let output = Command::new(compiler)
+        .args([
+            "-O3",
+            "-march=native",
+            "-o",
+            exe_file.to_str().unwrap(),
+            src_file.to_str().unwrap(),
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke {}: {}", compiler, e))?;
     let elapsed = t0.elapsed();
 
     if output.status.success() && exe_file.exists() {
@@ -869,8 +899,48 @@ fn test_supercompiler_showdown() {
             RunStatus::NotInstalled
         };
 
-        // 5. GHC Haskell (ghc -O2)
-        let ghc_opt_status = if competitors["GHC-O2"].installed && hs_src.exists() {
+        // 4b. Clang (clang -O3 -march=native)
+        let clang_opt_status = if competitors["Clang-O3"].installed && c_src.exists() {
+            let c_exe = test_dir.join(format!("{}_clang.exe", spec.id));
+            match compile_c_native(&c_src, &c_exe, "clang") {
+                Ok(_) => measure_binary(
+                    &c_exe,
+                    spec.expected_exit,
+                    expected_output,
+                    spec.runtime_arg,
+                    warmup_rounds,
+                    measure_rounds,
+                ),
+                Err(e) => RunStatus::CompileFailed(e),
+            }
+        } else {
+            RunStatus::NotInstalled
+        };
+
+        // 4c. GCC (gcc -O3 -march=native)
+        let gcc_opt_status = if competitors["GCC-O3"].installed && c_src.exists() {
+            let c_exe = test_dir.join(format!("{}_gcc.exe", spec.id));
+            match compile_c_native(&c_src, &c_exe, "gcc") {
+                Ok(_) => measure_binary(
+                    &c_exe,
+                    spec.expected_exit,
+                    expected_output,
+                    spec.runtime_arg,
+                    warmup_rounds,
+                    measure_rounds,
+                ),
+                Err(e) => RunStatus::CompileFailed(e),
+            }
+        } else {
+            RunStatus::NotInstalled
+        };
+
+        // 5. GHC Haskell (ghc -O2). Only benchmarks with a registered .hs source are
+        // evaluable; a missing source is NOT_INSTALLED, never a fabricated measurement.
+        let ghc_opt_status = if competitors["GHC-O2"].installed
+            && !spec.hs_rel.is_empty()
+            && hs_src.is_file()
+        {
             let hs_exe = test_dir.join(format!("{}_hs.exe", spec.id));
             match compile_ghc(&hs_src, &hs_exe) {
                 Ok(_) => measure_binary(
@@ -899,6 +969,8 @@ fn test_supercompiler_showdown() {
             let best_comp_ns = [
                 get_median_ns(&rust_opt_status),
                 get_median_ns(&msvc_opt_status),
+                get_median_ns(&clang_opt_status),
+                get_median_ns(&gcc_opt_status),
                 get_median_ns(&ghc_opt_status),
             ]
             .into_iter()
@@ -925,6 +997,8 @@ fn test_supercompiler_showdown() {
             nl_base: nl_base_status,
             rust_opt: rust_opt_status,
             msvc_opt: msvc_opt_status,
+            clang_opt: clang_opt_status,
+            gcc_opt: gcc_opt_status,
             ghc_opt: ghc_opt_status,
             hosc_sc: hosc_sc_status,
         });
@@ -932,14 +1006,16 @@ fn test_supercompiler_showdown() {
 
     // Print Markdown Showdown Table
     println!("\n### Supercompiler Showdown Results Table (In-Process Monotonic Compute Timings)\n");
-    println!("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |");
-    println!("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
+    println!("| Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Clang-O3 | GCC-O3 | GHC-O2 | HOSC-SC | Winner | Speedup vs Base |");
+    println!("|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|");
 
     for r in &rows {
         let sc_str = format_status(&r.nl_sc);
         let base_str = format_status(&r.nl_base);
         let rust_str = format_status(&r.rust_opt);
         let msvc_str = format_status(&r.msvc_opt);
+        let clang_str = format_status(&r.clang_opt);
+        let gcc_str = format_status(&r.gcc_opt);
         let ghc_str = format_status(&r.ghc_opt);
         let hosc_str = format_status(&r.hosc_sc);
 
@@ -951,6 +1027,12 @@ fn test_supercompiler_showdown() {
         }
         if let Some(ns) = get_median_ns(&r.msvc_opt) {
             comp_candidates.push(("MSVC-O2", ns));
+        }
+        if let Some(ns) = get_median_ns(&r.clang_opt) {
+            comp_candidates.push(("Clang-O3", ns));
+        }
+        if let Some(ns) = get_median_ns(&r.gcc_opt) {
+            comp_candidates.push(("GCC-O3", ns));
         }
         if let Some(ns) = get_median_ns(&r.ghc_opt) {
             comp_candidates.push(("GHC-O2", ns));
@@ -983,13 +1065,15 @@ fn test_supercompiler_showdown() {
         };
 
         println!(
-            "| **{}** | {} | **{}** | {} | {} | {} | {} | {} | **{}** | {} |",
+            "| **{}** | {} | **{}** | {} | {} | {} | {} | {} | {} | {} | **{}** | {} |",
             r.spec.name,
             r.spec.group,
             sc_str,
             base_str,
             rust_str,
             msvc_str,
+            clang_str,
+            gcc_str,
             ghc_str,
             hosc_str,
             winner,
@@ -1022,6 +1106,8 @@ fn test_supercompiler_showdown() {
             ("NumLang-Base", &r.nl_base),
             ("Rustc-O3", &r.rust_opt),
             ("MSVC-O2", &r.msvc_opt),
+            ("Clang-O3", &r.clang_opt),
+            ("GCC-O3", &r.gcc_opt),
             ("GHC-O2", &r.ghc_opt),
             ("HOSC-SC", &r.hosc_sc),
         ];
@@ -1068,12 +1154,13 @@ fn test_supercompiler_showdown() {
                         r.spec.name,
                         r.spec.expected_exit,
                         sys_name,
-                        err.replace('"', "'")
+                        err.replace('"', "'").replace(',', ";")
                     ));
                 }
                 RunStatus::WrongOutput { actual, expected } => {
+                    // Commas are CSV field delimiters: never place one inside the status cell.
                     csv_lines.push(format!(
-                        "{},{},{},{},{},0,0,0,0,WRONG_OUTPUT(actual={},expected={}),",
+                        "{},{},{},{},{},0,0,0,0,WRONG_OUTPUT(actual={};expected={}),",
                         r.spec.id,
                         r.spec.group,
                         r.spec.name,

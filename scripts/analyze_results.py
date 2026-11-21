@@ -43,7 +43,7 @@ REQUIRED_ROUNDS = 30     # contract section 5 (non-quick mode)
 WIN_LOW = 1.05           # contract section 6
 REGRESSION_HIGH = 0.95   # contract section 6
 SC = "NumLang-SC"
-COMPARATORS = ("NumLang-Base", "Rustc-O3", "MSVC-O2")
+COMPARATORS = ("NumLang-Base", "Rustc-O3", "MSVC-O2", "Clang-O3", "GCC-O3", "GHC-O2")
 
 
 def sha256(path: Path) -> str:
@@ -242,10 +242,12 @@ def main():
     print("Decision rule: ratio = comparator/SC; WIN iff CI low > 1.05; "
           "REG iff CI high < 0.95; fold at <= 500 ns")
 
-    hdr = (f"{'benchmark':<16} {'SC med':>10} | "
-           f"{'Base med':>10} {'Base ratio [CI]':>22} {'V':>4} | "
-           f"{'Rustc med':>10} {'Rustc ratio [CI]':>22} {'V':>4} | "
-           f"{'MSVC med':>10} {'MSVC ratio [CI]':>22} {'V':>4}")
+    short = {"NumLang-Base": "Base", "Rustc-O3": "Rustc", "MSVC-O2": "MSVC",
+             "Clang-O3": "Clang", "GCC-O3": "GCC", "GHC-O2": "GHC"}
+    hdr = f"{'benchmark':<16} {'SC med':>10} |"
+    for name in COMPARATORS:
+        lbl = short.get(name, name)
+        hdr += f" {lbl + ' med':>10} {lbl + ' ratio [CI]':>22} {'V':>4} |"
     print()
     print(hdr)
     print("-" * len(hdr))
