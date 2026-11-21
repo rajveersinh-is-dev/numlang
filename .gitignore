@@ -9,6 +9,8 @@ fuzz_report.json
 bench/bin/
 __pycache__/
 *.pyc
+*.hi
+*.o
 _panic.nl
 *.pdb
 .numlang_cache/
