@@ -5,7 +5,7 @@
 //! fast-path branches in residualized MIR when confidence exceeds configurable thresholds.
 
 use crate::mir::lower::{MirBasicBlock, MirFunction, MirProgram};
-use crate::mir::{BasicBlockId, Terminator};
+use crate::mir::{validate_mir_function, BasicBlockId, Terminator};
 use std::collections::HashMap;
 
 /// Concrete observed type profile for a local variable or parameter at a specialization site.
@@ -76,6 +76,13 @@ impl TypeProfiler {
 
 /// Analyze a function and insert speculative type guards at polymorphic/indirect call sites
 /// where the observed profile confidence meets or exceeds `confidence_threshold` (default: 0.95).
+///
+/// Each inserted `Terminator::TypeGuard` splits the original block: the fast path re-runs the
+/// unspecialized `IndirectCall` when the guarded type tag matches, and the deopt stub is the
+/// baseline fallback that always re-executes the original unspecialized call when the tag does
+/// not match. The transformed function is committed only if it passes
+/// `validate_mir_function`; otherwise the function is left unchanged (baseline fallback), so
+/// speculative specialization can never leave the function in a broken state or panic.
 ///
 /// Returns the number of speculative type guards successfully inserted into the function.
 pub fn insert_speculative_type_guards(
@@ -177,7 +184,25 @@ pub fn insert_speculative_type_guards(
     }
 
     if guards_inserted > 0 {
-        func.blocks = new_blocks;
+        // Safety: commit the transformed function only if it still validates.
+        // Every speculative guard carries a baseline fallback: the `deopt_stub`
+        // re-executes the original unspecialized `IndirectCall`, so control can
+        // always fall back to the baseline behavior. If a transformation ever
+        // produces an invalid function we keep the baseline instead of
+        // committing it, and this function never panics.
+        let candidate = MirFunction {
+            name: func.name.clone(),
+            params: func.params.clone(),
+            return_ty: func.return_ty.clone(),
+            locals: func.locals.clone(),
+            blocks: new_blocks,
+            is_distilled: func.is_distilled,
+        };
+        if validate_mir_function(&candidate).is_ok() {
+            func.blocks = candidate.blocks;
+        } else {
+            guards_inserted = 0;
+        }
     }
 
     guards_inserted

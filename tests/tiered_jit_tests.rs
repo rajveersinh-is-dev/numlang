@@ -29,7 +29,7 @@ use numlang::mir::supercompiler::outliner::{
 };
 use numlang::mir::{validate_mir_function, BasicBlockId, Place, Terminator};
 use numlang::parser::parse;
-use numlang::runtime::tier::{TierConfig, TierManager};
+use numlang::runtime::tier::{Tier, TierConfig, TierManager};
 use numlang::token::tokenize;
 use numlang::typecheck::{typecheck, Type};
 
@@ -816,4 +816,61 @@ fn test_outlined_binary_size_reduction_and_bit_identical_execution() {
         t0_exit, t1_exit,
         "Tier 0 and Tier 1 outputs must be 100% bit-identical"
     );
+}
+
+#[test]
+fn test_tier_promotion_cold_to_hot_and_deduplicated() {
+    let mir_code = r#"
+    fn promotion_kernel(x: i64) -> i64 { return x * 7 + 11; }
+    fn main() -> i64 { return promotion_kernel(2); }
+    "#;
+    let mir = parse_to_mir(mir_code);
+    let manager = TierManager::new(TierConfig {
+        hot_threshold: 5,
+        enable_tier1: true,
+    });
+    manager.register_function("promotion_kernel", &mir);
+
+    // Cold path is cheap: only an atomic counter moves, no compilation at all.
+    for i in 0..4 {
+        let (is_t1, ptr) = manager.record_call("promotion_kernel");
+        assert!(!is_t1, "call {} must stay on Tier 0", i + 1);
+        assert!(ptr.is_none());
+        assert!(
+            manager.is_cold("promotion_kernel"),
+            "call {} must still be cold",
+            i + 1
+        );
+    }
+    assert_eq!(manager.promotion_count(), 0);
+    assert!(!manager.is_promotion_pending("promotion_kernel"));
+
+    // Crossing the threshold submits exactly one expensive Tier 1 job.
+    let (is_t1, _) = manager.record_call("promotion_kernel");
+    assert!(!is_t1, "the crossing call itself still returns Tier 0");
+    assert!(manager.is_hot("promotion_kernel"));
+    assert_eq!(
+        manager.tier("promotion_kernel"),
+        Some(Tier::Hot),
+        "crossing the threshold must promote the function"
+    );
+    assert_eq!(manager.promotion_count(), 1);
+
+    // Wait for the atomic OSR swap, then hammer the hot function: repeated
+    // post-threshold calls must not queue duplicate supercompilations.
+    assert!(
+        manager.wait_for_tier1("promotion_kernel", Duration::from_millis(3000)),
+        "Tier 1 OSR upgrade must complete"
+    );
+    for _ in 0..20 {
+        let (t1, ptr) = manager.record_call("promotion_kernel");
+        assert!(t1, "promoted calls must dispatch to Tier 1");
+        assert!(ptr.is_some());
+    }
+    assert_eq!(
+        manager.promotion_count(),
+        1,
+        "cold is cheap and hot is expensive exactly once: no duplicate jobs"
+    );
+    assert!(!manager.is_promotion_pending("promotion_kernel"));
 }

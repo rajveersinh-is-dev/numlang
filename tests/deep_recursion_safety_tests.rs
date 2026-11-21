@@ -102,6 +102,7 @@ fn test_cps_linear_deep_recursion_depth_1200() {
         max_unroll_depth: 0,
         max_inline_depth: 8,
         inline_loop_body_calls: false,
+        time_budget_ms: None,
     };
 
     let driver = SupercompilerDriver::new(&func).with_config(config);

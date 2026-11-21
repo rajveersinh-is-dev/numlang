@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::time::Instant;
 
 use super::generalize::{solve_coupled_2var_recurrence, solve_recurrence};
 use super::state::{Interval, SymbolicState};
@@ -60,6 +61,9 @@ pub struct SupercompilerStats {
     // Phase 35: Residual code-size metrics (set by compact.rs after compaction)
     pub residual_block_count: usize,
     pub residual_stmt_count: usize,
+    /// Wall-clock milliseconds consumed by driving before completion or timeout.
+    /// Only populated when a `time_budget_ms` is configured and fires.
+    pub time_spent_ms: u64,
 }
 
 impl fmt::Display for SupercompilerStats {
@@ -176,6 +180,9 @@ pub struct DriverConfig {
     pub max_inline_depth: usize,
     pub max_inline_nodes: usize,
     pub inline_loop_body_calls: bool,
+    /// Optional wall-clock budget for the driving trampoline. `None` (the
+    /// default) means no timeout, so existing callers keep their behaviour.
+    pub time_budget_ms: Option<u64>,
 }
 
 impl Default for DriverConfig {
@@ -188,8 +195,18 @@ impl Default for DriverConfig {
             max_inline_depth: 8,
             max_inline_nodes: 512,
             inline_loop_body_calls: false,
+            time_budget_ms: None,
         }
     }
+}
+
+/// Outcome of a single trampoline run. `TimedOut` means the configured time
+/// budget was exhausted and the work queue was cleared, leaving a partial tree
+/// that signals graceful fallback to the baseline MIR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveOutcome {
+    Completed,
+    TimedOut,
 }
 
 pub struct SupercompilerDriver<'a> {
@@ -209,6 +226,10 @@ pub struct SupercompilerDriver<'a> {
     pub config: DriverConfig,
     witness: TerminationWitness,
     param_refinements: HashMap<String, Interval>,
+    /// Start of the current drive, used for the optional wall-clock budget.
+    start_time: Instant,
+    /// Set when the time budget fires; drives the fallback signal in the tree.
+    timed_out: bool,
 }
 
 impl<'a> SupercompilerDriver<'a> {
@@ -263,6 +284,8 @@ impl<'a> SupercompilerDriver<'a> {
             config: DriverConfig::default(),
             witness: TerminationWitness::default(),
             param_refinements: HashMap::new(),
+            start_time: Instant::now(),
+            timed_out: false,
         }
     }
 
@@ -378,7 +401,21 @@ impl<'a> SupercompilerDriver<'a> {
             depth: 0,
         });
 
-        self.trampoline_drive(&mut work_queue);
+        // Begin the budget at the actual drive, not at driver construction, so
+        // configuration time cannot consume it.
+        self.start_time = Instant::now();
+        let outcome = self.trampoline_drive(&mut work_queue);
+
+        if outcome == DriveOutcome::TimedOut {
+            // Mark the root as overflow so residualization emits `Unreachable`
+            // at the entry block. The existing `has_unreachable` guard in the
+            // supercompilation pipeline then reverts to the original baseline
+            // MIR instead of committing a partially-explored residual.
+            self.timed_out = true;
+            self.nodes[root_id.0].overflow = true;
+            self.nodes[root_id.0].return_term = None;
+            self.nodes[root_id.0].edges.clear();
+        }
 
         self.stats.nodes_explored = self.nodes.len();
 
@@ -436,8 +473,34 @@ impl<'a> SupercompilerDriver<'a> {
         ancestors
     }
 
-    pub fn trampoline_drive(&mut self, work_queue: &mut VecDeque<DriveTask>) {
+    /// Returns true once the configured wall-clock budget has been exhausted.
+    /// Elapsed time is recorded in `stats.time_spent_ms` at that moment.
+    fn check_time_budget(&mut self) -> bool {
+        if let Some(budget_ms) = self.config.time_budget_ms {
+            let elapsed_ms = self.start_time.elapsed().as_millis() as u64;
+            if elapsed_ms >= budget_ms {
+                // Keep the telemetry strictly positive so a zero/tiny budget
+                // still produces an observable timeout signal.
+                self.stats.time_spent_ms = elapsed_ms.max(1);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drives the work queue to completion, or aborts deterministically when
+    /// the optional time budget fires. The check happens at task boundaries
+    /// (before every task, and again after CFG transitions added new work), so
+    /// the outcome never depends on timing inside an individual task.
+    pub fn trampoline_drive(&mut self, work_queue: &mut VecDeque<DriveTask>) -> DriveOutcome {
         while let Some(task) = work_queue.pop_back() {
+            if self.check_time_budget() {
+                work_queue.clear();
+                self.timed_out = true;
+                return DriveOutcome::TimedOut;
+            }
+
+            let was_transition = matches!(&task, DriveTask::HandleTransition { .. });
             match task {
                 DriveTask::ProcessNode { node_id, depth } => {
                     self.execute_process_node(node_id, depth, work_queue);
@@ -450,7 +513,21 @@ impl<'a> SupercompilerDriver<'a> {
                     self.execute_handle_transition(from_id, *next_state, depth, work_queue);
                 }
             }
+
+            // Transitions may have enqueued more tasks; check again so a long
+            // chain of transitions cannot overshoot the budget.
+            if was_transition && self.check_time_budget() {
+                work_queue.clear();
+                self.timed_out = true;
+                return DriveOutcome::TimedOut;
+            }
         }
+        DriveOutcome::Completed
+    }
+
+    /// Whether the most recent drive was cut short by the time budget.
+    pub fn timed_out(&self) -> bool {
+        self.timed_out
     }
 
     pub fn drive_node(
@@ -461,7 +538,7 @@ impl<'a> SupercompilerDriver<'a> {
     ) {
         let mut work_queue = VecDeque::new();
         work_queue.push_back(DriveTask::ProcessNode { node_id, depth });
-        self.trampoline_drive(&mut work_queue);
+        let _ = self.trampoline_drive(&mut work_queue);
     }
 
     fn execute_process_node(
@@ -783,7 +860,24 @@ impl<'a> SupercompilerDriver<'a> {
                 args,
             } => {
                 let callee_res = self.resolve_place(callee, &working_state);
-                let callee_term = working_state.get_value(&callee_res);
+                let mut callee_term = working_state.get_value(&callee_res);
+                // Follow variable aliases (e.g. `let g = f`) to the underlying closure
+                // value so higher-order inlining works across function-valued
+                // parameters and copy chains.
+                let mut alias_hops = 0;
+                while alias_hops < 8 {
+                    alias_hops += 1;
+                    let Some(term_id) = callee_term else {
+                        break;
+                    };
+                    match self.interner.get(term_id).clone() {
+                        SymTerm::Var(base_place, _) => {
+                            let base_res = self.resolve_place(&base_place, &working_state);
+                            callee_term = working_state.get_value(&base_res);
+                        }
+                        _ => break,
+                    }
+                }
 
                 let arg_terms: Vec<SymTermId> = args
                     .iter()
@@ -1445,7 +1539,7 @@ impl<'a> SupercompilerDriver<'a> {
             next_state: Box::new(next_state),
             depth,
         });
-        self.trampoline_drive(&mut work_queue);
+        let _ = self.trampoline_drive(&mut work_queue);
     }
 
     fn execute_handle_transition(

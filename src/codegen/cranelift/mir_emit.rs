@@ -16,6 +16,142 @@ use crate::ast::{BinaryOp, UnaryOp};
 use crate::typecheck::{Type, TypedLiteral};
 
 impl CraneliftCompiler {
+    fn is_alloc_local_to_function(
+        &self,
+        func: &crate::mir::lower::MirFunction,
+        dest_local: &str,
+        size_bytes: u32,
+    ) -> bool {
+        if size_bytes == 0 || size_bytes > 4096 {
+            return false;
+        }
+
+        let mut saw_alloc = false;
+        let place_uses_local = |p: &crate::mir::Place, local: &str| p.local == local;
+
+        for block in &func.blocks {
+            for stmt in &block.statements {
+                let crate::mir::lower::Statement::Assign(dest, rval) = stmt;
+                if dest.local == dest_local && dest.projections.is_empty() {
+                    if let crate::mir::lower::Rvalue::Alloc(_) = rval {
+                        saw_alloc = true;
+                        continue;
+                    }
+                    // Reassignment of the alloc local - not provably local/simple.
+                    return false;
+                }
+
+                if dest.local == dest_local && !dest.projections.is_empty() {
+                    // Storing through projection of alloc local is not a direct load pattern.
+                    return false;
+                }
+
+                match rval {
+                    crate::mir::lower::Rvalue::Load(p) => {
+                        if place_uses_local(p, dest_local) {
+                            // Direct load is allowed only as simple local load.
+                            if !p.projections.is_empty() {
+                                return false;
+                            }
+                            continue;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Alloc(p) => {
+                        if place_uses_local(p, dest_local) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Use(p)
+                    | crate::mir::lower::Rvalue::UnaryOp(_, p)
+                    | crate::mir::lower::Rvalue::Discriminant(p) => {
+                        if place_uses_local(p, dest_local) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::BinaryOp(_, l, r) => {
+                        if place_uses_local(l, dest_local) || place_uses_local(r, dest_local) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Call(_, args) => {
+                        if args.iter().any(|p| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Struct(_, fields) => {
+                        if fields.iter().any(|(_, p)| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Array(elems) => {
+                        if elems.iter().any(|p| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::EnumVariant { fields, .. } => {
+                        if fields.iter().any(|p| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::Phi(incoming) => {
+                        if incoming.iter().any(|(_, p)| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                    crate::mir::lower::Rvalue::FnPtr(_) | crate::mir::lower::Rvalue::Constant(_) => {}
+                    crate::mir::lower::Rvalue::Thunk { .. } => {
+                        // conservative: thunks are not expected, but don't allow escape
+                    }
+                    crate::mir::lower::Rvalue::ClosureAlloc { captured, .. } => {
+                        if captured.iter().any(|p| place_uses_local(p, dest_local)) {
+                            return false;
+                        }
+                    }
+                }
+
+                // If the destination is some other local, and rval was Load of our local, we already continued.
+                // Any other rvalue that references our local was rejected above.
+            }
+
+            match &block.terminator {
+                crate::mir::Terminator::Return { value: Some(p) } => {
+                    if place_uses_local(p, dest_local) {
+                        return false;
+                    }
+                }
+                crate::mir::Terminator::BranchIf { condition, .. } => {
+                    if place_uses_local(condition, dest_local) {
+                        return false;
+                    }
+                }
+                crate::mir::Terminator::Switch { value, .. } => {
+                    if place_uses_local(value, dest_local) {
+                        return false;
+                    }
+                }
+                crate::mir::Terminator::TypeGuard { local, .. } => {
+                    if place_uses_local(local, dest_local) {
+                        return false;
+                    }
+                }
+                crate::mir::Terminator::IndirectCall { callee, args, .. } => {
+                    if place_uses_local(callee, dest_local)
+                        || args.iter().any(|p| place_uses_local(p, dest_local))
+                    {
+                        return false;
+                    }
+                }
+                crate::mir::Terminator::Fork { .. }
+                | crate::mir::Terminator::Force { .. }
+                | crate::mir::Terminator::Return { value: None }
+                | crate::mir::Terminator::Branch { .. }
+                | crate::mir::Terminator::Unreachable => {}
+            }
+        }
+
+        saw_alloc
+    }
+
     pub fn compile_mir_function(
         &mut self,
         func: &crate::mir::lower::MirFunction,
@@ -467,29 +603,70 @@ impl CraneliftCompiler {
                                 _ => builder.ins().fadd(lv, rv),
                             }
                         } else {
+                            let is_signed = local_types
+                                .get(&l.local)
+                                .or_else(|| local_types.get(&r.local))
+                                .map(|t| t.is_signed())
+                                .unwrap_or(true);
                             match op {
                                 BinaryOp::Add => builder.ins().iadd(lv, rv),
                                 BinaryOp::Sub => builder.ins().isub(lv, rv),
                                 BinaryOp::Mul => builder.ins().imul(lv, rv),
-                                BinaryOp::Div => builder.ins().sdiv(lv, rv),
-                                BinaryOp::Mod => builder.ins().srem(lv, rv),
+                                BinaryOp::Div => {
+                                    if is_signed {
+                                        builder.ins().sdiv(lv, rv)
+                                    } else {
+                                        builder.ins().udiv(lv, rv)
+                                    }
+                                }
+                                BinaryOp::Mod => {
+                                    if is_signed {
+                                        builder.ins().srem(lv, rv)
+                                    } else {
+                                        builder.ins().urem(lv, rv)
+                                    }
+                                }
                                 BinaryOp::Eq => builder.ins().icmp(IntCC::Equal, lv, rv),
                                 BinaryOp::Ne => builder.ins().icmp(IntCC::NotEqual, lv, rv),
-                                BinaryOp::Lt => builder.ins().icmp(IntCC::SignedLessThan, lv, rv),
+                                BinaryOp::Lt => {
+                                    if is_signed {
+                                        builder.ins().icmp(IntCC::SignedLessThan, lv, rv)
+                                    } else {
+                                        builder.ins().icmp(IntCC::UnsignedLessThan, lv, rv)
+                                    }
+                                }
                                 BinaryOp::Le => {
-                                    builder.ins().icmp(IntCC::SignedLessThanOrEqual, lv, rv)
+                                    if is_signed {
+                                        builder.ins().icmp(IntCC::SignedLessThanOrEqual, lv, rv)
+                                    } else {
+                                        builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, lv, rv)
+                                    }
                                 }
                                 BinaryOp::Gt => {
-                                    builder.ins().icmp(IntCC::SignedGreaterThan, lv, rv)
+                                    if is_signed {
+                                        builder.ins().icmp(IntCC::SignedGreaterThan, lv, rv)
+                                    } else {
+                                        builder.ins().icmp(IntCC::UnsignedGreaterThan, lv, rv)
+                                    }
                                 }
                                 BinaryOp::Ge => {
-                                    builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, lv, rv)
+                                    if is_signed {
+                                        builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, lv, rv)
+                                    } else {
+                                        builder.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, lv, rv)
+                                    }
                                 }
                                 BinaryOp::BitAnd => builder.ins().band(lv, rv),
                                 BinaryOp::BitOr => builder.ins().bor(lv, rv),
                                 BinaryOp::BitXor => builder.ins().bxor(lv, rv),
                                 BinaryOp::Shl => builder.ins().ishl(lv, rv),
-                                BinaryOp::Shr => builder.ins().sshr(lv, rv),
+                                BinaryOp::Shr => {
+                                    if is_signed {
+                                        builder.ins().sshr(lv, rv)
+                                    } else {
+                                        builder.ins().ushr(lv, rv)
+                                    }
+                                }
                                 BinaryOp::Pow => {
                                     super::ast_stmt::FunctionTranslationState::emit_int_pow_raw(
                                         lv,
@@ -1245,12 +1422,21 @@ impl CraneliftCompiler {
                             }
                             _ => inner_ty.size_bytes().max(8) as u32,
                         };
-                        let size_val = builder.ins().iconst(types::I64, size as i64);
-                        let malloc_func = self
-                            .module
-                            .declare_func_in_func(self.malloc_id, builder.func);
-                        let call_inst = builder.ins().call(malloc_func, &[size_val]);
-                        let slot_addr = builder.inst_results(call_inst)[0];
+                        let slot_addr = if self.is_alloc_local_to_function(func, &place.local, size) {
+                            let stack_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                size,
+                                8,
+                            ));
+                            builder.ins().stack_addr(types::I64, stack_slot, 0)
+                        } else {
+                            let size_val = builder.ins().iconst(types::I64, size as i64);
+                            let malloc_func = self
+                                .module
+                                .declare_func_in_func(self.malloc_id, builder.func);
+                            let call_inst = builder.ins().call(malloc_func, &[size_val]);
+                            builder.inst_results(call_inst)[0]
+                        };
                         let inner_val = get_place_value(
                             &mut builder,
                             &var_map,
@@ -1306,15 +1492,22 @@ impl CraneliftCompiler {
                         }
                     }
                     crate::mir::lower::Rvalue::FnPtr(name) => {
-                        if let Some(func_id) = self.func_ids.get(name) {
-                            let local_func =
-                                self.module.declare_func_in_func(*func_id, builder.func);
-                            builder.ins().func_addr(types::I64, local_func)
-                        } else {
-                            builder.ins().iconst(types::I64, 0)
-                        }
+                        let func_id = self.func_ids.get(name).ok_or_else(|| {
+                            CodegenError::BackendError(format!(
+                                "Unknown fnptr target '{}' in MIR codegen for '{}'",
+                                name, func.name
+                            ))
+                        })?;
+                        let local_func = self.module.declare_func_in_func(*func_id, builder.func);
+                        builder.ins().func_addr(types::I64, local_func)
                     }
-                    _ => builder.ins().iconst(types::I64, 0),
+                    _ => {
+                        return Err(CodegenError::BackendError(format!(
+                            "Unsupported rvalue {:?} in MIR codegen for '{}'",
+                            std::mem::discriminant(rval),
+                            func.name
+                        )));
+                    }
                 };
 
                 if let crate::mir::lower::Rvalue::Use(src_p) = rval {

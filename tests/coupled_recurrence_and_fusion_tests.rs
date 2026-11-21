@@ -313,3 +313,103 @@ fn test_coupled_2var_linear_recurrence() {
     let code = compile_and_run_supercompiled(src, "coupled_2var");
     assert_eq!(code, 81);
 }
+
+#[test]
+fn test_affine_coupled_recurrence_direct() {
+    let mut interner = TermInterner::new();
+    // a_{k+1} = 2*a_k + b_k + 1
+    // b_{k+1} = a_k + 2*b_k - 1
+    // a0 = 1, b0 = 0
+    let mut a = 1i64;
+    let mut b = 0i64;
+    let mut sa = vec![a];
+    let mut sb = vec![b];
+    for _ in 0..6 {
+        let na = 2 * a + b + 1;
+        let nb = a + 2 * b - 1;
+        a = na;
+        b = nb;
+        sa.push(a);
+        sb.push(b);
+    }
+
+    let n4 = interner.intern_int(4);
+    let (sol_a, sol_b) =
+        solve_coupled_2var_recurrence(&sa, &sb, n4, &mut interner)
+            .expect("Failed to solve affine coupled recurrence for n=4");
+    if let SymTerm::ConstInt(val_a, _) = interner.get(sol_a) {
+        assert_eq!(*val_a, sa[4], "a_4 must match iterative");
+    } else {
+        panic!("Expected ConstInt for a_4");
+    }
+    if let SymTerm::ConstInt(val_b, _) = interner.get(sol_b) {
+        assert_eq!(*val_b, sb[4], "b_4 must match iterative");
+    } else {
+        panic!("Expected ConstInt for b_4");
+    }
+
+    // Symbolic emission check
+    let place = numlang::mir::Place {
+        local: "n".to_string(),
+        projections: vec![],
+    };
+    let n_sym = interner.intern_var(place, Type::I64);
+    let (sym_a, sym_b) =
+        solve_coupled_2var_recurrence(&sa, &sb, n_sym, &mut interner)
+            .expect("Failed to solve affine coupled recurrence symbolically");
+    match interner.get(sym_a) {
+        SymTerm::Call(callee, args, _) => {
+            assert_eq!(callee, "__coupled_a");
+            assert_eq!(args.len(), 9);
+        }
+        other => panic!("Expected Call to __coupled_a, found: {:?}", other),
+    }
+    match interner.get(sym_b) {
+        SymTerm::Call(callee, args, _) => {
+            assert_eq!(callee, "__coupled_b");
+            assert_eq!(args.len(), 9);
+        }
+        other => panic!("Expected Call to __coupled_b, found: {:?}", other),
+    }
+}
+
+#[test]
+fn test_nway_affine_matrix_recurrence_large_n() {
+    let mut interner = TermInterner::new();
+    // X_{n+1} = M X_n + c, M=[[2,1],[1,3]], c=[5,-2], X0=[1,0]
+    let mut x = vec![1i64, 0i64];
+    let mut t0 = vec![x[0]];
+    let mut t1 = vec![x[1]];
+    for _ in 0..20 {
+        let nx0 = 2 * x[0] + x[1] + 5;
+        let nx1 = x[0] + 3 * x[1] - 2;
+        x = vec![nx0, nx1];
+        t0.push(x[0]);
+        t1.push(x[1]);
+    }
+    let trajs = vec![t0.clone(), t1.clone()];
+    let sys = numlang::mir::supercompiler::recurrence::detect_nway_linear_system(&trajs)
+        .expect("detect nway");
+    // Large N with modular wrap: n=1000
+    let big_n = 1000i64;
+    // iterative
+    let mut xi = vec![1i64, 0i64];
+    for _ in 0..big_n {
+        let nx0 = 2i64.wrapping_mul(xi[0]).wrapping_add(xi[1]).wrapping_add(5);
+        let nx1 = xi[0].wrapping_add(3i64.wrapping_mul(xi[1])).wrapping_sub(2);
+        xi = vec![nx0, nx1];
+    }
+    let n_term = interner.intern_int(big_n);
+    let res = numlang::mir::supercompiler::recurrence::solve_nway_recurrence(&sys, n_term, &mut interner);
+    assert_eq!(res.len(), 2);
+    if let SymTerm::ConstInt(v, _) = interner.get(res[0]) {
+        assert_eq!(*v, xi[0], "nway large N component 0 must match iterative");
+    } else {
+        panic!("Expected ConstInt");
+    }
+    if let SymTerm::ConstInt(v, _) = interner.get(res[1]) {
+        assert_eq!(*v, xi[1], "nway large N component 1 must match iterative");
+    } else {
+        panic!("Expected ConstInt");
+    }
+}

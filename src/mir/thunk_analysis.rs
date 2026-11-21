@@ -4,9 +4,16 @@
 //! - `Bottom`: thunk is never forced on any reachable path.
 //! - `GuardDemanded`: thunk is forced on some paths (e.g. inside a conditional or switch branch).
 //! - `FullyDemanded`: thunk is unconditionally forced on every execution path to exit.
+//!
+//! In addition, [`compute_stream_thunk_demands`] is a loop-aware analysis for
+//! stream-style producer/consumer pipelines (the `stream_take` pattern): a thunk
+//! that is forced inside the consumer loop of a codata chain is classified as
+//! `FullyDemanded`, because the pipeline pulls on it every iteration. This lets
+//! the stream-fusion passes collapse the chain; thunks not forced in loops keep
+//! their path-sensitive demand, so we never force more than demanded.
 
 use crate::mir::lower::{MirFunction, Rvalue, Statement};
-use crate::mir::{BasicBlockId, Terminator};
+use crate::mir::{compute_cfg, BasicBlockId, Terminator};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -203,5 +210,67 @@ pub fn compute_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
         result.insert(t.clone(), d);
     }
 
+    result
+}
+
+/// Returns the set of blocks that lie on a cycle (can reach themselves via at least one edge).
+fn blocks_in_cycles(func: &MirFunction) -> HashSet<BasicBlockId> {
+    let (_preds, succs) = compute_cfg(&func.blocks);
+    let mut in_cycle = HashSet::new();
+    for block in &func.blocks {
+        let start = block.id.clone();
+        let mut seen: HashSet<BasicBlockId> = HashSet::new();
+        let mut work: Vec<BasicBlockId> = succs.get(&start).cloned().unwrap_or_default();
+        while let Some(b) = work.pop() {
+            if b == start {
+                in_cycle.insert(start.clone());
+                break;
+            }
+            if seen.insert(b.clone()) {
+                if let Some(s) = succs.get(&b) {
+                    work.extend(s.iter().cloned());
+                }
+            }
+        }
+    }
+    in_cycle
+}
+
+/// Collects the blocks that force each thunk (by local name).
+fn force_sites(func: &MirFunction) -> HashMap<String, Vec<BasicBlockId>> {
+    let mut sites: HashMap<String, Vec<BasicBlockId>> = HashMap::new();
+    for block in &func.blocks {
+        if let Terminator::Force { thunk, .. } = &block.terminator {
+            sites.entry(thunk.clone()).or_default().push(block.id.clone());
+        }
+    }
+    sites
+}
+
+/// Computes thunk demand for stream-style producer/consumer pipelines.
+///
+/// Unlike [`compute_thunk_demands`] (a path-sensitive analysis), this analysis is
+/// loop-aware: a thunk that is forced inside the consumer loop of a codata chain
+/// (e.g. the `stream_take` pattern, where an internal branch sits inside the loop)
+/// is classified `FullyDemanded`, because the pipeline pulls on the thunk on every
+/// iteration. This is what lets the stream-fusion passes collapse the chain.
+/// Thunks that are not forced within any loop keep their
+/// [`compute_thunk_demands`] classification, so we never force more than demanded
+/// and laziness semantics are preserved.
+pub fn compute_stream_thunk_demands(func: &MirFunction) -> HashMap<String, Demand> {
+    let base = compute_thunk_demands(func);
+    if func.blocks.is_empty() {
+        return base;
+    }
+    let in_cycle = blocks_in_cycles(func);
+    let sites = force_sites(func);
+    let mut result = base;
+    for (thunk, blocks) in sites {
+        // Stream pipeline: every force site of this thunk is inside a loop.
+        let all_in_loops = !blocks.is_empty() && blocks.iter().all(|b| in_cycle.contains(b));
+        if all_in_loops {
+            result.insert(thunk, Demand::FullyDemanded);
+        }
+    }
     result
 }

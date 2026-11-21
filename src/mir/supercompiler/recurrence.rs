@@ -682,16 +682,16 @@ pub fn solve_nway_recurrence(
     // Calling convention: (n, A[0][0]..A[n-1][n-1], c[0]..c[n-1], x0[0]..x0[n-1], num_iters)
     let mut args = Vec::with_capacity(1 + n * n + n + n + 1);
     args.push(interner.intern_int(n as i64));
-    for r in 0..n {
-        for c in 0..n {
-            args.push(interner.intern_int(sys.a[r][c]));
+    for row in &sys.a {
+        for &value in row {
+            args.push(interner.intern_int(value));
         }
     }
-    for r in 0..n {
-        args.push(interner.intern_int(sys.c[r]));
+    for &value in &sys.c {
+        args.push(interner.intern_int(value));
     }
-    for r in 0..n {
-        args.push(interner.intern_int(sys.init[r]));
+    for &value in &sys.init {
+        args.push(interner.intern_int(value));
     }
     args.push(num_iters);
 

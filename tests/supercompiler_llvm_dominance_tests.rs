@@ -322,3 +322,112 @@ fn test_coopt_05_head_to_head_dominance_matrix() {
         huge_scalar_duration
     );
 }
+
+#[test]
+fn test_coopt_06_llvm_and_cranelift_residuals_match_on_benchmark_set() {
+    use numlang::codegen::linker::link_executable;
+    use numlang::codegen::llvm_backend::{LlvmCompiler, OptLevel};
+    use numlang::codegen::compile_mir_to_obj;
+    use numlang::mir::supercompiler::supercompile_mir_program;
+    use std::process::Command;
+
+    fn llvm_available() -> bool {
+        let probe_mir = get_mir("fn main() -> i64 { return 0; }");
+        let mut compiler = LlvmCompiler::new(OptLevel::O2);
+        let test_dir =
+            std::env::temp_dir().join(format!("numlang_coopt06_probe_{}", std::process::id()));
+        let _ = fs::create_dir_all(&test_dir);
+        let obj = test_dir.join("probe.obj");
+        let ok = match compiler.compile_mir_to_obj(&probe_mir, &obj) {
+            Ok(_) => true,
+            Err(err) => {
+                let msg = err.to_string();
+                !msg.contains("not enabled") && !msg.contains("BackendDisabled")
+            }
+        };
+        let _ = fs::remove_dir_all(&test_dir);
+        ok
+    }
+
+    if !llvm_available() {
+        eprintln!("skipping coopt_06: LLVM backend unavailable");
+        return;
+    }
+
+    let benchmarks = [
+        (
+            "bench_sum",
+            r#"
+fn main() -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 20 {
+        s = s + i;
+        i = i + 1;
+    }
+    return s;
+}
+"#,
+        ),
+        (
+            "bench_branch",
+            r#"
+fn pick(x: i64) -> i64 {
+    if x > 10 { return x - 3; } else { return x + 7; }
+}
+fn main() -> i64 { return pick(4) + pick(20); }
+"#,
+        ),
+        (
+            "bench_nested",
+            r#"
+fn main() -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 5 {
+        let mut j: i64 = 0;
+        while j < 4 {
+            s = s + i * 3 + j;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+"#,
+        ),
+    ];
+
+    let test_dir = std::env::temp_dir().join(format!("numlang_coopt06_{}", std::process::id()));
+    fs::create_dir_all(&test_dir).expect("create test dir");
+
+    for (name, src) in benchmarks {
+        let mut mir = get_mir(src);
+        supercompile_mir_program(&mut mir);
+
+        let cl_obj_bytes = compile_mir_to_obj(&mir).expect("cranelift mir codegen");
+        let cl_obj = test_dir.join(format!("{}_cl.obj", name));
+        let cl_exe = test_dir.join(format!("{}_cl.exe", name));
+        fs::write(&cl_obj, cl_obj_bytes).expect("write cl obj");
+        link_executable(&cl_obj, &cl_exe).expect("link cl exe");
+        let cl_out = Command::new(&cl_exe).output().expect("run cl exe");
+        let cl_code = cl_out.status.code().unwrap_or(-1);
+
+        let mut llvm_compiler = LlvmCompiler::new(OptLevel::O2);
+        let llvm_obj = test_dir.join(format!("{}_llvm.obj", name));
+        let llvm_exe = test_dir.join(format!("{}_llvm.exe", name));
+        llvm_compiler
+            .compile_mir_to_obj(&mir, &llvm_obj)
+            .expect("llvm mir codegen");
+        link_executable(&llvm_obj, &llvm_exe).expect("link llvm exe");
+        let llvm_out = Command::new(&llvm_exe).output().expect("run llvm exe");
+        let llvm_code = llvm_out.status.code().unwrap_or(-1);
+
+        assert_eq!(
+            cl_code, llvm_code,
+            "residual mismatch for {name}: cranelift={cl_code} llvm={llvm_code}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&test_dir);
+}

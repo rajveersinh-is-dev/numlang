@@ -163,6 +163,7 @@ pub fn supercompile_mir_functions_work_stealing(
         sc_bce_eliminated: 0,
         residual_block_count: 0,
         residual_stmt_count: 0,
+        time_spent_ms: 0,
     };
 
     (processed, stats)

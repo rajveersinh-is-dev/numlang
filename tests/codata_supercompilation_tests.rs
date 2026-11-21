@@ -7,17 +7,19 @@
 //! - LAZY-04: Stream fusion compiling infinite producer-consumer codata chains
 //! - LAZY-05: LLVM IR zero heap allocation validation and functional parity
 
+use numlang::ast::BinaryOp;
 use numlang::codegen::llvm_backend::{emit_llvm_ir, OptLevel};
 use numlang::mir::lower::{
     lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement,
 };
 use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
-use numlang::mir::thunk_analysis::{compute_thunk_demands, Demand};
+use numlang::mir::thunk_analysis::{compute_stream_thunk_demands, compute_thunk_demands, Demand};
 use numlang::mir::{validate_mir_function, BasicBlockId, Place, Terminator};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
 use numlang::typecheck::types::Type;
+use std::process::Command;
 
 fn get_mir(source: &str) -> MirProgram {
     let tokens = tokenize(source).expect("tokenization failed");
@@ -506,4 +508,242 @@ fn test_direct_mir_thunk_loop_fusion() {
             "Terminator::Force must be replaced with Branch"
         );
     }
+}
+
+fn place(name: &str) -> Place {
+    Place {
+        local: name.to_string(),
+        projections: vec![],
+    }
+}
+
+fn stmt_const(name: &str, v: i64) -> Statement {
+    Statement::Assign(
+        place(name),
+        Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Int(v, Type::I64)),
+    )
+}
+
+#[test]
+fn test_stream_thunk_demand_fully_demanded_in_loop() {
+    // A thunk forced inside the consumer loop of a codata chain (the stream_take
+    // pattern: the Force is guarded by an internal branch inside the loop) is
+    // classified FullyDemanded by the loop-aware stream analysis, so the stream
+    // fusion can collapse the chain.
+    let func = MirFunction {
+        name: "test_stream_branch_loop".to_string(),
+        params: vec![("n".to_string(), Type::I64)],
+        return_ty: Type::I64,
+        locals: vec![
+            MirLocalDecl { name: "n".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl { name: "t".to_string(), ty: Type::I64, mutable: true },
+            MirLocalDecl { name: "i".to_string(), ty: Type::I64, mutable: true },
+            MirLocalDecl { name: "cond1".to_string(), ty: Type::Bool, mutable: false },
+            MirLocalDecl { name: "cond2".to_string(), ty: Type::Bool, mutable: false },
+            MirLocalDecl { name: "_thunk".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl { name: "_res".to_string(), ty: Type::I64, mutable: true },
+        ],
+        blocks: vec![
+            // bb0: entry: t = 0; i = 0; branch bb1
+            MirBasicBlock {
+                id: BasicBlockId(0),
+                arguments: vec![],
+                statements: vec![stmt_const("t", 0), stmt_const("i", 0)],
+                terminator: Terminator::Branch { target: BasicBlockId(1) },
+            },
+            // bb1: header: cond1 = i < n; BranchIf(cond1, bb2, bb5)
+            MirBasicBlock {
+                id: BasicBlockId(1),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    place("cond1"),
+                    Rvalue::BinaryOp(BinaryOp::Lt, place("i"), place("n")),
+                )],
+                terminator: Terminator::BranchIf {
+                    condition: place("cond1"),
+                    then_target: BasicBlockId(2),
+                    else_target: BasicBlockId(5),
+                },
+            },
+            // bb2: body: branch bb3
+            MirBasicBlock {
+                id: BasicBlockId(2),
+                arguments: vec![],
+                statements: vec![],
+                terminator: Terminator::Branch { target: BasicBlockId(3) },
+            },
+            // bb3: internal branch: cond2 = true; BranchIf(cond2, bb4, bb5)
+            MirBasicBlock {
+                id: BasicBlockId(3),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    place("cond2"),
+                    Rvalue::Constant(numlang::typecheck::typed_ast::TypedLiteral::Bool(true)),
+                )],
+                terminator: Terminator::BranchIf {
+                    condition: place("cond2"),
+                    then_target: BasicBlockId(4),
+                    else_target: BasicBlockId(5),
+                },
+            },
+            // bb4: then: _thunk = Thunk{step}; Force(_thunk, _res, cont=bb2) (back-edge)
+            MirBasicBlock {
+                id: BasicBlockId(4),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    place("_thunk"),
+                    Rvalue::Thunk {
+                        body: "step".to_string(),
+                        env: vec![],
+                    },
+                )],
+                terminator: Terminator::Force {
+                    thunk: "_thunk".to_string(),
+                    result: "_res".to_string(),
+                    cont: BasicBlockId(2),
+                },
+            },
+            // bb5: exit: return t
+            MirBasicBlock {
+                id: BasicBlockId(5),
+                arguments: vec![],
+                statements: vec![],
+                terminator: Terminator::Return { value: Some(place("t")) },
+            },
+        ],
+        is_distilled: false,
+    };
+
+    let stream_demands = compute_stream_thunk_demands(&func);
+    assert_eq!(
+        stream_demands.get("_thunk"),
+        Some(&Demand::FullyDemanded),
+        "Thunk forced inside the consumer loop (stream_take pattern) must be FullyDemanded"
+    );
+
+    // Sanity: the path-sensitive analysis alone does not see it as fully demanded
+    // at entry (the Force is guarded by an internal branch), so this tests the
+    // loop-aware part of the stream analysis.
+    let base = compute_thunk_demands(&func);
+    assert_ne!(
+        base.get("_thunk"),
+        Some(&Demand::FullyDemanded),
+        "Path-sensitive demand should not be FullyDemanded at entry for a branched Force"
+    );
+}
+
+#[test]
+fn test_stream_thunk_demand_not_forced_outside_loop() {
+    // Laziness: a thunk forced only on the exit path (no loop) must not become
+    // FullyDemanded in the stream analysis — we must never force more than demanded.
+    let func = MirFunction {
+        name: "test_exit_force".to_string(),
+        params: vec![("cond".to_string(), Type::Bool)],
+        return_ty: Type::I64,
+        locals: vec![
+            MirLocalDecl { name: "cond".to_string(), ty: Type::Bool, mutable: false },
+            MirLocalDecl { name: "_thunk".to_string(), ty: Type::I64, mutable: false },
+            MirLocalDecl { name: "_res".to_string(), ty: Type::I64, mutable: true },
+        ],
+        blocks: vec![
+            // bb0: _thunk = Thunk{step}; BranchIf(cond, bb1, bb2)
+            MirBasicBlock {
+                id: BasicBlockId(0),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    place("_thunk"),
+                    Rvalue::Thunk {
+                        body: "step".to_string(),
+                        env: vec![],
+                    },
+                )],
+                terminator: Terminator::BranchIf {
+                    condition: place("cond"),
+                    then_target: BasicBlockId(1),
+                    else_target: BasicBlockId(2),
+                },
+            },
+            // bb1: Force(_thunk, _res, cont=bb2)
+            MirBasicBlock {
+                id: BasicBlockId(1),
+                arguments: vec![],
+                statements: vec![],
+                terminator: Terminator::Force {
+                    thunk: "_thunk".to_string(),
+                    result: "_res".to_string(),
+                    cont: BasicBlockId(2),
+                },
+            },
+            // bb2: return
+            MirBasicBlock {
+                id: BasicBlockId(2),
+                arguments: vec![],
+                statements: vec![],
+                terminator: Terminator::Return { value: None },
+            },
+        ],
+        is_distilled: false,
+    };
+
+    let stream_demands = compute_stream_thunk_demands(&func);
+    assert_ne!(
+        stream_demands.get("_thunk"),
+        Some(&Demand::FullyDemanded),
+        "Thunks not forced inside any loop must not be classified FullyDemanded by the stream analysis"
+    );
+}
+
+fn run_program(src: &str) -> (Option<i32>, String) {
+    let id = format!(
+        "{}_{:?}_{}",
+        std::process::id(),
+        std::thread::current().id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("valid time")
+            .as_nanos()
+    )
+    .replace(['(', ')', ' '], "_");
+    let test_dir = std::env::temp_dir().join(format!("numlang_csc_{}", id));
+    std::fs::create_dir_all(&test_dir).expect("create test dir");
+    let src_file = test_dir.join("test.nl");
+    std::fs::write(&src_file, src).expect("write src file");
+    let output = Command::new(env!("CARGO_BIN_EXE_numlang"))
+        .arg("run")
+        .arg(&src_file)
+        .arg("--use-mir")
+        .arg("--supercompile")
+        .output()
+        .expect("run program");
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.code(), stdout)
+}
+
+#[test]
+fn test_branched_stream_pipeline_collapse() {
+    // stream_take-style pipeline: consumer loop with an internal branch over the
+    // accumulated value. Supercompilation must keep the result correct.
+    let src = r#"
+fn stream_pipeline(n: i64) -> i64 {
+    let mut total: i64 = 0;
+    let mut i: i64 = 0;
+    while i < n {
+        if i % 2 == 0 {
+            total = total + i * i;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+fn main() -> i64 {
+    return stream_pipeline(10);
+}
+"#;
+    let mut mir = get_mir(src);
+    let _stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+
+    let (code, stdout) = run_program(src);
+    // even squares 0+4+16+36+64 = 120
+    assert_eq!(code, Some(120), "expected 120, stdout: {}", stdout);
+    assert_eq!(stdout, "");
 }

@@ -11,8 +11,8 @@
 //!   Subsequent function dispatches read this pointer using `Ordering::Acquire` to jump
 //!   directly to specialized Tier 1 code without locking or pausing execution.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -21,6 +21,29 @@ use std::time::{Duration, Instant};
 use crate::codegen::cranelift::deopt::OsrTransitionSlot;
 use crate::mir::lower::MirProgram;
 use crate::mir::supercompiler::supercompile_mir_program;
+
+/// Runtime execution tier of a registered function.
+///
+/// - `Cold`: cheap path. Only an atomic counter is touched per call; no
+///   compilation or supercompilation happens at all.
+/// - `Hot`: expensive path. The function has crossed its hotness threshold and
+///   is handed to the background worker for a full Tier 1 supercompilation +
+///   native codegen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Cold,
+    Hot,
+}
+
+impl Tier {
+    pub fn is_hot(self) -> bool {
+        self == Tier::Hot
+    }
+
+    pub fn is_cold(self) -> bool {
+        self == Tier::Cold
+    }
+}
 
 /// Configuration knobs for the Tiered JIT runtime.
 #[derive(Debug, Clone)]
@@ -68,21 +91,30 @@ impl SupercompileWorker {
                     break;
                 }
 
-                // Execute Tier 1 full supercompilation pipeline
-                let mut sc_mir = task.mir_snapshot.clone();
-                supercompile_mir_program(&mut sc_mir);
-
-                // Compile supercompiled MIR to native object bytes
-                if let Ok(obj_bytes) = crate::codegen::compile_mir_to_obj(&sc_mir) {
-                    // Create stable pointer to compiled native artifacts
+                // Expensive path: full Tier 1 supercompilation is only ever
+                // performed for functions that crossed the hot threshold.
+                let compiled_ptr = (|| -> Option<*mut u8> {
+                    let mut sc_mir = task.mir_snapshot.clone();
+                    supercompile_mir_program(&mut sc_mir);
+                    let obj_bytes = crate::codegen::compile_mir_to_obj(&sc_mir).ok()?;
                     let boxed_bytes = Box::new(obj_bytes);
-                    let raw_ptr = Box::into_raw(boxed_bytes) as *mut u8;
+                    Some(Box::into_raw(boxed_bytes) as *mut u8)
+                })();
 
-                    // Atomically swap the function pointer in the OSR slot
-                    task.slot.upgrade(raw_ptr);
-
-                    if let Some(cb) = task.on_complete {
-                        cb(raw_ptr);
+                match compiled_ptr {
+                    Some(raw_ptr) => {
+                        // Atomically swap the function pointer in the OSR slot
+                        task.slot.upgrade(raw_ptr);
+                        if let Some(cb) = task.on_complete {
+                            cb(raw_ptr);
+                        }
+                    }
+                    None => {
+                        // Always notify the coordinator, including on failure,
+                        // so an in-flight job can never be leaked as pending.
+                        if let Some(cb) = task.on_complete {
+                            cb(std::ptr::null_mut());
+                        }
                     }
                 }
             }
@@ -127,6 +159,11 @@ pub struct TierManager {
     slots: RwLock<HashMap<String, Arc<OsrTransitionSlot>>>,
     mir_snapshots: RwLock<HashMap<String, MirProgram>>,
     worker: Mutex<Option<SupercompileWorker>>,
+    /// Functions with a Tier 1 job currently in flight. Prevents the repeated
+    /// post-threshold calls from queuing duplicate expensive compilations.
+    pending: Arc<Mutex<HashSet<String>>>,
+    /// Number of promotions actually submitted to the background worker.
+    promotions: AtomicU64,
 }
 
 impl TierManager {
@@ -142,6 +179,8 @@ impl TierManager {
             slots: RwLock::new(HashMap::new()),
             mir_snapshots: RwLock::new(HashMap::new()),
             worker: Mutex::new(worker),
+            pending: Arc::new(Mutex::new(HashSet::new())),
+            promotions: AtomicU64::new(0),
         }
     }
 
@@ -184,27 +223,58 @@ impl TierManager {
 
         let crossed = slot.record_invocation();
         if crossed {
-            // Trigger Tier 1 background compilation
-            if let Ok(worker_guard) = self.worker.lock() {
+            // Cheap for cold: the branch above is the only work done for the
+            // first `hot_threshold - 1` calls. Expensive for hot: from the
+            // crossing call onward we submit exactly one full Tier 1 job.
+            // `record_invocation` stays true until the OSR pointer is swapped,
+            // so the pending set is what prevents duplicate submissions.
+            let mut pending = match self.pending.lock() {
+                Ok(g) => g,
+                Err(_) => return (false, None),
+            };
+            if !pending.insert(name.to_string()) {
+                return (false, None);
+            }
+
+            let submitted = if let Ok(worker_guard) = self.worker.lock() {
                 if let Some(worker) = worker_guard.as_ref() {
                     let snapshot = {
                         let snapshots = match self.mir_snapshots.read() {
                             Ok(s) => s,
-                            Err(_) => return (false, None),
+                            Err(poisoned) => poisoned.into_inner(),
                         };
                         snapshots.get(name).cloned()
                     };
 
-                    if let Some(mir) = snapshot {
-                        let task = TierTask {
-                            function_name: name.to_string(),
-                            mir_snapshot: mir,
-                            slot: Arc::clone(&slot),
-                            on_complete: None,
-                        };
-                        let _ = worker.submit(task);
+                    match snapshot {
+                        Some(mir) => {
+                            let pending_for_cb = Arc::clone(&self.pending);
+                            let name_for_cb = name.to_string();
+                            let task = TierTask {
+                                function_name: name.to_string(),
+                                mir_snapshot: mir,
+                                slot: Arc::clone(&slot),
+                                on_complete: Some(Box::new(move |_ptr| {
+                                    if let Ok(mut set) = pending_for_cb.lock() {
+                                        set.remove(&name_for_cb);
+                                    }
+                                })),
+                            };
+                            worker.submit(task).is_ok()
+                        }
+                        None => false,
                     }
+                } else {
+                    false
                 }
+            } else {
+                false
+            };
+
+            if submitted {
+                self.promotions.fetch_add(1, Ordering::Relaxed);
+            } else {
+                pending.remove(name);
             }
         }
 
@@ -238,5 +308,37 @@ impl TierManager {
     pub fn get_slot(&self, name: &str) -> Option<Arc<OsrTransitionSlot>> {
         let slots = self.slots.read().ok()?;
         slots.get(name).cloned()
+    }
+
+    /// Classify a registered function into its current execution tier.
+    ///
+    /// A function is `Hot` once it has either crossed the configured hotness
+    /// threshold or been upgraded to a Tier 1 OSR target; otherwise `Cold`.
+    pub fn tier(&self, name: &str) -> Option<Tier> {
+        let slot = self.get_slot(name)?;
+        let hot = slot.should_osr() || slot.get_invocation_count() >= self.config.hot_threshold;
+        Some(if hot { Tier::Hot } else { Tier::Cold })
+    }
+
+    pub fn is_hot(&self, name: &str) -> bool {
+        self.tier(name).is_some_and(Tier::is_hot)
+    }
+
+    pub fn is_cold(&self, name: &str) -> bool {
+        self.tier(name).is_some_and(Tier::is_cold)
+    }
+
+    /// Number of distinct functions that have been promoted to the expensive
+    /// Tier 1 compilation path. Repeated post-threshold calls do not increase it.
+    pub fn promotion_count(&self) -> u64 {
+        self.promotions.load(Ordering::Relaxed)
+    }
+
+    /// Whether a Tier 1 compilation job for `name` is still in flight.
+    pub fn is_promotion_pending(&self, name: &str) -> bool {
+        self.pending
+            .lock()
+            .map(|set| set.contains(name))
+            .unwrap_or(false)
     }
 }

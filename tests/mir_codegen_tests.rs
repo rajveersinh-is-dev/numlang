@@ -179,3 +179,108 @@ fn test_mir_supercompiler_explicit_pipeline() {
         .expect("Failed to run binary");
     assert_eq!(output.status.code().unwrap_or(-1), 15);
 }
+
+#[test]
+fn test_mir_codegen_unsupported_rvalue_returns_structured_error() {
+    use numlang::codegen::compile_mir_to_obj;
+    use numlang::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+    use numlang::mir::{BasicBlockId, Place, Terminator};
+    use numlang::typecheck::types::Type;
+
+    let mir = MirProgram {
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_ty: Type::I64,
+            locals: vec![MirLocalDecl {
+                name: "_t0".to_string(),
+                ty: Type::I64,
+                mutable: true,
+            }],
+            blocks: vec![MirBasicBlock {
+                id: BasicBlockId(0),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    Place {
+                        local: "_t0".to_string(),
+                        projections: vec![],
+                    },
+                    Rvalue::ClosureAlloc {
+                        fn_name: "missing".to_string(),
+                        captured: vec![],
+                    },
+                )],
+                terminator: Terminator::Return {
+                    value: Some(Place {
+                        local: "_t0".to_string(),
+                        projections: vec![],
+                    }),
+                },
+            }],
+            is_distilled: false,
+        }],
+        structs: vec![],
+        enums: vec![],
+    };
+
+    let err = compile_mir_to_obj(&mir).expect_err("unsupported rvalue should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unsupported rvalue") || msg.contains("Unsupported"),
+        "expected structured unsupported-rvalue error, got: {msg}"
+    );
+}
+
+#[test]
+fn test_llvm_mir_codegen_unsupported_rvalue_returns_structured_error() {
+    use numlang::codegen::llvm_backend::{LlvmCompiler, OptLevel};
+    use numlang::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
+    use numlang::mir::{BasicBlockId, Place, Terminator};
+    use numlang::typecheck::types::Type;
+
+    let mir = MirProgram {
+        functions: vec![MirFunction {
+            name: "main".to_string(),
+            params: vec![],
+            return_ty: Type::I64,
+            locals: vec![MirLocalDecl {
+                name: "_t0".to_string(),
+                ty: Type::I64,
+                mutable: true,
+            }],
+            blocks: vec![MirBasicBlock {
+                id: BasicBlockId(0),
+                arguments: vec![],
+                statements: vec![Statement::Assign(
+                    Place {
+                        local: "_t0".to_string(),
+                        projections: vec![],
+                    },
+                    Rvalue::Alloc(Place {
+                        local: "_t0".to_string(),
+                        projections: vec![],
+                    }),
+                )],
+                terminator: Terminator::Return {
+                    value: Some(Place {
+                        local: "_t0".to_string(),
+                        projections: vec![],
+                    }),
+                },
+            }],
+            is_distilled: false,
+        }],
+        structs: vec![],
+        enums: vec![],
+    };
+
+    let mut compiler = LlvmCompiler::new(OptLevel::O2);
+    let err = compiler
+        .compile_mir_to_obj_bytes(&mir)
+        .expect_err("unsupported rvalue should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("Unsupported Rvalue::Alloc") || msg.contains("Unsupported"),
+        "expected structured unsupported-rvalue error, got: {msg}"
+    );
+}

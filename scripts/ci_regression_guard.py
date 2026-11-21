@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
 """
 ci_regression_guard.py: Enforce performance non-regression invariant for CI.
-Verifies that every benchmark in showdown_results.csv maintains:
-    Ratio (Base / SC) >= 1.0 within statistical noise threshold.
-Specifically: rejects any benchmark whose 95% CI upper bound is < 0.95
-(which would indicate a statistically significant slowdown of >5%).
+
+Verifies, per the NumLang Benchmark Contract (BENCHMARK_CONTRACT.md), that the NumLang-SC
+supercompiler does not exhibit a statistically significant residual regression versus the
+NumLang-Base residual runtime on any canonical benchmark.
+
+Contract rule (strict win rule):
+- A NumLang-SC benchmark is a strict win when the 95% confidence interval of the
+  Base/SC runtime ratio excludes 1.0 AND the effect is >= 5% (ratio lower bound > 1.05).
+- A real regression (residual slowdown of SC relative to Base beyond noise) is when the
+  95% CI upper bound of the Base/SC ratio falls below 0.95 (SC slower than Base by >= 5%
+  with CI excluding 1.0) -> the baseline strictly wins.
+
+Failures:
+- The guard FAILS (exit 1) when any evaluable benchmark shows a real regression.
+- Folded cells (median within the hardware performance counter quantization floor of
+  <= 500 ns) are tolerated per the contract's folded policy and are never treated as wins
+  or regressions.
 
 Deliverable for Phase C (Profitability Gate & Ablation Study).
 """
 
 import argparse
 import csv
-import os
 import statistics
 import sys
 from collections import OrderedDict
@@ -27,17 +39,19 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CSV = ROOT / "bench" / "data" / "showdown_results.csv"
 SAMPLE_CSV = ROOT / "bench" / "data" / "showdown_results_sample.csv"
 
+# Frozen by BENCHMARK_CONTRACT.md.
+FOLDED_NS_THRESHOLD = 500
+WIN_EFFECT_PCT = 5.0
+REGRESSION_BOUND = 1.0 - WIN_EFFECT_PCT / 100.0
 
-def calc_ratio_stats(base_raw, sc_raw, fallback_base=0, fallback_sc=0):
+
+def calc_ratio_stats(base_raw, sc_raw):
     if not base_raw or not sc_raw:
-        if fallback_sc > 0 and fallback_base > 0:
-            r = fallback_base / fallback_sc
-            return {"median": r, "ci95_low": r, "ci95_high": r}
-        return {"median": 1.0, "ci95_low": 1.0, "ci95_high": 1.0}
+        return None
     n = min(len(base_raw), len(sc_raw))
     ratios = [base_raw[i] / sc_raw[i] for i in range(n) if sc_raw[i] > 0]
     if not ratios:
-        return {"median": 1.0, "ci95_low": 1.0, "ci95_high": 1.0}
+        return None
     ratios.sort()
     nr = len(ratios)
     r_med = statistics.median(ratios)
@@ -56,7 +70,7 @@ def parse_raw_rounds(raw_str):
     return [int(x.strip()) for x in raw_str.split(";") if x.strip().isdigit()]
 
 
-def run_regression_guard(csv_path: Path, threshold: float = 0.95) -> int:
+def run_regression_guard(csv_path: Path, threshold: float = REGRESSION_BOUND) -> int:
     if not csv_path.exists():
         if SAMPLE_CSV.exists():
             csv_path = SAMPLE_CSV
@@ -73,15 +87,17 @@ def run_regression_guard(csv_path: Path, threshold: float = 0.95) -> int:
                 benchmarks[bid] = {"name": row["name"], "group": row["group"], "systems": {}}
             raw = parse_raw_rounds(row.get("raw_rounds_ns", ""))
             benchmarks[bid]["systems"][row["system"]] = {
-                "median_ns": int(row.get("median_ns", 0)),
+                "median_ns": int(row.get("median_ns") or 0),
                 "raw": raw,
             }
 
     regressions = []
+    folded = []
+    skipped = 0
     total_checked = 0
 
     print("=" * 78)
-    print(f"CI RUNTIME REGRESSION GUARD (threshold: upper CI < {threshold})")
+    print(f"CI RUNTIME REGRESSION GUARD (strict win rule: SC win iff ratio CI > {1.0 / (1.0 - WIN_EFFECT_PCT / 100.0):.2f} AND effect >= {WIN_EFFECT_PCT}%; regression iff upper CI < {threshold})")
     print(f"Data source: {csv_path}")
     print("=" * 78)
 
@@ -92,13 +108,23 @@ def run_regression_guard(csv_path: Path, threshold: float = 0.95) -> int:
         if not base_data or not sc_data:
             continue
 
+        if not base_data.get("raw") or not sc_data.get("raw"):
+            # No measurable rounds recorded -> nothing to guard (NOT_INSTALLED / unmeasured).
+            skipped += 1
+            continue
+
         total_checked += 1
-        stats = calc_ratio_stats(
-            base_data["raw"],
-            sc_data["raw"],
-            fallback_base=base_data["median_ns"],
-            fallback_sc=sc_data["median_ns"],
-        )
+        sc_median = sc_data["median_ns"]
+        if sc_median <= FOLDED_NS_THRESHOLD:
+            # Folded cells are tolerated by contract policy and never treated as regressions.
+            folded.append(bid)
+            print(f"  [FOLD] {bid:15} | Base: {base_data['median_ns']:>10} ns | SC: {sc_median:>10} ns | Folded (≤500ns) - tolerated")
+            continue
+
+        stats = calc_ratio_stats(base_data["raw"], sc_data["raw"])
+        if stats is None:
+            skipped += 1
+            continue
 
         r_med = stats["median"]
         r_low = stats["ci95_low"]
@@ -129,7 +155,8 @@ def run_regression_guard(csv_path: Path, threshold: float = 0.95) -> int:
             print(f"  - {reg['id']} ({reg['name']}): Ratio {reg['ratio_median']:.2f}x [{reg['ci95_low']:.2f}-{reg['ci95_high']:.2f}]")
         return 1
 
-    print(f"SUCCESS: All {total_checked} benchmarks maintained ratio >= 1.0 within noise threshold [upper CI >= {threshold}].")
+    fold_note = f" ({len(folded)} folded/tolerated)" if folded else ""
+    print(f"SUCCESS: All {total_checked} benchmarks maintained ratio >= 1.0 within noise threshold [upper CI >= {threshold}].{fold_note}")
     print("0 regressions detected.")
     print("=" * 78)
     return 0
@@ -138,6 +165,6 @@ def run_regression_guard(csv_path: Path, threshold: float = 0.95) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NumLang CI Runtime Regression Guard")
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV, help="Path to showdown_results.csv")
-    parser.add_argument("--threshold", type=float, default=0.95, help="Regression ratio threshold (default 0.95)")
+    parser.add_argument("--threshold", type=float, default=REGRESSION_BOUND, help="Regression ratio threshold (default 0.95)")
     args = parser.parse_args()
     sys.exit(run_regression_guard(args.csv, args.threshold))

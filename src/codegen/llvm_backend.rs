@@ -299,13 +299,23 @@ impl LlvmCompiler {
             OptLevel::O3 => OptimizationLevel::Aggressive,
         };
 
+        let cpu = TargetMachine::get_host_cpu_name();
+        let cpu_str = cpu.to_str().unwrap_or("generic");
+        let features = TargetMachine::get_host_cpu_features();
+        let features_str = features.to_str().unwrap_or("");
+        let reloc = if cfg!(target_os = "windows") {
+            RelocMode::Default
+        } else {
+            RelocMode::PIC
+        };
+
         let target_machine = target
             .create_target_machine(
                 &triple,
-                "x86-64",
-                "+avx2",
+                cpu_str,
+                features_str,
                 opt_llvm,
-                RelocMode::Default,
+                reloc,
                 CodeModel::Default,
             )
             .ok_or_else(|| {
@@ -416,9 +426,15 @@ impl LlvmCompiler {
         pass_manager.add_reassociate_pass();
         pass_manager.add_gvn_pass();
         pass_manager.add_cfg_simplification_pass();
-        pass_manager.add_loop_vectorize_pass(); // auto-vectorization
+        pass_manager.add_tail_call_elimination_pass();
+        pass_manager.add_aggressive_dce_pass();
+        pass_manager.add_dead_store_elimination_pass();
+        pass_manager.add_licm_pass();
+        pass_manager.add_loop_vectorize_pass();
         pass_manager.add_slp_vectorize_pass();
-        if self.opt_level == OptLevel::O3 {
+        if matches!(self.opt_level, OptLevel::O2 | OptLevel::O3) {
+            pass_manager.add_instruction_combining_pass();
+            pass_manager.add_cfg_simplification_pass();
             pass_manager.add_loop_unroll_pass();
         }
         pass_manager.run_on(module);
@@ -1190,7 +1206,32 @@ impl LlvmCompiler {
                         let i64_type = self.context.i64_type();
                         Some(i64_type.const_int(0, false).into())
                     }
-                    _ => None,
+                    Rvalue::Alloc(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::Alloc in LLVM MIR codegen".to_string(),
+                        ));
+                    }
+                    Rvalue::Load(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::Load in LLVM MIR codegen".to_string(),
+                        ));
+                    }
+                    Rvalue::ClosureAlloc { .. } => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::ClosureAlloc in LLVM MIR codegen".to_string(),
+                        ));
+                    }
+                    Rvalue::FnPtr(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::FnPtr in LLVM MIR codegen".to_string(),
+                        ));
+                    }
+                    _ => {
+                        return Err(LlvmError::CodegenError(format!(
+                            "Unsupported rvalue in LLVM MIR codegen: {:?}",
+                            rvalue
+                        )));
+                    }
                 };
 
                 if let Some(val) = value_to_store {
@@ -1492,6 +1533,22 @@ fn get_place_tbaa_tag(
     1 // fallback scalar i64 tag
 }
 
+fn llvm_host_cpu() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86-64"
+    } else {
+        "generic"
+    }
+}
+
+fn llvm_host_features() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "+avx2,+fma,+sse4.2,+bmi,+bmi2"
+    } else {
+        "+sse2"
+    }
+}
+
 /// Pure Rust LLVM IR emitter for ahead-of-time inspection, verification,
 /// and co-optimization analysis. Emits rich TBAA metadata trees, noalias
 /// parameter attributes, loop vectorization metadata, and AVX2 vector SIMD sequences.
@@ -1735,6 +1792,26 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
                             );
                         }
                     }
+                    Rvalue::Alloc(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::Alloc in LLVM text IR emitter".to_string(),
+                        ));
+                    }
+                    Rvalue::Load(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::Load in LLVM text IR emitter".to_string(),
+                        ));
+                    }
+                    Rvalue::ClosureAlloc { .. } => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::ClosureAlloc in LLVM text IR emitter".to_string(),
+                        ));
+                    }
+                    Rvalue::FnPtr(_) => {
+                        return Err(LlvmError::CodegenError(
+                            "Unsupported Rvalue::FnPtr in LLVM text IR emitter".to_string(),
+                        ));
+                    }
                     _ => {
                         let _ = writeln!(out, "  ; statement");
                     }
@@ -1850,7 +1927,9 @@ pub fn emit_text_llvm_ir(program: &MirProgram, _opt_level: OptLevel) -> Result<S
     // Function attributes
     let _ = writeln!(
         out,
-        "attributes #0 = {{ nounwind \"target-cpu\"=\"x86-64\" \"target-features\"=\"+avx2\" }}"
+        "attributes #0 = {{ nounwind \"target-cpu\"=\"{}\" \"target-features\"=\"{}\" }}",
+        llvm_host_cpu(),
+        llvm_host_features()
     );
     let _ = writeln!(out);
 

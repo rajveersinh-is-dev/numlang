@@ -11,6 +11,9 @@ Validates that:
    and CLM-07 is marked as 'PROVEN (abstract model only)'.
 6. Benchmark numbers and win/tie counts in SHOWDOWN.md and README.md strictly match
    the raw CSV data and pass the CI regression guard.
+7. Every test/source/evidence/location path cited in docs/CLAIMS_LEDGER.md exists on disk.
+8. docs/FINAL_REPORT.md section 7 mirrors the ledger's claim IDs, summaries, statuses,
+   commits, and key numbers exactly.
 
 Exit code 0 if clean, 1 if any validation error is detected.
 """
@@ -190,6 +193,197 @@ def check_claims_ledger():
 
     return errors
 
+LEDGER_ROW_RE = re.compile(
+    r'\|\s*\*\*(CLM-\d{2})\*\*\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|'
+)
+
+EVIDENCE_PATH_EXTENSIONS = (
+    ".rs", ".py", ".csv", ".md", ".nl", ".lean", ".toml",
+    ".yml", ".yaml", ".json", ".txt", ".bib", ".sh", ".ps1",
+)
+
+
+def parse_claims_ledger():
+    """Parse docs/CLAIMS_LEDGER.md rows into a list of dicts, or None if missing."""
+    ledger_path = REPO_ROOT / "docs" / "CLAIMS_LEDGER.md"
+    if not ledger_path.exists():
+        return None
+    content = ledger_path.read_text(encoding="utf-8", errors="replace")
+    rows = []
+    for match in LEDGER_ROW_RE.finditer(content):
+        cid, claim, loc, evidence, status, commit = [m.strip() for m in match.groups()]
+        rows.append({
+            "id": cid,
+            "claim": claim,
+            "location": loc,
+            "evidence": evidence,
+            "status": status,
+            "commit": commit.strip("`").strip(),
+        })
+    return rows
+
+
+def _is_evidence_path_token(token):
+    token = token.strip()
+    if not token or token.startswith(("http://", "https://", "mailto:", "#")):
+        return False
+    if "/" in token or "\\" in token:
+        return True
+    return token.lower().endswith(EVIDENCE_PATH_EXTENSIONS)
+
+
+def _strip_cited_path_suffix(token):
+    """Drop ':123', ':123-456', and ':Phase 22' suffixes from a cited path."""
+    return re.sub(r':(?:Phase\s+)?\d+(?:-\d+)?$', '', token.strip())
+
+
+def check_ledger_evidence_paths():
+    """Stage 7: every test/source/evidence/location path cited in the ledger must exist."""
+    errors = []
+    rows = parse_claims_ledger()
+    if rows is None:
+        return ["docs/CLAIMS_LEDGER.md not found"]
+    if not rows:
+        return ["Could not parse any claim rows from docs/CLAIMS_LEDGER.md"]
+
+    checked = 0
+    for row in rows:
+        for column, column_label in (("evidence", "evidence"), ("location", "stated-location")):
+            for token in re.findall(r'`([^`]+)`', row[column]):
+                rel_path = _strip_cited_path_suffix(token)
+                if not _is_evidence_path_token(rel_path):
+                    continue
+                resolved = REPO_ROOT / rel_path
+                checked += 1
+                if not resolved.exists():
+                    errors.append(
+                        f"{row['id']}: {column_label} path '{token}' cited in "
+                        f"docs/CLAIMS_LEDGER.md does not exist (resolved to {resolved}). "
+                        f"Point the ledger at the real file or restore the missing file."
+                    )
+    if checked == 0:
+        errors.append(
+            "No cited paths were parsed from docs/CLAIMS_LEDGER.md; expected backticked "
+            "file paths in the evidence and stated-location columns."
+        )
+    return errors
+
+
+def _ledger_status_keyword(status):
+    """Extract the bold status keyword, e.g. '**TESTED** (detail)' -> 'TESTED'."""
+    match = re.match(r'\*\*(.+?)\*\*', status.strip())
+    if match:
+        return match.group(1).strip()
+    return status.strip().split()[0] if status.strip() else ""
+
+
+def _normalize_markdown_text(text):
+    text = text.replace("**", "")
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def _extract_markdown_section(content, start_pattern, end_pattern):
+    start = re.search(start_pattern, content, re.M)
+    if not start:
+        return None
+    remainder = content[start.end():]
+    end = re.search(end_pattern, remainder, re.M)
+    return remainder[:end.start()] if end else remainder
+
+
+def check_final_report_matches_ledger():
+    """Stage 8: FINAL_REPORT.md section 7 must mirror CLAIMS_LEDGER.md exactly."""
+    errors = []
+    ledger_rows = parse_claims_ledger()
+    if not ledger_rows:
+        return [
+            "docs/CLAIMS_LEDGER.md is missing or unparseable; "
+            "cannot reconcile docs/FINAL_REPORT.md section 7"
+        ]
+
+    report_path = REPO_ROOT / "docs" / "FINAL_REPORT.md"
+    if not report_path.exists():
+        return ["docs/FINAL_REPORT.md not found"]
+
+    report = report_path.read_text(encoding="utf-8", errors="replace")
+    section = _extract_markdown_section(report, r'^##\s*7\.', r'^##\s*8\.')
+    if section is None:
+        return [
+            "docs/FINAL_REPORT.md is missing its section 7 claim matrix "
+            "(expected a heading beginning '## 7.')"
+        ]
+
+    report_rows = {}
+    report_row_re = re.compile(
+        r'\|\s*\*\*(CLM-\d{2})\*\*\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|'
+    )
+    for match in report_row_re.finditer(section):
+        cid, summary, status, commit = [m.strip() for m in match.groups()]
+        if cid in report_rows:
+            errors.append(f"FINAL_REPORT.md section 7 lists {cid} more than once")
+        report_rows[cid] = {
+            "summary": summary,
+            "status": status,
+            "commit": commit.strip("`").strip(),
+        }
+
+    ledger_by_id = {row["id"]: row for row in ledger_rows}
+    missing = sorted(set(ledger_by_id) - set(report_rows))
+    extra = sorted(set(report_rows) - set(ledger_by_id))
+    if missing:
+        errors.append(
+            f"FINAL_REPORT.md section 7 is missing claim(s): {', '.join(missing)}"
+        )
+    if extra:
+        errors.append(
+            f"FINAL_REPORT.md section 7 lists claim(s) absent from the ledger: {', '.join(extra)}"
+        )
+    if len(report_rows) != len(ledger_by_id):
+        errors.append(
+            f"FINAL_REPORT.md section 7 has {len(report_rows)} claim rows; "
+            f"the ledger has {len(ledger_by_id)}"
+        )
+
+    for cid, ledger in ledger_by_id.items():
+        reported = report_rows.get(cid)
+        if reported is None:
+            continue
+
+        expected_summary = _normalize_markdown_text(ledger["claim"])
+        actual_summary = _normalize_markdown_text(reported["summary"])
+        if actual_summary != expected_summary:
+            errors.append(
+                f"{cid}: FINAL_REPORT.md section 7 summary does not match the ledger.\n"
+                f"    ledger: {expected_summary}\n"
+                f"    report: {actual_summary}"
+            )
+
+        expected_status = _normalize_markdown_text(_ledger_status_keyword(ledger["status"]))
+        actual_status = _normalize_markdown_text(reported["status"])
+        if actual_status != expected_status:
+            errors.append(
+                f"{cid}: FINAL_REPORT.md section 7 status '{actual_status}' does not match "
+                f"ledger status '{expected_status}'"
+            )
+
+        if reported["commit"] != ledger["commit"]:
+            errors.append(
+                f"{cid}: FINAL_REPORT.md section 7 commit '{reported['commit']}' does not match "
+                f"ledger commit '{ledger['commit']}'"
+            )
+
+        # Secondary numeric guard: every number in the ledger claim must survive into
+        # the report summary, so a partial rewrite cannot silently change a headline figure.
+        for number in re.findall(r'\d+(?:,\d{3})*(?:\.\d+)?', ledger["claim"]):
+            if number not in reported["summary"]:
+                errors.append(
+                    f"{cid}: number '{number}' from the ledger claim is missing from "
+                    f"FINAL_REPORT.md section 7 summary"
+                )
+
+    return errors
+
 def check_benchmark_numbers_single_source_of_truth():
     errors = []
     csv_path = REPO_ROOT / "bench" / "data" / "showdown_results.csv"
@@ -236,7 +430,7 @@ def main():
 
     all_errors = []
 
-    print("[1/6] Checking local Markdown links and document references...")
+    print("[1/8] Checking local Markdown links and document references...")
     link_errors = check_local_markdown_links()
     if link_errors:
         for err in link_errors:
@@ -245,7 +439,7 @@ def main():
     else:
         print("  [OK] All markdown links point to existing files.")
 
-    print("[2/6] Checking live CI status badges in README...")
+    print("[2/8] Checking live CI status badges in README...")
     badge_errors = check_readme_badges()
     if badge_errors:
         for err in badge_errors:
@@ -254,7 +448,7 @@ def main():
     else:
         print("  [OK] No static build badges detected.")
 
-    print("[3/6] Checking Lean 4 formalization for 'sorry' and 'axiom' shortcuts...")
+    print("[3/8] Checking Lean 4 formalization for 'sorry' and 'axiom' shortcuts...")
     lean_errors = check_lean_proofs()
     if lean_errors:
         for err in lean_errors:
@@ -263,7 +457,7 @@ def main():
     else:
         print("  [OK] Zero 'sorry' and zero 'axiom' statements found in Lean formalizations.")
 
-    print("[4/6] Checking documentation references to Lean files and theorems...")
+    print("[4/8] Checking documentation references to Lean files and theorems...")
     try:
         from scripts.check_lean_docs import check_docs
         doc_lean_errors = check_docs(REPO_ROOT)
@@ -281,7 +475,7 @@ def main():
     else:
         print("  [OK] Documentation references match verified Lean inventory.")
 
-    print("[5/6] Checking CLAIMS_LEDGER.md (20 claims, real git commit hashes, PROVEN abstract status)...")
+    print("[5/8] Checking CLAIMS_LEDGER.md (20 claims, real git commit hashes, PROVEN abstract status)...")
     ledger_errors = check_claims_ledger()
     if ledger_errors:
         for err in ledger_errors:
@@ -290,7 +484,7 @@ def main():
     else:
         print("  [OK] All 20 claims verified with valid git commits; CLM-07 status matches.")
 
-    print("[6/6] Checking single source of truth (README & SHOWDOWN numbers vs raw CSV & regression guard)...")
+    print("[6/8] Checking single source of truth (README & SHOWDOWN numbers vs raw CSV & regression guard)...")
     ssot_errors = check_benchmark_numbers_single_source_of_truth()
     if ssot_errors:
         for err in ssot_errors:
@@ -298,6 +492,24 @@ def main():
         all_errors.extend(ssot_errors)
     else:
         print("  [OK] Single source of truth intact: all numbers, ratios, and win counts match raw CSV.")
+
+    print("[7/8] Checking that every CLAIMS_LEDGER.md evidence/location path exists on disk...")
+    evidence_errors = check_ledger_evidence_paths()
+    if evidence_errors:
+        for err in evidence_errors:
+            print(f"  [ERROR] {err}")
+        all_errors.extend(evidence_errors)
+    else:
+        print("  [OK] Every test/source/evidence/location path cited in the ledger exists.")
+
+    print("[8/8] Checking FINAL_REPORT.md section 7 against CLAIMS_LEDGER.md...")
+    report_errors = check_final_report_matches_ledger()
+    if report_errors:
+        for err in report_errors:
+            print(f"  [ERROR] {err}")
+        all_errors.extend(report_errors)
+    else:
+        print("  [OK] FINAL_REPORT.md section 7 matches the ledger: IDs, summaries, statuses, commits, and numbers.")
 
     print("=====================================================================")
     if all_errors:

@@ -16,9 +16,19 @@
 //! ## 1. What is IN the Trusted Computing Base (Trusted Components):
 //! - **Source MIR Frontend**: The AST parser, typechecker, and AST-to-MIR lowering
 //!   pipeline are trusted to faithfully represent the programmer's intended source semantics.
-//! - **Bit-Blasting Logic & SAT Engine**: The CDCL / DPLL solver (`CdclSolver`), Tseitin
+//! - **Bit-Blasting Logic & SAT Engine**: The CDCL / DPLL solver (`SatSolver`), Tseitin
 //!   transformation, and two's complement bit-vector arithmetic circuits (`bvadd`, `bvsub`,
-//!   `bvmul`, `bvdiv`, etc.) are trusted to correctly decide satisfiability of QF_BV formulas.
+//!   `bvmul`, `bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`, shifts, and bitwise ops) are trusted to
+//!   correctly decide satisfiability of QF_BV formulas. Division and remainder circuits
+//!   implement the SMT-LIB total semantics (`bvudiv`/`bvurem`/`bvsdiv`/`bvsrem`), including
+//!   the SMT-LIB-defined values for a zero divisor and the wrapping `i64::MIN / -1` case.
+//!   Hardware traps/panics for division by zero or signed division overflow are NOT modeled;
+//!   a proof about a division-by-zero path therefore certifies the SMT-LIB semantics, not a
+//!   guarantee that the host program will not trap.
+//! - **Solver Search Budget**: The solver is incomplete by design. Exhaustion of its node
+//!   budget is reported as `SatSolveResult::Unknown` / `SmtResult::Unknown` and is propagated
+//!   as `ValidityResult::Incomplete` / `ValidationError::SolverIncomplete`. It is NEVER
+//!   coerced into `Unsat`, so resource exhaustion can never fabricate a certificate.
 //! - **Operational Memory Model**: The translation validator models 64-bit scalar registers
 //!   as exact 64-bit words with two's complement wrapping. Uninterpreted functions represent
 //!   opaque external function calls preserving congruence ($x = y \implies f(x) = f(y)$).
@@ -35,6 +45,9 @@
 //!   are untrusted. Equivalence is verified along all symbolic path conditions.
 //! - **Recurrence Collapse Rules**: Mathematical closed forms derived by polynomial difference
 //!   engines or matrix powering are validated bit-for-bit against unrolled operational paths.
+//!   This includes closed forms containing exact integer division/remainder (triangular,
+//!   cubic, and quartic polynomial sums), which are bit-blasted with SMT-LIB division
+//!   semantics rather than trusted as algebraic rewrites.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -775,6 +788,16 @@ impl SmtLib2Printer {
 
 pub type Lit = i32;
 
+/// Result of a SAT solver query that distinguishes resource exhaustion from a
+/// proven unsatisfiable clause set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SatSolveResult {
+    Sat(HashMap<usize, bool>),
+    Unsat,
+    /// The search budget was exhausted; no sound decision was reached.
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct SatSolver {
     pub num_vars: usize,
@@ -782,6 +805,8 @@ pub struct SatSolver {
     pub assignment: Vec<Option<bool>>, // 1-indexed
     trail: Vec<Lit>,
     trail_lim: Vec<usize>,
+    /// Maximum number of search nodes before the solver reports `Unknown`.
+    pub search_budget: usize,
 }
 
 impl Default for SatSolver {
@@ -798,6 +823,7 @@ impl SatSolver {
             assignment: vec![None, Some(true)],
             trail: vec![1],
             trail_lim: Vec::new(),
+            search_budget: 250_000,
         };
         // Assert constant true
         solver.clauses.push(vec![1]);
@@ -957,12 +983,26 @@ impl SatSolver {
         Ok(())
     }
 
-    pub fn solve(&mut self) -> Option<HashMap<usize, bool>> {
+    /// Solves the current clause set.
+    ///
+    /// `Unsat` and `Sat` are sound answers. `Unknown` means the search budget
+    /// was exhausted before the solver could decide; callers MUST NOT treat
+    /// `Unknown` as `Unsat` because doing so would fabricate proofs.
+    pub fn solve(&mut self) -> SatSolveResult {
         if self.propagate().is_err() {
-            return None;
+            return SatSolveResult::Unsat;
         }
-        let mut steps = 25000;
-        self.search(&mut steps)
+        let mut steps = self.search_budget;
+        match self.search(&mut steps) {
+            Some(model) => SatSolveResult::Sat(model),
+            None => {
+                if steps == 0 {
+                    SatSolveResult::Unknown
+                } else {
+                    SatSolveResult::Unsat
+                }
+            }
+        }
     }
 
     fn search(&mut self, steps: &mut usize) -> Option<HashMap<usize, bool>> {
@@ -984,8 +1024,8 @@ impl SatSolver {
             None => {
                 // All variables assigned, verify model
                 let mut model = HashMap::new();
-                for v in 1..=self.num_vars {
-                    model.insert(v, self.assignment[v].unwrap_or(false));
+                for (v, assigned) in self.assignment.iter().enumerate().skip(1) {
+                    model.insert(v, assigned.unwrap_or(false));
                 }
                 return Some(model);
             }
@@ -1057,6 +1097,131 @@ impl BitBlaster {
         bits
     }
 
+    /// Bit-vector multiplexer: `c ? t : e` (bitwise).
+    fn ite_bv(&mut self, c: Lit, t: &[Lit], e: &[Lit]) -> Vec<Lit> {
+        let width = t.len().min(e.len());
+        let mut res = Vec::with_capacity(width);
+        for i in 0..width {
+            res.push(self.solver.ite_gate(c, t[i], e[i]));
+        }
+        res
+    }
+
+    /// OR-reduction over a bit slice.
+    fn or_all_bits(&mut self, bits: &[Lit]) -> Lit {
+        let mut acc = self.solver.lit_false();
+        for &b in bits {
+            acc = self.solver.or_gate(acc, b);
+        }
+        acc
+    }
+
+    /// Unsigned restoring division/remainder.
+    ///
+    /// Returns `(quotient, remainder)` such that `a = b * q + r` and
+    /// `r < b` when `b != 0`. When `b == 0` the SMT-LIB total semantics are
+    /// used: `bvudiv a 0 = 2^w - 1` and `bvurem a 0 = a`.
+    fn udivrem_bv(&mut self, a: &[Lit], b: &[Lit]) -> (Vec<Lit>, Vec<Lit>) {
+        let width = a.len().min(b.len());
+        debug_assert!(width > 0);
+
+        let b_zero = -self.or_all_bits(b);
+
+        // Generalized restoring divider (valid whenever b != 0).
+        let false_bit = self.solver.lit_false();
+        let mut rem: Vec<Lit> = vec![false_bit; width];
+        let mut quot: Vec<Lit> = vec![false_bit; width];
+
+        for i in (0..width).rev() {
+            // shifted = 2 * rem + a[i], represented in width + 1 bits.
+            let mut shifted = vec![false_bit; width + 1];
+            shifted[0] = a[i];
+            for (j, &rbit) in rem.iter().enumerate().take(width) {
+                shifted[j + 1] = rbit;
+            }
+
+            // Zero-extend the divisor to width + 1 bits.
+            let mut b_ext = b.to_vec();
+            b_ext.truncate(width);
+            b_ext.push(false_bit);
+
+            // ge = shifted >= b_ext  (i.e. !(b_ext < shifted))
+            let lt = self.ult_bv(&b_ext, &shifted);
+            let ge = -lt;
+
+            let diff = self.sub_bv(&shifted, &b_ext);
+
+            // New remainder is the low `width` bits of the selected difference.
+            for j in 0..width {
+                rem[j] = self.solver.ite_gate(ge, diff[j], shifted[j]);
+            }
+            quot[i] = ge;
+        }
+
+        // SMT-LIB defines division by zero as a total function.
+        let all_ones = vec![self.solver.lit_true(); width];
+        let quot = self.ite_bv(b_zero, &all_ones, &quot);
+        let rem = self.ite_bv(b_zero, a, &rem);
+        (quot, rem)
+    }
+
+    /// Unsigned division with SMT-LIB total semantics.
+    fn udiv_bv(&mut self, a: &[Lit], b: &[Lit]) -> Vec<Lit> {
+        self.udivrem_bv(a, b).0
+    }
+
+    /// Unsigned remainder with SMT-LIB total semantics.
+    fn urem_bv(&mut self, a: &[Lit], b: &[Lit]) -> Vec<Lit> {
+        self.udivrem_bv(a, b).1
+    }
+
+    /// Signed division following SMT-LIB `bvsdiv` total semantics.
+    ///
+    /// The quotient is computed on magnitudes with unsigned division and the
+    /// sign is reapplied. For `b == 0` this yields `-1` when `a >= 0` and `1`
+    /// when `a < 0`, matching SMT-LIB. The `i64::MIN / -1` overflow case wraps
+    /// to `i64::MIN`, also matching SMT-LIB.
+    fn sdiv_bv(&mut self, a: &[Lit], b: &[Lit]) -> Vec<Lit> {
+        let width = a.len().min(b.len());
+        debug_assert!(width > 0);
+        let sign_a = a[width - 1];
+        let sign_b = b[width - 1];
+        let zero = vec![self.solver.lit_false(); width];
+
+        let neg_a = self.sub_bv(&zero, a);
+        let neg_b = self.sub_bv(&zero, b);
+        let abs_a = self.ite_bv(sign_a, &neg_a, a);
+        let abs_b = self.ite_bv(sign_b, &neg_b, b);
+        let (quot_abs, _) = self.udivrem_bv(&abs_a, &abs_b);
+
+        let sign = self.solver.xor_gate(sign_a, sign_b);
+        let neg_quot = self.sub_bv(&zero, &quot_abs);
+        self.ite_bv(sign, &neg_quot, &quot_abs)
+    }
+
+    /// Signed remainder following SMT-LIB `bvsrem` total semantics.
+    ///
+    /// The remainder takes the sign of the dividend. For `b == 0` the
+    /// SMT-LIB-defined result is the dividend itself.
+    fn srem_bv(&mut self, a: &[Lit], b: &[Lit]) -> Vec<Lit> {
+        let width = a.len().min(b.len());
+        debug_assert!(width > 0);
+        let sign_a = a[width - 1];
+        let sign_b = b[width - 1];
+        let zero = vec![self.solver.lit_false(); width];
+
+        let neg_a = self.sub_bv(&zero, a);
+        let neg_b = self.sub_bv(&zero, b);
+        let abs_a = self.ite_bv(sign_a, &neg_a, a);
+        let abs_b = self.ite_bv(sign_b, &neg_b, b);
+        let (_, rem_abs) = self.udivrem_bv(&abs_a, &abs_b);
+
+        let neg_rem = self.sub_bv(&zero, &rem_abs);
+        let rem_signed = self.ite_bv(sign_a, &neg_rem, &rem_abs);
+        let b_zero = -self.or_all_bits(b);
+        self.ite_bv(b_zero, a, &rem_signed)
+    }
+
     pub fn blast_bv(&mut self, expr: &BvExpr) -> Vec<Lit> {
         let width = expr.bitwidth();
         match expr {
@@ -1086,6 +1251,26 @@ impl BitBlaster {
                 let bl = self.blast_bv(l);
                 let br = self.blast_bv(r);
                 self.mul_bv(&bl, &br)
+            }
+            BvExpr::UDiv(l, r) => {
+                let bl = self.blast_bv(l);
+                let br = self.blast_bv(r);
+                self.udiv_bv(&bl, &br)
+            }
+            BvExpr::SDiv(l, r) => {
+                let bl = self.blast_bv(l);
+                let br = self.blast_bv(r);
+                self.sdiv_bv(&bl, &br)
+            }
+            BvExpr::URem(l, r) => {
+                let bl = self.blast_bv(l);
+                let br = self.blast_bv(r);
+                self.urem_bv(&bl, &br)
+            }
+            BvExpr::SRem(l, r) => {
+                let bl = self.blast_bv(l);
+                let br = self.blast_bv(r);
+                self.srem_bv(&bl, &br)
             }
             BvExpr::And(l, r) => {
                 let bl = self.blast_bv(l);
@@ -1176,7 +1361,6 @@ impl BitBlaster {
                     .push((b_args, ret_bits.clone()));
                 ret_bits
             }
-            _ => vec![self.solver.lit_false(); width],
         }
     }
 
@@ -1439,6 +1623,20 @@ impl BitBlaster {
 pub enum SmtResult {
     Unsat,
     Sat(HashMap<String, u64>),
+    /// The solver exhausted its search budget. This is NOT a proof of
+    /// unsatisfiability and must never be reported as one.
+    Unknown,
+}
+
+/// Result of a validity (theorem) check with an explicit incompleteness case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidityResult {
+    /// The formula holds for all inputs.
+    Valid,
+    /// A concrete counterexample falsifying the formula.
+    Invalid(HashMap<String, u64>),
+    /// The solver could not decide within its search budget.
+    Incomplete,
 }
 
 /// Checks satisfiability of a QF_BV formula.
@@ -1503,17 +1701,33 @@ pub fn check_satisfiability(formula: &BoolFormula) -> SmtResult {
     blaster.solver.add_clause(vec![root_lit]);
 
     match blaster.solver.solve() {
-        Some(sat_model) => SmtResult::Sat(blaster.extract_model(&sat_model)),
-        None => SmtResult::Unsat,
+        SatSolveResult::Sat(sat_model) => SmtResult::Sat(blaster.extract_model(&sat_model)),
+        SatSolveResult::Unsat => SmtResult::Unsat,
+        SatSolveResult::Unknown => SmtResult::Unknown,
+    }
+}
+
+/// Proves that a formula is VALID (holds for all inputs) by verifying its
+/// negation is UNSAT. Returns `Incomplete` when the solver budget is exhausted
+/// so callers can never mistake resource exhaustion for a proof.
+pub fn check_formula_validity(formula: &BoolFormula) -> ValidityResult {
+    let neg = formula.clone().negate();
+    match check_satisfiability(&neg) {
+        SmtResult::Unsat => ValidityResult::Valid,
+        SmtResult::Sat(counterexample) => ValidityResult::Invalid(counterexample),
+        SmtResult::Unknown => ValidityResult::Incomplete,
     }
 }
 
 /// Proves that a formula is VALID (holds for all inputs) by verifying its negation is UNSAT.
+///
+/// `Incomplete` is reported as `Err` with an empty counterexample map; use
+/// [`check_formula_validity`] when the distinction matters.
 pub fn verify_formula_validity(formula: &BoolFormula) -> Result<(), HashMap<String, u64>> {
-    let neg = formula.clone().negate();
-    match check_satisfiability(&neg) {
-        SmtResult::Unsat => Ok(()),
-        SmtResult::Sat(counterexample) => Err(counterexample),
+    match check_formula_validity(formula) {
+        ValidityResult::Valid => Ok(()),
+        ValidityResult::Invalid(counterexample) => Err(counterexample),
+        ValidityResult::Incomplete => Err(HashMap::new()),
     }
 }
 
@@ -2016,6 +2230,12 @@ pub enum ValidationError {
         func: String,
         message: String,
     },
+    /// The SMT solver exhausted its search budget. This is a failure to
+    /// certify, never a successful proof.
+    SolverIncomplete {
+        func: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -2074,6 +2294,14 @@ impl fmt::Display for ValidationError {
             }
             ValidationError::PostconditionFailed { func, message } => {
                 write!(f, "Loop postcondition failed in `{}`: {}", func, message)
+            }
+            ValidationError::SolverIncomplete { func, message } => {
+                write!(
+                    f,
+                    "SMT solver could not decide equivalence for `{}`: {} \
+                     (search budget exhausted; no certificate issued)",
+                    func, message
+                )
             }
         }
     }
@@ -2153,11 +2381,20 @@ impl<'a> TranslationValidator<'a> {
                 Box::new(BoolFormula::or_all(orig_sim_disj)),
             );
 
-            match verify_formula_validity(&sim_obligation) {
-                Ok(()) => {
+            match check_formula_validity(&sim_obligation) {
+                ValidityResult::Valid => {
                     smt_proved += 1;
                 }
-                Err(counterexample) => {
+                ValidityResult::Incomplete => {
+                    return Err(ValidationError::SolverIncomplete {
+                        func: self.orig.name.clone(),
+                        message: format!(
+                            "simulation obligation for residual path {:?} exceeded the SMT search budget",
+                            res_path.blocks
+                        ),
+                    });
+                }
+                ValidityResult::Invalid(counterexample) => {
                     let model_str = counterexample
                         .iter()
                         .map(|(k, v)| format!("{}={}", k, v))
@@ -2262,19 +2499,43 @@ impl<'a> KInductionValidator<'a> {
             // Check invariant at step
             let inv_at_step = subst_bool(&self.candidate.invariant, &current_state);
             let not_inv = BoolFormula::Not(Box::new(inv_at_step));
-            if let SmtResult::Sat(_) = check_satisfiability(&not_inv) {
-                return Err(ValidationError::InvariantViolation {
-                    func: self.candidate.name.clone(),
-                    step,
-                    message: format!("Base case failed at step {step}: invariant does not hold"),
-                });
+            match check_satisfiability(&not_inv) {
+                SmtResult::Sat(_) => {
+                    return Err(ValidationError::InvariantViolation {
+                        func: self.candidate.name.clone(),
+                        step,
+                        message: format!(
+                            "Base case failed at step {step}: invariant does not hold"
+                        ),
+                    });
+                }
+                SmtResult::Unknown => {
+                    return Err(ValidationError::SolverIncomplete {
+                        func: self.candidate.name.clone(),
+                        message: format!(
+                            "base-case invariant check at step {step} exceeded the SMT search budget"
+                        ),
+                    });
+                }
+                SmtResult::Unsat => {}
             }
 
             // Transition to next state
             let cond_at_step = subst_bool(&self.candidate.loop_condition, &current_state);
-            if let SmtResult::Unsat = check_satisfiability(&cond_at_step) {
-                // Loop terminates before k steps; base case holds vacuously for remaining steps
-                break;
+            match check_satisfiability(&cond_at_step) {
+                SmtResult::Unsat => {
+                    // Loop terminates before k steps; base case holds vacuously for remaining steps
+                    break;
+                }
+                SmtResult::Unknown => {
+                    return Err(ValidationError::SolverIncomplete {
+                        func: self.candidate.name.clone(),
+                        message: format!(
+                            "loop-condition check at step {step} exceeded the SMT search budget"
+                        ),
+                    });
+                }
+                SmtResult::Sat(_) => {}
             }
 
             let mut next_state = HashMap::new();
@@ -2322,6 +2583,12 @@ impl<'a> KInductionValidator<'a> {
         let not_goal = BoolFormula::Not(Box::new(goal));
         match check_satisfiability(&not_goal) {
             SmtResult::Unsat => Ok(true),
+            SmtResult::Unknown => Err(ValidationError::SolverIncomplete {
+                func: self.candidate.name.clone(),
+                message: format!(
+                    "inductive step at depth {k} exceeded the SMT search budget"
+                ),
+            }),
             SmtResult::Sat(counterexample) => Err(ValidationError::InductiveStepFailed {
                 func: self.candidate.name.clone(),
                 k,
@@ -2345,6 +2612,10 @@ impl<'a> KInductionValidator<'a> {
         let not_goal = BoolFormula::Not(Box::new(goal));
         match check_satisfiability(&not_goal) {
             SmtResult::Unsat => Ok(true),
+            SmtResult::Unknown => Err(ValidationError::SolverIncomplete {
+                func: self.candidate.name.clone(),
+                message: "postcondition check exceeded the SMT search budget".to_string(),
+            }),
             SmtResult::Sat(cex) => Err(ValidationError::PostconditionFailed {
                 func: self.candidate.name.clone(),
                 message: format!("Postcondition failed with counterexample {cex:?}"),

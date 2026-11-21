@@ -18,6 +18,13 @@ pub struct ArenaChunk {
     pub next: *mut ArenaChunk,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaFrame {
+    pub chunk: *mut ArenaChunk,
+    pub offset: usize,
+    pub total_allocated: usize,
+}
+
 #[repr(C)]
 pub struct Arena {
     pub head: *mut ArenaChunk,
@@ -25,6 +32,7 @@ pub struct Arena {
     pub default_chunk_size: usize,
     pub total_allocated: usize,
     pub peak_usage: usize,
+    pub frames: Vec<ArenaFrame>,
 }
 
 impl Arena {
@@ -41,6 +49,7 @@ impl Arena {
             default_chunk_size: cap,
             total_allocated: 0,
             peak_usage: 0,
+            frames: Vec::new(),
         }
     }
 
@@ -125,6 +134,48 @@ impl Arena {
             }
             self.current = self.head;
             self.total_allocated = 0;
+            self.frames.clear();
+        }
+    }
+
+    pub fn save(&self) -> ArenaFrame {
+        let offset = unsafe {
+            if self.current.is_null() {
+                0
+            } else {
+                (*self.current).offset
+            }
+        };
+        ArenaFrame {
+            chunk: self.current,
+            offset,
+            total_allocated: self.total_allocated,
+        }
+    }
+
+    pub fn restore(&mut self, frame: ArenaFrame) {
+        unsafe {
+            let mut curr = frame.chunk;
+            while !curr.is_null() {
+                (*curr).offset = 0;
+                curr = (*curr).next;
+            }
+            if !frame.chunk.is_null() {
+                (*frame.chunk).offset = frame.offset;
+            }
+            self.current = frame.chunk;
+            self.total_allocated = frame.total_allocated;
+        }
+    }
+
+    pub fn push_frame(&mut self) {
+        let frame = self.save();
+        self.frames.push(frame);
+    }
+
+    pub fn pop_frame(&mut self) {
+        if let Some(frame) = self.frames.pop() {
+            self.restore(frame);
         }
     }
 
@@ -220,6 +271,38 @@ pub extern "C" fn __nl_arena_get_peak_bytes() -> usize {
     DEFAULT_ARENA.with(|a| a.borrow().peak_usage)
 }
 
+#[no_mangle]
+pub extern "C" fn __nl_arena_push_frame() {
+    DEFAULT_ARENA.with(|a| a.borrow_mut().push_frame());
+}
+
+#[no_mangle]
+pub extern "C" fn __nl_arena_pop_frame() {
+    DEFAULT_ARENA.with(|a| a.borrow_mut().pop_frame());
+}
+
+/// # Safety
+/// If `arena` is non-null, it must point to a valid initialized `Arena`.
+#[no_mangle]
+pub unsafe extern "C" fn __nl_arena_push_frame_arena(arena: *mut Arena) {
+    if arena.is_null() {
+        __nl_arena_push_frame();
+    } else {
+        unsafe { (*arena).push_frame() }
+    }
+}
+
+/// # Safety
+/// If `arena` is non-null, it must point to a valid initialized `Arena`.
+#[no_mangle]
+pub unsafe extern "C" fn __nl_arena_pop_frame_arena(arena: *mut Arena) {
+    if arena.is_null() {
+        __nl_arena_pop_frame();
+    } else {
+        unsafe { (*arena).pop_frame() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +349,80 @@ mod tests {
 
         let p2 = __nl_arena_alloc_default(256);
         assert_eq!(p1, p2, "Default loop arena reuses head chunk on reset");
+    }
+
+    #[test]
+    fn test_arena_frame_push_pop() {
+        let mut arena = Arena::new(1024);
+        let p1 = arena.alloc(64);
+        assert!(!p1.is_null());
+        let alloc_before = arena.total_allocated;
+
+        arena.push_frame();
+        let p2 = arena.alloc(128);
+        assert!(!p2.is_null());
+        assert!(arena.total_allocated >= alloc_before + 128);
+
+        arena.pop_frame();
+        assert_eq!(arena.total_allocated, alloc_before);
+        let p3 = arena.alloc(128);
+        assert_eq!(p2, p3, "pop_frame should reuse allocation space");
+
+        arena.destroy();
+    }
+
+    #[test]
+    fn test_arena_save_restore() {
+        let mut arena = Arena::new(1024);
+        let p1 = arena.alloc(32);
+        let frame = arena.save();
+        let _p2 = arena.alloc(64);
+        assert!(arena.total_allocated >= 96);
+
+        arena.restore(frame);
+        assert_eq!(arena.total_allocated, 32);
+        let p3 = arena.alloc(64);
+        let p2_expected = unsafe { p1.add(32) };
+        assert_eq!(p3, p2_expected, "restore should rewind to saved position");
+        arena.destroy();
+    }
+
+    #[test]
+    fn test_arena_reset_clears_frames() {
+        let mut arena = Arena::new(1024);
+        arena.alloc(64);
+        arena.push_frame();
+        arena.alloc(64);
+        assert_eq!(arena.frames.len(), 1);
+        arena.reset();
+        assert_eq!(arena.frames.len(), 0);
+        assert_eq!(arena.total_allocated, 0);
+        arena.destroy();
+    }
+
+    #[test]
+    fn test_arena_frame_ffi() {
+        let arena = __nl_arena_create(1024);
+        unsafe {
+            let p1 = __nl_arena_alloc(arena, 64);
+            __nl_arena_push_frame_arena(arena);
+            let p2 = __nl_arena_alloc(arena, 128);
+            assert!(!p2.is_null());
+            __nl_arena_pop_frame_arena(arena);
+            let p3 = __nl_arena_alloc(arena, 128);
+            assert_eq!(p2, p3);
+            assert!(!p1.is_null());
+            __nl_arena_destroy(arena);
+        }
+
+        __nl_loop_reset();
+        let d1 = __nl_arena_alloc_default(64);
+        __nl_arena_push_frame();
+        let d2 = __nl_arena_alloc_default(64);
+        __nl_arena_pop_frame();
+        let d3 = __nl_arena_alloc_default(64);
+        assert_eq!(d2, d3);
+        assert!(!d1.is_null());
+        __nl_loop_reset();
     }
 }

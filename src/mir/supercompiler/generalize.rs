@@ -163,7 +163,7 @@ pub fn build_triangular_term(interner: &mut TermInterner, k: SymTermId, coeff: i
     } else {
         let zero_term = interner.intern_int(0);
         let bit_and = interner.intern_binary(BinaryOp::BitAnd, k, one_term, Type::I64);
-        let is_even = interner.intern_binary(BinaryOp::Eq, bit_and, zero_term, Type::Bool);
+        let is_even = interner.intern_binary(BinaryOp::Eq, bit_and, zero_term, Type::I64);
 
         let k_div_2 = interner.intern_binary(BinaryOp::Div, k, two_term, Type::I64);
         let even_tri = interner.intern_binary(BinaryOp::Mul, k_div_2, k_minus_1, Type::I64);
@@ -179,6 +179,232 @@ pub fn build_triangular_term(interner: &mut TermInterner, k: SymTermId, coeff: i
             interner.intern_binary(BinaryOp::Mul, tri_part, c_term, Type::I64)
         }
     }
+}
+
+/// Greatest common divisor of two unsigned integers.
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+/// Parity test of the iteration variable: true iff k is even.
+fn intern_is_even(interner: &mut TermInterner, k: SymTermId) -> SymTermId {
+    let one = interner.intern_int(1);
+    let zero = interner.intern_int(0);
+    let bit_and = interner.intern_binary(BinaryOp::BitAnd, k, one, Type::I64);
+    interner.intern_binary(BinaryOp::Eq, bit_and, zero, Type::I64)
+}
+
+/// Residue test of the iteration variable: true iff k % m == r (for k >= 0).
+fn intern_mod_eq(interner: &mut TermInterner, k: SymTermId, m: i64, r: i64) -> SymTermId {
+    let m_term = interner.intern_int(m);
+    let r_term = interner.intern_int(r);
+    let rem = interner.intern_binary(BinaryOp::Mod, k, m_term, Type::I64);
+    interner.intern_binary(BinaryOp::Eq, rem, r_term, Type::I64)
+}
+
+/// Constructs `C(k, 3) * coeff = k*(k-1)*(k-2)/6 * coeff` without ever dividing
+/// a value that may already have wrapped (LANGUAGE.md §9).
+///
+/// The divisor 6 = 2 * 3 is distributed into the individual consecutive factors
+/// *before* any multiplication: the factor selected by `k mod 3` is divided by 3
+/// (exact), and the even factor selected by the parity of `k` is halved (exact).
+/// `g = gcd(|coeff|, 6)` is folded into the coefficient at compile time.
+/// When `6 | coeff` (e.g. the common `d3 = 6`) no runtime division is emitted
+/// at all, preserving the historical closed-form shape exactly.
+fn build_cubic_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> SymTermId {
+    let fold = gcd_u64(coeff.unsigned_abs(), 6) as i64;
+    let folded_coeff = coeff / fold;
+    let divisor = 6 / fold;
+
+    let one = interner.intern_int(1);
+    let two = interner.intern_int(2);
+    let k_minus_1 = interner.intern_binary(BinaryOp::Sub, k, one, Type::I64);
+    let k_minus_2 = interner.intern_binary(BinaryOp::Sub, k, two, Type::I64);
+    let folded_term = interner.intern_int(folded_coeff);
+
+    let product = if divisor == 1 {
+        // 6 | coeff: fold the whole divisor into the coefficient (no division).
+        let k_times_k1 = interner.intern_binary(BinaryOp::Mul, k, k_minus_1, Type::I64);
+        interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64)
+    } else if divisor == 2 {
+        // 3 | coeff, 2 ∤ coeff: fold 3 and distribute only the halving, using
+        // the same parity-select shape as build_triangular_term (k, 1).
+        let tri = build_triangular_term(interner, k, 1);
+        interner.intern_binary(BinaryOp::Mul, tri, k_minus_2, Type::I64)
+    } else {
+        // divisor ∈ {3, 6}: distribute /3 over the factor selected by `k mod 3`,
+        // and (for divisor = 6) /2 over an even factor selected by parity.
+        let three = interner.intern_int(3);
+        let (fa, fb, fc) = if divisor % 3 == 0 {
+            let t0 = interner.intern_binary(BinaryOp::Div, k, three, Type::I64);
+            let t1 = interner.intern_binary(BinaryOp::Div, k_minus_1, three, Type::I64);
+            let t2 = interner.intern_binary(BinaryOp::Div, k_minus_2, three, Type::I64);
+            let c0 = intern_mod_eq(interner, k, 3, 0);
+            let c1 = intern_mod_eq(interner, k, 3, 1);
+            let c2 = intern_mod_eq(interner, k, 3, 2);
+            let fa = interner.intern_select(c0, t0, k, Type::I64);
+            let fb = interner.intern_select(c1, t1, k_minus_1, Type::I64);
+            let fc = interner.intern_select(c2, t2, k_minus_2, Type::I64);
+            (fa, fb, fc)
+        } else {
+            (k, k_minus_1, k_minus_2)
+        };
+
+        if divisor % 2 == 0 {
+            // divisor = 6: halve an even factor chosen by the parity of k.
+            let is_even = intern_is_even(interner, k);
+            let fa_div_2 = interner.intern_binary(BinaryOp::Div, fa, two, Type::I64);
+            let fb_div_2 = interner.intern_binary(BinaryOp::Div, fb, two, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, fa_div_2, fb, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fc, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, fa, fb_div_2, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fc, Type::I64);
+            interner.intern_select(is_even, even_leaf, odd_leaf, Type::I64)
+        } else {
+            let p = interner.intern_binary(BinaryOp::Mul, fa, fb, Type::I64);
+            interner.intern_binary(BinaryOp::Mul, p, fc, Type::I64)
+        }
+    };
+
+    interner.intern_binary(BinaryOp::Mul, product, folded_term, Type::I64)
+}
+
+/// Constructs `C(k, 4) * coeff = k*(k-1)*(k-2)*(k-3)/24 * coeff` without ever
+/// dividing a value that may already have wrapped (LANGUAGE.md §9).
+///
+/// The divisor 24 = 2^3 * 3 is distributed into the individual consecutive
+/// factors *before* any multiplication. `g = gcd(|coeff|, 24)` is folded into
+/// the coefficient at compile time. When `24 | coeff` (e.g. the common `d4 = 24`)
+/// no runtime division is emitted at all, preserving the historical closed-form
+/// shape exactly.
+fn build_quartic_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> SymTermId {
+    let fold = gcd_u64(coeff.unsigned_abs(), 24) as i64;
+    let folded_coeff = coeff / fold;
+    let divisor = 24 / fold;
+
+    let one = interner.intern_int(1);
+    let two = interner.intern_int(2);
+    let three = interner.intern_int(3);
+    let four = interner.intern_int(4);
+    let k_minus_1 = interner.intern_binary(BinaryOp::Sub, k, one, Type::I64);
+    let k_minus_2 = interner.intern_binary(BinaryOp::Sub, k, two, Type::I64);
+    let k_minus_3 = interner.intern_binary(BinaryOp::Sub, k, three, Type::I64);
+    let folded_term = interner.intern_int(folded_coeff);
+
+    if divisor == 1 {
+        // 24 | coeff: fold the whole divisor into the coefficient (no division).
+        let p1 = interner.intern_binary(BinaryOp::Mul, k, k_minus_1, Type::I64);
+        let p2 = interner.intern_binary(BinaryOp::Mul, p1, k_minus_2, Type::I64);
+        let p3 = interner.intern_binary(BinaryOp::Mul, p2, k_minus_3, Type::I64);
+        return interner.intern_binary(BinaryOp::Mul, p3, folded_term, Type::I64);
+    }
+
+    // Stage 1: distribute /3 into the factor selected by `k mod 3`.
+    // (d = k - 3 is never chosen; it is congruent to k mod 3.)
+    let (fa, fb, fc, fd) = if divisor % 3 == 0 {
+        let c0 = intern_mod_eq(interner, k, 3, 0);
+        let c1 = intern_mod_eq(interner, k, 3, 1);
+        let c2 = intern_mod_eq(interner, k, 3, 2);
+        let t0 = interner.intern_binary(BinaryOp::Div, k, three, Type::I64);
+        let t1 = interner.intern_binary(BinaryOp::Div, k_minus_1, three, Type::I64);
+        let t2 = interner.intern_binary(BinaryOp::Div, k_minus_2, three, Type::I64);
+        let fa = interner.intern_select(c0, t0, k, Type::I64);
+        let fb = interner.intern_select(c1, t1, k_minus_1, Type::I64);
+        let fc = interner.intern_select(c2, t2, k_minus_2, Type::I64);
+        (fa, fb, fc, k_minus_3)
+    } else {
+        (k, k_minus_1, k_minus_2, k_minus_3)
+    };
+
+    // Stage 2: distribute 2^p over the even factors.
+    let pow2 = divisor.trailing_zeros() as i32;
+
+    let product = match pow2 {
+        0 => {
+            let p1 = interner.intern_binary(BinaryOp::Mul, fa, fb, Type::I64);
+            let p2 = interner.intern_binary(BinaryOp::Mul, p1, fc, Type::I64);
+            interner.intern_binary(BinaryOp::Mul, p2, fd, Type::I64)
+        }
+        1 => {
+            // Halve a single even factor chosen by the parity of k.
+            let is_even = intern_is_even(interner, k);
+            let fa_div_2 = interner.intern_binary(BinaryOp::Div, fa, two, Type::I64);
+            let fb_div_2 = interner.intern_binary(BinaryOp::Div, fb, two, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, fa_div_2, fb, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fc, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fd, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, fa, fb_div_2, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fc, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fd, Type::I64);
+            interner.intern_select(is_even, even_leaf, odd_leaf, Type::I64)
+        }
+        2 => {
+            // Halve both even factors of the appropriate parity.
+            let is_even = intern_is_even(interner, k);
+            let fa_div_2 = interner.intern_binary(BinaryOp::Div, fa, two, Type::I64);
+            let fb_div_2 = interner.intern_binary(BinaryOp::Div, fb, two, Type::I64);
+            let fc_div_2 = interner.intern_binary(BinaryOp::Div, fc, two, Type::I64);
+            let fd_div_2 = interner.intern_binary(BinaryOp::Div, fd, two, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, fa_div_2, fb, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fc_div_2, Type::I64);
+            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fd, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, fa, fb_div_2, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fc, Type::I64);
+            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fd_div_2, Type::I64);
+            interner.intern_select(is_even, even_leaf, odd_leaf, Type::I64)
+        }
+        _ => {
+            // p == 3: /8 = /4 on the factor divisible by 4 + /2 on the other even.
+            let c0 = intern_mod_eq(interner, k, 4, 0);
+            let c1 = intern_mod_eq(interner, k, 4, 1);
+            let c2 = intern_mod_eq(interner, k, 4, 2);
+            let fa_div_4 = interner.intern_binary(BinaryOp::Div, fa, four, Type::I64);
+            let fb_div_4 = interner.intern_binary(BinaryOp::Div, fb, four, Type::I64);
+            let fc_div_4 = interner.intern_binary(BinaryOp::Div, fc, four, Type::I64);
+            let fd_div_4 = interner.intern_binary(BinaryOp::Div, fd, four, Type::I64);
+            let fa_div_2 = interner.intern_binary(BinaryOp::Div, fa, two, Type::I64);
+            let fb_div_2 = interner.intern_binary(BinaryOp::Div, fb, two, Type::I64);
+            let fc_div_2 = interner.intern_binary(BinaryOp::Div, fc, two, Type::I64);
+            let fd_div_2 = interner.intern_binary(BinaryOp::Div, fd, two, Type::I64);
+            // k ≡ 0: a/4, c/2 ; k ≡ 1: b/4, d/2 ; k ≡ 2: a/2, c/4 ; k ≡ 3: b/2, d/4
+            let leaf0 = interner.intern_binary(BinaryOp::Mul, fa_div_4, fb, Type::I64);
+            let leaf0 = interner.intern_binary(BinaryOp::Mul, leaf0, fc_div_2, Type::I64);
+            let leaf0 = interner.intern_binary(BinaryOp::Mul, leaf0, fd, Type::I64);
+            let leaf1 = interner.intern_binary(BinaryOp::Mul, fa, fb_div_4, Type::I64);
+            let leaf1 = interner.intern_binary(BinaryOp::Mul, leaf1, fc, Type::I64);
+            let leaf1 = interner.intern_binary(BinaryOp::Mul, leaf1, fd_div_2, Type::I64);
+            let leaf2 = interner.intern_binary(BinaryOp::Mul, fa_div_2, fb, Type::I64);
+            let leaf2 = interner.intern_binary(BinaryOp::Mul, leaf2, fc_div_4, Type::I64);
+            let leaf2 = interner.intern_binary(BinaryOp::Mul, leaf2, fd, Type::I64);
+            let leaf3 = interner.intern_binary(BinaryOp::Mul, fa, fb_div_2, Type::I64);
+            let leaf3 = interner.intern_binary(BinaryOp::Mul, leaf3, fc, Type::I64);
+            let leaf3 = interner.intern_binary(BinaryOp::Mul, leaf3, fd_div_4, Type::I64);
+            let inner = interner.intern_select(c2, leaf2, leaf3, Type::I64);
+            let mid = interner.intern_select(c1, leaf1, inner, Type::I64);
+            interner.intern_select(c0, leaf0, mid, Type::I64)
+        }
+    };
+
+    interner.intern_binary(BinaryOp::Mul, product, folded_term, Type::I64)
+}
+
+/// True iff the `order`-th forward differences of `samples` are constant across
+/// every available sample (not just the first two). Prevent shortcuts like
+/// `0,0,0,1,4,10` being mistaken for a degree-1 (constant) sequence.
+fn differences_constant(samples: &[i64], order: usize) -> bool {
+    let mut cur: Vec<i64> = samples.to_vec();
+    for _ in 0..order {
+        if cur.len() < 2 {
+            return false;
+        }
+        cur = cur.windows(2).map(|w| w[1].wrapping_sub(w[0])).collect();
+    }
+    cur.iter().all(|v| *v == cur[0])
 }
 
 /// Solves closed forms for numerical recurrence sequences:
@@ -202,7 +428,7 @@ pub fn solve_recurrence(
     let d1_1 = s2.wrapping_sub(s1);
 
     // Degree 1: Linear sequence s_k = s0 + k * d1
-    if d1_0 == d1_1 {
+    if differences_constant(samples, 1) {
         // s0 + N * d1
         let s0_term = interner.intern_int(s0);
         let d1_term = interner.intern_int(d1_0);
@@ -213,11 +439,10 @@ pub fn solve_recurrence(
     // Degree 2: Quadratic / Triangular sequence
     if samples.len() >= 4 {
         let s3 = samples[3];
-        let d1_2 = s3.wrapping_sub(s2);
+        let _d1_2 = s3.wrapping_sub(s2);
         let d2_0 = d1_1.wrapping_sub(d1_0);
-        let d2_1 = d1_2.wrapping_sub(d1_1);
 
-        if d2_0 == d2_1 {
+        if differences_constant(samples, 2) {
             // Formula: s_k = s0 + k * d1_0 + (k * (k - 1) / 2) * d2_0
             let s0_term = interner.intern_int(s0);
             let d1_term = interner.intern_int(d1_0);
@@ -242,44 +467,19 @@ pub fn solve_recurrence(
         let d1_3 = s4.wrapping_sub(s3);
         let d2_0 = d1_1.wrapping_sub(d1_0);
         let d2_1 = d1_2.wrapping_sub(d1_1);
-        let d2_2 = d1_3.wrapping_sub(d1_2);
+        let _d2_2 = d1_3.wrapping_sub(d1_2);
         let d3_0 = d2_1.wrapping_sub(d2_0);
-        let d3_1 = d2_2.wrapping_sub(d2_1);
 
-        if d3_0 == d3_1 {
+        if differences_constant(samples, 3) {
             let s0_term = interner.intern_int(s0);
             let d1_term = interner.intern_int(d1_0);
-            let d3_term = interner.intern_int(d3_0);
-            let one_term = interner.intern_int(1);
-            let two_term = interner.intern_int(2);
-            let three_term = interner.intern_int(3);
 
             let linear_part = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
-            let k_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one_term, Type::I64);
-            let k_minus_2 = interner.intern_binary(BinaryOp::Sub, num_iters, two_term, Type::I64);
 
             let quad_part = build_triangular_term(interner, num_iters, d2_0);
 
-            let cubic_part = if d3_0 % 6 == 0 {
-                let sixth_term = interner.intern_int(d3_0 / 6);
-                let k_times_k1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
-                let k_times_k1_k2 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-                interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, sixth_term, Type::I64)
-            } else {
-                let tri_one = build_triangular_term(interner, num_iters, 1);
-                let tri_times_k2 =
-                    interner.intern_binary(BinaryOp::Mul, tri_one, k_minus_2, Type::I64);
-                if d3_0 % 3 == 0 {
-                    let third_term = interner.intern_int(d3_0 / 3);
-                    interner.intern_binary(BinaryOp::Mul, tri_times_k2, third_term, Type::I64)
-                } else {
-                    let cubic_binom =
-                        interner.intern_binary(BinaryOp::Div, tri_times_k2, three_term, Type::I64);
-                    interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64)
-                }
-            };
+            // Sound cubic closed form: C(k, 3) * d3_0 without dividing a wrapped value.
+            let cubic_part = build_cubic_term(interner, num_iters, d3_0);
 
             let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
             let sum2 = interner.intern_binary(BinaryOp::Add, sum1, quad_part, Type::I64);
@@ -298,80 +498,22 @@ pub fn solve_recurrence(
         let d2_0 = d1_1.wrapping_sub(d1_0);
         let d2_1 = d1_2.wrapping_sub(d1_1);
         let d2_2 = d1_3.wrapping_sub(d1_2);
-        let d2_3 = d1_4.wrapping_sub(d1_3);
+        let _d2_3 = d1_4.wrapping_sub(d1_3);
         let d3_0 = d2_1.wrapping_sub(d2_0);
         let d3_1 = d2_2.wrapping_sub(d2_1);
-        let d3_2 = d2_3.wrapping_sub(d2_2);
         let d4_0 = d3_1.wrapping_sub(d3_0);
-        let d4_1 = d3_2.wrapping_sub(d3_1);
 
-        if d4_0 == d4_1 {
+        if differences_constant(samples, 4) {
             let s0_term = interner.intern_int(s0);
             let d1_term = interner.intern_int(d1_0);
-            let d3_term = interner.intern_int(d3_0);
-            let d4_term = interner.intern_int(d4_0);
-            let one_term = interner.intern_int(1);
-            let two_term = interner.intern_int(2);
-            let three_term = interner.intern_int(3);
-            let twentyfour_term = interner.intern_int(24);
 
             let linear_part = interner.intern_binary(BinaryOp::Mul, num_iters, d1_term, Type::I64);
-            let k_minus_1 = interner.intern_binary(BinaryOp::Sub, num_iters, one_term, Type::I64);
-            let k_minus_2 = interner.intern_binary(BinaryOp::Sub, num_iters, two_term, Type::I64);
-            let k_minus_3 = interner.intern_binary(BinaryOp::Sub, num_iters, three_term, Type::I64);
 
             let quad_part = build_triangular_term(interner, num_iters, d2_0);
 
-            let cubic_part = if d3_0 % 6 == 0 {
-                let sixth_term = interner.intern_int(d3_0 / 6);
-                let k_times_k1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
-                let k_times_k1_k2 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-                interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, sixth_term, Type::I64)
-            } else {
-                let tri_one = build_triangular_term(interner, num_iters, 1);
-                let tri_times_k2 =
-                    interner.intern_binary(BinaryOp::Mul, tri_one, k_minus_2, Type::I64);
-                if d3_0 % 3 == 0 {
-                    let third_term = interner.intern_int(d3_0 / 3);
-                    interner.intern_binary(BinaryOp::Mul, tri_times_k2, third_term, Type::I64)
-                } else {
-                    let cubic_binom =
-                        interner.intern_binary(BinaryOp::Div, tri_times_k2, three_term, Type::I64);
-                    interner.intern_binary(BinaryOp::Mul, cubic_binom, d3_term, Type::I64)
-                }
-            };
+            let cubic_part = build_cubic_term(interner, num_iters, d3_0);
 
-            let quartic_part = if d4_0 % 24 == 0 {
-                let twentyfourth_term = interner.intern_int(d4_0 / 24);
-                let k_times_k1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
-                let k_times_k1_k2 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-                let k_times_k1_k2_k3 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
-                interner.intern_binary(
-                    BinaryOp::Mul,
-                    k_times_k1_k2_k3,
-                    twentyfourth_term,
-                    Type::I64,
-                )
-            } else {
-                let k_times_k1 =
-                    interner.intern_binary(BinaryOp::Mul, num_iters, k_minus_1, Type::I64);
-                let k_times_k1_k2 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64);
-                let k_times_k1_k2_k3 =
-                    interner.intern_binary(BinaryOp::Mul, k_times_k1_k2, k_minus_3, Type::I64);
-                let quartic_binom = interner.intern_binary(
-                    BinaryOp::Div,
-                    k_times_k1_k2_k3,
-                    twentyfour_term,
-                    Type::I64,
-                );
-                interner.intern_binary(BinaryOp::Mul, quartic_binom, d4_term, Type::I64)
-            };
+            let quartic_part = build_quartic_term(interner, num_iters, d4_0);
 
             let sum1 = interner.intern_binary(BinaryOp::Add, s0_term, linear_part, Type::I64);
             let sum2 = interner.intern_binary(BinaryOp::Add, sum1, quad_part, Type::I64);

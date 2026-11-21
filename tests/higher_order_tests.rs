@@ -74,3 +74,25 @@ fn main() -> i64 {
     let (sc, _, stderr) = run_numlang_code(code, true);
     assert_eq!(sc, Some(10), "stderr: {}", stderr);
 }
+
+#[test]
+fn test_compose5_nested_higher_order_supercompile() {
+    // compose5-style nested higher-order calls: the supercompiler should inline
+    // the known function-valued parameters and fuse the pipeline.
+    let code = r#"
+fn add1(x: i64) -> i64 { return x + 1; }
+fn mul2(x: i64) -> i64 { return x * 2; }
+fn add3(x: i64) -> i64 { return x + 3; }
+fn sub5(x: i64) -> i64 { return x - 5; }
+fn add10(x: i64) -> i64 { return x + 10; }
+fn run_chain(val: i64) -> i64 {
+    return add1(mul2(add3(sub5(add10(val)))));
+}
+fn main() -> i64 {
+    return run_chain(3);
+}
+"#;
+    // ((3 + 10) - 5 + 3) * 2 + 1 = 23
+    let (sc, _, stderr) = run_numlang_code(code, true);
+    assert_eq!(sc, Some(23), "stderr: {}", stderr);
+}

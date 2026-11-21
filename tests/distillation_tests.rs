@@ -4,6 +4,7 @@ use std::process::Command;
 use numlang::codegen::compile_supercompiled_to_obj_with_mode;
 use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
+use numlang::mir::supercompiler::distill::calculate_function_cost;
 use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -431,4 +432,299 @@ fn test_distillation_chained_append() {
 
     let (code_res, _) = compile_and_run_distill(code, "chained_append");
     assert_eq!(code_res, 10, "1 + 2 + 3 + 4 = 10");
+}
+
+// ---------------------------------------------------------------------------
+// General (structural) distillation metamorphic & new-shape coverage
+// ---------------------------------------------------------------------------
+
+fn total_cost(mir: &MirProgram, names: &[&str]) -> usize {
+    names
+        .iter()
+        .map(|n| {
+            mir.functions
+                .iter()
+                .find(|f| &f.name == n)
+                .map(calculate_function_cost)
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+fn count_calls_to(func: &numlang::mir::lower::MirFunction, callee: &str) -> usize {
+    func.blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|s| match s {
+            Statement::Assign(_, Rvalue::Call(c, _)) if c == callee => Some(1),
+            _ => None,
+        })
+        .sum()
+}
+
+fn count_calls_in_inductive_branch(func: &numlang::mir::lower::MirFunction, callee: &str) -> usize {
+    func.blocks
+        .iter()
+        .filter(|b| {
+            b.statements.iter().any(|s| match s {
+                Statement::Assign(_, Rvalue::Use(p)) => !p.projections.is_empty(),
+                _ => false,
+            })
+        })
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|s| match s {
+            Statement::Assign(_, Rvalue::Call(c, _)) if c == callee => Some(1),
+            _ => None,
+        })
+        .sum()
+}
+
+fn count_allocation_sites(func: &numlang::mir::lower::MirFunction) -> usize {
+    func.blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter(|s| matches!(s, Statement::Assign(_, Rvalue::Alloc(_))))
+        .count()
+}
+
+#[test]
+fn test_distillation_metamorphic_rename_and_field_layout() {
+    // Every function/variable is renamed AND the recursive enum's field order
+    // is swapped (tail is payload 0, head is payload 1). The general structural
+    // pathway must still fuse the producer/consumer composition. A hard-coded
+    // "head=payload(0), tail=payload(1)" template would produce wrong code here.
+    let code = r#"
+    enum Sequence {
+        Empty,
+        Item(Box<Sequence>, i64),
+    }
+
+    fn glue(first: Sequence, second: Sequence) -> Sequence {
+        return match first {
+            Empty => second,
+            Item(rest, value) => Item(box(glue(deref(rest), second)), value),
+        };
+    }
+
+    fn accumulate(items: Sequence) -> i64 {
+        return match items {
+            Empty => 0,
+            Item(rest, value) => value + accumulate(deref(rest)),
+        };
+    }
+
+    fn combine(a: Sequence, b: Sequence) -> i64 {
+        return accumulate(glue(a, b));
+    }
+
+    fn main() -> i64 {
+        let p: Sequence = Item(box(Item(box(Empty), 8)), 7);
+        let q: Sequence = Item(box(Empty), 9);
+        return combine(p, q);
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["glue", "accumulate"]);
+    }
+
+    let mut mir = get_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0,
+        "General distillation must tie a recursive knot: {:?}",
+        stats
+    );
+
+    let fused = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "combine")
+        .expect("specialized combine must exist");
+    assert_eq!(
+        count_calls_to(fused, "glue"),
+        0,
+        "Producer calls must be deforested out of the inductive branch"
+    );
+    assert_eq!(
+        count_allocation_sites(fused),
+        0,
+        "Intermediate sequence must be fully deforested (0 heap allocations)"
+    );
+    assert!(
+        calculate_function_cost(fused) <= baseline_cost,
+        "Residual cost {} must not exceed baseline {}",
+        calculate_function_cost(fused),
+        baseline_cost
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "metamorphic_rename_layout");
+    assert_eq!(code_res, 24, "7 + 8 + 9 must equal 24");
+}
+
+#[test]
+fn test_distillation_tree_map_fold_composition() {
+    // NEW SHAPE (outside the three historical templates): a tree *mapper*
+    // composed with a tree *folder*. The general pathway must fuse them into
+    // a single pass that allocates zero intermediate trees.
+    let code = r#"
+    enum Tree {
+        Tip(i64),
+        Fork(Box<Tree>, Box<Tree>),
+    }
+
+    fn mirror(t: Tree) -> Tree {
+        return match t {
+            Tip(v) => Tip(v),
+            Fork(l, r) => Fork(box(mirror(deref(r))), box(mirror(deref(l)))),
+        };
+    }
+
+    fn fold(t: Tree) -> i64 {
+        return match t {
+            Tip(v) => v,
+            Fork(l, r) => fold(deref(l)) + fold(deref(r)),
+        };
+    }
+
+    fn mirror_fold(t: Tree) -> i64 {
+        return fold(mirror(t));
+    }
+
+    fn main() -> i64 {
+        let t: Tree = Fork(box(Tip(3)), box(Fork(box(Tip(4)), box(Tip(5)))));
+        return mirror_fold(t);
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["mirror", "fold"]);
+    }
+
+    let mut mir = get_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0,
+        "Tree map/fold fusion must generalise the recurrence: {:?}",
+        stats
+    );
+
+    let fused = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "mirror_fold")
+        .expect("specialized mirror_fold must exist");
+    assert_eq!(
+        count_calls_to(fused, "mirror"),
+        0,
+        "No producer calls may remain"
+    );
+    assert_eq!(
+        count_calls_to(fused, "fold"),
+        0,
+        "No consumer calls may remain"
+    );
+    assert_eq!(
+        count_allocation_sites(fused),
+        0,
+        "Intermediate mirrored trees must be fully deforested"
+    );
+    assert!(
+        calculate_function_cost(fused) <= baseline_cost,
+        "Residual cost {} must not exceed baseline {}",
+        calculate_function_cost(fused),
+        baseline_cost
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "tree_map_fold");
+    assert_eq!(code_res, 12, "3 + 4 + 5 must equal 12");
+}
+
+#[test]
+fn test_distillation_three_function_chain() {
+    // NEW SHAPE: a three-function producer/consumer chain
+    // bump -> tack -> tally, exposed through two type-compatible wrappers.
+    let code = r#"
+    enum Chain {
+        Stop,
+        More(i64, Box<Chain>),
+    }
+
+    fn bump(xs: Chain) -> Chain {
+        return match xs {
+            Stop => Stop,
+            More(h, t) => More(h + 1, box(bump(deref(t)))),
+        };
+    }
+
+    fn tack(xs: Chain, tail: Chain) -> Chain {
+        return match xs {
+            Stop => tail,
+            More(h, t) => More(h, box(tack(deref(t), tail))),
+        };
+    }
+
+    fn tally(xs: Chain) -> i64 {
+        return match xs {
+            Stop => 0,
+            More(h, t) => h + tally(deref(t)),
+        };
+    }
+
+    fn bump_tack(xs: Chain, tail: Chain) -> Chain {
+        return tack(bump(xs), tail);
+    }
+
+    fn pipeline(xs: Chain, tail: Chain) -> i64 {
+        return tally(bump_tack(xs, tail));
+    }
+
+    fn main() -> i64 {
+        let xs: Chain = More(2, box(More(4, box(Stop))));
+        let tail: Chain = More(6, box(Stop));
+        return pipeline(xs, tail);
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["bump", "tack", "tally"]);
+    }
+
+    let mut mir = get_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied >= 2,
+        "Both levels of the 3-function chain must be fused: {:?}",
+        stats
+    );
+
+    let pipeline = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "pipeline")
+        .expect("specialized pipeline must exist");
+    // The base case may call the consumer on the remaining tail; the
+    // *inductive* branch (with payload reads) must not call either original.
+    assert_eq!(count_calls_in_inductive_branch(pipeline, "tally"), 0);
+    assert_eq!(count_calls_in_inductive_branch(pipeline, "bump_tack"), 0);
+    assert_eq!(
+        count_allocation_sites(pipeline),
+        0,
+        "Fully fused pipeline must not allocate intermediate chains"
+    );
+    assert!(
+        calculate_function_cost(pipeline) <= baseline_cost,
+        "Residual cost {} must not exceed baseline {}",
+        calculate_function_cost(pipeline),
+        baseline_cost
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "three_function_chain");
+    assert_eq!(code_res, 14, "(2+1) + (4+1) + 6 = 14");
 }

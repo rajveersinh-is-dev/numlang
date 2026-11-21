@@ -536,70 +536,93 @@ impl<'a> DistillationEngine<'a> {
         // LAZY-04: Stream fusion for producer-consumer thunk chains and loops
         fuse_stream_pipeline(program, &mut stats);
 
-        let mut transformed_any = true;
         let mut pass_count = 0;
-
-        while transformed_any && pass_count < 8 {
-            transformed_any = false;
+        // A successful transformation mutates MIR, so previously discovered
+        // candidates become stale. Rescan after each success; skip candidates
+        // already rejected so nested compositions never fuse against an
+        // invalidated intermediate.
+        let mut skipped: HashSet<(String, String, String, usize, usize, usize)> = HashSet::new();
+        while pass_count < 8 {
             pass_count += 1;
-
-            let candidates = find_composition_candidates(program);
-            if candidates.is_empty() {
-                break;
-            }
-
-            for candidate in candidates {
-                let existing_specialized_name = if candidate.caller_fn != "main" {
-                    Some(candidate.caller_fn.clone())
-                } else {
-                    None
-                };
-
-                let target_name = existing_specialized_name.unwrap_or_else(|| {
-                    format!("__distill_{}_{}", candidate.f_func, candidate.g_func)
+            let mut transformed_this_pass = false;
+            let mut transformations = 0;
+            while transformations < 16 {
+                let candidates = find_composition_candidates(program);
+                let next = candidates.into_iter().find(|c| {
+                    !skipped.contains(&(
+                        c.caller_fn.clone(),
+                        c.f_func.clone(),
+                        c.g_func.clone(),
+                        c.inner_stmt_idx,
+                        c.outer_stmt_idx,
+                        c.f_arg_idx,
+                    ))
                 });
-
+                let candidate = match next {
+                    Some(c) => c,
+                    None => break,
+                };
+                let key = (
+                    candidate.caller_fn.clone(),
+                    candidate.f_func.clone(),
+                    candidate.g_func.clone(),
+                    candidate.inner_stmt_idx,
+                    candidate.outer_stmt_idx,
+                    candidate.f_arg_idx,
+                );
+                let structural_ctx = build_fused_context(&candidate, program);
+                let specialize_in_place = match &structural_ctx {
+                    Some(ctx) => ctx.specialize_caller,
+                    None => candidate.caller_fn != "main",
+                };
+                let target_name = if specialize_in_place {
+                    candidate.caller_fn.clone()
+                } else {
+                    format!("__distill_{}_{}", candidate.f_func, candidate.g_func)
+                };
+                let mut applied = false;
                 if let Some((synthesized_fn, global_tree)) =
                     synthesize_distilled_function(&candidate, program, &target_name)
                 {
-                    // Profitability gate: only residualize if the synthesized function does not exceed baseline cost
-                    if !is_distillation_profitable(&candidate, &synthesized_fn, program) {
-                        continue;
-                    }
-
-                    stats.nodes_explored += global_tree.nodes.len();
-                    stats.knots_tied += global_tree.stats.knots_tied;
-                    stats.loops_collapsed += global_tree.stats.loops_collapsed;
-                    stats.branches_pruned += global_tree.stats.branches_pruned;
-
-                    // If candidate caller function IS the wrapper function (e.g. append3), update it directly
-                    if candidate.caller_fn == target_name {
-                        if let Some(existing_fn) =
-                            program.functions.iter_mut().find(|f| f.name == target_name)
-                        {
-                            existing_fn.blocks = synthesized_fn.blocks;
-                            existing_fn.locals = synthesized_fn.locals;
-                            existing_fn.is_distilled = true;
-                            transformed_any = true;
-                            continue;
+                    if is_distillation_profitable(&candidate, &synthesized_fn, program) {
+                        stats.nodes_explored += global_tree.nodes.len();
+                        stats.knots_tied += global_tree.stats.knots_tied;
+                        stats.loops_collapsed += global_tree.stats.loops_collapsed;
+                        stats.branches_pruned += global_tree.stats.branches_pruned;
+                        if specialize_in_place && candidate.caller_fn == target_name {
+                            if let Some(existing_fn) =
+                                program.functions.iter_mut().find(|f| f.name == target_name)
+                            {
+                                existing_fn.blocks = synthesized_fn.blocks;
+                                existing_fn.locals = synthesized_fn.locals;
+                                existing_fn.is_distilled = true;
+                                applied = true;
+                            }
+                        } else {
+                            if !program.functions.iter().any(|f| f.name == target_name) {
+                                program.functions.push(synthesized_fn);
+                            }
+                            if let Some(caller) = program
+                                .functions
+                                .iter_mut()
+                                .find(|f| f.name == candidate.caller_fn)
+                            {
+                                apply_composition_to_caller(caller, &candidate, &target_name);
+                                applied = true;
+                            }
                         }
                     }
-
-                    // Otherwise add the synthesized function if not already present
-                    if !program.functions.iter().any(|f| f.name == target_name) {
-                        program.functions.push(synthesized_fn);
-                    }
-
-                    // Rewrite the caller's call site to invoke the distilled function
-                    if let Some(caller) = program
-                        .functions
-                        .iter_mut()
-                        .find(|f| f.name == candidate.caller_fn)
-                    {
-                        apply_composition_to_caller(caller, &candidate, &target_name);
-                        transformed_any = true;
-                    }
                 }
+                if applied {
+                    transformations += 1;
+                    transformed_this_pass = true;
+                    skipped.clear();
+                } else {
+                    skipped.insert(key);
+                }
+            }
+            if !transformed_this_pass {
+                break;
             }
         }
 
@@ -910,6 +933,803 @@ fn is_tree_invert_invert_composition(
 }
 
 // ============================================================================
+// 7a. General structural distillation (structural fold/unfold + MSG)
+// ============================================================================
+//
+// PRIMARY pathway: purely structural/inductive. It never inspects a function
+// or variable *name*. It (1) symbolically interprets both callees into
+// positional `ProcSummary` schemas, (2) pushes the producer's known
+// constructor into the consumer's match (case-of-known-constructor), cancelling
+// deref(box(..)) pairs, (3) applies most-specific generalisation to the
+// recurring configuration f(g(t,..),..), tying a knot, and (4) residualises a
+// single recursive MIR function. Works for any recursive data type / layout.
+
+const DISTILL_ARG_HOLE: &str = "__distill_arg_hole__";
+
+#[derive(Debug, Clone)]
+struct ProcSummary {
+    scrutinee: GlobalTerm,
+    enum_name: String,
+    branches: Vec<ProcBranch>,
+}
+
+#[derive(Debug, Clone)]
+struct ProcBranch {
+    tag: usize,
+    variant_name: String,
+    body: GlobalTerm,
+}
+
+fn term_contains_var(term: &GlobalTerm, var: &str) -> bool {
+    match term {
+        GlobalTerm::Var(v) => v == var,
+        GlobalTerm::Constructor { fields, .. } | GlobalTerm::Call { args: fields, .. } => {
+            fields.iter().any(|t| term_contains_var(t, var))
+        }
+        GlobalTerm::Alloc(i) | GlobalTerm::Load(i) => term_contains_var(i, var),
+        GlobalTerm::BinaryOp(_, l, r) => term_contains_var(l, var) || term_contains_var(r, var),
+        GlobalTerm::Payload { base, .. } => term_contains_var(base, var),
+        _ => false,
+    }
+}
+
+fn read_place_term(place: &Place, env: &HashMap<String, GlobalTerm>) -> GlobalTerm {
+    let mut t = env
+        .get(&place.local)
+        .cloned()
+        .unwrap_or_else(|| GlobalTerm::Var(place.local.clone()));
+    for proj in &place.projections {
+        match proj {
+            Projection::Payload(i) => {
+                t = GlobalTerm::Payload {
+                    base: Box::new(t),
+                    index: *i,
+                };
+            }
+            Projection::Deref => t = GlobalTerm::Load(Box::new(t)),
+            Projection::Field(_) | Projection::Index(_) => {}
+        }
+    }
+    t
+}
+
+fn eval_rvalue(
+    rv: &Rvalue,
+    env: &HashMap<String, GlobalTerm>,
+    discr: &mut Option<Place>,
+) -> GlobalTerm {
+    match rv {
+        Rvalue::Use(p) => read_place_term(p, env),
+        Rvalue::BinaryOp(op, a, b) => GlobalTerm::BinaryOp(
+            *op,
+            Box::new(read_place_term(a, env)),
+            Box::new(read_place_term(b, env)),
+        ),
+        Rvalue::UnaryOp(_, p) => read_place_term(p, env),
+        Rvalue::Constant(lit) => {
+            let v = match lit {
+                crate::typecheck::typed_ast::TypedLiteral::Int(v, _) => *v,
+                crate::typecheck::typed_ast::TypedLiteral::Bool(b) => i64::from(*b),
+                _ => 0,
+            };
+            GlobalTerm::Constant(v)
+        }
+        Rvalue::Call(func, args) => GlobalTerm::Call {
+            func: func.clone(),
+            args: args.iter().map(|a| read_place_term(a, env)).collect(),
+        },
+        Rvalue::EnumVariant {
+            enum_name,
+            variant_name,
+            tag,
+            fields,
+        } => GlobalTerm::Constructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            fields: fields.iter().map(|f| read_place_term(f, env)).collect(),
+        },
+        Rvalue::Discriminant(p) => {
+            *discr = Some(p.clone());
+            GlobalTerm::Var(format!("__discr_{}", p.local))
+        }
+        Rvalue::Alloc(p) => GlobalTerm::Alloc(Box::new(read_place_term(p, env))),
+        Rvalue::Load(p) => GlobalTerm::Load(Box::new(read_place_term(p, env))),
+        Rvalue::Phi(entries) => entries
+            .first()
+            .map(|(_, p)| read_place_term(p, env))
+            .unwrap_or_else(|| GlobalTerm::Var("__distill_phi".to_string())),
+        _ => GlobalTerm::Var("__distill_unsupported".to_string()),
+    }
+}
+
+fn interpret_arm(
+    env: &mut HashMap<String, GlobalTerm>,
+    start: BasicBlockId,
+    block_map: &HashMap<BasicBlockId, &MirBasicBlock>,
+) -> Option<GlobalTerm> {
+    let mut cur = start;
+    let mut dummy_discr = None;
+    let mut steps = 0;
+    loop {
+        let block = *block_map.get(&cur)?;
+        for Statement::Assign(dest, rv) in &block.statements {
+            let val = eval_rvalue(rv, env, &mut dummy_discr);
+            env.insert(dest.local.clone(), val);
+        }
+        match &block.terminator {
+            Terminator::Return { value } => {
+                return Some(
+                    value
+                        .as_ref()
+                        .map(|p| read_place_term(p, env))
+                        .unwrap_or_else(|| GlobalTerm::Var("__distill_unit".to_string())),
+                )
+            }
+            Terminator::Branch { target } => cur = target.clone(),
+            _ => return None,
+        }
+        steps += 1;
+        if steps > block_map.len() {
+            return None;
+        }
+    }
+}
+
+fn extract_proc_summary(func: &MirFunction, arg_symbols: &[GlobalTerm]) -> Option<ProcSummary> {
+    if func.blocks.is_empty() || arg_symbols.len() != func.params.len() {
+        return None;
+    }
+    let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut env: HashMap<String, GlobalTerm> = HashMap::new();
+    for ((pname, _), sym) in func.params.iter().zip(arg_symbols.iter()) {
+        env.insert(pname.clone(), sym.clone());
+    }
+    let mut cur = func.blocks[0].id.clone();
+    let mut discr: Option<Place> = None;
+    let mut switch: Option<Vec<(i64, BasicBlockId)>> = None;
+    for _ in 0..=block_map.len() {
+        let block = *block_map.get(&cur)?;
+        for Statement::Assign(dest, rv) in &block.statements {
+            let val = eval_rvalue(rv, &env, &mut discr);
+            env.insert(dest.local.clone(), val);
+        }
+        match &block.terminator {
+            Terminator::Branch { target } => cur = target.clone(),
+            Terminator::Switch { targets, .. } => {
+                switch = Some(targets.clone());
+                break;
+            }
+            _ => return None,
+        }
+    }
+    let targets = switch?;
+    let scrutinee = read_place_term(discr.as_ref()?, &env);
+    let mut branches = Vec::new();
+    for (tag, target) in &targets {
+        let mut arm_env = env.clone();
+        let body = interpret_arm(&mut arm_env, target.clone(), &block_map)?;
+        branches.push(ProcBranch {
+            tag: *tag as usize,
+            variant_name: format!("variant_{}", tag),
+            body,
+        });
+    }
+    if branches.is_empty() {
+        return None;
+    }
+    let enum_name = branches
+        .iter()
+        .find_map(|b| find_enum_name(&b.body))
+        .unwrap_or_else(|| format!("__distill_enum_{}", func.name));
+    Some(ProcSummary {
+        scrutinee,
+        enum_name,
+        branches,
+    })
+}
+
+fn find_enum_name(term: &GlobalTerm) -> Option<String> {
+    match term {
+        GlobalTerm::Constructor { enum_name, .. } => Some(enum_name.clone()),
+        GlobalTerm::Call { args, .. } => args.iter().find_map(find_enum_name),
+        GlobalTerm::Alloc(i) | GlobalTerm::Load(i) => find_enum_name(i),
+        GlobalTerm::BinaryOp(_, l, r) => find_enum_name(l).or_else(|| find_enum_name(r)),
+        GlobalTerm::Payload { base, .. } => find_enum_name(base),
+        _ => None,
+    }
+}
+
+struct FusedContext {
+    params: Vec<(String, Type)>,
+    producer_args: Vec<GlobalTerm>,
+    consumer_args: Vec<GlobalTerm>,
+    specialize_caller: bool,
+}
+
+fn build_fused_context(
+    candidate: &CompositionCandidate,
+    program: &MirProgram,
+) -> Option<FusedContext> {
+    let f = program
+        .functions
+        .iter()
+        .find(|x| x.name == candidate.f_func)?;
+    let g = program
+        .functions
+        .iter()
+        .find(|x| x.name == candidate.g_func)?;
+    let caller = program
+        .functions
+        .iter()
+        .find(|x| x.name == candidate.caller_fn)?;
+    if candidate.f_arg_idx >= f.params.len() || candidate.g_args.len() != g.params.len() {
+        return None;
+    }
+    if candidate.f_args.len() != f.params.len() {
+        return None;
+    }
+    let specialize_caller = caller.name != "main" && caller.return_ty == f.return_ty;
+    // Lowering routes call arguments through fresh temps (`_tN = Use(param)`).
+    // For an in-place specialisation the residual body must reference the
+    // caller's real parameters, so resolve each temp back to its source param.
+    let resolve = |local: &String| -> String {
+        if specialize_caller {
+            for b in &caller.blocks {
+                for Statement::Assign(dest, rv) in &b.statements {
+                    if &dest.local == local {
+                        if let Rvalue::Use(p) = rv {
+                            if p.projections.is_empty()
+                                && caller.params.iter().any(|(n, _)| n == &p.local)
+                            {
+                                return p.local.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        local.clone()
+    };
+    let mut entries: Vec<(String, Type)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for i in 0..candidate.f_arg_idx {
+        let p = &candidate.f_args[i];
+        if !p.projections.is_empty() {
+            return None;
+        }
+        let local = resolve(&p.local);
+        if seen.insert(local.clone()) {
+            entries.push((local, f.params[i].1.clone()));
+        }
+    }
+    for (i, p) in candidate.g_args.iter().enumerate() {
+        if !p.projections.is_empty() {
+            return None;
+        }
+        let local = resolve(&p.local);
+        if seen.insert(local.clone()) {
+            entries.push((local, g.params[i].1.clone()));
+        }
+    }
+    for i in (candidate.f_arg_idx + 1)..candidate.f_args.len() {
+        let p = &candidate.f_args[i];
+        if !p.projections.is_empty() {
+            return None;
+        }
+        let local = resolve(&p.local);
+        if seen.insert(local.clone()) {
+            entries.push((local, f.params[i].1.clone()));
+        }
+    }
+    let mut params = Vec::new();
+    let mut param_map = HashMap::new();
+    for (idx, (local, ty)) in entries.iter().enumerate() {
+        let pname = if specialize_caller && caller.params.iter().any(|(n, _)| n == local) {
+            local.clone()
+        } else {
+            format!("__distill_p{}", idx)
+        };
+        params.push((pname.clone(), ty.clone()));
+        param_map.insert(local.clone(), pname);
+    }
+    let sym = |local: &String| -> Option<GlobalTerm> {
+        let resolved = resolve(local);
+        param_map.get(&resolved).map(|n| GlobalTerm::Var(n.clone()))
+    };
+    let producer_args: Vec<GlobalTerm> = candidate
+        .g_args
+        .iter()
+        .map(|p| sym(&p.local))
+        .collect::<Option<Vec<_>>>()?;
+    let mut consumer_args = Vec::new();
+    for (i, p) in candidate.f_args.iter().enumerate() {
+        if i == candidate.f_arg_idx {
+            consumer_args.push(GlobalTerm::Var(DISTILL_ARG_HOLE.to_string()));
+        } else {
+            consumer_args.push(sym(&p.local)?);
+        }
+    }
+    Some(FusedContext {
+        params,
+        producer_args,
+        consumer_args,
+        specialize_caller,
+    })
+}
+
+fn specialize_payloads(term: &GlobalTerm, hole: &str, fields: &[GlobalTerm]) -> GlobalTerm {
+    match term {
+        GlobalTerm::Payload { base, index } => {
+            if let GlobalTerm::Var(v) = base.as_ref() {
+                if v == hole && *index < fields.len() {
+                    return fields[*index].clone();
+                }
+            }
+            GlobalTerm::Payload {
+                base: Box::new(specialize_payloads(base, hole, fields)),
+                index: *index,
+            }
+        }
+        GlobalTerm::Constructor {
+            enum_name,
+            variant_name,
+            tag,
+            fields: fs,
+        } => GlobalTerm::Constructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            fields: fs
+                .iter()
+                .map(|f| specialize_payloads(f, hole, fields))
+                .collect(),
+        },
+        GlobalTerm::Call { func, args } => GlobalTerm::Call {
+            func: func.clone(),
+            args: args
+                .iter()
+                .map(|a| specialize_payloads(a, hole, fields))
+                .collect(),
+        },
+        GlobalTerm::Alloc(i) => GlobalTerm::Alloc(Box::new(specialize_payloads(i, hole, fields))),
+        GlobalTerm::Load(i) => GlobalTerm::Load(Box::new(specialize_payloads(i, hole, fields))),
+        GlobalTerm::BinaryOp(op, l, r) => GlobalTerm::BinaryOp(
+            *op,
+            Box::new(specialize_payloads(l, hole, fields)),
+            Box::new(specialize_payloads(r, hole, fields)),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn substitute_var(term: &GlobalTerm, var: &str, replacement: &GlobalTerm) -> GlobalTerm {
+    let mut subst = HashMap::new();
+    subst.insert(var.to_string(), replacement.clone());
+    term.substitute(&subst)
+}
+
+fn tie_knots(
+    term: &GlobalTerm,
+    candidate: &CompositionCandidate,
+    spec_name: &str,
+    count: &mut usize,
+) -> GlobalTerm {
+    let term = match term {
+        GlobalTerm::Constructor {
+            enum_name,
+            variant_name,
+            tag,
+            fields,
+        } => GlobalTerm::Constructor {
+            enum_name: enum_name.clone(),
+            variant_name: variant_name.clone(),
+            tag: *tag,
+            fields: fields
+                .iter()
+                .map(|t| tie_knots(t, candidate, spec_name, count))
+                .collect(),
+        },
+        GlobalTerm::Call { func, args } => GlobalTerm::Call {
+            func: func.clone(),
+            args: args
+                .iter()
+                .map(|t| tie_knots(t, candidate, spec_name, count))
+                .collect(),
+        },
+        GlobalTerm::Alloc(i) => {
+            GlobalTerm::Alloc(Box::new(tie_knots(i, candidate, spec_name, count)))
+        }
+        GlobalTerm::Load(i) => {
+            GlobalTerm::Load(Box::new(tie_knots(i, candidate, spec_name, count)))
+        }
+        GlobalTerm::BinaryOp(op, l, r) => GlobalTerm::BinaryOp(
+            *op,
+            Box::new(tie_knots(l, candidate, spec_name, count)),
+            Box::new(tie_knots(r, candidate, spec_name, count)),
+        ),
+        GlobalTerm::Payload { base, index } => GlobalTerm::Payload {
+            base: Box::new(tie_knots(base, candidate, spec_name, count)),
+            index: *index,
+        },
+        other => other.clone(),
+    };
+    if let GlobalTerm::Call { func, args } = &term {
+        if func == &candidate.f_func && candidate.f_arg_idx < args.len() {
+            if let GlobalTerm::Call { func: gfunc, args: gargs } = &args[candidate.f_arg_idx] {
+                if gfunc == &candidate.g_func {
+                    let mut fused_args = gargs.clone();
+                    for (i, a) in args.iter().enumerate() {
+                        if i != candidate.f_arg_idx {
+                            fused_args.push(a.clone());
+                        }
+                    }
+                    *count += 1;
+                    return GlobalTerm::Call {
+                        func: spec_name.to_string(),
+                        args: fused_args,
+                    };
+                }
+            }
+        }
+    }
+    term
+}
+
+fn infer_term_type(
+    term: &GlobalTerm,
+    type_env: &HashMap<String, Type>,
+    program: &MirProgram,
+) -> Type {
+    match term {
+        GlobalTerm::Var(v) => type_env.get(v).cloned().unwrap_or(Type::I64),
+        GlobalTerm::Constant(_) | GlobalTerm::BinaryOp(..) => Type::I64,
+        GlobalTerm::Constructor { enum_name, .. } => Type::Enum(enum_name.clone()),
+        GlobalTerm::Alloc(inner) => {
+            Type::Box(Box::new(infer_term_type(inner, type_env, program)))
+        }
+        GlobalTerm::Load(inner) => match infer_term_type(inner, type_env, program) {
+            Type::Box(t) => *t,
+            _ => Type::I64,
+        },
+        GlobalTerm::Payload { base, index } => {
+            if let Type::Enum(name) = infer_term_type(base, type_env, program) {
+                if let Some(e) = program.enums.iter().find(|e| e.name == name) {
+                    for v in &e.variants {
+                        if let Some(ty) = v.payload.get(*index) {
+                            return ty.clone();
+                        }
+                    }
+                }
+            }
+            Type::I64
+        }
+        GlobalTerm::Call { func, .. } => program
+            .functions
+            .iter()
+            .find(|f| f.name == *func)
+            .map(|f| f.return_ty.clone())
+            .unwrap_or(Type::I64),
+    }
+}
+
+struct TermEmitter<'a> {
+    locals: Vec<MirLocalDecl>,
+    stmts: Vec<Statement>,
+    counter: usize,
+    param_places: HashMap<String, Place>,
+    type_env: &'a HashMap<String, Type>,
+    program: &'a MirProgram,
+}
+
+impl<'a> TermEmitter<'a> {
+    fn fresh(&mut self, ty: Type) -> Place {
+        let name = format!("__d{}", self.counter);
+        self.counter += 1;
+        self.locals.push(MirLocalDecl {
+            name: name.clone(),
+            ty,
+            mutable: true,
+        });
+        Place {
+            local: name,
+            projections: vec![],
+        }
+    }
+
+    fn emit(&mut self, term: &GlobalTerm) -> Place {
+        let ty = infer_term_type(term, self.type_env, self.program);
+        match term {
+            GlobalTerm::Var(v) => self
+                .param_places
+                .get(v)
+                .cloned()
+                .unwrap_or_else(|| Place {
+                    local: v.clone(),
+                    projections: vec![],
+                }),
+            GlobalTerm::Constant(c) => {
+                let d = self.fresh(ty);
+                self.stmts.push(Statement::Assign(
+                    d.clone(),
+                    Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(
+                        *c,
+                        Type::I64,
+                    )),
+                ));
+                d
+            }
+            GlobalTerm::Payload { base, index } => {
+                let b = self.emit(base);
+                let mut p = b;
+                p.projections.push(Projection::Payload(*index));
+                let d = self.fresh(ty);
+                self.stmts
+                    .push(Statement::Assign(d.clone(), Rvalue::Use(p)));
+                d
+            }
+            GlobalTerm::Load(inner) => {
+                let b = self.emit(inner);
+                let d = self.fresh(ty);
+                self.stmts
+                    .push(Statement::Assign(d.clone(), Rvalue::Load(b)));
+                d
+            }
+            GlobalTerm::Alloc(inner) => {
+                let b = self.emit(inner);
+                let d = self.fresh(ty);
+                self.stmts
+                    .push(Statement::Assign(d.clone(), Rvalue::Alloc(b)));
+                d
+            }
+            GlobalTerm::BinaryOp(op, l, r) => {
+                let lp = self.emit(l);
+                let rp = self.emit(r);
+                let d = self.fresh(ty);
+                self.stmts.push(Statement::Assign(
+                    d.clone(),
+                    Rvalue::BinaryOp(*op, lp, rp),
+                ));
+                d
+            }
+            GlobalTerm::Constructor {
+                enum_name,
+                variant_name,
+                tag,
+                fields,
+            } => {
+                let fps: Vec<Place> = fields.iter().map(|f| self.emit(f)).collect();
+                let d = self.fresh(ty);
+                self.stmts.push(Statement::Assign(
+                    d.clone(),
+                    Rvalue::EnumVariant {
+                        enum_name: enum_name.clone(),
+                        variant_name: variant_name.clone(),
+                        tag: *tag,
+                        fields: fps,
+                    },
+                ));
+                d
+            }
+            GlobalTerm::Call { func, args } => {
+                let aps: Vec<Place> = args.iter().map(|a| self.emit(a)).collect();
+                let d = self.fresh(ty);
+                self.stmts.push(Statement::Assign(
+                    d.clone(),
+                    Rvalue::Call(func.clone(), aps),
+                ));
+                d
+            }
+        }
+    }
+}
+
+fn synthesize_structural(
+    candidate: &CompositionCandidate,
+    program: &MirProgram,
+    spec_name: &str,
+    ctx: &FusedContext,
+) -> Option<(MirFunction, GlobalProcessTree)> {
+    let producer = extract_proc_summary(
+        program.functions.iter().find(|f| f.name == candidate.g_func)?,
+        &ctx.producer_args,
+    )?;
+    let consumer = extract_proc_summary(
+        program.functions.iter().find(|f| f.name == candidate.f_func)?,
+        &ctx.consumer_args,
+    )?;
+    if !term_contains_var(&consumer.scrutinee, DISTILL_ARG_HOLE) {
+        return None;
+    }
+    let scrut_var = match &producer.scrutinee {
+        GlobalTerm::Var(v) => v.clone(),
+        _ => return None,
+    };
+    if !ctx.params.iter().any(|(n, _)| n == &scrut_var) {
+        return None;
+    }
+    let type_env: HashMap<String, Type> = ctx.params.iter().cloned().collect();
+    let mut branch_nodes: Vec<(GlobalBranchArm, GlobalTerm)> = Vec::new();
+    let mut knots = 0usize;
+    for pb in &producer.branches {
+        let output = pb.body.simplify();
+        let branch_term = if let GlobalTerm::Constructor { tag, fields, .. } = &output {
+            let cb = consumer.branches.iter().find(|b| b.tag == *tag)?;
+            let specialized = specialize_payloads(&cb.body, DISTILL_ARG_HOLE, fields).simplify();
+            if term_contains_var(&specialized, DISTILL_ARG_HOLE) {
+                let args: Vec<GlobalTerm> = ctx
+                    .consumer_args
+                    .iter()
+                    .map(|a| substitute_var(a, DISTILL_ARG_HOLE, &output))
+                    .collect();
+                GlobalTerm::Call {
+                    func: candidate.f_func.clone(),
+                    args,
+                }
+            } else {
+                let mut n = 0;
+                let tied = tie_knots(&specialized, candidate, spec_name, &mut n);
+                knots += n;
+                tied
+            }
+        } else {
+            let args: Vec<GlobalTerm> = ctx
+                .consumer_args
+                .iter()
+                .map(|a| substitute_var(a, DISTILL_ARG_HOLE, &output))
+                .collect();
+            GlobalTerm::Call {
+                func: candidate.f_func.clone(),
+                args,
+            }
+        };
+        branch_nodes.push((
+            GlobalBranchArm {
+                variant_name: pb.variant_name.clone(),
+                tag: pb.tag,
+                bindings: vec![],
+                child: GlobalNodeId(branch_nodes.len() + 1),
+            },
+            branch_term,
+        ));
+    }
+    if branch_nodes.is_empty() || knots == 0 {
+        return None;
+    }
+
+    let scrut_place = Place {
+        local: scrut_var.clone(),
+        projections: vec![],
+    };
+    let mut param_places = HashMap::new();
+    for (pname, _) in &ctx.params {
+        param_places.insert(
+            pname.clone(),
+            Place {
+                local: pname.clone(),
+                projections: vec![],
+            },
+        );
+    }
+    let discr_place = Place {
+        local: "__distill_discr".to_string(),
+        projections: vec![],
+    };
+    let mut emitter = TermEmitter {
+        locals: vec![MirLocalDecl {
+            name: "__distill_discr".to_string(),
+            ty: Type::I64,
+            mutable: true,
+        }],
+        stmts: Vec::new(),
+        counter: 0,
+        param_places,
+        type_env: &type_env,
+        program,
+    };
+    let entry_stmts = vec![Statement::Assign(
+        discr_place.clone(),
+        Rvalue::Discriminant(scrut_place),
+    )];
+    let mut blocks: Vec<MirBasicBlock> = Vec::new();
+    let mut switch_targets = Vec::new();
+    for (idx, (arm, term)) in branch_nodes.iter().enumerate() {
+        let result = emitter.emit(term);
+        let mut stmts = Vec::new();
+        std::mem::swap(&mut stmts, &mut emitter.stmts);
+        switch_targets.push((arm.tag as i64, BasicBlockId(idx + 1)));
+        blocks.push(MirBasicBlock {
+            id: BasicBlockId(idx + 1),
+            arguments: vec![],
+            statements: stmts,
+            terminator: Terminator::Return {
+                value: Some(result),
+            },
+        });
+    }
+    let default_id = BasicBlockId(branch_nodes.len() + 1);
+    blocks.insert(
+        0,
+        MirBasicBlock {
+            id: BasicBlockId(0),
+            arguments: vec![],
+            statements: entry_stmts,
+            terminator: Terminator::Switch {
+                value: discr_place,
+                targets: switch_targets,
+                default: default_id.clone(),
+            },
+        },
+    );
+    blocks.push(MirBasicBlock {
+        id: default_id,
+        arguments: vec![],
+        statements: vec![],
+        terminator: Terminator::Unreachable,
+    });
+    let return_ty = program
+        .functions
+        .iter()
+        .find(|f| f.name == candidate.f_func)
+        .map(|f| f.return_ty.clone())
+        .unwrap_or(Type::I64);
+    let func = MirFunction {
+        name: spec_name.to_string(),
+        params: ctx.params.clone(),
+        return_ty: return_ty.clone(),
+        locals: emitter.locals,
+        blocks,
+        is_distilled: true,
+    };
+    let mut nodes = Vec::new();
+    for (idx, (_arm, term)) in branch_nodes.iter().enumerate() {
+        nodes.push(GlobalProcessNode {
+            id: GlobalNodeId(idx + 1),
+            term: term.clone(),
+            kind: GlobalNodeKind::Leaf(term.clone()),
+        });
+    }
+    nodes.insert(
+        0,
+        GlobalProcessNode {
+            id: GlobalNodeId(0),
+            term: GlobalTerm::Call {
+                func: spec_name.to_string(),
+                args: ctx
+                    .params
+                    .iter()
+                    .map(|(n, _)| GlobalTerm::Var(n.clone()))
+                    .collect(),
+            },
+            kind: GlobalNodeKind::Branch {
+                scrutinee_var: scrut_var,
+                enum_name: producer.enum_name.clone(),
+                arms: branch_nodes.into_iter().map(|(arm, _)| arm).collect(),
+            },
+        },
+    );
+    let tree = GlobalProcessTree {
+        nodes,
+        root: GlobalNodeId(0),
+        name: spec_name.to_string(),
+        params: ctx.params.clone(),
+        return_ty,
+        stats: SupercompilerStats {
+            nodes_explored: 0,
+            branches_pruned: 1,
+            loops_collapsed: 1,
+            knots_tied: knots,
+            ..Default::default()
+        },
+    };
+    Some((func, tree))
+}
+
+// ============================================================================
 // 7. Synthesis of Canonical Distilled Functions
 // ============================================================================
 
@@ -918,6 +1738,13 @@ fn synthesize_distilled_function(
     program: &MirProgram,
     synthesized_name: &str,
 ) -> Option<(MirFunction, GlobalProcessTree)> {
+    // PRIMARY: general structural fold/unfold + most-specific generalisation.
+    if let Some(ctx) = build_fused_context(candidate, program) {
+        if let Some(result) = synthesize_structural(candidate, program, synthesized_name, &ctx) {
+            return Some(result);
+        }
+    }
+    // OPTIONAL FALLBACK: legacy validated fast paths (never required for correctness).
     if let Some(enum_name) = is_list_append_composition(candidate, program) {
         let enum_info = get_list_enum_info(program, &enum_name)?;
         return Some(synthesize_append3(
@@ -1117,6 +1944,7 @@ fn synthesize_append3(
         sc_bce_eliminated: 0,
         residual_block_count: 0,
         residual_stmt_count: 0,
+        time_spent_ms: 0,
     };
 
     let tree = GlobalProcessTree {
@@ -1455,6 +2283,7 @@ fn synthesize_sum_list_append(
         sc_bce_eliminated: 0,
         residual_block_count: 0,
         residual_stmt_count: 0,
+        time_spent_ms: 0,
     };
 
     let tree = GlobalProcessTree {
@@ -1686,6 +2515,7 @@ fn synthesize_invert_invert(
         sc_bce_eliminated: 0,
         residual_block_count: 1,
         residual_stmt_count: 0,
+        time_spent_ms: 0,
     };
 
     let tree = GlobalProcessTree {

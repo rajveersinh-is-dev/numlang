@@ -31,7 +31,7 @@ pub use strength_reduce::*;
 
 pub use cache::{
     compute_composite_hash, extract_callees, sha256_str, CacheKey, CachedSpecialization,
-    DependencyGraph, SpecializationCache,
+    DependencyGraph, FeatureFlags, SpecializationCache,
 };
 pub use compact::{compact_mir_function, compact_process_tree};
 pub use distill::DistillationEngine;

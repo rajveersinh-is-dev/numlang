@@ -1,11 +1,17 @@
-use numlang::mir::lower::{lower_program, MirFunction, MirProgram};
-use numlang::mir::supercompiler::cache::{
-    compute_composite_hash, CacheKey, CachedSpecialization, SpecializationCache,
+use numlang::mir::lower::{
+    lower_program, MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement,
 };
+use numlang::mir::supercompiler::cache::{
+    compute_composite_hash, CacheKey, CachedSpecialization, FeatureFlags, SpecializationCache,
+};
+use numlang::mir::supercompiler::drive::{DriverConfig, SupercompilerDriver};
+use numlang::mir::supercompiler::residualize::residualize_process_tree;
 use numlang::mir::supercompiler::{supercompile_mir_program_with_cache, SupercompileMode};
+use numlang::mir::{BasicBlockId, Place, Terminator};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
+use numlang::typecheck::types::Type;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::process::Command;
@@ -431,4 +437,244 @@ fn main() -> i32 {
     assert!(deps_file.exists(), "deps.json should be saved");
 
     let _ = fs::remove_dir_all(&tmp);
+}
+
+// ============================================================================
+// Phase 3: format-v2 keys, feature flags, stale rejection, time budget
+// ============================================================================
+
+/// Builds a synthetic MIR function with N sequentially chained basic blocks.
+/// Each block is a separate driving task, so a wall-clock budget can interrupt
+/// the trampoline part-way through instead of inside one huge block.
+fn build_deep_chain(num_blocks: usize) -> MirFunction {
+    let mut blocks = Vec::with_capacity(num_blocks);
+    for i in 0..num_blocks {
+        let terminator = if i + 1 < num_blocks {
+            Terminator::Branch {
+                target: BasicBlockId(i + 1),
+            }
+        } else {
+            Terminator::Return {
+                value: Some(Place {
+                    local: "res".to_string(),
+                    projections: vec![],
+                }),
+            }
+        };
+        let statements = if i == 0 {
+            vec![Statement::Assign(
+                Place {
+                    local: "res".to_string(),
+                    projections: vec![],
+                },
+                Rvalue::Use(Place {
+                    local: "x".to_string(),
+                    projections: vec![],
+                }),
+            )]
+        } else {
+            vec![]
+        };
+        blocks.push(MirBasicBlock {
+            id: BasicBlockId(i),
+            arguments: vec![],
+            statements,
+            terminator,
+        });
+    }
+    MirFunction {
+        name: "big_chain".to_string(),
+        params: vec![("x".to_string(), Type::I64)],
+        return_ty: Type::I64,
+        locals: vec![
+            MirLocalDecl {
+                name: "x".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+            MirLocalDecl {
+                name: "res".to_string(),
+                ty: Type::I64,
+                mutable: false,
+            },
+        ],
+        blocks,
+        is_distilled: false,
+    }
+}
+
+#[test]
+fn test_stale_key_rejection_increments_counter() {
+    let tmp = std::env::temp_dir().join(format!("numlang_inc_stale_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let stored = dummy_entry("stale_target", "hash-original");
+    cache.store(&stored).expect("store original entry");
+    assert_eq!(stored.key.format_version, "2");
+
+    // Point a different key's composite path at the old entry's JSON. A correct
+    // lookup must compare embedded keys and reject this as stale.
+    let requested = CacheKey::new("stale_target", "hash-requested", "generic");
+    assert_ne!(requested, stored.key);
+    let path = cache.key_to_path(&requested);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create shard dir");
+    }
+    fs::write(&path, serde_json::to_string(&stored).expect("serialize"))
+        .expect("write stale entry at requested path");
+
+    let before = cache.metrics();
+    assert!(
+        cache.lookup(&requested).is_none(),
+        "a key mismatch must be treated as a miss, never served"
+    );
+    let after = cache.metrics();
+    assert_eq!(
+        after.stale_key_rejections,
+        before.stale_key_rejections + 1,
+        "exactly one stale-key rejection must be recorded"
+    );
+    assert_eq!(after.misses, before.misses + 1);
+
+    // A plain empty-path miss is not a stale rejection.
+    let missing = CacheKey::new("never_cached", "no-such-hash", "generic");
+    assert!(cache.lookup(&missing).is_none());
+    assert_eq!(
+        cache.metrics().stale_key_rejections,
+        after.stale_key_rejections,
+        "empty-path misses must not inflate the stale counter"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_cross_feature_flag_invalidation() {
+    let tmp = std::env::temp_dir().join(format!("numlang_inc_flags_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let flags_a = FeatureFlags::new(false, true, false);
+    let flags_b = FeatureFlags::new(true, true, false);
+    let key_a = CacheKey::new("flagged_fn", "same-hash", "generic").with_feature_flags(flags_a);
+    let key_b = CacheKey::new("flagged_fn", "same-hash", "generic").with_feature_flags(flags_b);
+
+    assert_ne!(key_a, key_b, "different feature flags must change key equality");
+    assert_ne!(key_a.composite_hash(), key_b.composite_hash());
+    assert_ne!(cache.key_to_path(&key_a), cache.key_to_path(&key_b));
+
+    let mut entry_a = dummy_entry("flagged_fn", "same-hash");
+    entry_a.key = key_a.clone();
+    let mut entry_b = dummy_entry("flagged_fn", "same-hash");
+    entry_b.key = key_b.clone();
+    cache.store(&entry_a).expect("store flags-a entry");
+    cache.store(&entry_b).expect("store flags-b entry");
+
+    // A fresh instance forces L2 lookups (L1 is per-instance).
+    let fresh = SpecializationCache::open(&tmp);
+    assert!(
+        fresh.lookup(&key_a).is_some(),
+        "flags-a specialization must be reusable with flags a"
+    );
+    assert!(
+        fresh.lookup(&key_b).is_some(),
+        "flags-b specialization must be reusable with flags b"
+    );
+
+    // Function-level invalidation removes every feature-flag variant.
+    let removed = fresh.invalidate_function("flagged_fn");
+    assert!(removed >= 2, "both flag variants must be invalidated, got {}", removed);
+    let verifier = SpecializationCache::open(&tmp);
+    assert!(verifier.lookup(&key_a).is_none(), "flags-a entry must be gone from L2");
+    assert!(verifier.lookup(&key_b).is_none(), "flags-b entry must be gone from L2");
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_legacy_cache_entry_deserializes_as_stale() {
+    let tmp = std::env::temp_dir().join(format!("numlang_inc_legacy_{}", std::process::id()));
+    let cache = SpecializationCache::open(&tmp);
+
+    let key = CacheKey::new("legacy_fn", "legacy-hash", "generic");
+    let path = cache.key_to_path(&key);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create shard dir");
+    }
+
+    // Serialize a current entry, then strip the two new fields to emulate a
+    // cache file written before format v2. Serde defaults must still allow it
+    // to deserialize; the embedded key then compares unequal to the v2 key.
+    let mut value = serde_json::to_value(dummy_entry("legacy_fn", "legacy-hash"))
+        .expect("serialize entry to value");
+    {
+        let key_obj = value["key"].as_object_mut().expect("key is an object");
+        key_obj.remove("format_version");
+        key_obj.remove("feature_flags");
+    }
+    fs::write(&path, serde_json::to_string(&value).expect("serialize legacy"))
+        .expect("write legacy entry");
+
+    assert!(
+        cache.lookup(&key).is_none(),
+        "legacy entry must deserialize but be rejected as stale"
+    );
+    assert_eq!(
+        cache.metrics().stale_key_rejections,
+        1,
+        "legacy key mismatch must be counted as a stale rejection"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_time_budget_timeout_falls_back_to_baseline() {
+    let func = build_deep_chain(1000);
+
+    let timed_config = DriverConfig {
+        time_budget_ms: Some(1),
+        max_inline_nodes: 100_000,
+        ..DriverConfig::default()
+    };
+    let timed = SupercompilerDriver::new(&func)
+        .with_config(timed_config)
+        .run();
+
+    assert!(
+        timed.stats.time_spent_ms >= 1,
+        "timeout must record a positive elapsed time, got {}",
+        timed.stats.time_spent_ms
+    );
+    assert!(
+        timed.nodes[timed.root.0].overflow,
+        "timed-out root must be marked overflow to trigger baseline fallback"
+    );
+    assert!(
+        timed.nodes.len() < func.blocks.len(),
+        "timeout must interrupt the trampoline before the whole chain is explored"
+    );
+
+    // The overflow signal must produce an Unreachable terminator, which the
+    // pipeline's `has_unreachable` guard uses to revert to baseline MIR.
+    let residual = residualize_process_tree(&timed, &func);
+    assert!(
+        residual
+            .blocks
+            .iter()
+            .any(|b| matches!(b.terminator, Terminator::Unreachable)),
+        "fallback residual must contain an Unreachable terminator"
+    );
+
+    // Control: the same program without a budget (and with the same generous
+    // node cap) explores the whole chain, so the budget is the only difference.
+    let full_config = DriverConfig {
+        max_inline_nodes: 100_000,
+        ..DriverConfig::default()
+    };
+    let full = SupercompilerDriver::new(&func)
+        .with_config(full_config)
+        .run();
+    assert!(!full.nodes[full.root.0].overflow);
+    assert_eq!(full.nodes.len(), func.blocks.len());
+    assert!(full.nodes.len() > timed.nodes.len());
 }

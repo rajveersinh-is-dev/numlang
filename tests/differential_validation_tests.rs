@@ -28,7 +28,7 @@ use numlang::mir::lower::lower_program;
 use numlang::parser::parse;
 use numlang::testing::gen::{generate_well_typed_program, GenConfig};
 use numlang::testing::lean_bridge::eval_with_lean_model;
-use numlang::testing::oracle::{evaluate_program, OracleResult};
+use numlang::testing::oracle::{evaluate_program, exit_code_is_truncated, exit_code_of, OracleResult};
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
 
@@ -118,7 +118,19 @@ fn validate_program_paths_a_to_e(
         OracleResult::Error(e) => return Err(format!("Oracle error on seed {}: {}", seed, e)),
     };
 
-    let expected_exit = oracle_val as i32;
+    // The runtime reduces the 64-bit `main` result to the 32-bit exit-code
+    // register with an explicit two's-complement truncation. Make that
+    // conversion explicit here as well, and refuse to compare values whose
+    // upper 32 bits the exit-code register cannot represent: otherwise a
+    // backend that diverges only in the high bits would compare equal.
+    if exit_code_is_truncated(oracle_val) {
+        return Err(format!(
+            "Oracle value {} on seed {} does not fit in the 32-bit exit-code register; \
+             the differential comparison would silently discard the upper 32 bits",
+            oracle_val, seed
+        ));
+    }
+    let expected_exit = exit_code_of(oracle_val);
 
     let mut typed =
         typecheck(&ast).map_err(|e| format!("Typecheck error on seed {}: {:?}", seed, e))?;
@@ -250,6 +262,44 @@ fn main() -> i64 {
 "#;
     let res = validate_program_paths_a_to_e(src, 2, 0, false);
     assert!(res.is_ok(), "Validation failed: {:?}", res.err());
+}
+
+/// End-to-end check that the differential harness's exit-code comparison uses
+/// the same explicit two's-complement truncation as the runtime, and that a
+/// value which does not fit in 32 bits is reported rather than silently
+/// discarded.
+#[test]
+fn test_exit_code_truncation_is_explicit_end_to_end() {
+    // (1 << 32) + 42 is not representable in the 32-bit exit-code register.
+    let src = r#"
+fn main() -> i64 {
+    return 4294967338;
+}
+"#;
+    let tokens = tokenize(src).expect("tokenize");
+    let ast = parse(&tokens).expect("parse");
+    let oracle_val = match evaluate_program(&ast) {
+        OracleResult::Value(v) => v,
+        other => panic!("unexpected oracle result: {:?}", other),
+    };
+    assert_eq!(oracle_val, (1i64 << 32) + 42);
+    assert!(
+        exit_code_is_truncated(oracle_val),
+        "value {} must be reported as truncated",
+        oracle_val
+    );
+    let expected_exit = exit_code_of(oracle_val);
+    assert_eq!(expected_exit, 42);
+
+    let mut typed = typecheck(&ast).expect("typecheck");
+    typed.desugar_for_loops();
+    let obj = compile_to_obj_with_opt(&typed, false).expect("Cranelift codegen");
+    let (exit, _out) = link_and_run(&obj, "truncation").expect("link and run");
+    assert_eq!(
+        exit,
+        Some(expected_exit),
+        "backend exit code must equal the explicit truncated oracle exit code"
+    );
 }
 
 // Proptest property-based differential validation with shrinking.

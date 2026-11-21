@@ -1,4 +1,6 @@
-use numlang::testing::random_program_gen::generate_deep_random_program;
+use numlang::testing::random_program_gen::{
+    generate_deep_random_program, generate_supercompilation_stress_program,
+};
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -128,6 +130,35 @@ fn test_differential_fuzz_smoke() {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(500);
     run_fuzz_batch(cases, "fuzz_report.json");
+}
+
+/// Smoke test for the supercompilation-stress generator: nested recurrences,
+/// coupled recurrence pairs, higher-order chains, and renamed identifiers.
+///
+/// Kept small and configurable via `FUZZ_STRESS_COUNT` (default 8) so it can
+/// run in normal CI without launching the 100k batch.
+#[test]
+fn test_supercompilation_stress_fuzz_smoke() {
+    let cases = std::env::var("FUZZ_STRESS_COUNT")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(8);
+
+    for seed in 0..cases {
+        let prog = generate_supercompilation_stress_program(seed);
+        let (norm_exit, norm_out) = run_numlang_code(&prog, false);
+        let (sc_exit, sc_out) = run_numlang_code(&prog, true);
+        assert_eq!(
+            norm_exit, sc_exit,
+            "exit-code divergence for stress seed {}:\n{}",
+            seed, prog
+        );
+        assert_eq!(
+            norm_out, sc_out,
+            "stdout divergence for stress seed {}:\n{}",
+            seed, prog
+        );
+    }
 }
 
 #[test]

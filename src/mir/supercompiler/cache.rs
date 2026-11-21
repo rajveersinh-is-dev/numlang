@@ -25,6 +25,39 @@ fn default_compiler_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Legacy cache entries do not carry a format version. Defaulting them to "1"
+/// guarantees that they never compare equal to a current ("2") key, so an old
+/// entry that is ever read back is rejected as stale instead of being reused.
+fn default_format_version() -> String {
+    "1".to_string()
+}
+
+/// Compiler feature flags that participate in cache identity.
+///
+/// A residual produced with one feature configuration must never be reused
+/// with a different one, so these flags are hashed into the L2 filename and
+/// compared during every lookup. All fields default to `false` so cache files
+/// written before this field existed still deserialize cleanly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct FeatureFlags {
+    #[serde(default)]
+    pub llvm_backend: bool,
+    #[serde(default)]
+    pub supercompile: bool,
+    #[serde(default)]
+    pub verify: bool,
+}
+
+impl FeatureFlags {
+    pub fn new(llvm_backend: bool, supercompile: bool, verify: bool) -> Self {
+        Self {
+            llvm_backend,
+            supercompile,
+            verify,
+        }
+    }
+}
+
 /// Key uniquely identifying a specialization.
 /// Hashed to produce the cache filename.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -42,6 +75,13 @@ pub struct CacheKey {
     /// Compiler optimization flags or mode (e.g. "opt_level=3;backend=cranelift;mode=classic").
     #[serde(default)]
     pub optimization_flags: String,
+    /// Cache entry format version. Current format is "2"; older entries are
+    /// rejected so a schema change cannot silently reuse a stale residual.
+    #[serde(default = "default_format_version")]
+    pub format_version: String,
+    /// Feature flags that affect the generated residual code.
+    #[serde(default)]
+    pub feature_flags: FeatureFlags,
 }
 
 impl Default for CacheKey {
@@ -52,6 +92,8 @@ impl Default for CacheKey {
             argument_fingerprint: String::new(),
             compiler_version: default_compiler_version(),
             optimization_flags: String::new(),
+            format_version: "2".to_string(),
+            feature_flags: FeatureFlags::default(),
         }
     }
 }
@@ -68,12 +110,46 @@ impl CacheKey {
             argument_fingerprint: argument_fingerprint.into(),
             compiler_version: default_compiler_version(),
             optimization_flags: String::new(),
+            format_version: "2".to_string(),
+            feature_flags: FeatureFlags::default(),
         }
     }
 
     pub fn with_flags(mut self, flags: impl Into<String>) -> Self {
         self.optimization_flags = flags.into();
         self
+    }
+
+    /// Attach the compiler feature flags that produced this specialization.
+    pub fn with_feature_flags(mut self, flags: FeatureFlags) -> Self {
+        self.feature_flags = flags;
+        self
+    }
+
+    /// Deterministic SHA-256 over every key field, including the format version
+    /// and the feature flags. This is the composite identity used for the L2
+    /// filename; changing any single field yields a different path.
+    pub fn composite_hash(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"numlang-specialization-key-v2\0");
+        hasher.update(self.function_name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.function_source_hash.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.argument_fingerprint.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.compiler_version.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.optimization_flags.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.format_version.as_bytes());
+        hasher.update(b"\0");
+        hasher.update([
+            self.feature_flags.llvm_backend as u8,
+            self.feature_flags.supercompile as u8,
+            self.feature_flags.verify as u8,
+        ]);
+        format!("{:x}", hasher.finalize())
     }
 }
 
@@ -101,6 +177,9 @@ pub struct CacheMetrics {
     pub l2_hits: usize,
     pub misses: usize,
     pub stores: usize,
+    /// Number of L2 entries that were found at the requested path but whose
+    /// embedded key did not match (format version, feature flags, etc.).
+    pub stale_key_rejections: u64,
 }
 
 /// Production-grade two-level content-addressed SHA-256 specialization cache:
@@ -133,19 +212,11 @@ impl SpecializationCache {
         &self.cache_dir
     }
 
-    /// Return the cache file path for a given key (SHA-256 of key JSON → hex filename).
+    /// Return the cache file path for a given key (SHA-256 of the full composite
+    /// key → hex filename). The composite hash covers the format version and
+    /// feature flags, so entries from an older format cannot collide here.
     pub fn key_to_path(&self, key: &CacheKey) -> PathBuf {
-        let key_json = serde_json::to_string(key).unwrap_or_else(|_| {
-            format!(
-                "{}:{}:{}:{}:{}",
-                key.function_name,
-                key.function_source_hash,
-                key.argument_fingerprint,
-                key.compiler_version,
-                key.optimization_flags,
-            )
-        });
-        let hex = sha256_str(&key_json);
+        let hex = key.composite_hash();
         let prefix = &hex[0..2];
         self.cache_dir.join(prefix).join(format!("{}.json", hex))
     }
@@ -248,6 +319,15 @@ impl SpecializationCache {
         // 1. Check L1 in-memory cache
         if let Ok(l1) = self.l1_cache.read() {
             if let Some(entry) = l1.get(key) {
+                // Defensive check: a stale entry must never be served, even if
+                // it somehow ended up under a mismatched in-memory key.
+                if entry.key != *key {
+                    if let Ok(mut m) = self.metrics.write() {
+                        m.stale_key_rejections += 1;
+                        m.misses += 1;
+                    }
+                    return None;
+                }
                 if let Ok(mut m) = self.metrics.write() {
                     m.l1_hits += 1;
                 }
@@ -295,7 +375,12 @@ impl SpecializationCache {
             }
             Some(entry)
         } else {
+            // The file existed at the requested composite path, but the key
+            // stored inside it differs — e.g. an older format version or a
+            // different feature-flag set. Treat as a miss and record the stale
+            // rejection separately from ordinary misses.
             if let Ok(mut m) = self.metrics.write() {
+                m.stale_key_rejections += 1;
                 m.misses += 1;
             }
             None

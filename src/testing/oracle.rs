@@ -49,6 +49,36 @@ pub enum OracleResult {
     Error(String),
 }
 
+impl OracleResult {
+    /// Converts the oracle result into the process exit code exactly as the
+    /// NumLang runtime does: a 64-bit main result is reduced to its low 32
+    /// bits (two's complement). Divergence and evaluation errors are reported
+    /// as `Err` rather than being silently mapped to an exit code.
+    pub fn exit_code(&self) -> Result<i32, String> {
+        match self {
+            OracleResult::Value(v) => Ok(exit_code_of(*v)),
+            OracleResult::Diverged => Err("oracle diverged (step budget exhausted)".to_string()),
+            OracleResult::Error(e) => Err(e.clone()),
+        }
+    }
+}
+
+/// Explicit two's-complement reduction of a 64-bit program result to the
+/// 32-bit process exit-code register.
+///
+/// Both the Cranelift (`ireduce I32`) and LLVM (`int_truncate`) backends
+/// truncate the `main` result this way. This helper makes that truncation
+/// visible at the oracle boundary instead of hiding it in a bare `as i32`.
+pub fn exit_code_of(value: i64) -> i32 {
+    value as i32
+}
+
+/// Returns `true` when `value` does not fit in the 32-bit exit-code register,
+/// i.e. when the runtime silently discards the upper 32 bits.
+pub fn exit_code_is_truncated(value: i64) -> bool {
+    value != (value as i32) as i64
+}
+
 enum Control {
     None,
     Return(Option<OracleValue>),
@@ -589,4 +619,34 @@ impl<'a> OracleInterpreter<'a> {
 pub fn evaluate_program(program: &Program) -> OracleResult {
     let mut interp = OracleInterpreter::new(program, 10_000_000);
     interp.eval_program()
+}
+
+#[cfg(test)]
+mod wrapping_checks {
+    use super::*;
+
+    #[test]
+    fn twos_complement_wrapping_matches_i64_arithmetic() {
+        assert_eq!(i64::MAX.wrapping_add(1), i64::MIN);
+        assert_eq!(i64::MIN.wrapping_sub(1), i64::MAX);
+        assert_eq!(i64::MIN.wrapping_mul(-1), i64::MIN);
+        assert_eq!((1i64 << 63).wrapping_mul(-1), i64::MIN);
+    }
+
+    #[test]
+    fn exit_code_conversion_is_explicit_and_detects_truncation() {
+        assert!(!exit_code_is_truncated(0));
+        assert!(!exit_code_is_truncated(i32::MAX as i64));
+        assert!(!exit_code_is_truncated(i32::MIN as i64));
+        assert_eq!(exit_code_of(i32::MAX as i64), i32::MAX);
+        assert_eq!(exit_code_of(i32::MIN as i64), i32::MIN);
+
+        // Values outside the 32-bit register are truncated by the runtime;
+        // the helper must report that instead of hiding it.
+        assert!(exit_code_is_truncated(1i64 << 32));
+        assert!(exit_code_is_truncated(i64::MAX));
+        assert!(exit_code_is_truncated(i64::MIN));
+        assert_eq!(exit_code_of(1i64 << 32), 0);
+        assert_eq!(exit_code_of(i64::MAX), -1);
+    }
 }

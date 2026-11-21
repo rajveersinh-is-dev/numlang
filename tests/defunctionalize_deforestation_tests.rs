@@ -158,10 +158,18 @@ fn main() -> i64 {
     for block in &apply_fn.blocks {
         for stmt in &block.statements {
             let Statement::Assign(_, rval) = stmt;
-            if let Rvalue::Use(place) = rval {
-                if place.projections.contains(&Projection::Payload(0)) {
-                    payload_projection_found = true;
-                }
+            // Either the captured environment is unpacked into a temp
+            // (`Rvalue::Use` with `Projection::Payload(0)`), or the scalar field
+            // is unboxed: the direct call passes a place with `Projection::Payload(0)`.
+            let found = match rval {
+                Rvalue::Use(place) => place.projections.contains(&Projection::Payload(0)),
+                Rvalue::Call(_, args) => args
+                    .iter()
+                    .any(|a| a.projections.contains(&Projection::Payload(0))),
+                _ => false,
+            };
+            if found {
+                payload_projection_found = true;
             }
         }
     }
@@ -222,4 +230,121 @@ fn main() -> i64 {
     // pipe(add3, mul4, 7) = (7 + 3) * 4 = 40
     let (code, _, stderr) = run_numlang_code(src, true);
     assert_eq!(code, Some(40), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_non_escaping_closure_direct_call() {
+    // A closure that is only ever directly dispatched (never stored, passed, or
+    // returned) must be inlined/direct-called rather than tagged by defunctionalization.
+    let src = r#"
+fn main() -> i64 {
+    let f: fn(i64) -> i64 = |x: i64| x * 3;
+    let a: i64 = f(7);
+    return a;
+}
+"#;
+    let mir = get_mir(src);
+
+    // No synthetic ClosureTag enum should be created.
+    assert!(
+        !mir.enums.iter().any(|e| e.name.starts_with("ClosureTag_")),
+        "Non-escaping closures must not produce tagged variants"
+    );
+    // No ClosureAlloc or IndirectCall should remain.
+    for func in &mir.functions {
+        for block in &func.blocks {
+            for stmt in &block.statements {
+                let Statement::Assign(_, rval) = stmt;
+                assert!(
+                    !matches!(rval, Rvalue::ClosureAlloc { .. }),
+                    "ClosureAlloc of a non-escaping closure must be rewritten"
+                );
+            }
+            assert!(
+                !matches!(block.terminator, Terminator::IndirectCall { .. }),
+                "IndirectCall of a non-escaping closure must be rewritten to a direct Call"
+            );
+        }
+    }
+    // A direct Call to the closure function must exist.
+    let direct_calls: Vec<String> = mir
+        .functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|s| match s {
+            Statement::Assign(_, Rvalue::Call(c, _)) => Some(c.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        direct_calls.iter().any(|c| c.contains("closure")),
+        "Must contain a direct call to the closure function: {:?}",
+        direct_calls
+    );
+
+    // Execution still returns the right value: 7 * 3 = 21.
+    let (code, _, stderr) = run_numlang_code(src, true);
+    assert_eq!(code, Some(21), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_escaping_closure_captured_scalar_unboxed() {
+    // An escaping closure with a scalar captured field stays tagged, but the
+    // scalar payload is unboxed at the dispatch site (read directly from the
+    // enum payload instead of being copied into a temporary).
+    let src = r#"
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+    return f(x);
+}
+fn main() -> i64 {
+    let factor: i64 = 7;
+    let f: fn(i64) -> i64 = |x: i64| x * factor;
+    return apply(f, 6);
+}
+"#;
+    let mir = get_mir(src);
+
+    // The closure is escaping: a synthetic enum must exist and be dispatched via Switch.
+    let closure_enum = mir
+        .enums
+        .iter()
+        .find(|e| e.name.starts_with("ClosureTag_"))
+        .expect("escaping closure must produce a ClosureTag enum");
+    assert_eq!(closure_enum.variants.len(), 1, "one variant for one closure");
+
+    // The dispatch of the escaping closure must go through a Switch.
+    let mut switch_found = false;
+    let mut unboxed_found = false;
+    for func in &mir.functions {
+        for block in &func.blocks {
+            if let Terminator::Switch { targets, .. } = &block.terminator {
+                assert!(
+                    !targets.is_empty(),
+                    "escaping closure must dispatch via Switch"
+                );
+                switch_found = true;
+            }
+            for stmt in &block.statements {
+                let Statement::Assign(_, rval) = stmt;
+                if let Rvalue::Call(_, args) = rval {
+                    if args
+                        .iter()
+                        .any(|a| a.projections.contains(&Projection::Payload(0)))
+                    {
+                        unboxed_found = true;
+                    }
+                }
+            }
+        }
+    }
+    assert!(switch_found, "escaping closure dispatch must be a Switch");
+    assert!(
+        unboxed_found,
+        "escaping closure with scalar captured field must be unboxed (Payload passed as call arg)"
+    );
+
+    // Exec: apply(f, 6) = 6 * 7 = 42
+    let (code, _, stderr) = run_numlang_code(src, false);
+    assert_eq!(code, Some(42), "stderr: {}", stderr);
 }

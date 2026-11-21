@@ -23,3 +23,9 @@ jobs:
           cargo test --test structural_generality_tests
           cargo test --test general_recurrence_tests
           cargo test --test integrity_lint
+
+      - name: Run Benchmark Table Generator (Check-Only)
+        run: python scripts/make_bench_table.py --check
+
+      - name: Run CI Runtime Regression Guard
+        run: python scripts/ci_regression_guard.py

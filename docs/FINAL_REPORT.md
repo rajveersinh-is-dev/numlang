@@ -51,7 +51,7 @@ All empirical measurements, allocator attribution tests, ablation studies, and f
 | **R6** | 25x MSVC vs Rust gap on `nrev` unattributed; SC vs Base parity questioned | Windows `HeapAlloc` (`Box::new`) vs static bump pool overhead | Conducted allocator attribution experiment (`docs/evidence/round2/allocator_attribution.csv`); proved 25x gap was 100% allocator-driven; confirmed SC and Base parity on Cranelift runtime arena [`docs/audits/round2-phase-B.md`] | **RESOLVED & VERIFIED** |
 | **R7** | Lean circular soundness concern; duplicate theorems; missing axiom logs | Potential restatement of operational lemmas; no published axiom log | Authored `docs/LEAN_COVERAGE.md`; verified 0 duplicate theorems; verified `#print axioms` (0 sorry, 0 custom axioms) [`docs/evidence/round2/lean_axioms.txt`] [`docs/audits/round2-phase-E.md`] | **RESOLVED & VERIFIED** |
 | **R8** | `validate.rs` undocumented TCB; description varied (Horn vs QF_BV) | Missing formal boundary disclosure | Added explicit TCB disclosure (trusted vs checked) to `validate.rs`; verified 10 distinct mutations caught via SMT portfolio solver [`docs/audits/round2-phase-F.md`] | **RESOLVED & VERIFIED** |
-| **R9** | Ledger held "Phase N" rather than commit hashes; hand-typed numbers | Manual documentation maintenance | Automated 6-stage claims linter; validated git objects with `git cat-file -t`; verified win/tie counts match raw CSV [`docs/audits/round2-phase-D.md`] | **RESOLVED & VERIFIED** |
+| **R9** | Ledger held "Phase N" rather than commit hashes; hand-typed numbers | Manual documentation maintenance | Automated 8-stage claims linter; validated git objects with `git cat-file -t`; verified every cited evidence path exists on disk and that `FINAL_REPORT.md` section 7 matches the ledger; verified win/tie counts match raw CSV [`docs/audits/round2-phase-D.md`] | **RESOLVED & VERIFIED** |
 | **R10** | Unverified related work entries | Informal academic citations | Expanded primary literature references with complete DOIs and venues (Turchin, Wadler, Hamilton, Glück/Klimov, Kruskal, Higman, Futamura, Coutts) [`docs/audits/round2-phase-G.md`] | **RESOLVED & VERIFIED** |
 | **R11** | Minor discrepancies in flags, directory structure, and clean builds | Stale build artifacts and doc discrepancies | Tested `cargo clean` and fresh rebuild (56.5s); verified 0 errors and 0 warnings under `cargo clippy --all-targets -- -D warnings` [`docs/audits/round2-phase-G.md`] | **RESOLVED & VERIFIED** |
 
@@ -62,7 +62,7 @@ All empirical measurements, allocator attribution tests, ablation studies, and f
 - **Phase A (Root-Cause The Disappearing Wins)**: Bisected intermediate regressions and restored dynamic recurrence collapse on runtime-opaque bounds. Restored `tri_sum_dyn` (1,892x), `cubic_sum_dyn` (381x), `fib_matrix` (9.12x), and `sum_map` (36.5x). Bounded static loops documented transparently as folded/timer floor. Committed in `627fe49` (`docs/audits/round2-phase-A.md`).
 - **Phase B (Measurement and Statistics)**: Diagnosed baseline slowdown overhead. Conducted empirical allocator attribution experiment (`docs/evidence/round2/allocator_attribution.csv`), proving the 25x MSVC vs Rust gap on `nrev` was 100% Windows `HeapAlloc` vs bump arena. Authored automated table generator `scripts/make_bench_table.py` computing Median, MAD, Min, and 95% CI; unbolded SC column. Committed in `6061432` (`docs/audits/round2-phase-B.md`).
 - **Phase C (Profitability Gate & Ablation Study)**: Implemented 4D `evaluate_function` cost model in `src/mir/supercompiler/mrsc.rs` with `reset_reverted_stats`. Verified cost model invariance across all 18 benchmarks (`tests/cost_model_invariance_tests.rs`). Conducted 15-round ablation study (`docs/evidence/round2/ablation_study.csv`). Integrated CI runtime regression guard (`scripts/ci_regression_guard.py`) into `.github/workflows/ci.yml`. Committed in `cb4de98` (`docs/audits/round2-phase-C.md`).
-- **Phase D (Single Source of Truth)**: Updated all 20 claims in `docs/CLAIMS_LEDGER.md` with verified git commit hashes; CLM-07 scoped to `PROVEN (abstract model only)`. Enhanced `scripts/claims_lint.py` to 6 stages (validates markdown links, badges, zero sorry/axioms, Lean docs inventory, commit hashes via `git cat-file -t`, and win/tie sync). Generated independent reviewer artifact (`docs/agents/reviewer-round2-2026-10-11.md`). Committed in `53e7a11` (`docs/audits/round2-phase-D.md`).
+- **Phase D (Single Source of Truth)**: Updated all 20 claims in `docs/CLAIMS_LEDGER.md` with verified git commit hashes; CLM-07 scoped to `PROVEN (abstract model only)`. Enhanced `scripts/claims_lint.py` to 6 stages (validates markdown links, badges, zero sorry/axioms, Lean docs inventory, commit hashes via `git cat-file -t`, and win/tie sync); the linter was subsequently extended to 8 stages, adding evidence-path existence and `FINAL_REPORT.md` section 7 ↔ ledger reconciliation. Generated independent reviewer artifact (`docs/agents/reviewer-round2-2026-10-11.md`). Committed in `53e7a11` (`docs/audits/round2-phase-D.md`).
 - **Phase E (Lean Honesty & Coverage)**: Authored `docs/LEAN_COVERAGE.md` establishing 1-to-1 operational mapping between Lean relations and Rust compiler functions. Verified 0 duplicate theorems between `lean/` and `proof/`. Verified `#print axioms` across all 26 headline theorems (0 sorry, 0 custom axioms). Captured evidence to `docs/evidence/round2/lean_axioms.txt`. Committed in `46aecbf` (`docs/audits/round2-phase-E.md`).
 - **Phase F (Translation Validator Integrity)**: Added explicit TCB disclosure (trusted vs checked) to `src/mir/supercompiler/validate.rs`. Added `test_translation_validator_catches_10_distinct_mutations` in `tests/translation_validation_smt_tests.rs`, proving the SMT validator catches 10 distinct, mathematically non-equivalent mutations. Committed in `53ae9fb` (`docs/audits/round2-phase-F.md`).
 - **Phase G (Citations, Reproducibility & Hygiene)**: Audited literature citations across `README.md`, `SHOWDOWN.md`, and `paper/references.bib` (Hamilton, Turchin, Glück/Klimov, Kruskal, Higman, Wadler, Futamura, Coutts). Tested `cargo clean` and fresh rebuild (56.5s). Verified 0 clippy warnings, `integrity_lint`, `make_bench_table.py --all`, and `claims_lint.py`. Committed in `90c3fdc` (`docs/audits/round2-phase-G.md`).
@@ -72,7 +72,7 @@ All empirical measurements, allocator attribution tests, ablation studies, and f
 
 ## 5. Empirical Benchmark Showdown Results
 
-All numbers below were generated dynamically from raw CSV measurements (`bench/data/perf_history.csv`) using `scripts/make_bench_table.py` across **5 discarded warmups followed by 30 measured rounds per cell**:
+All numbers below were generated dynamically from the per-round raw measurements in `bench/data/showdown_results.csv` using `scripts/make_bench_table.py` across **5 discarded warmups followed by 30 measured rounds per cell** (the generator falls back to `bench/data/showdown_results_sample.csv` only when the primary CSV is absent). `bench/data/perf_history.csv` is a separate historical log of commit-level median timings and is **not** an input to the table generator. The table is the Round 2 Phase B measurement snapshot; the live `SHOWDOWN.md` and `README.md` tables are regenerated from the same CSV by that script:
 
 | Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Result vs Base (95% CI) | Speedup vs Base |
 |:---|:---|:---:|:---:|:---:|:---:|:---|:---:|
@@ -122,30 +122,30 @@ All numbers below were generated dynamically from raw CSV measurements (`bench/d
 
 ## 7. Public Claims Ledger (Final Status)
 
-All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly validated with live git commit hashes:
+All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly validated with live git commit hashes. The table below is a verbatim mirror of the ledger's public-claim text, status, and last-verified commit; `scripts/claims_lint.py` stage 8 mechanically enforces this correspondence, so this section cannot drift from the ledger without failing CI.
 
 | Claim ID | Claim Summary | Status | Verified Commit |
 |:---|:---|:---:|:---:|
-| **CLM-01** | Deforestation eliminates intermediate lists without allocations | **TESTED** | `6061432` |
-| **CLM-02** | Deforestation is non-allocating on trees | **TESTED** | `6061432` |
-| **CLM-03** | Deforestation works on arbitrary ADTs | **TESTED** | `6061432` |
-| **CLM-04** | Stream fusion fuses map/filter into single loop | **TESTED** | `6061432` |
-| **CLM-05** | Distillation eliminates nested intermediate structures | **TESTED** | `6061432` |
-| **CLM-06** | MRSC explores multiple driving paths and selects Pareto-optimal residual | **TESTED** | `cb4de98` |
-| **CLM-07** | Lean formalization proves supercompilation preserves semantics | **PROVEN (abstract model only)** | `46aecbf` |
-| **CLM-08** | Whistle guarantees termination via Kruskal's tree theorem | **PARTIAL** | `46aecbf` |
-| **CLM-09** | Showdown reports 5 outright wins over Rustc -O3 and MSVC /O2 | **TESTED** | `6061432` |
-| **CLM-10** | Linear recurrence collapse yields >30,000x speedup on triangular numbers | **TESTED** | `627fe49` |
-| **CLM-11** | Polynomial recurrence collapse yields >10,000x on cubic sum | **TESTED** | `627fe49` |
-| **CLM-12** | Fast matrix exponentiation for coupled linear recurrences | **TESTED** | `627fe49` |
-| **CLM-13** | Reynolds defunctionalization eliminates higher-order closure overhead | **TESTED** | `6061432` |
-| **CLM-14** | Complete language pipeline from lexer to native machine code | **TESTED** | `cb4de98` |
-| **CLM-15** | Pure Rust implementation with zero external dependencies | **REMOVED** | `53e7a11` |
-| **CLM-16** | Cranelift backend produces optimized native machine code | **TESTED** | `cb4de98` |
-| **CLM-17** | Self-contained translation validator verifies compiler passes | **TESTED** | `53ae9fb` |
-| **CLM-18** | Property-based and metamorphic test suites prevent regressions | **TESTED** | `cb4de98` |
-| **CLM-19** | Competitive on CLBG benchmarks | **REMOVED** | `53e7a11` |
-| **CLM-20** | Canonical supercompilation benchmark suite with 30 programs | **PARTIAL** | `6061432` |
+| **CLM-01** | Global Hamilton distillation eliminates intermediate data structures in consumer-producer chains | **TESTED** | `0aa6825` |
+| **CLM-02** | Multi-Result Supercompilation (MRSC) generates hypergraphs with Pareto selection | **TESTED** | `0aa6825` |
+| **CLM-03** | Constant forward differences and companion matrices collapse recurrences from $O(N)$ to $O(1)$ and $O(\log N)$ | **TESTED** | `0aa6825` |
+| **CLM-04** | Reynolds defunctionalization converts higher-order closures to first-order dispatches | **TESTED** | `0aa6825` |
+| **CLM-05** | Lazy thunk supercompilation collapses codata pipelines into register loops | **TESTED** | `0aa6825` |
+| **CLM-06** | Self-applicable specializer `minspec.nl` structures Futamura 1, 2, and 3 projections | **TESTED** | `0aa6825` |
+| **CLM-07** | Lean 4 mechanized operational models have zero `sorry` and zero unproven axioms | **PROVEN (abstract model only)** | `0aa6825` |
+| **CLM-08** | Process tree termination formalization via homeomorphic embedding and sequence pigeonhole | **PARTIAL** | `0aa6825` |
+| **CLM-09** | NumLang supercompiler achieves 6 outright wins and 12 ties out of 18 literature benchmarks against industrial compilers | **TESTED** | `0aa6825` |
+| **CLM-10** | Peak recurrence collapse speedup of 1,962x on `tri_sum` (Euler closed form) | **TESTED** | `0aa6825` |
+| **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | **TESTED** | `0aa6825` |
+| **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | **TESTED** | `0aa6825` |
+| **CLM-13** | Zero panic in codegen and lowering pipelines | **TESTED** | `0aa6825` |
+| **CLM-14** | Zero clippy warnings under `cargo clippy --all-targets -- -D warnings` | **TESTED** | `0aa6825` |
+| **CLM-15** | Pure Rust implementation | **REMOVED** | `0aa6825` |
+| **CLM-16** | Cross-platform execution across Linux, macOS, and Windows | **TESTED** | `0aa6825` |
+| **CLM-17** | Formal SMT-based translation validation via bit-vectors and Horn clauses | **TESTED** | `0aa6825` |
+| **CLM-18** | Two-level specialization disk cache (`.numlang_cache/`) | **TESTED** | `0aa6825` |
+| **CLM-19** | Computer Language Benchmarks Game (CLBG) evaluations (Phase 58) | **REMOVED** | `0aa6825` |
+| **CLM-20** | 30 canonical literature benchmarks evaluated | **PARTIAL** | `0aa6825` |
 
 ---
 
@@ -162,7 +162,7 @@ All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly valida
 | **Lean Formalization Build** | `cd lean && lake build`<br>`cd proof && lake build` | **100% PASSED** (16 jobs) | Clean builds, 0 sorry |
 | **Lean Axiom Audit** | `python scripts/check_lean_axioms.py` | **100% PASSED** | Standard foundational axioms only |
 | **Table Generator Regeneration** | `python scripts/make_bench_table.py --all` | **100% PASSED** | Single source of truth intact |
-| **Claims & Badge Linter** | `python scripts/claims_lint.py` | **100% PASSED** (6/6 stages) | All git commits & win counts match |
+| **Claims & Badge Linter** | `python scripts/claims_lint.py` | **100% PASSED** (8/8 stages) | All git commits, evidence paths, win counts, and ledger/report claims match |
 | **CI Regression Guard** | `python scripts/ci_regression_guard.py` | **100% PASSED** | 0 regressions vs baseline |
 
 ---

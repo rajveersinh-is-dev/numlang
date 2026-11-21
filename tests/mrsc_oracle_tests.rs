@@ -6,7 +6,9 @@ use numlang::codegen::compile_supercompiled_to_obj_with_mode;
 use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram};
 use numlang::mir::supercompiler::cache::SpecializationCache;
-use numlang::mir::supercompiler::mrsc::{MrscCostModel, MrscCostVector, MrscObjective};
+use numlang::mir::supercompiler::mrsc::{
+    MrscCostModel, MrscCostVector, MrscFallbackReason, MrscObjective, MrscProfitabilityContract,
+};
 use numlang::mir::supercompiler::mrsc_oracle::{
     IddfsOracleConfig, MrscOracleEngine, OracleCandidate, OracleParetoFrontier,
 };
@@ -100,24 +102,28 @@ fn test_pareto_dominance_4d() {
     let vec_a = MrscCostVector {
         dynamic_steps: 10.0,
         allocation_count: 1,
+        call_count: 0,
         residual_blocks: 4,
         register_pressure: 3,
     };
     let vec_b = MrscCostVector {
         dynamic_steps: 10.0,
         allocation_count: 1,
+        call_count: 0,
         residual_blocks: 5,
         register_pressure: 3,
     };
     let vec_c = MrscCostVector {
         dynamic_steps: 5.0,
         allocation_count: 2,
+        call_count: 0,
         residual_blocks: 4,
         register_pressure: 3,
     };
     let vec_d = MrscCostVector {
         dynamic_steps: 15.0,
         allocation_count: 2,
+        call_count: 0,
         residual_blocks: 6,
         register_pressure: 4,
     };
@@ -426,4 +432,50 @@ fn test_e2e_executable_execution_with_mrsc_exhaustive() {
         exit_code, 0,
         "Binary compiled with --mrsc-exhaustive must execute correctly and return 0"
     );
+}
+
+#[test]
+fn test_oracle_never_accept_falls_back_to_baseline() {
+    let code = r#"
+    fn oracle_kernel(n: i64) -> i64 {
+        let mut acc: i64 = 0;
+        let mut i: i64 = 0;
+        while i < n {
+            acc = acc + i;
+            i = i + 1;
+        }
+        return acc;
+    }
+    "#;
+    let mir = get_mir(code);
+    let func = &mir.functions[0];
+    let config = IddfsOracleConfig {
+        min_depth: 2,
+        max_depth: 8,
+        step_depth: 2,
+        objective: MrscObjective::Speed,
+        exhaustive: true,
+    };
+    let oracle = MrscOracleEngine::new_with_contract(
+        func,
+        &mir.functions,
+        config,
+        MrscProfitabilityContract::NEVER_ACCEPT,
+    );
+
+    let (frontier, winner) = oracle.explore_iddfs();
+
+    assert!(
+        winner.residual == *func,
+        "Fallback path must return the original baseline MIR"
+    );
+    let telemetry = frontier
+        .selection
+        .clone()
+        .expect("frontier must expose the gate decision");
+    assert!(telemetry.fallback);
+    assert!(!telemetry.accepted);
+    assert_ne!(telemetry.reason, MrscFallbackReason::AcceptedImprovement);
+    assert_eq!(telemetry, oracle.last_decision().unwrap());
+    assert_eq!(frontier.total_evaluated, 12);
 }

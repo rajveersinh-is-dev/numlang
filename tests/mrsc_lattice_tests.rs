@@ -6,8 +6,9 @@ use numlang::codegen::linker::link_executable;
 use numlang::mir::lower::{lower_program, MirProgram};
 use numlang::mir::supercompiler::drive::SupercompilerStats;
 use numlang::mir::supercompiler::mrsc::{
-    CandidateMetrics, CustomWeightedObjective, MinCodeSizeObjective, MinDynamicBranchObjective,
-    MultiResultEngine, ParetoCandidate, ParetoFrontier, ParetoObjective, ResidualObjective,
+    CandidateMetrics, CustomWeightedObjective, ExplorationOptions, MinCodeSizeObjective,
+    MinDynamicBranchObjective, MultiResultEngine, ParetoCandidate, ParetoFrontier,
+    ParetoObjective, ResidualObjective,
 };
 use numlang::mir::supercompiler::SupercompileMode;
 use numlang::mir::Terminator;
@@ -361,5 +362,45 @@ fn test_mrsc_end_to_end_execution_parity() {
     assert_eq!(
         res_pareto, 161,
         "MRSC pareto-optimized execution must produce 161"
+    );
+}
+
+#[test]
+fn test_mrsc_exploration_hook_is_a_clean_bounded_api() {
+    let source = r#"
+    fn hooked_kernel(x: i64) -> i64 {
+        return x * 3 + 1;
+    }
+    fn main() -> i64 { return hooked_kernel(4); }
+    "#;
+    let mir = get_mir(source);
+    let func = &mir.functions[0];
+    let mrsc = MultiResultEngine::new(func, &mir.functions);
+    let hook_calls = std::cell::Cell::new(0usize);
+
+    let (_graph, frontier) = mrsc.explore_hypergraph_with_hook(
+        &ExplorationOptions::default(),
+        &|baseline: &numlang::mir::lower::MirFunction, current: &ParetoFrontier| {
+            hook_calls.set(hook_calls.get() + 1);
+            assert!(!current.is_empty(), "hook runs after built-in derivations");
+            let tree = numlang::mir::supercompiler::SupercompilerDriver::new(baseline).run();
+            let metrics = CandidateMetrics::new(baseline, &tree);
+            vec![ParetoCandidate {
+                name: "External_Hook_Candidate".to_string(),
+                residual: baseline.clone(),
+                tree,
+                metrics,
+            }]
+        },
+    );
+
+    assert_eq!(
+        hook_calls.get(),
+        1,
+        "External candidate hook must be called exactly once (bounded work)"
+    );
+    assert!(
+        frontier.selection.is_none(),
+        "Exploration alone must not fabricate a profitability decision"
     );
 }

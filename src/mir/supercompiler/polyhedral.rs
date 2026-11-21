@@ -45,13 +45,13 @@ impl AffineExpr {
         let mut coeffs = self.coefficients.clone();
         for (v, c) in &other.coefficients {
             let entry = coeffs.entry(v.clone()).or_insert(0);
-            *entry += c;
+            *entry = entry.wrapping_add(*c);
             if *entry == 0 {
                 coeffs.remove(v);
             }
         }
         AffineExpr {
-            constant: self.constant + other.constant,
+            constant: self.constant.wrapping_add(other.constant),
             coefficients: coeffs,
         }
     }
@@ -60,13 +60,13 @@ impl AffineExpr {
         let mut coeffs = self.coefficients.clone();
         for (v, c) in &other.coefficients {
             let entry = coeffs.entry(v.clone()).or_insert(0);
-            *entry -= c;
+            *entry = entry.wrapping_sub(*c);
             if *entry == 0 {
                 coeffs.remove(v);
             }
         }
         AffineExpr {
-            constant: self.constant - other.constant,
+            constant: self.constant.wrapping_sub(other.constant),
             coefficients: coeffs,
         }
     }
@@ -77,10 +77,10 @@ impl AffineExpr {
         }
         let mut coeffs = BTreeMap::new();
         for (v, c) in &self.coefficients {
-            coeffs.insert(v.clone(), c * k);
+            coeffs.insert(v.clone(), c.wrapping_mul(k));
         }
         AffineExpr {
-            constant: self.constant * k,
+            constant: self.constant.wrapping_mul(k),
             coefficients: coeffs,
         }
     }
@@ -89,7 +89,7 @@ impl AffineExpr {
         let mut sum = self.constant;
         for (v, c) in &self.coefficients {
             if let Some(&val) = env.get(v) {
-                sum += c * val;
+                sum = sum.wrapping_add(c.wrapping_mul(val));
             }
         }
         sum
@@ -185,7 +185,7 @@ impl IterationDomain {
             Inequality::ge_zero(AffineExpr::variable(var).sub(&AffineExpr::constant(lower)));
         // i < upper => (upper - 1) - i >= 0
         let ineq_upper =
-            Inequality::ge_zero(AffineExpr::constant(upper - 1).sub(&AffineExpr::variable(var)));
+            Inequality::ge_zero(AffineExpr::constant(upper.wrapping_sub(1)).sub(&AffineExpr::variable(var)));
 
         IterationDomain {
             loop_var: var.to_string(),
@@ -207,7 +207,7 @@ impl IterationDomain {
 
     pub fn trip_count(&self) -> usize {
         if self.upper_bound > self.lower_bound && self.step > 0 {
-            ((self.upper_bound - self.lower_bound) as usize).div_ceil(self.step as usize)
+            ((self.upper_bound.wrapping_sub(self.lower_bound)) as usize).div_ceil(self.step as usize)
         } else {
             0
         }

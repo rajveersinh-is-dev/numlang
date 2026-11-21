@@ -331,3 +331,51 @@ fn test_polyhedral_multi_stage_3pass_deforestation() {
         "Neither p1 nor p2 should allocate array memory in MIR"
     );
 }
+
+#[test]
+fn test_polyhedral_nested_loops_execution() {
+    let code = r#"
+    fn nested_sum(n: i64) -> i64 {
+        let mut total: i64 = 0;
+        for i in 0..n {
+            for j in 0..n {
+                total = total + i + j;
+            }
+        }
+        return total;
+    }
+
+    fn main() -> i64 {
+        return nested_sum(4);
+    }
+    "#;
+
+    let res = compile_and_run(code, "test_polyhedral_nested_loops");
+    // sum_{i=0}^{3} sum_{j=0}^{3} (i+j) = 4*sum_i i + 4*sum_j j = 4*6 + 4*6 = 48
+    assert_eq!(res, expected_exit(48), "Nested loop sum must be 48");
+}
+
+#[test]
+fn test_polyhedral_2d_stencil_execution() {
+    let code = r#"
+    fn stencil_2d() -> i64 {
+        let xs: [i64; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let mut out: i64 = 0;
+        for i in 1..2 {
+            for j in 1..2 {
+                let idx: i64 = i * 3 + j;
+                out = out + xs[idx - 3] + xs[idx] + xs[idx + 3];
+            }
+        }
+        return out;
+    }
+
+    fn main() -> i64 {
+        return stencil_2d();
+    }
+    "#;
+
+    let res = compile_and_run(code, "test_polyhedral_2d_stencil_exec");
+    // i=1,j=1: idx=4, xs[1]+xs[4]+xs[7] = 2+5+8 = 15
+    assert_eq!(res, expected_exit(15), "2D stencil execution must be 15");
+}
