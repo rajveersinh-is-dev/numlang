@@ -728,3 +728,197 @@ fn test_distillation_three_function_chain() {
     let (code_res, _) = compile_and_run_distill(code, "three_function_chain");
     assert_eq!(code_res, 14, "(2+1) + (4+1) + 6 = 14");
 }
+
+
+// ---------------------------------------------------------------------------
+// Benchmark-shaped pipelines: the standard optimiser inlines direct calls
+// before MIR lowering, so the composition must be recovered from the inlined
+// switch loops rather than from nested Rvalue::Call statements.
+// ---------------------------------------------------------------------------
+
+fn get_pipeline_mir(source: &str) -> MirProgram {
+    let tokens = tokenize(source).expect("Tokenize failed");
+    let ast = parse(&tokens).expect("Parse failed");
+    let mut typed = typecheck(&ast).expect("Typecheck failed");
+    numlang::compiler::distill_and_optimize(
+        &mut typed,
+        &numlang::compiler::CompilerConfig {
+            supercompile: true,
+            ..Default::default()
+        },
+    );
+    lower_program(&typed)
+}
+
+fn count_calls_in(func: &numlang::mir::lower::MirFunction, callee: &str) -> usize {
+    func.blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|s| match s {
+            Statement::Assign(_, Rvalue::Call(c, _)) if c == callee => Some(1),
+            _ => None,
+        })
+        .sum()
+}
+
+#[test]
+fn test_distillation_fires_on_renamed_inlined_list_composition() {
+    // Generic two-function producer/consumer composition. Nothing is named
+    // after a benchmark; the producer/consumer roles are discovered from the
+    // inlined loop dataflow (a switch whose arms all write a local consumed by
+    // a second switch).
+    let code = r#"
+    enum Chain {
+        End,
+        Link(Box<Chain>, i64),
+    }
+
+    fn attach(first: Chain, second: Chain) -> Chain {
+        return match first {
+            End => second,
+            Link(rest, value) => Link(box(attach(deref(rest), second)), value),
+        };
+    }
+
+    fn total(items: Chain) -> i64 {
+        return match items {
+            End => 0,
+            Link(rest, value) => value + total(deref(rest)),
+        };
+    }
+
+    fn combined(a: Chain, b: Chain) -> i64 {
+        return total(attach(a, b));
+    }
+
+    fn main() -> i64 {
+        let p: Chain = Link(box(Link(box(End), 8)), 7);
+        let q: Chain = Link(box(End), 9);
+        return combined(p, q);
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["attach", "total"]);
+    }
+
+    let mut mir = get_pipeline_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0,
+        "Inlined list composition must tie a knot: {:?}",
+        stats
+    );
+
+    let fused = mir
+        .functions
+        .iter()
+        .find(|f| f.is_distilled && f.name.starts_with("__distill_"))
+        .expect("a distilled fused function must be synthesised");
+    assert_eq!(
+        count_calls_to(fused, "attach"),
+        0,
+        "Producer calls must be eliminated from the fused residual"
+    );
+    assert_eq!(
+        count_allocation_sites(fused),
+        0,
+        "Intermediate list nodes must be fully deforested"
+    );
+    assert!(
+        calculate_function_cost(fused) <= baseline_cost,
+        "Residual cost {} must not exceed baseline {}",
+        calculate_function_cost(fused),
+        baseline_cost
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "renamed_inlined_composition");
+    assert_eq!(code_res, 24, "7 + 8 + 9 must equal 24");
+}
+
+#[test]
+fn test_distillation_fires_on_nested_inlined_composition() {
+    // A nested composition g(g(x)) over a list. The producer's recursive arm
+    // ends in a call (not a constructor), so fusion requires the involution
+    // pathway: bounded symbolic evaluation proves g(g(x)) == x and residualises
+    // a single-pass copy.
+    let code = r#"
+    enum Bag {
+        Nothing,
+        Item(i64, Box<Bag>),
+    }
+
+    fn join(xs: Bag, ys: Bag) -> Bag {
+        return match xs {
+            Nothing => ys,
+            Item(v, rest) => Item(v, box(join(deref(rest), ys))),
+        };
+    }
+
+    fn turn(xs: Bag) -> Bag {
+        return match xs {
+            Nothing => Nothing,
+            Item(v, rest) => join(turn(deref(rest)), Item(v, box(Nothing))),
+        };
+    }
+
+    fn add_up(xs: Bag) -> i64 {
+        return match xs {
+            Nothing => 0,
+            Item(v, rest) => v + add_up(deref(rest)),
+        };
+    }
+
+    fn twice(xs: Bag) -> Bag {
+        return turn(turn(xs));
+    }
+
+    fn main() -> i64 {
+        let xs: Bag = Item(4, box(Item(5, box(Nothing))));
+        return add_up(twice(xs));
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["turn", "join"]);
+    }
+
+    let mut mir = get_pipeline_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0,
+        "Nested inlined composition must tie a knot: {:?}",
+        stats
+    );
+
+    let fused = mir
+        .functions
+        .iter()
+        .find(|f| f.is_distilled && f.name.starts_with("__distill_"))
+        .expect("nested composition must produce a distilled function");
+    assert!(
+        calculate_function_cost(fused) <= baseline_cost,
+        "Residual cost {} must not exceed baseline {}",
+        calculate_function_cost(fused),
+        baseline_cost
+    );
+    let caller = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "twice")
+        .expect("caller must exist");
+    assert_eq!(
+        count_calls_in(caller, "turn"),
+        0,
+        "Inlined producer calls must be replaced by the fused residual"
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "nested_inlined_composition");
+    assert_eq!(code_res, 9, "double turn must preserve 4 + 5 = 9");
+}
+
+

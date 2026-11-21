@@ -160,17 +160,9 @@ pub fn supercompile_mir_program_with_cache(
     }
 
     for func in &mut program.functions {
-        // Functions synthesized or transformed by global distillation are already in optimal single-pass form
-        if mode == SupercompileMode::Distill && func.is_distilled {
-            total_stats.residual_block_count += func.blocks.len();
-            total_stats.residual_stmt_count += func
-                .blocks
-                .iter()
-                .map(|b| b.statements.len())
-                .sum::<usize>();
-            continue;
-        }
-
+        // Distilled functions still need Pass 2: global distillation fuses call
+        // compositions but does not run symbolic driving / recurrence solving.
+        // Skipping them here caused dynamic recurrence collapses to regress.
         match mode {
             SupercompileMode::Classic => {
                 // 1. Compute the CacheKey for this function with composite hashing
@@ -226,10 +218,7 @@ pub fn supercompile_mir_program_with_cache(
                     && baseline_blocks > 4; // only guard non-trivial functions
 
                 let uncollapsed_knot = stats.knots_tied > 0;
-                let has_unreachable = new_func
-                    .blocks
-                    .iter()
-                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let has_unreachable = has_reachable_unreachable(&new_func);
 
                 let cost_model = MrscCostModel::new();
                 let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
@@ -288,29 +277,45 @@ pub fn supercompile_mir_program_with_cache(
                 let (_dead, _deduped) = compact_process_tree(&mut tree);
                 let mut new_func =
                     residualize_process_tree_parallel(&tree, func, parallel_residualize);
-                let has_unreachable = new_func
-                    .blocks
-                    .iter()
-                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let _stmts_removed = compact_mir_function(&mut new_func);
+                let _sr = strength_reduce_mir_function(&mut new_func);
+                if _sr > 0 {
+                    compact_mir_function(&mut new_func);
+                }
+                let has_unreachable = has_reachable_unreachable(&new_func);
                 let cost_model = MrscCostModel::new();
                 let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
                 let sc_cost = cost_model.evaluate_function(&new_func, &stats);
                 let base_score = cost_model.score(&base_cost, MrscObjective::Speed);
                 let sc_score = cost_model.score(&sc_cost, MrscObjective::Speed);
                 let cost_regression = sc_score > base_score;
+                let profitable = is_profitable(&stats, budget, &tree);
+                let fold_profitable = tree.nodes.len() < budget && folds > 0;
+                if std::env::var_os("NUMLANG_DEBUG_DISTILL").is_some() {
+                    eprintln!(
+                        "[distill-debug] fn={} loops_collapsed={} folds={} has_uncollapsed_array_loops={} uncollapsed_knot={} has_unreachable={} cost_regression={} base_score={} sc_score={} profitable={} fold_profitable={} tree_nodes={} budget={}",
+                        func.name,
+                        stats.loops_collapsed,
+                        folds,
+                        has_uncollapsed_array_loops,
+                        uncollapsed_knot,
+                        has_unreachable,
+                        cost_regression,
+                        base_score,
+                        sc_score,
+                        profitable,
+                        fold_profitable,
+                        tree.nodes.len(),
+                        budget,
+                    );
+                }
 
                 if !has_uncollapsed_array_loops
                     && !uncollapsed_knot
                     && !has_unreachable
                     && !cost_regression
-                    && (is_profitable(&stats, budget, &tree)
-                        || (tree.nodes.len() < budget && folds > 0))
+                    && (profitable || fold_profitable)
                 {
-                    let _stmts_removed = compact_mir_function(&mut new_func);
-                    let _sr = strength_reduce_mir_function(&mut new_func);
-                    if _sr > 0 {
-                        compact_mir_function(&mut new_func);
-                    }
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count =
                         new_func.blocks.iter().map(|b| b.statements.len()).sum();
@@ -339,10 +344,7 @@ pub fn supercompile_mir_program_with_cache(
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
                 let uncollapsed_knot = stats.knots_tied > 0;
-                let has_unreachable = best_res
-                    .blocks
-                    .iter()
-                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let has_unreachable = has_reachable_unreachable(&best_res);
                 let cost_model = MrscCostModel::new();
                 let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
                 let sc_cost = cost_model.evaluate_function(&best_res, &stats);
@@ -415,10 +417,7 @@ pub fn supercompile_mir_program_with_cache(
                     let stats = winner.tree.stats.clone();
                     (winner.residual, stats)
                 };
-                let has_unreachable = best_res
-                    .blocks
-                    .iter()
-                    .any(|b| matches!(b.terminator, Terminator::Unreachable));
+                let has_unreachable = has_reachable_unreachable(&best_res);
                 let cost_model = MrscCostModel::new();
                 let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
                 let sc_cost = cost_model.evaluate_function(&best_res, &stats);
@@ -460,6 +459,44 @@ pub fn supercompile_mir_program_with_cache(
     let _prog_sr = strength_reduce_mir_program(program);
 
     total_stats
+}
+
+fn has_reachable_unreachable(func: &MirFunction) -> bool {
+    use std::collections::{HashSet, VecDeque};
+
+    let mut id_to_block: std::collections::HashMap<
+        crate::mir::BasicBlockId,
+        &crate::mir::lower::MirBasicBlock,
+    > = std::collections::HashMap::new();
+    for b in &func.blocks {
+        id_to_block.insert(b.id.clone(), b);
+    }
+
+    let Some(entry) = func.blocks.first().map(|b| b.id.clone()) else {
+        return false;
+    };
+
+    let mut reachable: HashSet<crate::mir::BasicBlockId> = HashSet::new();
+    let mut queue: VecDeque<crate::mir::BasicBlockId> = VecDeque::new();
+    queue.push_back(entry);
+    while let Some(id) = queue.pop_front() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        if let Some(block) = id_to_block.get(&id) {
+            for succ in block.terminator.successors() {
+                if !reachable.contains(&succ) {
+                    queue.push_back(succ);
+                }
+            }
+        }
+    }
+
+    reachable.iter().any(|id| {
+        id_to_block
+            .get(id)
+            .is_some_and(|b| matches!(b.terminator, Terminator::Unreachable))
+    })
 }
 
 fn is_profitable(stats: &SupercompilerStats, budget: usize, tree: &ProcessTree) -> bool {

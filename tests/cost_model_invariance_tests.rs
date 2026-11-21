@@ -4,7 +4,9 @@ use numlang::mir::supercompiler::mrsc::{
     MinCodeSizeObjective, MrscCostModel, MrscCostVector, MrscFallbackReason,
     MrscObjective, MrscProfitabilityContract, MultiResultEngine,
 };
+use numlang::mir::supercompiler::distill::calculate_function_cost;
 use numlang::mir::supercompiler::supercompile_mir_function_with_stats;
+use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::parser::parse;
 use numlang::token::tokenize;
 use numlang::typecheck::typecheck;
@@ -318,4 +320,86 @@ fn test_metamorphic_gate_renaming_field_permutation_loop_bounds() {
         );
         assert_gate_never_slower(&source, &format!("bound {}", bound));
     }
+}
+
+
+#[test]
+fn test_fused_residual_is_cheaper_under_five_dimensional_cost_model() {
+    let source = r#"
+    enum List {
+        Nil,
+        Cons(i64, Box<List>),
+    }
+
+    fn append(xs: List, ys: List) -> List {
+        return match xs {
+            Nil => ys,
+            Cons(h, t) => Cons(h, box(append(deref(t), ys))),
+        };
+    }
+
+    fn append3(xs: List, ys: List, zs: List) -> List {
+        return append(append(xs, ys), zs);
+    }
+
+    fn sum_list(xs: List) -> i64 {
+        return match xs {
+            Nil => 0,
+            Cons(h, t) => h + sum_list(deref(t)),
+        };
+    }
+
+    fn main() -> i64 {
+        let xs: List = Cons(1, box(Nil));
+        let ys: List = Cons(2, box(Nil));
+        let zs: List = Cons(3, box(Nil));
+        return sum_list(append3(xs, ys, zs));
+    }
+    "#;
+
+    let baseline = compile_to_mir(source);
+    let mut fused_program = compile_to_mir(source);
+    supercompile_mir_program_with_mode(&mut fused_program, SupercompileMode::Distill, "size");
+    let fused = fused_program
+        .functions
+        .iter()
+        .find(|f| f.is_distilled && f.name.starts_with("__distill_"))
+        .expect("structural distillation must synthesise a fused residual");
+
+    let model = MrscCostModel::new();
+    let base_cost: usize = ["append"]
+        .iter()
+        .map(|name| {
+            let func = baseline.functions.iter().find(|f| &f.name == name).unwrap();
+            calculate_function_cost(func)
+        })
+        .sum();
+    // The fused residual replaces one round of append's allocations/calls with
+    // a single recursive loop; both the 5D model and the distill cost function
+    // must rank it below the two producer/consumer calls it replaces.
+    let fused_cost = calculate_function_cost(fused);
+    assert!(
+        fused_cost < base_cost * 2,
+        "distill instruction cost {} must be below two producer/consumer calls ({})",
+        fused_cost,
+        base_cost * 2
+    );
+
+    let base_vector = model.evaluate_function(
+        baseline.functions.iter().find(|f| f.name == "append").unwrap(),
+        &SupercompilerStats::default(),
+    );
+    let fused_vector = model.evaluate_function(fused, &SupercompilerStats::default());
+    let base_score = model.score(&base_vector, MrscObjective::Speed);
+    let fused_score = model.score(&fused_vector, MrscObjective::Speed);
+    assert!(
+        fused_score < 2.0 * base_score,
+        "MRSC 5D speed score {} must be below two baseline calls ({})",
+        fused_score,
+        2.0 * base_score
+    );
+    assert!(
+        fused_vector.allocation_count <= 2 * base_vector.allocation_count,
+        "fused residual must not increase allocation sites"
+    );
 }

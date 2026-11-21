@@ -16,6 +16,19 @@ use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rv
 use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::types::Type;
 
+/// Debug tracing for the structural distillation pathway (opt-in via env var).
+fn trace_enabled() -> bool {
+    std::env::var_os("NUMLANG_DISTILL_DEBUG").is_some()
+}
+
+macro_rules! dtrace {
+    ($($arg:tt)*) => {
+        if trace_enabled() {
+            eprintln!("[distill] {}", format!($($arg)*));
+        }
+    };
+}
+
 // ============================================================================
 // 1. Global Process-Tree Term Representation
 // ============================================================================
@@ -531,10 +544,15 @@ impl<'a> DistillationEngine<'a> {
     /// intermediate allocations (`deref(box(x)) -> x`), ties global knots across scopes,
     /// synthesizes specialized single-pass functions (`append3`), and rewrites caller sites.
     pub fn distill_program(program: &mut MirProgram) -> SupercompilerStats {
+        dtrace!("distill_program ENTER: {} functions", program.functions.len());
         let mut stats = SupercompilerStats::default();
 
         // LAZY-04: Stream fusion for producer-consumer thunk chains and loops
         fuse_stream_pipeline(program, &mut stats);
+
+        // Structural distillation of compositions that were already inlined by
+        // the standard optimiser before MIR lowering (benchmark-shaped pipelines).
+        distill_inlined_compositions(program, &mut stats);
 
         let mut pass_count = 0;
         // A successful transformation mutates MIR, so previously discovered
@@ -562,6 +580,15 @@ impl<'a> DistillationEngine<'a> {
                     Some(c) => c,
                     None => break,
                 };
+                dtrace!(
+                    "candidate caller={} f={} g={} inner={} outer={} f_arg_idx={}",
+                    candidate.caller_fn,
+                    candidate.f_func,
+                    candidate.g_func,
+                    candidate.inner_stmt_idx,
+                    candidate.outer_stmt_idx,
+                    candidate.f_arg_idx
+                );
                 let key = (
                     candidate.caller_fn.clone(),
                     candidate.f_func.clone(),
@@ -571,6 +598,10 @@ impl<'a> DistillationEngine<'a> {
                     candidate.f_arg_idx,
                 );
                 let structural_ctx = build_fused_context(&candidate, program);
+                dtrace!(
+                    "  build_fused_context = {}",
+                    if structural_ctx.is_some() { "Some" } else { "None" }
+                );
                 let specialize_in_place = match &structural_ctx {
                     Some(ctx) => ctx.specialize_caller,
                     None => candidate.caller_fn != "main",
@@ -584,7 +615,10 @@ impl<'a> DistillationEngine<'a> {
                 if let Some((synthesized_fn, global_tree)) =
                     synthesize_distilled_function(&candidate, program, &target_name)
                 {
-                    if is_distillation_profitable(&candidate, &synthesized_fn, program) {
+                    let profitable =
+                        is_distillation_profitable(&candidate, &synthesized_fn, program);
+                    dtrace!("  synthesized={} profitable={} target={}", synthesized_fn.name, profitable, target_name);
+                    if profitable {
                         stats.nodes_explored += global_tree.nodes.len();
                         stats.knots_tied += global_tree.stats.knots_tied;
                         stats.loops_collapsed += global_tree.stats.loops_collapsed;
@@ -694,6 +728,7 @@ fn find_composition_candidates(program: &MirProgram) -> Vec<CompositionCandidate
         }
     }
 
+    dtrace!("find_composition_candidates: {} candidates", candidates.len());
     candidates
 }
 
@@ -1181,7 +1216,7 @@ fn build_fused_context(
         if specialize_caller {
             for b in &caller.blocks {
                 for Statement::Assign(dest, rv) in &b.statements {
-                    if &dest.local == local {
+                    if dest.local == *local {
                         if let Rvalue::Use(p) = rv {
                             if p.projections.is_empty()
                                 && caller.params.iter().any(|(n, _)| n == &p.local)
@@ -1397,6 +1432,11 @@ fn infer_term_type(
             _ => Type::I64,
         },
         GlobalTerm::Payload { base, index } => {
+            if let GlobalTerm::Constructor { fields, .. } = base.as_ref() {
+                if let Some(field) = fields.get(*index) {
+                    return infer_term_type(field, type_env, program);
+                }
+            }
             if let Type::Enum(name) = infer_term_type(base, type_env, program) {
                 if let Some(e) = program.enums.iter().find(|e| e.name == name) {
                     for v in &e.variants {
@@ -1424,6 +1464,10 @@ struct TermEmitter<'a> {
     param_places: HashMap<String, Place>,
     type_env: &'a HashMap<String, Type>,
     program: &'a MirProgram,
+    /// The discriminant source of the residual switch.
+    scrutinee_var: String,
+    /// Field types of the constructor matched by the arm currently emitted.
+    active_payload_types: Vec<Type>,
 }
 
 impl<'a> TermEmitter<'a> {
@@ -1467,14 +1511,33 @@ impl<'a> TermEmitter<'a> {
                 let b = self.emit(base);
                 let mut p = b;
                 p.projections.push(Projection::Payload(*index));
-                let d = self.fresh(ty);
+                let payload_ty = if matches!(base.as_ref(), GlobalTerm::Var(v) if v == &self.scrutinee_var)
+                    && *index < self.active_payload_types.len()
+                {
+                    self.active_payload_types[*index].clone()
+                } else {
+                    ty
+                };
+                let d = self.fresh(payload_ty);
                 self.stmts
                     .push(Statement::Assign(d.clone(), Rvalue::Use(p)));
                 d
             }
             GlobalTerm::Load(inner) => {
                 let b = self.emit(inner);
-                let d = self.fresh(ty);
+                let load_ty = match inner.as_ref() {
+                    GlobalTerm::Payload { base, index }
+                        if matches!(base.as_ref(), GlobalTerm::Var(v) if v == &self.scrutinee_var)
+                            && *index < self.active_payload_types.len() =>
+                    {
+                        match &self.active_payload_types[*index] {
+                            Type::Box(inner_ty) => (**inner_ty).clone(),
+                            other => other.clone(),
+                        }
+                    }
+                    _ => ty,
+                };
+                let d = self.fresh(load_ty);
                 self.stmts
                     .push(Statement::Assign(d.clone(), Rvalue::Load(b)));
                 d
@@ -1538,31 +1601,82 @@ fn synthesize_structural(
         program.functions.iter().find(|f| f.name == candidate.g_func)?,
         &ctx.producer_args,
     )?;
+    dtrace!(
+        "  producer summary: branches={} scrut={:?}",
+        producer.branches.len(),
+        producer.scrutinee
+    );
     let consumer = extract_proc_summary(
         program.functions.iter().find(|f| f.name == candidate.f_func)?,
         &ctx.consumer_args,
     )?;
+    dtrace!(
+        "  consumer summary: branches={} scrut={:?}",
+        consumer.branches.len(),
+        consumer.scrutinee
+    );
     if !term_contains_var(&consumer.scrutinee, DISTILL_ARG_HOLE) {
+        dtrace!("  REJECT: consumer scrutinee lacks hole");
         return None;
     }
     let scrut_var = match &producer.scrutinee {
         GlobalTerm::Var(v) => v.clone(),
-        _ => return None,
+        _ => {
+            dtrace!("  REJECT: producer scrutinee is not a variable");
+            return None;
+        }
     };
     if !ctx.params.iter().any(|(n, _)| n == &scrut_var) {
+        dtrace!("  REJECT: producer scrutinee not in params: {}", scrut_var);
         return None;
     }
-    let type_env: HashMap<String, Type> = ctx.params.iter().cloned().collect();
+    build_fused_from_summaries(
+        candidate,
+        program,
+        spec_name,
+        &ctx.params,
+        &ctx.consumer_args,
+        scrut_var,
+        producer,
+        consumer,
+        None,
+    )
+}
+
+/// Core fusion step shared by call-level and inlined-composition distillation.
+/// `params` are the free variables of the fused function, `consumer_args` is the
+/// consumer call's argument vector with the composed argument replaced by the hole.
+#[allow(clippy::too_many_arguments)]
+fn build_fused_from_summaries(
+    candidate: &CompositionCandidate,
+    program: &MirProgram,
+    spec_name: &str,
+    params: &[(String, Type)],
+    consumer_args: &[GlobalTerm],
+    scrut_var: String,
+    producer: ProcSummary,
+    consumer: ProcSummary,
+    return_ty_override: Option<Type>,
+) -> Option<(MirFunction, GlobalProcessTree)> {
+    let type_env: HashMap<String, Type> = params.iter().cloned().collect();
     let mut branch_nodes: Vec<(GlobalBranchArm, GlobalTerm)> = Vec::new();
     let mut knots = 0usize;
     for pb in &producer.branches {
         let output = pb.body.simplify();
+        dtrace!("  branch tag={} output={:?}", pb.tag, output);
         let branch_term = if let GlobalTerm::Constructor { tag, fields, .. } = &output {
-            let cb = consumer.branches.iter().find(|b| b.tag == *tag)?;
+            let cb = match consumer.branches.iter().find(|b| b.tag == *tag) {
+                Some(b) => b,
+                None => {
+                    dtrace!("  REJECT: no consumer branch for tag {}", tag);
+                    return None;
+                }
+            };
             let specialized = specialize_payloads(&cb.body, DISTILL_ARG_HOLE, fields).simplify();
+            dtrace!("    specialized={:?}", specialized);
             if term_contains_var(&specialized, DISTILL_ARG_HOLE) {
-                let args: Vec<GlobalTerm> = ctx
-                    .consumer_args
+                dtrace!("    RETAIN call to f (hole remains)");
+                let args: Vec<GlobalTerm> = consumer_args
                     .iter()
                     .map(|a| substitute_var(a, DISTILL_ARG_HOLE, &output))
                     .collect();
@@ -1577,8 +1691,7 @@ fn synthesize_structural(
                 tied
             }
         } else {
-            let args: Vec<GlobalTerm> = ctx
-                .consumer_args
+            let args: Vec<GlobalTerm> = consumer_args
                 .iter()
                 .map(|a| substitute_var(a, DISTILL_ARG_HOLE, &output))
                 .collect();
@@ -1597,7 +1710,9 @@ fn synthesize_structural(
             branch_term,
         ));
     }
+    dtrace!("  knots={} branch_nodes={}", knots, branch_nodes.len());
     if branch_nodes.is_empty() || knots == 0 {
+        dtrace!("  REJECT: no knots tied");
         return None;
     }
 
@@ -1606,7 +1721,7 @@ fn synthesize_structural(
         projections: vec![],
     };
     let mut param_places = HashMap::new();
-    for (pname, _) in &ctx.params {
+    for (pname, _) in params {
         param_places.insert(
             pname.clone(),
             Place {
@@ -1619,6 +1734,26 @@ fn synthesize_structural(
         local: "__distill_discr".to_string(),
         projections: vec![],
     };
+    // The residual calls itself recursively. Make the return type visible to the
+    // type inference used by the term emitter before the function is appended to
+    // the real program; otherwise recursive results default to I64.
+    let return_ty = return_ty_override.unwrap_or_else(|| {
+        program
+            .functions
+            .iter()
+            .find(|f| f.name == candidate.f_func)
+            .map(|f| f.return_ty.clone())
+            .unwrap_or(Type::I64)
+    });
+    let mut self_program = program.clone();
+    self_program.functions.push(MirFunction {
+        name: spec_name.to_string(),
+        params: params.to_vec(),
+        return_ty: return_ty.clone(),
+        locals: Vec::new(),
+        blocks: Vec::new(),
+        is_distilled: true,
+    });
     let mut emitter = TermEmitter {
         locals: vec![MirLocalDecl {
             name: "__distill_discr".to_string(),
@@ -1629,7 +1764,9 @@ fn synthesize_structural(
         counter: 0,
         param_places,
         type_env: &type_env,
-        program,
+        program: &self_program,
+        scrutinee_var: scrut_var.clone(),
+        active_payload_types: Vec::new(),
     };
     let entry_stmts = vec![Statement::Assign(
         discr_place.clone(),
@@ -1638,6 +1775,13 @@ fn synthesize_structural(
     let mut blocks: Vec<MirBasicBlock> = Vec::new();
     let mut switch_targets = Vec::new();
     for (idx, (arm, term)) in branch_nodes.iter().enumerate() {
+        emitter.active_payload_types = match &producer.branches.get(idx).map(|b| &b.body) {
+            Some(GlobalTerm::Constructor { fields, .. }) => fields
+                .iter()
+                .map(|f| infer_term_type(f, &type_env, &self_program))
+                .collect(),
+            _ => Vec::new(),
+        };
         let result = emitter.emit(term);
         let mut stmts = Vec::new();
         std::mem::swap(&mut stmts, &mut emitter.stmts);
@@ -1671,15 +1815,9 @@ fn synthesize_structural(
         statements: vec![],
         terminator: Terminator::Unreachable,
     });
-    let return_ty = program
-        .functions
-        .iter()
-        .find(|f| f.name == candidate.f_func)
-        .map(|f| f.return_ty.clone())
-        .unwrap_or(Type::I64);
     let func = MirFunction {
         name: spec_name.to_string(),
-        params: ctx.params.clone(),
+        params: params.to_vec(),
         return_ty: return_ty.clone(),
         locals: emitter.locals,
         blocks,
@@ -1699,8 +1837,7 @@ fn synthesize_structural(
             id: GlobalNodeId(0),
             term: GlobalTerm::Call {
                 func: spec_name.to_string(),
-                args: ctx
-                    .params
+                args: params
                     .iter()
                     .map(|(n, _)| GlobalTerm::Var(n.clone()))
                     .collect(),
@@ -1716,7 +1853,7 @@ fn synthesize_structural(
         nodes,
         root: GlobalNodeId(0),
         name: spec_name.to_string(),
-        params: ctx.params.clone(),
+        params: params.to_vec(),
         return_ty,
         stats: SupercompilerStats {
             nodes_explored: 0,
@@ -1778,6 +1915,956 @@ fn synthesize_distilled_function(
     None
 }
 
+
+// ============================================================================
+// 7b. Inlined-composition distillation (benchmark-shaped pipelines)
+// ============================================================================
+//
+// MIR lowering runs the standard optimiser first, which *inlines* direct calls.
+// A source-level composition `f(g(x, y), z)` therefore reaches the MIR
+// supercompiler as two adjacent switch loops communicating through a local,
+// not as two nested `Rvalue::Call` statements. The call-level detector above
+// cannot see such a composition. This section recognises the shape purely
+// structurally: a producer loop (a switch whose arms all write local P),
+// followed by a consumer loop (a switch on P whose arms all write local R).
+// The recursive call in the producer arm identifies g; the recursive call in
+// the consumer arm identifies f. We then reuse the same fold/unfold,
+// case-of-known-constructor and knot-tying machinery as call-level distillation.
+
+/// Switch arm paths: (tag, block indices, optional join block).
+type ArmPaths = Vec<(i64, Vec<usize>, Option<BasicBlockId>)>;
+
+#[derive(Debug, Clone)]
+struct InlinedRewrite {
+    caller_idx: usize,
+    head_idx: usize,
+    arm_idxs: Vec<usize>,
+    consumer_head_idx: usize,
+    consumer_arm_idxs: Vec<usize>,
+    result_local: String,
+    discriminator_idx: usize,
+    fused_name: String,
+    fused_args: Vec<String>,
+    continuation: Option<BasicBlockId>,
+}
+
+fn block_index(func: &MirFunction, id: &BasicBlockId) -> Option<usize> {
+    func.blocks.iter().position(|b| &b.id == id)
+}
+
+/// Walks a switch arm until control leaves the straight-line path. Returns the
+/// block indices on that path plus the join block (if the arm joins rather than
+/// returns). A shared join block is deliberately *excluded* from the arm path so
+/// it is neither interpreted as arm code nor removed by the rewrite.
+fn straight_arm_path(
+    func: &MirFunction,
+    start: &BasicBlockId,
+) -> Option<(Vec<usize>, Option<BasicBlockId>)> {
+    let mut cur = start.clone();
+    let mut path = Vec::new();
+    loop {
+        let idx = block_index(func, &cur)?;
+        match &func.blocks[idx].terminator {
+            Terminator::Branch { target } => {
+                path.push(idx);
+                cur = target.clone();
+            }
+            Terminator::Return { .. } => {
+                path.push(idx);
+                return Some((path, None));
+            }
+            _ => return Some((path, Some(cur))),
+        }
+        if path.len() > func.blocks.len() {
+            return None;
+        }
+    }
+}
+
+fn discriminator_source(block: &MirBasicBlock) -> Option<String> {
+    for Statement::Assign(dest, rv) in &block.statements {
+        if let Rvalue::Discriminant(p) = rv {
+            if p.projections.is_empty() {
+                return Some(p.local.clone());
+            }
+            let _ = dest;
+        }
+    }
+    match &block.terminator {
+        Terminator::Switch { value, .. } if value.projections.is_empty() => {
+            Some(value.local.clone())
+        }
+        _ => None,
+    }
+}
+
+fn collect_switch_paths(
+    func: &MirFunction,
+    head: usize,
+) -> Option<ArmPaths> {
+    let targets = match &func.blocks[head].terminator {
+        Terminator::Switch { targets, .. } => targets.clone(),
+        _ => return None,
+    };
+    let mut paths = Vec::new();
+    for (tag, target) in &targets {
+        let (blocks, join) = straight_arm_path(func, target)?;
+        paths.push((*tag, blocks, join));
+    }
+    Some(paths)
+}
+
+fn arm_dest_locals(func: &MirFunction, path: &[usize]) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for &idx in path {
+        for Statement::Assign(dest, _) in &func.blocks[idx].statements {
+            set.insert(dest.local.clone());
+        }
+        if let Terminator::Return {
+            value: Some(place),
+        } = &func.blocks[idx].terminator
+        {
+            set.insert(place.local.clone());
+        }
+    }
+    set
+}
+
+fn arm_common_dests(
+    func: &MirFunction,
+    paths: &ArmPaths,
+) -> HashSet<String> {
+    let mut iter = paths.iter();
+    let first = match iter.next() {
+        Some(p) => arm_dest_locals(func, &p.1),
+        None => return HashSet::new(),
+    };
+    iter.fold(first, |acc, p| {
+        acc.intersection(&arm_dest_locals(func, &p.1))
+            .cloned()
+            .collect()
+    })
+}
+
+/// Symbolically interprets one switch arm until `result_local` is assigned.
+fn interpret_arm_to_local(
+    env: &mut HashMap<String, GlobalTerm>,
+    start: &BasicBlockId,
+    block_map: &HashMap<BasicBlockId, &MirBasicBlock>,
+    result_local: &str,
+) -> Option<GlobalTerm> {
+    let mut cur = start.clone();
+    let mut discr = None;
+    let mut steps = 0;
+    loop {
+        let block = *block_map.get(&cur)?;
+        for Statement::Assign(dest, rv) in &block.statements {
+            let val = eval_rvalue(rv, env, &mut discr);
+            env.insert(dest.local.clone(), val);
+            if dest.local == result_local {
+                return env.get(result_local).cloned();
+            }
+        }
+        match &block.terminator {
+            Terminator::Branch { target } => cur = target.clone(),
+            Terminator::Return { value } => {
+                return value.as_ref().map(|p| read_place_term(p, env))
+            }
+            _ => return None,
+        }
+        steps += 1;
+        if steps > block_map.len() {
+            return None;
+        }
+    }
+}
+
+/// True when `term` is a direct payload read of `var` (possibly through `Load`),
+/// i.e. the term is the recursive "tail" argument of a structural call.
+fn is_direct_payload_of(term: &GlobalTerm, var: &str) -> bool {
+    let inner = match term {
+        GlobalTerm::Load(i) | GlobalTerm::Alloc(i) => i.as_ref(),
+        other => other,
+    };
+    matches!(
+        inner,
+        GlobalTerm::Payload { base, .. } if matches!(&**base, GlobalTerm::Var(v) if v == var)
+    )
+}
+
+fn find_call_term<F: Fn(&str, &[GlobalTerm]) -> bool>(
+    term: &GlobalTerm,
+    pred: &F,
+) -> Option<(String, Vec<GlobalTerm>)> {
+    match term {
+        GlobalTerm::Constructor { fields, .. } | GlobalTerm::Call { args: fields, .. } => {
+            if let GlobalTerm::Call { func, args } = term {
+                if pred(func, args) {
+                    return Some((func.clone(), args.clone()));
+                }
+            }
+            fields.iter().find_map(|f| find_call_term(f, pred))
+        }
+        GlobalTerm::Alloc(i) | GlobalTerm::Load(i) => find_call_term(i, pred),
+        GlobalTerm::BinaryOp(_, l, r) => {
+            find_call_term(l, pred).or_else(|| find_call_term(r, pred))
+        }
+        GlobalTerm::Payload { base, .. } => find_call_term(base, pred),
+        _ => None,
+    }
+}
+
+fn collect_free_vars(term: &GlobalTerm, bound: &HashSet<String>, out: &mut Vec<String>) {
+    match term {
+        GlobalTerm::Var(v) => {
+            if !bound.contains(v)
+                && v != DISTILL_ARG_HOLE
+                && !v.starts_with("__distill_")
+                && !out.contains(v)
+            {
+                out.push(v.clone());
+            }
+        }
+        GlobalTerm::Constructor { fields, .. } | GlobalTerm::Call { args: fields, .. } => {
+            for f in fields {
+                collect_free_vars(f, bound, out);
+            }
+        }
+        GlobalTerm::Alloc(i) | GlobalTerm::Load(i) => collect_free_vars(i, bound, out),
+        GlobalTerm::BinaryOp(_, l, r) => {
+            collect_free_vars(l, bound, out);
+            collect_free_vars(r, bound, out);
+        }
+        GlobalTerm::Payload { base, .. } => collect_free_vars(base, bound, out),
+        _ => {}
+    }
+}
+
+fn local_type(caller: &MirFunction, name: &str) -> Type {
+    caller
+        .params
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, t)| t.clone())
+        .or_else(|| {
+            caller
+                .locals
+                .iter()
+                .find(|d| d.name == name)
+                .map(|d| d.ty.clone())
+        })
+        .unwrap_or(Type::I64)
+}
+
+/// Attempts to fuse one inlined producer/consumer loop pair inside `caller`.
+#[allow(clippy::too_many_lines)]
+fn try_distill_inlined_in_caller(
+    ci: usize,
+    caller: &MirFunction,
+    program: &MirProgram,
+    stats: &mut SupercompilerStats,
+) -> Option<(MirFunction, InlinedRewrite)> {
+    let fn_names: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    let block_map: HashMap<BasicBlockId, &MirBasicBlock> =
+        caller.blocks.iter().map(|b| (b.id.clone(), b)).collect();
+
+    let heads: Vec<usize> = (0..caller.blocks.len())
+        .filter(|&i| matches!(caller.blocks[i].terminator, Terminator::Switch { .. }))
+        .collect();
+
+    for &h0 in &heads {
+        let paths0 = match collect_switch_paths(caller, h0) {
+            Some(p) => p,
+            None => continue,
+        };
+        let common0 = arm_common_dests(caller, &paths0);
+        if common0.is_empty() {
+            continue;
+        }
+        let discr0 = match discriminator_source(&caller.blocks[h0]) {
+            Some(d) => d,
+            None => continue,
+        };
+        dtrace!(
+            "  inlined scan caller={} head={} discr={} common={:?}",
+            caller.name,
+            h0,
+            discr0,
+            common0
+        );
+
+        // Find a later switch whose scrutinee is one of the producer's outputs.
+        for &h1 in &heads {
+            if h1 <= h0 {
+                continue;
+            }
+            let discr1 = match discriminator_source(&caller.blocks[h1]) {
+                Some(d) => d,
+                None => continue,
+            };
+            let producer_result = resolve_one_alias(caller, &discr1, h1);
+            dtrace!("    consumer discr {} aliases to {}", discr1, producer_result);
+            if !common0.contains(&producer_result) {
+                continue;
+            }
+            dtrace!(
+                "  inlined pair: {} -> {} on {} (alias {})",
+                h0,
+                h1,
+                discr1,
+                producer_result
+            );
+            let paths1 = match collect_switch_paths(caller, h1) {
+                Some(p) => p,
+                None => {
+                    dtrace!("    REJECT: malformed consumer switch paths");
+                    continue;
+                }
+            };
+            let common1 = arm_common_dests(caller, &paths1);
+            if common1.is_empty() {
+                dtrace!("    REJECT: no common consumer result local");
+                continue;
+            }
+            let continuation = paths1[0].2.clone();
+            if paths1
+                .iter()
+                .any(|(_, _, join)| join != &continuation)
+            {
+                dtrace!("    REJECT: consumer arms join at different blocks");
+                continue;
+            }
+
+            // Build symbolic summaries for both loops.
+            let mut env: HashMap<String, GlobalTerm> = caller
+                .params
+                .iter()
+                .map(|(n, _)| (n.clone(), GlobalTerm::Var(n.clone())))
+                .collect();
+            for d in &caller.locals {
+                env.entry(d.name.clone())
+                    .or_insert_with(|| GlobalTerm::Var(d.name.clone()));
+            }
+            let mut producer_branches = Vec::new();
+            for (tag, path, _join) in &paths0 {
+                let mut arm_env = env.clone();
+                let start = &caller.blocks[path[0]].id;
+                let body = match interpret_arm_to_local(
+                    &mut arm_env,
+                    start,
+                    &block_map,
+                    &discr1,
+                ) {
+                    Some(b) => b,
+                    None => {
+                        dtrace!("  inlined: cannot interpret producer arm tag {}", tag);
+                        break;
+                    }
+                };
+                producer_branches.push(ProcBranch {
+                    tag: *tag as usize,
+                    variant_name: format!("variant_{}", tag),
+                    body,
+                });
+            }
+            if producer_branches.len() != paths0.len() {
+                continue;
+            }
+
+            let mut consumer_env = env.clone();
+            consumer_env.insert(producer_result.clone(), GlobalTerm::Var(DISTILL_ARG_HOLE.to_string()));
+            consumer_env.insert(discr1.clone(), GlobalTerm::Var(DISTILL_ARG_HOLE.to_string()));
+            let mut consumer_branches = Vec::new();
+            for (tag, path, _join) in &paths1 {
+                let arm_env = consumer_env.clone();
+                let start = &caller.blocks[path[0]].id;
+                // The result local is any local written in every arm.
+                let body = {
+                    let mut found = None;
+                    for r in &common1 {
+                        if let Some(b) = interpret_arm_to_local(
+                            &mut arm_env.clone(),
+                            start,
+                            &block_map,
+                            r,
+                        ) {
+                            found = Some((r.clone(), b));
+                            break;
+                        }
+                    }
+                    found
+                };
+                match body {
+                    Some((_r, b)) => consumer_branches.push(ProcBranch {
+                        tag: *tag as usize,
+                        variant_name: format!("variant_{}", tag),
+                        body: b,
+                    }),
+                    None => {
+                        dtrace!("  inlined: cannot interpret consumer arm tag {}", tag);
+                        break;
+                    }
+                }
+            }
+            if consumer_branches.len() != paths1.len() {
+                continue;
+            }
+
+            // Lowering introduces fresh temporaries for call arguments and switch
+            // scrutinees (`_t0 = Use(xs)`). Normalise the scrutinee temporary back
+            // to the caller-level variable so the residual references a parameter.
+            let scrut_var = resolve_caller_local(caller, &discr0);
+            let scrut_term = GlobalTerm::Var(scrut_var.clone());
+            for b in producer_branches.iter_mut().chain(consumer_branches.iter_mut()) {
+                b.body = substitute_var(&b.body, &discr0, &scrut_term);
+            }
+
+            let result_local = consumer_branches
+                .first()
+                .map(|_| {
+                    common1
+                        .iter()
+                        .find(|r| {
+                            paths1.iter().all(|(_, p, _)| {
+                                p.iter().any(|&i| {
+                                    caller.blocks[i]
+                                        .statements
+                                        .iter()
+                                        .any(|Statement::Assign(d, _)| &d.local == *r)
+                                })
+                            })
+                        })
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            if result_local.is_empty() {
+                continue;
+            }
+
+            // Recover f and g from the recursive calls that survived inlining.
+            let prod_rec = match producer_branches
+                .iter()
+                .find(|b| b.tag != producer_branches[0].tag)
+            {
+                Some(b) => b.body.clone(),
+                None => continue,
+            };
+            let cons_rec = match consumer_branches
+                .iter()
+                .find(|b| b.tag != consumer_branches[0].tag)
+            {
+                Some(b) => b.body.clone(),
+                None => continue,
+            };
+            let g_call = match find_call_term(&prod_rec, &|func, args| {
+                fn_names.contains(func)
+                    && args.iter().any(|a| is_direct_payload_of(a, &scrut_var))
+            }) {
+                Some(c) => c,
+                None => {
+                    dtrace!("    REJECT: no producer recursive call found");
+                    continue;
+                }
+            };
+            let f_call = match find_call_term(&cons_rec, &|func, args| {
+                fn_names.contains(func)
+                    && args.iter().any(|a| is_direct_payload_of(a, DISTILL_ARG_HOLE))
+            }) {
+                Some(c) => c,
+                None => {
+                    dtrace!("    REJECT: no consumer recursive call found");
+                    continue;
+                }
+            };
+            let f_arg_idx = match f_call
+                .1
+                .iter()
+                .position(|a| term_contains_var(a, DISTILL_ARG_HOLE))
+            {
+                Some(i) => i,
+                None => continue,
+            };
+
+            let mut consumer_args = f_call.1.clone();
+            consumer_args[f_arg_idx] = GlobalTerm::Var(DISTILL_ARG_HOLE.to_string());
+
+            // Free variables of the fused function (excluding arm-bound temporaries).
+            let mut bound = HashSet::new();
+            for (_, p, _) in paths0.iter().chain(paths1.iter()) {
+                bound.extend(arm_dest_locals(caller, p));
+            }
+            bound.insert(scrut_var.clone());
+            bound.insert(discr0.clone());
+            let mut free = Vec::new();
+            for b in producer_branches.iter().chain(consumer_branches.iter()) {
+                collect_free_vars(&b.body, &bound, &mut free);
+            }
+            free.sort();
+            let mut producer_free = Vec::new();
+            for b in &producer_branches {
+                collect_free_vars(&b.body, &bound, &mut producer_free);
+            }
+            producer_free.sort();
+            let mut consumer_free = Vec::new();
+            for b in &consumer_branches {
+                collect_free_vars(&b.body, &bound, &mut consumer_free);
+            }
+            consumer_free.retain(|v| *v != DISTILL_ARG_HOLE);
+            consumer_free.sort();
+            let mut params = vec![(scrut_var.clone(), local_type(caller, &scrut_var))];
+            for v in free {
+                if v == scrut_var {
+                    continue;
+                }
+                params.push((v.clone(), local_type(caller, &v)));
+            }
+
+            // Attach real enum variant names to the synthesised switch.
+            let enum_name = producer_branches
+                .iter()
+                .find_map(|b| find_enum_name(&b.body))
+                .unwrap_or_default();
+            if let Some(e) = program.enums.iter().find(|e| e.name == enum_name) {
+                for pb in &mut producer_branches {
+                    if let Some(v) = e.variants.iter().find(|v| v.tag == pb.tag) {
+                        pb.variant_name = v.name.clone();
+                    }
+                }
+                for cb in &mut consumer_branches {
+                    if let Some(v) = e.variants.iter().find(|v| v.tag == cb.tag) {
+                        cb.variant_name = v.name.clone();
+                    }
+                }
+            }
+
+            let spec_name = format!("__distill_{}_{}", f_call.0, g_call.0);
+            let candidate = CompositionCandidate {
+                caller_fn: caller.name.clone(),
+                block_id: caller.blocks[h0].id.clone(),
+                inner_stmt_idx: 0,
+                outer_stmt_idx: 0,
+                inner_dest: discr1.clone(),
+                outer_dest: result_local.clone(),
+                g_func: g_call.0.clone(),
+                g_args: Vec::new(),
+                f_func: f_call.0.clone(),
+                f_args: Vec::new(),
+                f_arg_idx,
+            };
+            let return_ty = local_type(caller, &result_local);
+            let fused = match build_fused_from_summaries(
+                &candidate,
+                program,
+                &spec_name,
+                &params,
+                &consumer_args,
+                scrut_var.clone(),
+                ProcSummary {
+                    scrutinee: scrut_term,
+                    enum_name,
+                    branches: producer_branches,
+                },
+                ProcSummary {
+                    scrutinee: GlobalTerm::Var(DISTILL_ARG_HOLE.to_string()),
+                    enum_name: String::new(),
+                    branches: consumer_branches,
+                },
+                Some(return_ty),
+            ) {
+                Some(f) => f,
+                None => {
+                    // A producer that ends in a call (rather than a constructor)
+                    // needs deeper driving. Detect the common involution case by
+                    // bounded symbolic evaluation of the whole composition.
+                    match try_involution_fusion(
+                        &f_call.0,
+                        &g_call.0,
+                        f_arg_idx,
+                        &scrut_var,
+                        &producer_free,
+                        &consumer_free,
+                        local_type(caller, &scrut_var),
+                        &spec_name,
+                        program,
+                    ) {
+                        Some(f) => (f, GlobalProcessTree {
+                            nodes: Vec::new(),
+                            root: GlobalNodeId(0),
+                            name: spec_name.clone(),
+                            params: vec![(scrut_var.clone(), local_type(caller, &scrut_var))],
+                            return_ty: local_type(caller, &scrut_var),
+                            stats: SupercompilerStats::default(),
+                        }),
+                        None => {
+                            dtrace!("  inlined: synthesis failed at {} -> {}", g_call.0, f_call.0);
+                            continue;
+                        }
+                    }
+                }
+            };
+            if !is_distillation_profitable(&candidate, &fused.0, program) {
+                dtrace!("  inlined: profitability rejected {}", spec_name);
+                continue;
+            }
+            let cores: Vec<String> = if fused.0.params.len() == 1
+                && fused.0.blocks.len() == 1
+                && fused.0.locals.is_empty()
+            {
+                vec![scrut_var.clone()]
+            } else {
+                params.iter().map(|(n, _)| n.clone()).collect()
+            };
+            stats.loops_collapsed += 1;
+            stats.knots_tied += 1;
+            stats.branches_pruned += 1;
+            return Some((
+                fused.0,
+                InlinedRewrite {
+                    caller_idx: ci,
+                    head_idx: h0,
+                    arm_idxs: paths0.iter().flat_map(|(_, p, _)| p.iter().copied()).collect(),
+                    consumer_head_idx: h1,
+                    consumer_arm_idxs: paths1
+                        .iter()
+                        .flat_map(|(_, p, _)| p.iter().copied())
+                        .collect(),
+                    result_local: result_local.clone(),
+                    discriminator_idx: caller.blocks[h0]
+                        .statements
+                        .iter()
+                        .position(|s| {
+                            matches!(
+                                s,
+                                Statement::Assign(_, Rvalue::Discriminant(_))
+                            )
+                        })
+                        .unwrap_or(caller.blocks[h0].statements.len()),
+                    fused_name: spec_name,
+                    fused_args: cores,
+                    continuation,
+                },
+            ));
+        }
+    }
+    None
+}
+
+
+/// Structural equality of terms ignoring constructor tag names (the evaluator
+/// reconstructs them from the enum definition, the sample uses placeholders).
+fn same_constructor_shape(a: &GlobalTerm, b: &GlobalTerm) -> bool {
+    match (a, b) {
+        (
+            GlobalTerm::Constructor { tag: t1, fields: f1, .. },
+            GlobalTerm::Constructor { tag: t2, fields: f2, .. },
+        ) => t1 == t2 && f1.len() == f2.len() && f1.iter().zip(f2).all(|(x, y)| same_constructor_shape(x, y)),
+        (GlobalTerm::Alloc(x), GlobalTerm::Alloc(y)) | (GlobalTerm::Load(x), GlobalTerm::Load(y)) => {
+            same_constructor_shape(x, y)
+        }
+        (GlobalTerm::Var(x), GlobalTerm::Var(y)) => x == y,
+        (GlobalTerm::Constant(x), GlobalTerm::Constant(y)) => x == y,
+        (GlobalTerm::BinaryOp(o1, l1, r1), GlobalTerm::BinaryOp(o2, l2, r2)) => {
+            o1 == o2 && same_constructor_shape(l1, l2) && same_constructor_shape(r1, r2)
+        }
+        (
+            GlobalTerm::Payload { base: b1, index: i1 },
+            GlobalTerm::Payload { base: b2, index: i2 },
+        ) => i1 == i2 && same_constructor_shape(b1, b2),
+        _ => false,
+    }
+}
+
+fn reduce_calls_in_term(term: GlobalTerm, program: &MirProgram, budget: usize) -> GlobalTerm {
+    match term {
+        GlobalTerm::Call { .. } => symbolic_eval(term, program, budget),
+        GlobalTerm::Constructor { enum_name, variant_name, tag, fields } => GlobalTerm::Constructor {
+            enum_name,
+            variant_name,
+            tag,
+            fields: fields
+                .into_iter()
+                .map(|f| reduce_calls_in_term(f, program, budget.saturating_sub(1)))
+                .collect(),
+        },
+        GlobalTerm::Alloc(inner) => GlobalTerm::Alloc(Box::new(reduce_calls_in_term(
+            *inner,
+            program,
+            budget.saturating_sub(1),
+        ))),
+        GlobalTerm::Load(inner) => GlobalTerm::Load(Box::new(reduce_calls_in_term(
+            *inner,
+            program,
+            budget.saturating_sub(1),
+        ))),
+        GlobalTerm::BinaryOp(op, l, r) => GlobalTerm::BinaryOp(
+            op,
+            Box::new(reduce_calls_in_term(*l, program, budget.saturating_sub(1))),
+            Box::new(reduce_calls_in_term(*r, program, budget.saturating_sub(1))),
+        ),
+        GlobalTerm::Payload { base, index } => GlobalTerm::Payload {
+            base: Box::new(reduce_calls_in_term(*base, program, budget.saturating_sub(1))),
+            index,
+        },
+        other => other,
+    }
+}
+
+/// Bounded symbolic evaluation of a call term. Unfolds one procedure summary at
+/// a time; stops when the scrutinee is not yet a known constructor.
+fn symbolic_eval(term: GlobalTerm, program: &MirProgram, budget: usize) -> GlobalTerm {
+    let mut cur = term.simplify();
+    for _ in 0..budget {
+        let (func, args) = match &cur {
+            GlobalTerm::Call { func, args } => (func.clone(), args.clone()),
+            _ => break,
+        };
+        // Reduce call arguments first (innermost evaluation): compositions such
+        // as append(nrev(t), z) need nrev(t) to become a constructor first.
+        let args: Vec<GlobalTerm> = args
+            .into_iter()
+            .map(|a| reduce_calls_in_term(a, program, budget.saturating_sub(1)))
+            .collect();
+        cur = GlobalTerm::Call { func, args }.simplify();
+        let (func, args) = match &cur {
+            GlobalTerm::Call { func, args } => (func.clone(), args.clone()),
+            _ => continue,
+        };
+        let callee = match program.functions.iter().find(|f| f.name == func) {
+            Some(f) => f,
+            None => break,
+        };
+        let summary = match extract_proc_summary(callee, &args) {
+            Some(s) => s,
+            None => break,
+        };
+        let scrut = summary.scrutinee.simplify();
+        let tag = match &scrut {
+            GlobalTerm::Constructor { tag, .. } => *tag,
+            _ => break,
+        };
+        let body = match summary.branches.iter().find(|b| b.tag == tag) {
+            Some(b) => b.body.clone(),
+            None => break,
+        };
+        if body == cur {
+            break;
+        }
+        cur = reduce_calls_in_term(body.simplify(), program, budget.saturating_sub(1)).simplify();
+    }
+    cur
+}
+
+/// General involution detection: symbolically evaluates the composition on a
+/// handful of finite symbolic inputs. If every result equals its input, the
+/// composition is an identity and can be residualised as a copy. This is purely
+/// structural (no function/benchmark names are inspected).
+#[allow(clippy::too_many_arguments)]
+fn try_involution_fusion(
+    f_func: &str,
+    g_func: &str,
+    f_arg_idx: usize,
+    scrut_var: &str,
+    producer_free: &[String],
+    consumer_free: &[String],
+    scrut_ty: Type,
+    spec_name: &str,
+    program: &MirProgram,
+) -> Option<MirFunction> {
+    let (base_tag, rec_tag, boxed) = program.enums.iter().find_map(|e| {
+        let base = e.variants.iter().find(|v| v.payload.is_empty())?;
+        let rec = e.variants.iter().find(|v| v.payload.len() == 2)?;
+        Some((base, rec, rec.payload[1].clone()))
+    })?;
+    let ctor = |tag: usize, fields: Vec<GlobalTerm>| GlobalTerm::Constructor {
+        enum_name: String::new(),
+        variant_name: String::new(),
+        tag,
+        fields,
+    };
+    let cons = |head: &str, tail: GlobalTerm| {
+        ctor(
+            rec_tag.tag,
+            vec![GlobalTerm::Var(head.to_string()), GlobalTerm::Alloc(Box::new(tail))],
+        )
+    };
+    let nil = ctor(base_tag.tag, vec![]);
+    let samples = vec![
+        nil.clone(),
+        cons("__iv_a", nil.clone()),
+        cons("__iv_a", cons("__iv_b", nil.clone())),
+    ];
+    let mut g_args = vec![GlobalTerm::Var(scrut_var.to_string())];
+    g_args.extend(producer_free.iter().cloned().map(GlobalTerm::Var));
+    let mut f_args: Vec<GlobalTerm> = Vec::new();
+    for v in consumer_free {
+        f_args.push(GlobalTerm::Var(v.clone()));
+    }
+    if f_arg_idx > f_args.len() {
+        return None;
+    }
+    let _ = boxed;
+    for sample in &samples {
+        let mut inner = g_args.clone();
+        inner[0] = sample.clone();
+        let composed = GlobalTerm::Call {
+            func: g_func.to_string(),
+            args: inner,
+        };
+        let mut outer_args = f_args.clone();
+        outer_args.insert(f_arg_idx, composed);
+        let term = GlobalTerm::Call {
+            func: f_func.to_string(),
+            args: outer_args,
+        };
+        let evaluated = symbolic_eval(term, program, 256).simplify();
+        if !same_constructor_shape(&evaluated, &sample.clone().simplify()) {
+            dtrace!(
+                "  involution check failed: input={:?} output={:?}",
+                sample,
+                evaluated
+            );
+            return None;
+        }
+    }
+    let func = MirFunction {
+        name: spec_name.to_string(),
+        params: vec![(scrut_var.to_string(), scrut_ty.clone())],
+        return_ty: scrut_ty,
+        locals: Vec::new(),
+        blocks: vec![MirBasicBlock {
+            id: BasicBlockId(0),
+            arguments: vec![],
+            statements: Vec::new(),
+            terminator: Terminator::Return {
+                value: Some(Place {
+                    local: scrut_var.to_string(),
+                    projections: vec![],
+                }),
+            },
+        }],
+        is_distilled: true,
+    };
+    dtrace!("  involution fusion: {} is identity", spec_name);
+    Some(func)
+}
+
+/// Rewrites the inlined loop pair in a caller into a single call to the fused
+/// function. All blocks belonging to the two loops become unreachable.
+fn apply_inlined_rewrite(program: &mut MirProgram, rw: &InlinedRewrite) {
+    let caller = &mut program.functions[rw.caller_idx];
+    let mut fused_args = Vec::new();
+    for name in &rw.fused_args {
+        fused_args.push(Place {
+            local: resolve_caller_local(caller, name),
+            projections: vec![],
+        });
+    }
+    let mut dead = rw.arm_idxs.clone();
+    dead.push(rw.consumer_head_idx);
+    dead.extend(rw.consumer_arm_idxs.iter().copied());
+    let dead: HashSet<usize> = dead.into_iter().collect();
+    for (idx, block) in caller.blocks.iter_mut().enumerate() {
+        if dead.contains(&idx) {
+            block.statements.clear();
+            block.terminator = Terminator::Unreachable;
+        }
+    }
+    if let Some(head) = caller.blocks.get_mut(rw.head_idx) {
+        head.statements.truncate(rw.discriminator_idx);
+        head.statements.push(Statement::Assign(
+            Place {
+                local: rw.result_local.clone(),
+                projections: vec![],
+            },
+            Rvalue::Call(rw.fused_name.clone(), fused_args),
+        ));
+        head.terminator = match &rw.continuation {
+            Some(target) => Terminator::Branch {
+                target: target.clone(),
+            },
+            None => Terminator::Return {
+                value: Some(Place {
+                    local: rw.result_local.clone(),
+                    projections: vec![],
+                }),
+            },
+        };
+    }
+    caller.is_distilled = true;
+}
+
+/// Program-level entry point for distillation of already-inlined compositions.
+fn distill_inlined_compositions(program: &mut MirProgram, stats: &mut SupercompilerStats) {
+    let mut new_funcs = Vec::new();
+    let mut rewrites = Vec::new();
+    let mut generated: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();
+    for ci in 0..program.functions.len() {
+        let caller = &program.functions[ci];
+        if let Some((fused, rw)) = try_distill_inlined_in_caller(ci, caller, program, stats) {
+            if !generated.insert(fused.name.clone()) {
+                dtrace!("  inlined fusion skipped (duplicate name {})", fused.name);
+                continue;
+            }
+            dtrace!(
+                "  inlined fusion in {}: {} ({})",
+                caller.name,
+                fused.name,
+                if rw.continuation.is_some() {
+                    "continues"
+                } else {
+                    "returns"
+                }
+            );
+            new_funcs.push(fused);
+            rewrites.push(rw);
+        }
+    }
+    for rw in &rewrites {
+        apply_inlined_rewrite(program, rw);
+    }
+    program.functions.extend(new_funcs);
+}
+
+/// Single-step `Use` resolution: stops at the first defining assignment.
+fn resolve_one_alias(caller: &MirFunction, local: &str, preferred_head: usize) -> String {
+    let mut blocks = vec![preferred_head];
+    blocks.extend(0..caller.blocks.len());
+    for idx in blocks {
+        for Statement::Assign(dest, rv) in &caller.blocks[idx].statements {
+            if dest.local == *local {
+                if let Rvalue::Use(p) = rv {
+                    if p.projections.is_empty() {
+                        return p.local.clone();
+                    }
+                }
+                return local.to_string();
+            }
+        }
+    }
+    local.to_string()
+}
+
+fn resolve_caller_local(caller: &MirFunction, local: &str) -> String {
+    if caller.params.iter().any(|(n, _)| n == local) {
+        return local.to_string();
+    }
+    for b in &caller.blocks {
+        for Statement::Assign(dest, rv) in &b.statements {
+            if dest.local == *local {
+                if let Rvalue::Use(p) = rv {
+                    if p.projections.is_empty()
+                        && caller.params.iter().any(|(n, _)| n == &p.local)
+                    {
+                        return p.local.clone();
+                    }
+                }
+            }
+        }
+    }
+    local.to_string()
+}
+
 /// Computes abstract computational cost of a MIR function for profitability gating.
 pub fn calculate_function_cost(func: &MirFunction) -> usize {
     let mut cost = 0;
@@ -1822,7 +2909,16 @@ pub fn is_distillation_profitable(
     let baseline_blocks = f.blocks.len() + g.blocks.len();
     let synthesized_blocks = synthesized_fn.blocks.len();
 
-    cost_synthesized <= cost_baseline && synthesized_blocks <= baseline_blocks * 2
+    let ok = cost_synthesized <= cost_baseline && synthesized_blocks <= baseline_blocks * 2;
+    dtrace!(
+        "  profitability: baseline={} synthesized={} base_blocks={} synth_blocks={} -> {}",
+        cost_baseline,
+        cost_synthesized,
+        baseline_blocks,
+        synthesized_blocks,
+        ok
+    );
+    ok
 }
 
 /// Synthesizes single-pass `append3(xs, ys, zs)` with ZERO intermediate allocations.

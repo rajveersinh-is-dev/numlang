@@ -8,7 +8,8 @@ measurement CSV, under the frozen `BENCHMARK_CONTRACT.md` v1.0 decision rule.
 | Item | Value |
 |:---|:---|
 | CSV analyzed | `bench/data/showdown_results.csv` (gitignored — `.gitignore:16`) |
-| **Live CSV SHA-256 (current vintage — Agent M multi-compiler run, 2026-11-21)** | `FC2175DEB37E73CAA8EB3CD0B8034B82D044F45E8BC1304339A005472AE15838` (22-benchmark FULL run, 5 warmups + 30 rounds; **8 systems / 176 cells** — adds measured `Clang-O3`, `GCC-O3`, `GHC-O2`; 6 SC wins / 16 ties / 0 regressions vs Base) |
+| **Live CSV SHA-256 (current vintage — full Distill-pipeline run, 2026-11-21)** | `38326959c83046fed203210932b97f123ae9b5d011b380f474a18983a3ef245b` (22-benchmark FULL run, 5 warmups + 30 rounds; **8 systems / 176 cells**; 7 SC wins / 15 ties / 0 regressions vs Base; nrev 6.4x, tri_sum_dyn/cubic_sum_dyn collapses restored) |
+| CSV SHA-256 (superseded — Agent M multi-compiler run) | `FC2175DEB37E73CAA8EB3CD0B8034B82D044F45E8BC1304339A005472AE15838` (22-benchmark FULL run; first to add measured Clang/GCC/GHC; 6 SC wins / 16 ties / 0 regressions) |
 | CSV SHA-256 (superseded vintage — 6-system run before Clang/GCC/GHC were measured) | `3b1ada010300971af3190ed30a7408ea1126fbd135b328f2974aa51ee2f5b22e` (22-benchmark full run after restoring the `fib_matrix` collapse; 6 wins / 16 ties / 0 regressions) |
 | **CSV SHA-256 (superseded vintage — used for the §2 table)** | `D11F063C8EC37A5A1B59B482E3212B7979FD9BF6D8E4AA189750AE8099BECB24` (superseded: the live CSV was re-run after the audit snapshot) |
 | README.md SHA-256 (regenerated from the current live CSV) | `DFF8368551744848B1D2384D0ED034387D7D3743D495C36E1F7BC39CA914B56F` |

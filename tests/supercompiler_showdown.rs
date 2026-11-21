@@ -165,11 +165,12 @@ fn compile_numlang(
     cmd.arg("build")
         .arg(src_file)
         .arg("--bench")
+        .arg("--no-cache")
         .arg("-o")
         .arg(exe_file);
 
     if supercompile {
-        cmd.arg("--supercompile");
+        cmd.arg("--supercompile").arg("--mode").arg("distill");
     } else {
         cmd.arg("--use-mir");
     }
