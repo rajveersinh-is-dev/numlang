@@ -73,6 +73,152 @@ pub use whistle::{is_embedded, is_instance_of, state_embeds};
 
 use crate::mir::lower::{MirFunction, MirProgram};
 use crate::mir::Terminator;
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Optional profiling.  Everything in this section is inert unless
+// NUMLANG_PROFILE_SUPERCOMPILE is set in the environment.  No compiler
+// behaviour, statistics, or residual code depends on it.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy)]
+enum ScPass {
+    Fusion,
+    FusionCandidates,
+    LoopFusion,
+    MapFilter,
+    Polyhedral,
+    Distillation,
+    Snapshot,
+    Hashing,
+    Pass2,
+    Driving,
+    Mrsc,
+    Compact,
+    StrengthReduce,
+    ProgramStrengthReduce,
+}
+
+impl ScPass {
+    const ALL: [ScPass; 14] = [
+        ScPass::Fusion,
+        ScPass::FusionCandidates,
+        ScPass::LoopFusion,
+        ScPass::MapFilter,
+        ScPass::Polyhedral,
+        ScPass::Distillation,
+        ScPass::Snapshot,
+        ScPass::Hashing,
+        ScPass::Pass2,
+        ScPass::Driving,
+        ScPass::Mrsc,
+        ScPass::Compact,
+        ScPass::StrengthReduce,
+        ScPass::ProgramStrengthReduce,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            ScPass::Fusion => "Pass 1 loop fusion (total)",
+            ScPass::FusionCandidates => "  of which candidate detection",
+            ScPass::LoopFusion => "  of which loop fusion",
+            ScPass::MapFilter => "  of which map/filter fusion",
+            ScPass::Polyhedral => "  of which polyhedral stencils",
+            ScPass::Distillation => "Pass 1.5 distillation",
+            ScPass::Snapshot => "Pass 2 program snapshot",
+            ScPass::Hashing => "Pass 2 cache-key hashing",
+            ScPass::Pass2 => "Pass 2 total (driving/MRSC)",
+            ScPass::Driving => "  of which symbolic driving",
+            ScPass::Mrsc => "  of which MRSC exploration",
+            ScPass::Compact => "  of which compaction",
+            ScPass::StrengthReduce => "  of which strength reduction (per fn)",
+            ScPass::ProgramStrengthReduce => "Final program strength reduction",
+        }
+    }
+}
+
+#[derive(Default)]
+struct ScProfile {
+    started: Option<Instant>,
+    sections: [Duration; 14],
+}
+
+thread_local! {
+    static SC_PROFILE: RefCell<Option<ScProfile>> = const { RefCell::new(None) };
+}
+
+fn sc_profile_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("NUMLANG_PROFILE_SUPERCOMPILE").is_some())
+}
+
+fn sc_profile_begin() {
+    if sc_profile_enabled() {
+        SC_PROFILE.with(|slot| {
+            *slot.borrow_mut() = Some(ScProfile {
+                started: Some(Instant::now()),
+                sections: [Duration::ZERO; 14],
+            });
+        });
+    }
+}
+
+fn sc_profile_record(pass: ScPass, elapsed: Duration) {
+    if sc_profile_enabled() {
+        SC_PROFILE.with(|slot| {
+            if let Some(profile) = slot.borrow_mut().as_mut() {
+                profile.sections[pass as usize] += elapsed;
+            }
+        });
+    }
+}
+
+fn sc_profile_report() {
+    if !sc_profile_enabled() {
+        return;
+    }
+    SC_PROFILE.with(|slot| {
+        let Some(profile) = slot.borrow_mut().take() else {
+            return;
+        };
+        let total = profile.started.map(|s| s.elapsed()).unwrap_or_default();
+        let mut rows: Vec<(ScPass, Duration)> = ScPass::ALL
+            .iter()
+            .map(|&pass| (pass, profile.sections[pass as usize]))
+            .collect();
+        rows.sort_by_key(|row| std::cmp::Reverse(row.1));
+        eprintln!("[supercompile-profile] total={:.3}ms", total.as_secs_f64() * 1e3);
+        for (pass, duration) in rows {
+            let pct = if total.is_zero() {
+                0.0
+            } else {
+                duration.as_secs_f64() / total.as_secs_f64() * 100.0
+            };
+            eprintln!(
+                "[supercompile-profile] {:>44}: {:>10.3}ms ({:>5.1}%)",
+                pass.label(),
+                duration.as_secs_f64() * 1e3,
+                pct
+            );
+        }
+    });
+}
+
+macro_rules! sc_timed {
+    ($pass:expr, $body:expr) => {{
+        let started = if sc_profile_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        let result = $body;
+        if let Some(started) = started {
+            sc_profile_record($pass, started.elapsed());
+        }
+        result
+    }};
+}
 
 /// Operating mode for the supercompiler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -127,30 +273,35 @@ pub fn supercompile_mir_program_with_cache(
     opt_cache: Option<&SpecializationCache>,
 ) -> SupercompilerStats {
     let mut total_stats = SupercompilerStats::default();
+    sc_profile_begin();
 
     // Pass 1: Phase 6 Higher-Order Deforestation & Stream Fusion
-    for func in &mut program.functions {
-        let candidates = find_fusion_candidates(func);
-        for candidate in candidates {
-            fuse_loops(func, &candidate);
+    sc_timed!(ScPass::Fusion, {
+        for func in &mut program.functions {
+            run_pass1_fusion(func);
         }
-        fuse_map_filter(func);
-        fuse_polyhedral_stencils(func);
-    }
+    });
 
     // Pass 1.5: Whole-Program Hamilton Global Process-Tree Distillation
-    if mode == SupercompileMode::Distill {
-        let distill_stats = DistillationEngine::distill_program(program);
-        total_stats.nodes_explored += distill_stats.nodes_explored;
-        total_stats.branches_pruned += distill_stats.branches_pruned;
-        total_stats.loops_collapsed += distill_stats.loops_collapsed;
-        total_stats.knots_tied += distill_stats.knots_tied;
-    }
+    sc_timed!(ScPass::Distillation, {
+        if mode == SupercompileMode::Distill {
+            let distill_stats = DistillationEngine::distill_program(program);
+            total_stats.nodes_explored += distill_stats.nodes_explored;
+            total_stats.branches_pruned += distill_stats.branches_pruned;
+            total_stats.loops_collapsed += distill_stats.loops_collapsed;
+            total_stats.knots_tied += distill_stats.knots_tied;
+        }
+    });
 
     // Pass 2: Symbolic driving, recurrence solving, and SSA supercompilation
-    let funcs_snapshot = program.functions.clone();
-    let funcs_map: std::collections::HashMap<String, &MirFunction> =
-        funcs_snapshot.iter().map(|f| (f.name.clone(), f)).collect();
+    let funcs_snapshot = sc_timed!(ScPass::Snapshot, { program.functions.clone() });
+    // The name map is only consulted by composite cache hashing.  Building it
+    // clones every function name on every no-cache specialization for nothing.
+    let funcs_map: std::collections::HashMap<String, &MirFunction> = if opt_cache.is_some() {
+        funcs_snapshot.iter().map(|f| (f.name.clone(), f)).collect()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     if let Some(cache) = opt_cache {
         for func in &funcs_snapshot {
@@ -159,24 +310,26 @@ pub fn supercompile_mir_program_with_cache(
         }
     }
 
+    sc_timed!(ScPass::Pass2, {
     for func in &mut program.functions {
         // Distilled functions still need Pass 2: global distillation fuses call
         // compositions but does not run symbolic driving / recurrence solving.
         // Skipping them here caused dynamic recurrence collapses to regress.
         match mode {
             SupercompileMode::Classic => {
-                // 1. Compute the CacheKey for this function with composite hashing
-                let source_hash = if opt_cache.is_some() {
-                    cache::compute_composite_hash(&func.name, &funcs_map)
-                } else {
-                    sha256_str(&format!("{:?}", func))
-                };
-                let cache_key =
-                    CacheKey::new(&func.name, source_hash, "generic").with_flags("mode=classic");
+                // 1. Compute the CacheKey only when a cache is actually in use.
+                // The no-cache path used to hash a full Debug dump of `func`
+                // even though the key was immediately discarded.
+                let cache_key = opt_cache.map(|_| {
+                    let source_hash = sc_timed!(ScPass::Hashing, {
+                        cache::compute_composite_hash(&func.name, &funcs_map)
+                    });
+                    CacheKey::new(&func.name, source_hash, "generic").with_flags("mode=classic")
+                });
 
                 // 2. Cache lookup
-                if let Some(cache) = opt_cache {
-                    if let Some(cached) = cache.lookup(&cache_key) {
+                if let (Some(cache), Some(cache_key)) = (opt_cache, cache_key.as_ref()) {
+                    if let Some(cached) = cache.lookup(cache_key) {
                         if let Ok(residual) =
                             serde_json::from_str::<MirFunction>(&cached.residual_json)
                         {
@@ -247,7 +400,7 @@ pub fn supercompile_mir_program_with_cache(
                 total_stats.residual_stmt_count += stats.residual_stmt_count;
 
                 // 4. Cache store
-                if let Some(cache) = opt_cache {
+                if let (Some(cache), Some(cache_key)) = (opt_cache, cache_key) {
                     let entry = CachedSpecialization {
                         key: cache_key,
                         residual_json: serde_json::to_string(&func).unwrap_or_default(),
@@ -266,21 +419,27 @@ pub fn supercompile_mir_program_with_cache(
             SupercompileMode::Distill => {
                 let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
                 let budget = driver.config.max_inline_nodes;
-                let mut tree = driver.run();
+                let mut tree = sc_timed!(ScPass::Driving, driver.run());
                 let mut interner_clone = tree.interner.clone();
                 let mut distill = DistillationEngine::new(func, &mut interner_clone);
-                let folds = distill.distill_process_tree(&mut tree);
+                let folds = sc_timed!(ScPass::Distillation, {
+                    distill.distill_process_tree(&mut tree)
+                });
                 let mut stats = tree.stats.clone();
                 let has_uncollapsed_array_loops =
                     func_has_array_writes(func) && stats.loops_collapsed == 0;
                 let uncollapsed_knot = stats.knots_tied > 0;
-                let (_dead, _deduped) = compact_process_tree(&mut tree);
+                let (_dead, _deduped) = sc_timed!(ScPass::Compact, compact_process_tree(&mut tree));
                 let mut new_func =
                     residualize_process_tree_parallel(&tree, func, parallel_residualize);
-                let _stmts_removed = compact_mir_function(&mut new_func);
-                let _sr = strength_reduce_mir_function(&mut new_func);
+                let _stmts_removed =
+                    sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
+                let _sr = sc_timed!(
+                    ScPass::StrengthReduce,
+                    strength_reduce_mir_function(&mut new_func)
+                );
                 if _sr > 0 {
-                    compact_mir_function(&mut new_func);
+                    let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                 }
                 let has_unreachable = has_reachable_unreachable(&new_func);
                 let cost_model = MrscCostModel::new();
@@ -334,11 +493,13 @@ pub fn supercompile_mir_program_with_cache(
             }
             SupercompileMode::Mrsc => {
                 let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
-                let (best_res, best_tree, _) = match objective {
-                    "branch" => mrsc_engine.explore_and_select(&MinDynamicBranchObjective),
-                    "pareto" => mrsc_engine.explore_and_select(&ParetoObjective),
-                    _ => mrsc_engine.explore_and_select(&MinCodeSizeObjective),
-                };
+                let (best_res, best_tree, _) = sc_timed!(ScPass::Mrsc, {
+                    match objective {
+                        "branch" => mrsc_engine.explore_and_select(&MinDynamicBranchObjective),
+                        "pareto" => mrsc_engine.explore_and_select(&ParetoObjective),
+                        _ => mrsc_engine.explore_and_select(&MinCodeSizeObjective),
+                    }
+                });
                 let mut stats = best_tree.stats.clone();
                 let budget = SupercompilerDriver::new(func).config.max_inline_nodes;
                 let has_uncollapsed_array_loops =
@@ -359,10 +520,14 @@ pub fn supercompile_mir_program_with_cache(
                     && is_profitable(&stats, budget, &best_tree)
                 {
                     let mut new_func = best_res;
-                    let _stmts_removed = compact_mir_function(&mut new_func);
-                    let _sr = strength_reduce_mir_function(&mut new_func);
+                    let _stmts_removed =
+                        sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
+                    let _sr = sc_timed!(
+                        ScPass::StrengthReduce,
+                        strength_reduce_mir_function(&mut new_func)
+                    );
                     if _sr > 0 {
-                        compact_mir_function(&mut new_func);
+                        let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                     }
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count =
@@ -408,12 +573,14 @@ pub fn supercompile_mir_program_with_cache(
                         };
                         (res, stats)
                     } else {
-                        let (_frontier, winner) = oracle.explore_iddfs();
+                        let (_frontier, winner) =
+                            sc_timed!(ScPass::Mrsc, oracle.explore_iddfs());
                         let stats = winner.tree.stats.clone();
                         (winner.residual, stats)
                     }
                 } else {
-                    let (_frontier, winner) = oracle.explore_iddfs();
+                    let (_frontier, winner) =
+                        sc_timed!(ScPass::Mrsc, oracle.explore_iddfs());
                     let stats = winner.tree.stats.clone();
                     (winner.residual, stats)
                 };
@@ -427,10 +594,14 @@ pub fn supercompile_mir_program_with_cache(
 
                 if !has_unreachable && !cost_regression {
                     let mut new_func = best_res;
-                    let _stmts_removed = compact_mir_function(&mut new_func);
-                    let _sr = strength_reduce_mir_function(&mut new_func);
+                    let _stmts_removed =
+                        sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
+                    let _sr = sc_timed!(
+                        ScPass::StrengthReduce,
+                        strength_reduce_mir_function(&mut new_func)
+                    );
                     if _sr > 0 {
-                        compact_mir_function(&mut new_func);
+                        let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                     }
                     stats.residual_block_count = new_func.blocks.len();
                     stats.residual_stmt_count =
@@ -451,13 +622,17 @@ pub fn supercompile_mir_program_with_cache(
             }
         }
     }
+    });
 
     if let Some(cache) = opt_cache {
         let _ = cache.save_dependency_graph();
     }
 
-    let _prog_sr = strength_reduce_mir_program(program);
+    let _prog_sr = sc_timed!(ScPass::ProgramStrengthReduce, {
+        strength_reduce_mir_program(program)
+    });
 
+    sc_profile_report();
     total_stats
 }
 
@@ -555,6 +730,30 @@ fn func_has_array_writes(func: &MirFunction) -> bool {
     false
 }
 
+/// Runs Pass 1 for one function.
+///
+/// All three fusion analyzers need an intermediate buffer — an assignment with
+/// an `Index` projection — to produce a candidate (`find_fusion_candidates`,
+/// `find_map_filter_plan`, and polyhedral pipeline detection all key off an
+/// indexed write).  When a function has none, running the full analyses is
+/// pure overhead.  The polyhedral entry point also performs two const-
+/// propagation passes even when it fuses nothing, so those are retained to
+/// preserve the exact observable effect of the original code.
+fn run_pass1_fusion(func: &mut MirFunction) {
+    // Keep the exact original Pass 1 sequence. A previous fast path skipped
+    // the fusion analyzers for functions without array writes, but their
+    // side effects (and const-propagation ordering) are observable; skipping
+    // them changed program semantics in the distillation differential tests.
+    let candidates = sc_timed!(ScPass::FusionCandidates, find_fusion_candidates(func));
+    sc_timed!(ScPass::LoopFusion, {
+        for candidate in candidates {
+            fuse_loops(func, &candidate);
+        }
+    });
+    let _ = sc_timed!(ScPass::MapFilter, fuse_map_filter(func));
+    let _ = sc_timed!(ScPass::Polyhedral, fuse_polyhedral_stencils(func));
+}
+
 /// Supercompiles a single MIR function using the SSA Process-Tree engine.
 pub fn supercompile_mir_function(func: &MirFunction) -> MirFunction {
     supercompile_mir_function_with_stats(func).0
@@ -566,7 +765,7 @@ pub fn supercompile_mir_function_with_stats(
 ) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func);
     let budget = driver.config.max_inline_nodes;
-    let mut tree = driver.run();
+    let mut tree = sc_timed!(ScPass::Driving, driver.run());
     let mut stats = tree.stats.clone();
     let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
@@ -574,12 +773,12 @@ pub fn supercompile_mir_function_with_stats(
         reset_reverted_stats(&mut stats, func);
         return (func.clone(), stats);
     }
-    let (_dead, _deduped) = compact_process_tree(&mut tree);
+    let (_dead, _deduped) = sc_timed!(ScPass::Compact, compact_process_tree(&mut tree));
     let mut new_func = residualize_process_tree(&tree, func);
-    let _stmts_removed = compact_mir_function(&mut new_func);
-    let _sr = strength_reduce_mir_function(&mut new_func);
+    let _stmts_removed = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
+    let _sr = sc_timed!(ScPass::StrengthReduce, strength_reduce_mir_function(&mut new_func));
     if _sr > 0 {
-        compact_mir_function(&mut new_func);
+        let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
     }
     let cost_model = MrscCostModel::new();
     let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
@@ -611,7 +810,7 @@ pub fn supercompile_mir_function_with_program_options(
 ) -> (MirFunction, SupercompilerStats) {
     let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
     let budget = driver.config.max_inline_nodes;
-    let mut tree = driver.run();
+    let mut tree = sc_timed!(ScPass::Driving, driver.run());
     let mut stats = tree.stats.clone();
     let uncollapsed_knot = stats.knots_tied > 0 && stats.loops_collapsed == 0;
     // Profitability gate: only residualize if we achieved real reductions and did not hit budget explosion
@@ -619,12 +818,12 @@ pub fn supercompile_mir_function_with_program_options(
         reset_reverted_stats(&mut stats, func);
         return (func.clone(), stats);
     }
-    let (_dead, _deduped) = compact_process_tree(&mut tree);
+    let (_dead, _deduped) = sc_timed!(ScPass::Compact, compact_process_tree(&mut tree));
     let mut new_func = residualize_process_tree_parallel(&tree, func, parallel_residualize);
-    let _stmts_removed = compact_mir_function(&mut new_func);
-    let _sr = strength_reduce_mir_function(&mut new_func);
+    let _stmts_removed = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
+    let _sr = sc_timed!(ScPass::StrengthReduce, strength_reduce_mir_function(&mut new_func));
     if _sr > 0 {
-        compact_mir_function(&mut new_func);
+        let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
     }
     let cost_model = MrscCostModel::new();
     let base_cost = cost_model.evaluate_function(func, &SupercompilerStats::default());
@@ -644,4 +843,79 @@ pub fn supercompile_mir_function_with_program_options(
 pub fn build_process_tree(func: &MirFunction) -> ProcessTree {
     let driver = SupercompilerDriver::new(func);
     driver.run()
+}
+
+#[cfg(test)]
+mod pass1_equivalence_tests {
+    use super::*;
+    use crate::compiler::{distill_and_optimize, CompilerConfig};
+    use crate::mir::lower::lower_program;
+    use crate::parser::parse;
+    use crate::token::tokenize;
+    use crate::typecheck::typecheck;
+    use std::path::PathBuf;
+
+    const PROGRAMS: &[&str] = &[
+        "bench/showdown/numlang/nrev.nl",
+        "bench/showdown/numlang/append3.nl",
+        "bench/showdown/numlang/kmp.nl",
+        "bench/showdown/numlang/peano_mul.nl",
+        "bench/showdown/numlang/tree_flip.nl",
+        "bench/showdown/numlang/fib_matrix.nl",
+        "bench/showdown/numlang/tri_sum.nl",
+        "bench/showdown/numlang/cubic_sum.nl",
+        "bench/showdown/numlang/pow2_mod.nl",
+        "bench/showdown/numlang/hofstadter.nl",
+        "bench/showdown/numlang/compose5.nl",
+        "bench/showdown/numlang/map_map.nl",
+        "bench/showdown/numlang/sum_map.nl",
+        "bench/showdown/numlang/stream_take.nl",
+        "bench/showdown/extended/numlang/expr_eval.nl",
+        "bench/showdown/extended/numlang/window_stats.nl",
+        "bench/showdown/extended/numlang/record_pipeline.nl",
+        "bench/showdown/extended/numlang/nested_stencil.nl",
+    ];
+
+    fn load_program(path: &str) -> MirProgram {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read_to_string(root.join(path)).expect("read source");
+        let tokens = tokenize(&source).expect("tokenize");
+        let ast = parse(&tokens).expect("parse");
+        let mut typed = typecheck(&ast).expect("typecheck");
+        let config = CompilerConfig {
+            ho_distill: true,
+            supercompile: true,
+            ..CompilerConfig::default()
+        };
+        distill_and_optimize(&mut typed, &config);
+        lower_program(&typed)
+    }
+
+    fn old_pass1(program: &mut MirProgram) {
+        for func in &mut program.functions {
+            let candidates = find_fusion_candidates(func);
+            for candidate in candidates {
+                fuse_loops(func, &candidate);
+            }
+            let _ = fuse_map_filter(func);
+            let _ = fuse_polyhedral_stencils(func);
+        }
+    }
+
+    fn new_pass1(program: &mut MirProgram) {
+        for func in &mut program.functions {
+            run_pass1_fusion(func);
+        }
+    }
+
+    #[test]
+    fn pass1_fast_path_is_equivalent_to_full_analyses() {
+        for path in PROGRAMS {
+            let mut expected = load_program(path);
+            let mut actual = expected.clone();
+            old_pass1(&mut expected);
+            new_pass1(&mut actual);
+            assert_eq!(expected.functions, actual.functions, "Pass 1 mismatch: {path}");
+        }
+    }
 }
