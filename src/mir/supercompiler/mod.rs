@@ -189,14 +189,22 @@ pub fn supercompile_mir_program_with_cache(
                             serde_json::from_str::<MirFunction>(&cached.residual_json)
                         {
                             *func = residual;
+                            // A cached residual may predate newer compaction passes. Re-run
+                            // the idempotent peephole compactor so cache hits get the same
+                            // code as freshly supercompiled functions.
+                            compact_mir_function(func);
                             total_stats.nodes_explored += cached.stats_nodes_explored;
                             total_stats.branches_pruned += cached.stats_branches_pruned;
                             total_stats.loops_collapsed += cached.stats_loops_collapsed;
                             total_stats.knots_tied += cached.stats_knots_tied;
                             total_stats.calls_inlined += cached.stats_calls_inlined;
                             total_stats.sc_bce_eliminated += cached.stats_sc_bce_eliminated;
-                            total_stats.residual_block_count += cached.stats_residual_block_count;
-                            total_stats.residual_stmt_count += cached.stats_residual_stmt_count;
+                            total_stats.residual_block_count += func.blocks.len();
+                            total_stats.residual_stmt_count += func
+                                .blocks
+                                .iter()
+                                .map(|b| b.statements.len())
+                                .sum::<usize>();
                             continue; // skip driving entirely
                         }
                     }

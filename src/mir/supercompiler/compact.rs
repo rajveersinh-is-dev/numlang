@@ -1,17 +1,18 @@
 //! Phase 35: Post-Distillation Process-Tree & MIR Residual Compaction.
 //!
-//! Provides two compaction passes:
+//! Provides two compaction entry points:
 //! 1. `compact_process_tree`: Prunes dead overflow nodes and deduplicates alpha-equivalent
 //!    knot targets prior to residualization.
 //! 2. `compact_mir_function`: Peephole optimization pass over residualized MIR functions,
-//!    removing no-op identity assignments and performing conservative copy propagation
-//!    into return terminators (eta-reduction).
+//!    removing no-op identity assignments, performing conservative copy propagation
+//!    into return terminators (eta-reduction), and folding empty branch-only blocks
+//!    (jump threading) to a combined fixpoint.
 
 use std::collections::{HashMap, HashSet};
 
 use super::drive::{ProcessEdge, ProcessNodeId, ProcessTree};
 use crate::mir::lower::{MirFunction, Rvalue, Statement};
-use crate::mir::{Place, Projection, Terminator};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 
 /// Phase 35: Compact a ProcessTree before residualization.
 ///
@@ -120,13 +121,19 @@ pub fn compact_process_tree(tree: &mut ProcessTree) -> (usize, usize) {
 /// 2. Trivial copy propagation: if a local is defined exactly once as
 ///    Rvalue::Use(other_place) and used exactly once immediately as the
 ///    return value, substitute inline and delete the assignment.
-/// 3. Returns the number of statements removed.
+/// 3. Empty-branch folding: remove blocks with no statements whose terminator
+///    is an unconditional Branch, redirecting all references to their target.
+///
+/// The three passes are rerun to a combined fixpoint: folding can expose new
+/// no-op statements (and vice versa). Returns the number of statements and
+/// blocks removed.
 pub fn compact_mir_function(func: &mut MirFunction) -> usize {
     let mut total_removed = 0;
     loop {
         let p1 = run_noop_removal_pass(func);
         let p2 = run_copy_propagation_pass(func);
-        let iter_removed = p1 + p2;
+        let p3 = run_empty_branch_folding_pass(func);
+        let iter_removed = p1 + p2 + p3;
         total_removed += iter_removed;
         if iter_removed == 0 {
             break;
@@ -241,6 +248,178 @@ fn run_copy_propagation_pass(func: &mut MirFunction) -> usize {
     }
 
     removed
+}
+
+/// Pass 3: Fold empty branch-only blocks (jump threading).
+///
+/// A block is foldable when it has no statements, no block arguments, and its
+/// terminator is an unconditional `Branch` to a *different*, still-live block.
+/// The following cases are deliberately left alone:
+///   * the entry block (`blocks[0]`, which codegen treats as the function entry),
+///   * self-loops and cycles made entirely of foldable blocks (infinite loops),
+///   * blocks whose id is used as a Phi incoming label (rewriting those labels
+///     would require splitting the Phi by predecessor),
+///   * blocks that forward into a block with arguments.
+///
+/// For the remaining blocks, every BasicBlockId reference in surviving
+/// terminators is redirected to the folded block's ultimate non-foldable
+/// target, and the folded blocks are physically removed from `func.blocks`.
+/// Ids are *not* renumbered: codegen builds a `BasicBlockId -> machine block`
+/// map and only relies on `blocks[0]` being the entry, so stable (possibly
+/// non-contiguous) ids are safe and keep back-edge heuristics consistent.
+fn run_empty_branch_folding_pass(func: &mut MirFunction) -> usize {
+    let Some(entry_id) = func.blocks.first().map(|b| b.id.clone()) else {
+        return 0;
+    };
+    let live_ids: HashSet<BasicBlockId> = func.blocks.iter().map(|b| b.id.clone()).collect();
+    let blocks_with_args: HashSet<BasicBlockId> = func
+        .blocks
+        .iter()
+        .filter(|b| !b.arguments.is_empty())
+        .map(|b| b.id.clone())
+        .collect();
+
+    // Phi incoming labels name the predecessor block; dropping such a block
+    // would leave the Phi with a dangling/incorrect label.
+    let phi_labels: HashSet<BasicBlockId> = func
+        .blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|stmt| match stmt {
+            Statement::Assign(_, Rvalue::Phi(incoming)) => Some(incoming),
+            _ => None,
+        })
+        .flat_map(|incoming| incoming.iter().map(|(id, _)| id.clone()))
+        .collect();
+
+    // Candidate -> immediate forwarding target.
+    let mut forward: HashMap<BasicBlockId, BasicBlockId> = HashMap::new();
+    for block in &func.blocks {
+        if !block.statements.is_empty() || !block.arguments.is_empty() {
+            continue;
+        }
+        if block.id == entry_id || phi_labels.contains(&block.id) {
+            continue;
+        }
+        if let Terminator::Branch { target } = &block.terminator {
+            // Self-loops are never folded, and the target must still exist.
+            if target != &block.id
+                && live_ids.contains(target)
+                && !blocks_with_args.contains(target)
+            {
+                forward.insert(block.id.clone(), target.clone());
+            }
+        }
+    }
+    if forward.is_empty() {
+        return 0;
+    }
+
+    // Resolve each candidate to its ultimate target in one shot, which folds
+    // arbitrarily long chains without needing a pass per link. Chains that end
+    // in a cycle of foldable blocks are preserved conservatively.
+    let mut final_target: HashMap<BasicBlockId, BasicBlockId> = HashMap::new();
+    let mut skipped: HashSet<BasicBlockId> = HashSet::new();
+
+    for start in forward.keys() {
+        if final_target.contains_key(start) || skipped.contains(start) {
+            continue;
+        }
+        let mut path: Vec<BasicBlockId> = Vec::new();
+        let mut seen: HashSet<BasicBlockId> = HashSet::new();
+        let mut cur = start.clone();
+        let mut target: Option<BasicBlockId> = None;
+        let mut abort = false;
+
+        loop {
+            if skipped.contains(&cur) {
+                abort = true; // leads into a previously detected cycle
+                break;
+            }
+            if let Some(resolved) = final_target.get(&cur).cloned() {
+                target = Some(resolved);
+                break;
+            }
+            let Some(next) = forward.get(&cur).cloned() else {
+                target = Some(cur.clone()); // reached a non-foldable block
+                break;
+            };
+            if !seen.insert(cur.clone()) {
+                abort = true; // foldable cycle / loop back-edge: keep it
+                break;
+            }
+            path.push(cur.clone());
+            cur = next;
+        }
+
+        if abort {
+            for id in path {
+                skipped.insert(id);
+            }
+        } else if let Some(target) = target {
+            for id in path {
+                final_target.insert(id, target.clone());
+            }
+        }
+    }
+
+    let removed_count = final_target.len();
+    if removed_count == 0 {
+        return 0;
+    }
+
+    func.blocks
+        .retain(|b| !final_target.contains_key(&b.id));
+    for block in &mut func.blocks {
+        redirect_terminator_blocks(&mut block.terminator, &final_target);
+    }
+    removed_count
+}
+
+/// Rewrite every BasicBlockId referenced by a terminator through the redirect map.
+fn redirect_terminator_blocks(
+    term: &mut Terminator,
+    redirect: &HashMap<BasicBlockId, BasicBlockId>,
+) {
+    fn redirect_id(id: &mut BasicBlockId, redirect: &HashMap<BasicBlockId, BasicBlockId>) {
+        if let Some(new_id) = redirect.get(id) {
+            *id = new_id.clone();
+        }
+    }
+
+    match term {
+        Terminator::Branch { target } => redirect_id(target, redirect),
+        Terminator::BranchIf {
+            then_target,
+            else_target,
+            ..
+        } => {
+            redirect_id(then_target, redirect);
+            redirect_id(else_target, redirect);
+        }
+        Terminator::Switch {
+            targets, default, ..
+        } => {
+            redirect_id(default, redirect);
+            for (_, target) in targets {
+                redirect_id(target, redirect);
+            }
+        }
+        Terminator::IndirectCall { next, .. } => redirect_id(next, redirect),
+        Terminator::Fork { left, right, join } => {
+            redirect_id(left, redirect);
+            redirect_id(right, redirect);
+            redirect_id(join, redirect);
+        }
+        Terminator::Force { cont, .. } => redirect_id(cont, redirect),
+        Terminator::TypeGuard {
+            fast_path, deopt_stub, ..
+        } => {
+            redirect_id(fast_path, redirect);
+            redirect_id(deopt_stub, redirect);
+        }
+        Terminator::Return { .. } | Terminator::Unreachable => {}
+    }
 }
 
 fn record_place_uses(place: &Place, uses: &mut HashMap<String, usize>) {
