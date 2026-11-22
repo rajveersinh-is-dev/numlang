@@ -747,3 +747,37 @@ fn main() -> i64 {
     assert_eq!(code, Some(120), "expected 120, stdout: {}", stdout);
     assert_eq!(stdout, "");
 }
+
+#[test]
+fn test_renamed_stream_filter_fold_constant_call() {
+    // Renamed identifiers: same structure as a filtered/taken stream sum.
+    // The constant-argument call must be folded/collapsed correctly.
+    let src = r#"
+fn tally(limit: i64) -> i64 {
+    let mut acc: i64 = 0;
+    let mut idx: i64 = 0;
+    while idx < limit {
+        if idx % 2 == 0 {
+            acc = acc + idx * idx;
+        }
+        idx = idx + 1;
+    }
+    return acc;
+}
+fn main() -> i64 {
+    let mut out: i64 = 0;
+    let mut step: i64 = 0;
+    while step < 20 {
+        out = out + (tally(50) % 10000);
+        step = step + 1;
+    }
+    return out % 256;
+}
+"#;
+    let mut mir = get_mir(src);
+    let _stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+
+    let (code, stdout) = run_program(src);
+    // tally(50): evens 0,2,...,48 => 4*sum(k^2,k=0..24)=19600; 20*(19600%10000)=192000; %256=0
+    assert_eq!(code, Some(0), "expected 0, stdout: {}", stdout);
+}

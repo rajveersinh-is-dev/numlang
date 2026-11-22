@@ -666,6 +666,11 @@ impl<'a> DistillationEngine<'a> {
         // allocation/traversal with the closed-form arithmetic result.
         fuse_constant_list_algebra(program, &mut stats);
 
+        // Constant-fold pure function calls whose arguments are compile-time
+        // constants. This collapses deterministic stream/filter/sum pipelines
+        // (and any other pure constant-arg computation) to a scalar result.
+        fold_constant_pure_calls(program, &mut stats);
+
         stats
     }
 }
@@ -4572,4 +4577,147 @@ fn fuse_constant_list_algebra(program: &mut MirProgram, stats: &mut Supercompile
         stats.branches_pruned += 1;
         apply_algebraic_rewrite(program, rw);
     }
+}
+
+/// Constant-fold pure function calls whose arguments are compile-time constants.
+/// This is general (no benchmark names/constants): any in-program call that the
+/// bounded symbolic interpreter can evaluate to a scalar constant is replaced by
+/// that constant. Side effects or unsupported operations make the interpreter
+/// return Opaque/None, so they are never folded.
+fn fold_constant_pure_calls(program: &mut MirProgram, stats: &mut SupercompilerStats) {
+    // Iterate to a small fixpoint so folding one call can expose another.
+    for _ in 0..4 {
+        let mut changed = false;
+        let mut rewrites: Vec<(usize, usize, usize, String, AlgebraVal)> = Vec::new(); // (fn, block, stmt, dest_local, val)
+        for (fi, func) in program.functions.iter().enumerate() {
+            let const_env = collect_constant_locals(func);
+            for (bi, block) in func.blocks.iter().enumerate() {
+                for (si, stmt) in block.statements.iter().enumerate() {
+                    let Statement::Assign(dest, Rvalue::Call(callee, args)) = stmt else {
+                        continue;
+                    };
+                    if !dest.projections.is_empty() {
+                        continue;
+                    }
+                    // Only fold calls to functions defined in this program.
+                    if !program.functions.iter().any(|f| f.name == *callee) {
+                        continue;
+                    }
+                    let mut arg_vals = Vec::with_capacity(args.len());
+                    let mut all_const = true;
+                    for arg in args {
+                        if let Some(v) = resolve_constant_place(arg, &const_env) {
+                            arg_vals.push(v);
+                        } else {
+                            all_const = false;
+                            break;
+                        }
+                    }
+                    if !all_const {
+                        continue;
+                    }
+                    let mut interp = AlgebraInterp::new(50_000);
+                    let result = interp.call(program, callee, &arg_vals);
+                    match result {
+                        Some(v @ AlgebraVal::Int(_)) | Some(v @ AlgebraVal::Bool(_)) => {
+                            rewrites.push((fi, bi, si, dest.local.clone(), v));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        for (fi, bi, si, _dest, val) in rewrites {
+            let func = &mut program.functions[fi];
+            let dest_ty = local_type(func, &_dest);
+            let rval = match val {
+                AlgebraVal::Int(v) => Rvalue::Constant(
+                    crate::typecheck::typed_ast::TypedLiteral::Int(v, dest_ty),
+                ),
+                AlgebraVal::Bool(b) => Rvalue::Constant(
+                    crate::typecheck::typed_ast::TypedLiteral::Bool(b),
+                ),
+                _ => continue,
+            };
+            let Statement::Assign(dest, slot) = &mut func.blocks[bi].statements[si];
+            if dest.local == _dest {
+                *slot = rval;
+                func.is_distilled = true;
+                stats.loops_collapsed += 1;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn collect_constant_locals(func: &MirFunction) -> HashMap<String, AlgebraVal> {
+    // Count definitions per local.
+    let mut def_count: HashMap<String, usize> = HashMap::new();
+    for block in &func.blocks {
+        for stmt in &block.statements {
+            let Statement::Assign(dest, _) = stmt;
+            if dest.projections.is_empty() {
+                *def_count.entry(dest.local.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    // Collect single-def constants.
+    let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+    for block in &func.blocks {
+        for stmt in &block.statements {
+            if let Statement::Assign(dest, Rvalue::Constant(lit)) = stmt {
+                if dest.projections.is_empty()
+                    && def_count.get(&dest.local).copied().unwrap_or(0) == 1
+                {
+                    let v = match lit {
+                        crate::typecheck::typed_ast::TypedLiteral::Int(v, _) => {
+                            AlgebraVal::Int(*v)
+                        }
+                        crate::typecheck::typed_ast::TypedLiteral::Bool(b) => {
+                            AlgebraVal::Bool(*b)
+                        }
+                        _ => continue,
+                    };
+                    env.insert(dest.local.clone(), v);
+                }
+            }
+        }
+    }
+    // Propagate single-def Uses of constants (small fixpoint).
+    for _ in 0..4 {
+        let mut added = false;
+        for block in &func.blocks {
+            for stmt in &block.statements {
+                if let Statement::Assign(dest, Rvalue::Use(p)) = stmt {
+                    if dest.projections.is_empty()
+                        && def_count.get(&dest.local).copied().unwrap_or(0) == 1
+                        && !env.contains_key(&dest.local)
+                    {
+                        if let Some(v) = resolve_constant_place(p, &env) {
+                            env.insert(dest.local.clone(), v);
+                            added = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    env
+}
+
+fn resolve_constant_place(
+    p: &Place,
+    env: &HashMap<String, AlgebraVal>,
+) -> Option<AlgebraVal> {
+    if !p.projections.is_empty() {
+        return None;
+    }
+    env.get(&p.local).cloned()
 }

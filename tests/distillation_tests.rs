@@ -1164,3 +1164,38 @@ fn test_algebraic_fusion_keeps_identity_involution() {
     assert_eq!(code_res, 12);
 }
 
+#[test]
+fn test_distill_renamed_constant_stream_pipeline() {
+    // Renamed identifiers: constant-argument deterministic pipeline should
+    // collapse/fold to the same scalar result.
+    let code = r#"
+    fn produce(limit: i64) -> i64 {
+        let mut acc: i64 = 0;
+        let mut k: i64 = 0;
+        while k < limit {
+            if k % 2 == 0 {
+                acc = acc + k * k;
+            }
+            k = k + 1;
+        }
+        return acc;
+    }
+
+    fn main() -> i64 {
+        let mut total: i64 = 0;
+        let mut rep: i64 = 0;
+        while rep < 10 {
+            total = total + (produce(50) % 10000);
+            rep = rep + 1;
+        }
+        return total % 256;
+    }
+    "#;
+
+    let mut mir = get_mir(code);
+    let _stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    let (code_res, _) = compile_and_run_distill(code, "renamed_const_stream_pipeline");
+    // produce(50)=19600, 19600%10000=9600, 10*9600=96000, 96000%256=0.
+    assert_eq!(code_res, 0);
+}
+
