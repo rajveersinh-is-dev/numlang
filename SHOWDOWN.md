@@ -62,35 +62,35 @@ The following results were generated directly by the automated Rust test harness
 
 | Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Clang-O3 | GCC-O3 | GHC-O2 | HOSC-SC | Result vs Base (95% CI) | Speedup vs Base |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Naive Reverse (Double nrev)** | G1: Deforestation | 35.40 µs | 222.40 µs | 1.29 ms | 53.50 µs | 49.60 µs | 26.80 µs | 21.80 µs | NOT_INSTALLED | **NumLang-SC Win (6.38x [5.54-6.98])** | 6.38x |
-| **Triple List Append** | G1: Deforestation | 86.60 µs | 89.40 µs | 444.00 µs | 15.00 µs | 14.10 µs | 8.50 µs | 7.60 µs | NOT_INSTALLED | **Tie (1.02x [0.78-1.27])** | 1.02x |
-| **Knuth-Morris-Pratt DFA** | G1: Deforestation | 35.20 µs | 34.80 µs | 224.10 µs | 61.30 µs | 61.10 µs | 208.80 µs | 7.50 µs | NOT_INSTALLED | **Tie (1.01x [0.73-1.27])** | 1.01x |
-| **Peano Multiplication** | G1: Deforestation | 34.00 µs | 35.60 µs | 132.80 µs | 185.20 µs | 186.90 µs | 188.50 µs | 6.90 µs | NOT_INSTALLED | **Tie (1.06x [0.67-1.45])** | 1.06x |
-| **Double Tree Inversion** | G1: Deforestation | 56.20 µs | 104.20 µs | 532.40 µs | 508.80 µs | 505.80 µs | 628.70 µs | 14.20 µs | NOT_INSTALLED | **NumLang-SC Win (1.80x [1.24-3.07])** | 1.80x |
-| **Coupled Fibonacci Recurrence Matrix Power** | G2: Recurrences | 6.70 µs | 120.30 µs | 3.40 µs | 34.80 µs | 3.10 µs | 2.50 µs | 5.40 µs | NOT_INSTALLED | **NumLang-SC Win (18.07x [15.15-19.89])** | 18.07x |
-| **Triangular Summation (50M)** | G2: Recurrences | 8.00 µs | 20.92 ms | ≤ 500 ns* | 9.41 ms | ≤ 500 ns* | ≤ 500 ns* | 16.23 ms | NOT_INSTALLED | **NumLang-SC Win (2609.72x [2140.61-3521.12])** | 2609.72x |
-| **Sum of Squares 1^2+...+10M^2 (Degree-3)** | G2: Recurrences | 8.50 µs | 4.89 ms | ≤ 500 ns* | 3.56 ms | ≤ 500 ns* | 1.42 ms | 4.49 ms | NOT_INSTALLED | **NumLang-SC Win (613.11x [354.78-846.30])** | 613.11x |
-| **Geometric Power Loop (100)** | G2: Recurrences | 7.70 µs | 7.10 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (0.96x [0.34-1.34])** | 0.96x |
-| **Hofstadter Mutual Linear Recurrence** | G2: Recurrences | 9.20 µs | 9.00 µs | 4.30 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 17.10 µs | NOT_INSTALLED | **Tie (0.99x [0.70-1.38])** | 0.99x |
-| **Dynamic Triangular Summation (50M)** | G2-Dyn: Recurrences (Runtime) | 9.50 µs | 20.78 ms | 6.27 ms | 12.67 ms | ≤ 500 ns* | 5.09 ms | 16.40 ms | NOT_INSTALLED | **NumLang-SC Win (2106.05x [789.02-2507.52])** | 2106.05x |
-| **Dynamic Sum of Squares (10M)** | G2-Dyn: Recurrences (Runtime) | 9.80 µs | 4.47 ms | 4.15 ms | 3.55 ms | ≤ 500 ns* | 1.42 ms | 4.22 ms | NOT_INSTALLED | **NumLang-SC Win (451.39x [307.99-521.89])** | 451.39x |
-| **Dynamic Fibonacci Matrix Power (1000)** | G2-Dyn: Recurrences (Runtime) | 10.70 µs | 11.50 µs | 4.40 µs | 3.40 µs | 3.10 µs | 3.10 µs | 88.70 µs | NOT_INSTALLED | **Tie (1.08x [0.92-1.32])** | 1.08x |
-| **Dynamic Geometric Power Loop (100)** | G2-Dyn: Recurrences (Runtime) | 7.60 µs | 7.20 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (0.96x [0.58-1.17])** | 0.96x |
-| **5-Deep Function Composition Chain** | G3: Higher-Order | 7.10 µs | 8.00 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | NOT_INSTALLED | **Tie (1.12x [0.79-1.45])** | 1.12x |
-| **Map-Map Pipeline Deforestation** | G3: Higher-Order | 7.20 µs | 7.20 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 6.50 µs | NOT_INSTALLED | **Tie (0.99x [0.67-1.35])** | 0.99x |
-| **Sum-Map Stream Fusion (1M)** | G3: Higher-Order | 7.60 µs | 432.60 µs | ≤ 500 ns* | 355.40 µs | ≤ 500 ns* | ≤ 500 ns* | 410.20 µs | NOT_INSTALLED | **NumLang-SC Win (57.76x [16.95-67.59])** | 57.76x |
-| **Stream Pipeline Filter-Sum** | G3: Higher-Order | 57.40 µs | 59.00 µs | ≤ 500 ns* | 37.10 µs | ≤ 500 ns* | 26.20 µs | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (1.02x [0.91-1.41])** | 1.02x |
-| **Bytecode Expression Evaluator** | G4: Extended Realistic | 7.60 µs | 8.10 µs | 27.40 µs | 5.30 µs | 8.70 µs | 8.20 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (0.99x [0.73-1.19])** | 0.99x |
-| **Sliding-Window Sensor Statistics** | G4: Extended Realistic | 8.00 µs | 8.60 µs | 26.60 µs | 5.20 µs | 8.40 µs | 7.60 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (1.07x [0.76-2.62])** | 1.07x |
-| **Struct Record Transform Pipeline** | G4: Extended Realistic | 7.00 µs | 8.90 µs | 24.60 µs | 6.10 µs | 8.70 µs | 7.00 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (1.26x [1.05-1.69])** | 1.26x |
-| **Multi-Pass Clamped 2D Stencil** | G4: Extended Realistic | 13.30 µs | 12.30 µs | 28.30 µs | 10.70 µs | 10.00 µs | 7.90 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (0.93x [0.47-1.02])** | 0.93x |
+| **Naive Reverse (Double nrev)** | G1: Deforestation | 7.80 µs | 227.80 µs | 1.33 ms | 61.40 µs | 49.50 µs | 26.80 µs | 24.00 µs | NOT_INSTALLED | **NumLang-SC Win (29.93x [23.82-34.54])** | 29.93x |
+| **Triple List Append** | G1: Deforestation | 7.70 µs | 89.60 µs | 444.70 µs | 15.30 µs | 14.90 µs | 8.70 µs | 8.70 µs | NOT_INSTALLED | **NumLang-SC Win (11.74x [8.88-15.78])** | 11.74x |
+| **Knuth-Morris-Pratt DFA** | G1: Deforestation | 36.90 µs | 38.70 µs | 235.40 µs | 60.60 µs | 61.80 µs | 210.80 µs | 8.10 µs | NOT_INSTALLED | **Tie (1.03x [0.74-1.45])** | 1.03x |
+| **Peano Multiplication** | G1: Deforestation | 7.90 µs | 35.60 µs | 132.70 µs | 184.90 µs | 187.20 µs | 190.50 µs | 7.80 µs | NOT_INSTALLED | **NumLang-SC Win (4.56x [3.48-6.44])** | 4.56x |
+| **Double Tree Inversion** | G1: Deforestation | 7.70 µs | 104.20 µs | 533.50 µs | 506.30 µs | 507.00 µs | 629.90 µs | 14.30 µs | NOT_INSTALLED | **NumLang-SC Win (13.41x [8.17-19.26])** | 13.41x |
+| **Coupled Fibonacci Recurrence Matrix Power** | G2: Recurrences | 7.10 µs | 121.00 µs | 3.40 µs | 34.80 µs | 3.10 µs | 2.50 µs | 5.50 µs | NOT_INSTALLED | **NumLang-SC Win (17.29x [13.07-19.91])** | 17.29x |
+| **Triangular Summation (50M)** | G2: Recurrences | 8.50 µs | 20.93 ms | ≤ 500 ns* | 9.44 ms | ≤ 500 ns* | ≤ 500 ns* | 16.36 ms | NOT_INSTALLED | **NumLang-SC Win (2514.65x [1930.34-2973.61])** | 2514.65x |
+| **Sum of Squares 1^2+...+10M^2 (Degree-3)** | G2: Recurrences | 8.60 µs | 5.04 ms | ≤ 500 ns* | 3.55 ms | ≤ 500 ns* | 1.42 ms | 4.58 ms | NOT_INSTALLED | **NumLang-SC Win (587.31x [379.96-717.42])** | 587.31x |
+| **Geometric Power Loop (100)** | G2: Recurrences | 7.70 µs | 7.60 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (1.02x [0.61-1.24])** | 1.02x |
+| **Hofstadter Mutual Linear Recurrence** | G2: Recurrences | 9.00 µs | 9.50 µs | 4.20 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 17.40 µs | NOT_INSTALLED | **Tie (1.03x [0.77-1.99])** | 1.03x |
+| **Dynamic Triangular Summation (50M)** | G2-Dyn: Recurrences (Runtime) | 9.80 µs | 20.54 ms | 6.28 ms | 12.68 ms | ≤ 500 ns* | 5.07 ms | 16.45 ms | NOT_INSTALLED | **NumLang-SC Win (2077.24x [1608.52-2367.26])** | 2077.24x |
+| **Dynamic Sum of Squares (10M)** | G2-Dyn: Recurrences (Runtime) | 8.50 µs | 4.54 ms | 4.11 ms | 3.57 ms | ≤ 500 ns* | 1.43 ms | 4.30 ms | NOT_INSTALLED | **NumLang-SC Win (535.27x [304.27-607.92])** | 535.27x |
+| **Dynamic Fibonacci Matrix Power (1000)** | G2-Dyn: Recurrences (Runtime) | 11.40 µs | 11.40 µs | 4.50 µs | 3.40 µs | 3.10 µs | 3.10 µs | 93.40 µs | NOT_INSTALLED | **Tie (1.02x [0.77-1.83])** | 1.02x |
+| **Dynamic Geometric Power Loop (100)** | G2-Dyn: Recurrences (Runtime) | 9.90 µs | 8.50 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (0.90x [0.43-1.44])** | 0.90x |
+| **5-Deep Function Composition Chain** | G3: Higher-Order | 8.50 µs | 8.10 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | NOT_INSTALLED | **Tie (0.92x [0.74-2.60])** | 0.92x |
+| **Map-Map Pipeline Deforestation** | G3: Higher-Order | 7.50 µs | 8.10 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 6.30 µs | NOT_INSTALLED | **Tie (1.07x [0.64-2.07])** | 1.07x |
+| **Sum-Map Stream Fusion (1M)** | G3: Higher-Order | 8.60 µs | 433.30 µs | ≤ 500 ns* | 355.40 µs | ≤ 500 ns* | ≤ 500 ns* | 410.30 µs | NOT_INSTALLED | **NumLang-SC Win (50.92x [17.06-66.31])** | 50.92x |
+| **Stream Pipeline Filter-Sum** | G3: Higher-Order | 57.80 µs | 58.40 µs | ≤ 500 ns* | 36.60 µs | ≤ 500 ns* | 24.70 µs | WRONG_OUTPUT(actual=1;expected=0) | NOT_INSTALLED | **Tie (1.02x [0.78-1.48])** | 1.02x |
+| **Bytecode Expression Evaluator** | G4: Extended Realistic | 9.10 µs | 7.90 µs | 29.90 µs | 5.20 µs | 8.60 µs | 7.80 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (0.90x [0.66-1.15])** | 0.90x |
+| **Sliding-Window Sensor Statistics** | G4: Extended Realistic | 8.40 µs | 8.80 µs | 28.50 µs | 5.20 µs | 8.50 µs | 7.60 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (1.04x [0.71-4.34])** | 1.04x |
+| **Struct Record Transform Pipeline** | G4: Extended Realistic | 7.80 µs | 11.50 µs | 26.30 µs | 5.80 µs | 8.60 µs | 8.00 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (1.28x [0.91-2.43])** | 1.28x |
+| **Multi-Pass Clamped 2D Stencil** | G4: Extended Realistic | 13.20 µs | 12.80 µs | 28.90 µs | 10.40 µs | 9.90 µs | 7.90 µs | NOT_INSTALLED | NOT_INSTALLED | **Tie (0.96x [0.86-1.54])** | 0.96x |
 
 *\*Note on `≤ 500 ns*` and `Folded (≤500ns)*`: Entries marked with an asterisk indicate compile-time closed-form collapses or micro-loops where systems evaluated within the hardware performance counter quantization floor ($\le 500$ ns). Per Phase B integrity rules, these cells are disclosed transparently as folded/invalid rather than claimed as synthetic numeric wins.*
 
 ### Summary Metrics
 - **Total Canonical Benchmarks Evaluated**: 22
-- **NumLang-SC Statistically Significant Wins vs Baseline**: **8 / 22 (36.4%)** (95% CI of ratio excludes 1.0 AND effect $\ge 5\%$)
-- **Statistical Ties vs Baseline**: **14 / 22 (63.6%)** (effect within noise threshold)
+- **NumLang-SC Statistically Significant Wins vs Baseline**: **10 / 22 (45.5%)** (95% CI of ratio excludes 1.0 AND effect $\ge 5\%$)
+- **Statistical Ties vs Baseline**: **12 / 22 (54.5%)** (effect within noise threshold)
 - **Zero Fabricated Wins**: Constant-bound arithmetic loops folded by LLVM/MSVC at compile-time are excluded from win tallies.
 
 ---
@@ -100,153 +100,153 @@ To ensure rigorous reproducibility, the following table details the empirical di
 
 | Benchmark | System | Median | MAD | Min | 95% CI Range | Status |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|
-| `nrev` (Naive Reverse (Double nrev)) | **NumLang-SC** | 35.10 µs | 1.75 µs | 32.80 µs | [32.80 µs - 40.30 µs] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **NumLang-Base** | 222.25 µs | 4.75 µs | 210.90 µs | [211.90 µs - 245.20 µs] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **Rustc-O3** | 1.29 ms | 9.15 µs | 1.27 ms | [1.28 ms - 1.51 ms] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **MSVC-O2** | 53.50 µs | 0.50 µs | 51.60 µs | [52.80 µs - 85.70 µs] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **Clang-O3** | 49.55 µs | 0.35 µs | 48.00 µs | [48.20 µs - 53.90 µs] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **GCC-O3** | 26.75 µs | 0.45 µs | 25.60 µs | [25.80 µs - 32.60 µs] | SUCCESS |
-| `nrev` (Naive Reverse (Double nrev)) | **GHC-O2** | 21.80 µs | 1.45 µs | 19.80 µs | [20.20 µs - 33.40 µs] | SUCCESS |
-| `append3` (Triple List Append) | **NumLang-SC** | 86.30 µs | 7.40 µs | 74.20 µs | [75.70 µs - 115.80 µs] | SUCCESS |
-| `append3` (Triple List Append) | **NumLang-Base** | 88.65 µs | 4.85 µs | 80.70 µs | [81.10 µs - 100.00 µs] | SUCCESS |
-| `append3` (Triple List Append) | **Rustc-O3** | 443.95 µs | 2.65 µs | 288.00 µs | [440.70 µs - 651.80 µs] | SUCCESS |
-| `append3` (Triple List Append) | **MSVC-O2** | 14.95 µs | 0.50 µs | 14.10 µs | [14.30 µs - 21.00 µs] | SUCCESS |
-| `append3` (Triple List Append) | **Clang-O3** | 14.05 µs | 0.25 µs | 13.60 µs | [13.70 µs - 22.20 µs] | SUCCESS |
-| `append3` (Triple List Append) | **GCC-O3** | 8.50 µs | 0.25 µs | 7.90 µs | [8.10 µs - 11.60 µs] | SUCCESS |
-| `append3` (Triple List Append) | **GHC-O2** | 7.60 µs | 0.50 µs | 6.20 µs | [6.30 µs - 11.50 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **NumLang-SC** | 35.20 µs | 1.85 µs | 31.00 µs | [31.40 µs - 48.70 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **NumLang-Base** | 34.65 µs | 2.15 µs | 31.20 µs | [31.70 µs - 44.80 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **Rustc-O3** | 224.00 µs | 1.05 µs | 220.20 µs | [221.70 µs - 234.50 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **MSVC-O2** | 61.30 µs | 1.60 µs | 58.70 µs | [58.70 µs - 209.50 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **Clang-O3** | 61.10 µs | 0.65 µs | 59.30 µs | [59.60 µs - 65.20 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **GCC-O3** | 208.75 µs | 1.85 µs | 204.90 µs | [205.10 µs - 246.00 µs] | SUCCESS |
-| `kmp` (Knuth-Morris-Pratt DFA) | **GHC-O2** | 7.45 µs | 0.75 µs | 6.00 µs | [6.20 µs - 11.50 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **NumLang-SC** | 34.00 µs | 2.25 µs | 30.30 µs | [30.70 µs - 48.30 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **NumLang-Base** | 35.55 µs | 2.90 µs | 31.30 µs | [32.00 µs - 48.10 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **Rustc-O3** | 132.60 µs | 1.40 µs | 129.50 µs | [129.60 µs - 243.70 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **MSVC-O2** | 184.75 µs | 3.10 µs | 178.00 µs | [180.70 µs - 198.20 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **Clang-O3** | 186.15 µs | 4.15 µs | 180.80 µs | [181.20 µs - 271.90 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **GCC-O3** | 188.45 µs | 2.85 µs | 180.90 µs | [183.30 µs - 214.20 µs] | SUCCESS |
-| `peano_mul` (Peano Multiplication) | **GHC-O2** | 6.85 µs | 0.35 µs | 6.10 µs | [6.20 µs - 10.10 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **NumLang-SC** | 55.95 µs | 4.00 µs | 49.90 µs | [50.80 µs - 75.70 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **NumLang-Base** | 104.05 µs | 7.45 µs | 93.30 µs | [93.60 µs - 155.80 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **Rustc-O3** | 532.05 µs | 3.40 µs | 519.30 µs | [523.20 µs - 562.10 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **MSVC-O2** | 507.85 µs | 6.95 µs | 498.10 µs | [498.20 µs - 826.20 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **Clang-O3** | 505.40 µs | 3.80 µs | 490.90 µs | [496.40 µs - 667.60 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **GCC-O3** | 628.35 µs | 5.55 µs | 596.30 µs | [600.00 µs - 931.10 µs] | SUCCESS |
-| `tree_flip` (Double Tree Inversion) | **GHC-O2** | 13.90 µs | 1.55 µs | 12.20 µs | [12.20 µs - 25.40 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **NumLang-SC** | 6.65 µs | 0.40 µs | 6.10 µs | [6.10 µs - 8.10 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **NumLang-Base** | 120.30 µs | 0.30 µs | 119.60 µs | [119.70 µs - 122.50 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **Rustc-O3** | 3.40 µs | 0.00 µs | 3.30 µs | [3.40 µs - 3.50 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **MSVC-O2** | 34.80 µs | 0.00 µs | 34.10 µs | [34.70 µs - 39.30 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **Clang-O3** | 3.10 µs | 0.00 µs | 3.00 µs | [3.00 µs - 3.20 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **GCC-O3** | 2.50 µs | 0.00 µs | 2.50 µs | [2.50 µs - 2.60 µs] | SUCCESS |
-| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **GHC-O2** | 5.40 µs | 0.20 µs | 5.10 µs | [5.10 µs - 6.80 µs] | SUCCESS |
-| `tri_sum` (Triangular Summation (50M)) | **NumLang-SC** | 8.00 µs | 0.55 µs | 7.10 µs | [7.10 µs - 9.80 µs] | SUCCESS |
-| `tri_sum` (Triangular Summation (50M)) | **NumLang-Base** | 20.92 ms | 276.45 µs | 19.54 ms | [20.00 ms - 26.41 ms] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **NumLang-SC** | 7.80 µs | 0.80 µs | 6.70 µs | [6.70 µs - 9.90 µs] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **NumLang-Base** | 227.50 µs | 8.05 µs | 215.50 µs | [216.00 µs - 301.10 µs] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **Rustc-O3** | 1.33 ms | 38.70 µs | 1.29 ms | [1.29 ms - 2.31 ms] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **MSVC-O2** | 61.15 µs | 8.25 µs | 52.20 µs | [52.70 µs - 116.90 µs] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **Clang-O3** | 49.50 µs | 0.50 µs | 47.80 µs | [48.50 µs - 56.20 µs] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **GCC-O3** | 26.75 µs | 0.35 µs | 26.00 µs | [26.10 µs - 40.60 µs] | SUCCESS |
+| `nrev` (Naive Reverse (Double nrev)) | **GHC-O2** | 24.00 µs | 2.55 µs | 20.10 µs | [20.40 µs - 31.00 µs] | SUCCESS |
+| `append3` (Triple List Append) | **NumLang-SC** | 7.70 µs | 0.60 µs | 6.10 µs | [6.10 µs - 13.00 µs] | SUCCESS |
+| `append3` (Triple List Append) | **NumLang-Base** | 89.45 µs | 5.75 µs | 81.50 µs | [82.40 µs - 125.70 µs] | SUCCESS |
+| `append3` (Triple List Append) | **Rustc-O3** | 444.55 µs | 2.50 µs | 436.70 µs | [439.10 µs - 592.80 µs] | SUCCESS |
+| `append3` (Triple List Append) | **MSVC-O2** | 15.30 µs | 0.70 µs | 14.20 µs | [14.60 µs - 22.60 µs] | SUCCESS |
+| `append3` (Triple List Append) | **Clang-O3** | 14.65 µs | 0.90 µs | 13.70 µs | [13.80 µs - 21.90 µs] | SUCCESS |
+| `append3` (Triple List Append) | **GCC-O3** | 8.70 µs | 0.50 µs | 7.90 µs | [7.90 µs - 11.90 µs] | SUCCESS |
+| `append3` (Triple List Append) | **GHC-O2** | 8.60 µs | 1.20 µs | 6.70 µs | [7.00 µs - 11.70 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **NumLang-SC** | 36.45 µs | 4.25 µs | 31.40 µs | [32.10 µs - 51.00 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **NumLang-Base** | 38.60 µs | 4.90 µs | 32.20 µs | [32.30 µs - 52.30 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **Rustc-O3** | 232.35 µs | 12.45 µs | 218.40 µs | [218.90 µs - 305.30 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **MSVC-O2** | 60.55 µs | 1.00 µs | 59.00 µs | [59.10 µs - 108.20 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **Clang-O3** | 61.75 µs | 1.15 µs | 59.20 µs | [59.70 µs - 208.40 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **GCC-O3** | 210.35 µs | 2.30 µs | 204.10 µs | [204.80 µs - 283.50 µs] | SUCCESS |
+| `kmp` (Knuth-Morris-Pratt DFA) | **GHC-O2** | 8.10 µs | 0.70 µs | 6.40 µs | [6.60 µs - 11.50 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **NumLang-SC** | 7.90 µs | 0.60 µs | 7.00 µs | [7.00 µs - 9.40 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **NumLang-Base** | 35.30 µs | 3.45 µs | 30.30 µs | [31.70 µs - 50.20 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **Rustc-O3** | 132.55 µs | 1.20 µs | 129.90 µs | [130.00 µs - 234.00 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **MSVC-O2** | 184.80 µs | 2.55 µs | 177.60 µs | [178.70 µs - 260.90 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **Clang-O3** | 187.10 µs | 5.65 µs | 179.50 µs | [180.40 µs - 259.50 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **GCC-O3** | 190.10 µs | 3.70 µs | 180.80 µs | [184.10 µs - 257.50 µs] | SUCCESS |
+| `peano_mul` (Peano Multiplication) | **GHC-O2** | 7.80 µs | 0.70 µs | 6.40 µs | [6.50 µs - 11.40 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **NumLang-SC** | 7.65 µs | 0.45 µs | 6.50 µs | [6.70 µs - 12.00 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **NumLang-Base** | 103.90 µs | 5.45 µs | 92.90 µs | [93.70 µs - 148.90 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **Rustc-O3** | 533.50 µs | 6.80 µs | 520.40 µs | [525.00 µs - 640.80 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **MSVC-O2** | 506.25 µs | 4.70 µs | 489.00 µs | [493.70 µs - 770.70 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **Clang-O3** | 506.85 µs | 8.90 µs | 481.60 µs | [488.10 µs - 818.70 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **GCC-O3** | 629.05 µs | 6.15 µs | 591.30 µs | [595.00 µs - 849.60 µs] | SUCCESS |
+| `tree_flip` (Double Tree Inversion) | **GHC-O2** | 14.15 µs | 1.25 µs | 12.50 µs | [12.60 µs - 26.30 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **NumLang-SC** | 7.05 µs | 0.35 µs | 5.70 µs | [6.50 µs - 9.20 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **NumLang-Base** | 120.90 µs | 0.65 µs | 117.80 µs | [119.60 µs - 132.40 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **Rustc-O3** | 3.40 µs | 0.00 µs | 3.30 µs | [3.30 µs - 3.60 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **MSVC-O2** | 34.80 µs | 0.10 µs | 33.90 µs | [33.90 µs - 45.90 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **Clang-O3** | 3.10 µs | 0.00 µs | 3.10 µs | [3.10 µs - 3.20 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **GCC-O3** | 2.50 µs | 0.00 µs | 2.40 µs | [2.50 µs - 2.60 µs] | SUCCESS |
+| `fib_matrix` (Coupled Fibonacci Recurrence Matrix Power) | **GHC-O2** | 5.50 µs | 0.25 µs | 5.10 µs | [5.10 µs - 8.10 µs] | SUCCESS |
+| `tri_sum` (Triangular Summation (50M)) | **NumLang-SC** | 8.45 µs | 0.65 µs | 6.80 µs | [7.00 µs - 10.80 µs] | SUCCESS |
+| `tri_sum` (Triangular Summation (50M)) | **NumLang-Base** | 20.91 ms | 196.55 µs | 20.17 ms | [20.57 ms - 22.87 ms] | SUCCESS |
 | `tri_sum` (Triangular Summation (50M)) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `tri_sum` (Triangular Summation (50M)) | **MSVC-O2** | 9.40 ms | 26.35 µs | 9.18 ms | [9.21 ms - 10.07 ms] | SUCCESS |
+| `tri_sum` (Triangular Summation (50M)) | **MSVC-O2** | 9.44 ms | 31.45 µs | 9.40 ms | [9.40 ms - 10.25 ms] | SUCCESS |
 | `tri_sum` (Triangular Summation (50M)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `tri_sum` (Triangular Summation (50M)) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `tri_sum` (Triangular Summation (50M)) | **GHC-O2** | 16.22 ms | 147.25 µs | 15.74 ms | [15.78 ms - 17.46 ms] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **NumLang-SC** | 8.45 µs | 1.15 µs | 6.70 µs | [6.90 µs - 14.20 µs] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **NumLang-Base** | 4.88 ms | 292.40 µs | 4.20 ms | [4.25 ms - 6.60 ms] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **Rustc-O3** | ≤ 500 ns* | 0.05 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **MSVC-O2** | 3.55 ms | 2.25 µs | 3.50 ms | [3.54 ms - 3.64 ms] | SUCCESS |
+| `tri_sum` (Triangular Summation (50M)) | **GHC-O2** | 16.36 ms | 129.45 µs | 15.83 ms | [16.01 ms - 17.49 ms] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **NumLang-SC** | 8.55 µs | 0.75 µs | 6.90 µs | [7.30 µs - 11.20 µs] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **NumLang-Base** | 5.03 ms | 176.95 µs | 4.25 ms | [4.26 ms - 5.69 ms] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **MSVC-O2** | 3.55 ms | 7.85 µs | 3.47 ms | [3.51 ms - 3.81 ms] | SUCCESS |
 | `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **GCC-O3** | 1.42 ms | 0.30 µs | 1.39 ms | [1.42 ms - 1.46 ms] | SUCCESS |
-| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **GHC-O2** | 4.48 ms | 192.65 µs | 4.12 ms | [4.18 ms - 5.24 ms] | SUCCESS |
-| `pow2_mod` (Geometric Power Loop (100)) | **NumLang-SC** | 7.50 µs | 0.65 µs | 6.00 µs | [6.10 µs - 19.10 µs] | SUCCESS |
-| `pow2_mod` (Geometric Power Loop (100)) | **NumLang-Base** | 7.05 µs | 0.30 µs | 5.50 µs | [6.20 µs - 9.40 µs] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **GCC-O3** | 1.42 ms | 0.30 µs | 1.39 ms | [1.39 ms - 1.48 ms] | SUCCESS |
+| `cubic_sum` (Sum of Squares 1^2+...+10M^2 (Degree-3)) | **GHC-O2** | 4.56 ms | 218.45 µs | 4.18 ms | [4.19 ms - 5.75 ms] | SUCCESS |
+| `pow2_mod` (Geometric Power Loop (100)) | **NumLang-SC** | 7.65 µs | 0.45 µs | 6.40 µs | [6.60 µs - 12.00 µs] | SUCCESS |
+| `pow2_mod` (Geometric Power Loop (100)) | **NumLang-Base** | 7.55 µs | 0.65 µs | 6.00 µs | [6.40 µs - 9.60 µs] | SUCCESS |
 | `pow2_mod` (Geometric Power Loop (100)) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod` (Geometric Power Loop (100)) | **MSVC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod` (Geometric Power Loop (100)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod` (Geometric Power Loop (100)) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **NumLang-SC** | 9.15 µs | 0.45 µs | 8.00 µs | [8.20 µs - 12.20 µs] | SUCCESS |
-| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **NumLang-Base** | 9.00 µs | 0.45 µs | 7.90 µs | [8.00 µs - 11.50 µs] | SUCCESS |
-| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **Rustc-O3** | 4.30 µs | 0.30 µs | 3.60 µs | [3.60 µs - 5.60 µs] | SUCCESS |
-| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **MSVC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
+| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **NumLang-SC** | 9.00 µs | 0.45 µs | 7.90 µs | [8.10 µs - 11.70 µs] | SUCCESS |
+| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **NumLang-Base** | 9.45 µs | 0.40 µs | 8.10 µs | [8.60 µs - 25.90 µs] | SUCCESS |
+| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **Rustc-O3** | 4.20 µs | 0.20 µs | 3.80 µs | [3.90 µs - 5.60 µs] | SUCCESS |
+| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **MSVC-O2** | ≤ 500 ns* | 0.05 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `hofstadter` (Hofstadter Mutual Linear Recurrence) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `hofstadter` (Hofstadter Mutual Linear Recurrence) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **GHC-O2** | 17.05 µs | 0.55 µs | 15.80 µs | [15.90 µs - 29.30 µs] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **NumLang-SC** | 9.50 µs | 0.50 µs | 8.30 µs | [8.40 µs - 26.60 µs] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **NumLang-Base** | 20.77 ms | 224.35 µs | 19.36 ms | [19.51 ms - 21.27 ms] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **Rustc-O3** | 6.27 ms | 3.50 µs | 6.22 ms | [6.25 ms - 6.42 ms] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **MSVC-O2** | 12.67 ms | 27.10 µs | 12.15 ms | [12.38 ms - 12.98 ms] | SUCCESS |
+| `hofstadter` (Hofstadter Mutual Linear Recurrence) | **GHC-O2** | 17.35 µs | 0.95 µs | 15.80 µs | [16.10 µs - 22.10 µs] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **NumLang-SC** | 9.75 µs | 0.45 µs | 8.80 µs | [8.80 µs - 12.50 µs] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **NumLang-Base** | 20.52 ms | 264.90 µs | 19.07 ms | [19.56 ms - 21.16 ms] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **Rustc-O3** | 6.28 ms | 13.35 µs | 6.12 ms | [6.17 ms - 6.50 ms] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **MSVC-O2** | 12.68 ms | 73.90 µs | 12.27 ms | [12.29 ms - 13.39 ms] | SUCCESS |
 | `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **GCC-O3** | 5.08 ms | 56.25 µs | 4.99 ms | [5.01 ms - 5.50 ms] | SUCCESS |
-| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **GHC-O2** | 16.40 ms | 86.20 µs | 15.95 ms | [15.98 ms - 16.72 ms] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **NumLang-SC** | 9.75 µs | 0.75 µs | 8.40 µs | [8.50 µs - 13.80 µs] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **NumLang-Base** | 4.47 ms | 75.10 µs | 4.25 ms | [4.34 ms - 4.58 ms] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **Rustc-O3** | 4.15 ms | 62.60 µs | 4.04 ms | [4.07 ms - 5.14 ms] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **MSVC-O2** | 3.55 ms | 9.50 µs | 3.48 ms | [3.49 ms - 4.96 ms] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **GCC-O3** | 5.07 ms | 37.95 µs | 4.94 ms | [4.98 ms - 5.46 ms] | SUCCESS |
+| `tri_sum_dyn` (Dynamic Triangular Summation (50M)) | **GHC-O2** | 16.45 ms | 186.65 µs | 15.81 ms | [16.09 ms - 17.24 ms] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **NumLang-SC** | 8.50 µs | 0.60 µs | 7.50 µs | [7.70 µs - 15.00 µs] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **NumLang-Base** | 4.54 ms | 45.20 µs | 4.15 ms | [4.20 ms - 4.68 ms] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **Rustc-O3** | 4.11 ms | 21.50 µs | 4.04 ms | [4.04 ms - 4.32 ms] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **MSVC-O2** | 3.57 ms | 18.65 µs | 3.48 ms | [3.48 ms - 3.73 ms] | SUCCESS |
 | `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **GCC-O3** | 1.42 ms | 3.90 µs | 1.40 ms | [1.42 ms - 2.18 ms] | SUCCESS |
-| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **GHC-O2** | 4.22 ms | 24.30 µs | 4.11 ms | [4.12 ms - 5.22 ms] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **NumLang-SC** | 10.70 µs | 0.30 µs | 10.00 µs | [10.10 µs - 12.00 µs] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **NumLang-Base** | 11.45 µs | 0.85 µs | 9.90 µs | [10.30 µs - 14.70 µs] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **Rustc-O3** | 4.40 µs | 0.10 µs | 4.30 µs | [4.30 µs - 5.00 µs] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **GCC-O3** | 1.43 ms | 3.30 µs | 1.39 ms | [1.42 ms - 1.64 ms] | SUCCESS |
+| `cubic_sum_dyn` (Dynamic Sum of Squares (10M)) | **GHC-O2** | 4.30 ms | 97.95 µs | 4.17 ms | [4.19 ms - 5.29 ms] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **NumLang-SC** | 11.30 µs | 0.45 µs | 10.20 µs | [10.40 µs - 16.90 µs] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **NumLang-Base** | 11.40 µs | 0.60 µs | 10.20 µs | [10.30 µs - 21.20 µs] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **Rustc-O3** | 4.50 µs | 0.10 µs | 4.30 µs | [4.40 µs - 4.80 µs] | SUCCESS |
 | `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **MSVC-O2** | 3.40 µs | 0.00 µs | 3.20 µs | [3.30 µs - 3.40 µs] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **Clang-O3** | 3.10 µs | 0.00 µs | 3.00 µs | [3.10 µs - 3.20 µs] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **GCC-O3** | 3.10 µs | 0.00 µs | 3.00 µs | [3.00 µs - 3.20 µs] | SUCCESS |
-| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **GHC-O2** | 88.65 µs | 1.95 µs | 83.50 µs | [86.20 µs - 105.80 µs] | SUCCESS |
-| `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **NumLang-SC** | 7.60 µs | 0.50 µs | 6.60 µs | [6.80 µs - 11.40 µs] | SUCCESS |
-| `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **NumLang-Base** | 7.15 µs | 0.45 µs | 6.30 µs | [6.40 µs - 9.50 µs] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **Clang-O3** | 3.10 µs | 0.00 µs | 3.10 µs | [3.10 µs - 3.20 µs] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **GCC-O3** | 3.10 µs | 0.00 µs | 3.00 µs | [3.00 µs - 3.10 µs] | SUCCESS |
+| `fib_matrix_dyn` (Dynamic Fibonacci Matrix Power (1000)) | **GHC-O2** | 91.85 µs | 4.50 µs | 85.10 µs | [87.20 µs - 121.80 µs] | SUCCESS |
+| `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **NumLang-SC** | 9.80 µs | 0.95 µs | 8.20 µs | [8.40 µs - 18.60 µs] | SUCCESS |
+| `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **NumLang-Base** | 8.45 µs | 0.75 µs | 7.40 µs | [7.50 µs - 13.80 µs] | SUCCESS |
 | `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **MSVC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `pow2_mod_dyn` (Dynamic Geometric Power Loop (100)) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `compose5` (5-Deep Function Composition Chain) | **NumLang-SC** | 7.05 µs | 0.50 µs | 5.70 µs | [6.00 µs - 9.80 µs] | SUCCESS |
-| `compose5` (5-Deep Function Composition Chain) | **NumLang-Base** | 8.00 µs | 0.60 µs | 6.70 µs | [6.90 µs - 10.70 µs] | SUCCESS |
+| `compose5` (5-Deep Function Composition Chain) | **NumLang-SC** | 8.45 µs | 1.50 µs | 6.20 µs | [6.60 µs - 12.40 µs] | SUCCESS |
+| `compose5` (5-Deep Function Composition Chain) | **NumLang-Base** | 8.05 µs | 0.55 µs | 6.60 µs | [6.90 µs - 22.40 µs] | SUCCESS |
 | `compose5` (5-Deep Function Composition Chain) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `compose5` (5-Deep Function Composition Chain) | **MSVC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `compose5` (5-Deep Function Composition Chain) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `compose5` (5-Deep Function Composition Chain) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `compose5` (5-Deep Function Composition Chain) | **GHC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - 0.60 µs] | SUCCESS |
-| `map_map` (Map-Map Pipeline Deforestation) | **NumLang-SC** | 7.10 µs | 0.60 µs | 6.00 µs | [6.30 µs - 9.80 µs] | SUCCESS |
-| `map_map` (Map-Map Pipeline Deforestation) | **NumLang-Base** | 7.10 µs | 0.50 µs | 6.50 µs | [6.50 µs - 9.20 µs] | SUCCESS |
+| `compose5` (5-Deep Function Composition Chain) | **GHC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - 0.80 µs] | SUCCESS |
+| `map_map` (Map-Map Pipeline Deforestation) | **NumLang-SC** | 7.50 µs | 0.50 µs | 6.60 µs | [6.70 µs - 12.70 µs] | SUCCESS |
+| `map_map` (Map-Map Pipeline Deforestation) | **NumLang-Base** | 8.10 µs | 0.75 µs | 6.50 µs | [6.90 µs - 13.90 µs] | SUCCESS |
 | `map_map` (Map-Map Pipeline Deforestation) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `map_map` (Map-Map Pipeline Deforestation) | **MSVC-O2** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `map_map` (Map-Map Pipeline Deforestation) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `map_map` (Map-Map Pipeline Deforestation) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `map_map` (Map-Map Pipeline Deforestation) | **GHC-O2** | 6.35 µs | 1.00 µs | 5.00 µs | [5.00 µs - 11.00 µs] | SUCCESS |
-| `sum_map` (Sum-Map Stream Fusion (1M)) | **NumLang-SC** | 7.50 µs | 0.40 µs | 6.30 µs | [6.40 µs - 25.50 µs] | SUCCESS |
-| `sum_map` (Sum-Map Stream Fusion (1M)) | **NumLang-Base** | 432.60 µs | 0.65 µs | 422.20 µs | [423.90 µs - 445.10 µs] | SUCCESS |
+| `map_map` (Map-Map Pipeline Deforestation) | **GHC-O2** | 6.30 µs | 1.00 µs | 5.00 µs | [5.10 µs - 10.00 µs] | SUCCESS |
+| `sum_map` (Sum-Map Stream Fusion (1M)) | **NumLang-SC** | 8.60 µs | 0.65 µs | 7.10 µs | [7.50 µs - 25.40 µs] | SUCCESS |
+| `sum_map` (Sum-Map Stream Fusion (1M)) | **NumLang-Base** | 433.20 µs | 0.75 µs | 421.40 µs | [422.30 µs - 583.50 µs] | SUCCESS |
 | `sum_map` (Sum-Map Stream Fusion (1M)) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `sum_map` (Sum-Map Stream Fusion (1M)) | **MSVC-O2** | 355.40 µs | 0.10 µs | 354.40 µs | [355.30 µs - 572.80 µs] | SUCCESS |
+| `sum_map` (Sum-Map Stream Fusion (1M)) | **MSVC-O2** | 355.40 µs | 3.95 µs | 346.70 µs | [346.70 µs - 522.10 µs] | SUCCESS |
 | `sum_map` (Sum-Map Stream Fusion (1M)) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
 | `sum_map` (Sum-Map Stream Fusion (1M)) | **GCC-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `sum_map` (Sum-Map Stream Fusion (1M)) | **GHC-O2** | 410.15 µs | 0.35 µs | 400.10 µs | [409.70 µs - 516.90 µs] | SUCCESS |
-| `stream_take` (Stream Pipeline Filter-Sum) | **NumLang-SC** | 57.35 µs | 0.55 µs | 55.70 µs | [55.90 µs - 74.70 µs] | SUCCESS |
-| `stream_take` (Stream Pipeline Filter-Sum) | **NumLang-Base** | 58.70 µs | 1.55 µs | 55.90 µs | [56.30 µs - 83.10 µs] | SUCCESS |
+| `sum_map` (Sum-Map Stream Fusion (1M)) | **GHC-O2** | 410.25 µs | 0.30 µs | 402.70 µs | [409.80 µs - 512.10 µs] | SUCCESS |
+| `stream_take` (Stream Pipeline Filter-Sum) | **NumLang-SC** | 57.75 µs | 0.85 µs | 54.80 µs | [56.10 µs - 74.50 µs] | SUCCESS |
+| `stream_take` (Stream Pipeline Filter-Sum) | **NumLang-Base** | 58.35 µs | 1.10 µs | 56.30 µs | [56.60 µs - 84.70 µs] | SUCCESS |
 | `stream_take` (Stream Pipeline Filter-Sum) | **Rustc-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `stream_take` (Stream Pipeline Filter-Sum) | **MSVC-O2** | 37.10 µs | 0.20 µs | 34.00 µs | [34.90 µs - 48.30 µs] | SUCCESS |
+| `stream_take` (Stream Pipeline Filter-Sum) | **MSVC-O2** | 36.55 µs | 0.65 µs | 34.00 µs | [34.40 µs - 40.80 µs] | SUCCESS |
 | `stream_take` (Stream Pipeline Filter-Sum) | **Clang-O3** | ≤ 500 ns* | 0.00 µs | ≤ 500 ns* | [≤ 500 ns* - ≤ 500 ns*] | SUCCESS |
-| `stream_take` (Stream Pipeline Filter-Sum) | **GCC-O3** | 26.20 µs | 0.15 µs | 17.70 µs | [17.70 µs - 31.00 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **NumLang-SC** | 7.55 µs | 0.85 µs | 6.30 µs | [6.40 µs - 11.70 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **NumLang-Base** | 8.05 µs | 0.95 µs | 6.10 µs | [6.30 µs - 9.50 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **Rustc-O3** | 27.40 µs | 1.30 µs | 24.50 µs | [24.60 µs - 34.20 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **MSVC-O2** | 5.30 µs | 0.40 µs | 4.60 µs | [4.70 µs - 7.60 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **Clang-O3** | 8.65 µs | 0.35 µs | 8.10 µs | [8.10 µs - 11.70 µs] | SUCCESS |
-| `expr_eval` (Bytecode Expression Evaluator) | **GCC-O3** | 8.10 µs | 0.80 µs | 7.00 µs | [7.00 µs - 10.80 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **NumLang-SC** | 7.90 µs | 0.70 µs | 6.90 µs | [7.00 µs - 12.30 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **NumLang-Base** | 8.60 µs | 0.55 µs | 7.30 µs | [7.70 µs - 18.40 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **Rustc-O3** | 26.55 µs | 0.60 µs | 25.10 µs | [25.20 µs - 29.80 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **MSVC-O2** | 5.20 µs | 0.20 µs | 4.70 µs | [4.80 µs - 6.00 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **Clang-O3** | 8.40 µs | 0.20 µs | 7.90 µs | [7.90 µs - 9.90 µs] | SUCCESS |
-| `window_stats` (Sliding-Window Sensor Statistics) | **GCC-O3** | 7.60 µs | 0.60 µs | 6.60 µs | [6.90 µs - 10.40 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **NumLang-SC** | 7.00 µs | 0.25 µs | 6.20 µs | [6.20 µs - 8.80 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **NumLang-Base** | 8.90 µs | 0.40 µs | 8.10 µs | [8.20 µs - 11.80 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **Rustc-O3** | 24.60 µs | 1.10 µs | 22.50 µs | [23.00 µs - 27.20 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **MSVC-O2** | 6.10 µs | 0.15 µs | 5.40 µs | [5.50 µs - 7.20 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **Clang-O3** | 8.70 µs | 0.15 µs | 8.20 µs | [8.40 µs - 11.60 µs] | SUCCESS |
-| `record_pipeline` (Struct Record Transform Pipeline) | **GCC-O3** | 7.00 µs | 0.35 µs | 6.30 µs | [6.30 µs - 8.90 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **NumLang-SC** | 13.25 µs | 0.75 µs | 12.20 µs | [12.40 µs - 27.40 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **NumLang-Base** | 12.30 µs | 0.40 µs | 11.60 µs | [11.70 µs - 16.10 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **Rustc-O3** | 28.25 µs | 1.30 µs | 26.40 µs | [26.50 µs - 35.40 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **MSVC-O2** | 10.65 µs | 0.45 µs | 9.50 µs | [9.50 µs - 13.40 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **Clang-O3** | 9.95 µs | 0.40 µs | 9.00 µs | [9.30 µs - 12.70 µs] | SUCCESS |
-| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **GCC-O3** | 7.90 µs | 0.25 µs | 7.30 µs | [7.40 µs - 10.70 µs] | SUCCESS |
+| `stream_take` (Stream Pipeline Filter-Sum) | **GCC-O3** | 24.40 µs | 3.20 µs | 17.80 µs | [17.80 µs - 34.20 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **NumLang-SC** | 9.10 µs | 1.15 µs | 6.80 µs | [7.20 µs - 12.10 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **NumLang-Base** | 7.90 µs | 0.50 µs | 6.60 µs | [6.60 µs - 11.10 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **Rustc-O3** | 29.80 µs | 2.30 µs | 26.60 µs | [26.80 µs - 39.60 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **MSVC-O2** | 5.15 µs | 0.25 µs | 4.60 µs | [4.60 µs - 8.50 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **Clang-O3** | 8.60 µs | 0.35 µs | 8.10 µs | [8.10 µs - 12.00 µs] | SUCCESS |
+| `expr_eval` (Bytecode Expression Evaluator) | **GCC-O3** | 7.80 µs | 0.50 µs | 6.90 µs | [7.00 µs - 12.10 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **NumLang-SC** | 8.30 µs | 0.60 µs | 6.90 µs | [7.10 µs - 12.00 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **NumLang-Base** | 8.80 µs | 1.00 µs | 7.20 µs | [7.40 µs - 36.90 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **Rustc-O3** | 28.45 µs | 1.75 µs | 25.10 µs | [25.90 µs - 40.20 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **MSVC-O2** | 5.15 µs | 0.25 µs | 4.80 µs | [4.80 µs - 7.60 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **Clang-O3** | 8.45 µs | 0.25 µs | 7.50 µs | [7.90 µs - 9.80 µs] | SUCCESS |
+| `window_stats` (Sliding-Window Sensor Statistics) | **GCC-O3** | 7.60 µs | 0.35 µs | 6.70 µs | [6.80 µs - 10.40 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **NumLang-SC** | 7.75 µs | 0.75 µs | 6.50 µs | [6.90 µs - 10.20 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **NumLang-Base** | 11.20 µs | 2.30 µs | 8.10 µs | [8.30 µs - 18.20 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **Rustc-O3** | 26.30 µs | 0.90 µs | 23.60 µs | [24.40 µs - 28.20 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **MSVC-O2** | 5.80 µs | 0.20 µs | 5.40 µs | [5.50 µs - 6.80 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **Clang-O3** | 8.60 µs | 0.30 µs | 8.10 µs | [8.10 µs - 10.40 µs] | SUCCESS |
+| `record_pipeline` (Struct Record Transform Pipeline) | **GCC-O3** | 7.90 µs | 0.70 µs | 6.70 µs | [7.10 µs - 10.90 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **NumLang-SC** | 13.20 µs | 0.45 µs | 11.90 µs | [12.50 µs - 15.00 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **NumLang-Base** | 12.80 µs | 0.45 µs | 11.70 µs | [12.20 µs - 19.90 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **Rustc-O3** | 28.85 µs | 0.95 µs | 27.10 µs | [27.40 µs - 41.10 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **MSVC-O2** | 10.35 µs | 0.35 µs | 9.50 µs | [9.70 µs - 12.90 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **Clang-O3** | 9.90 µs | 0.30 µs | 9.30 µs | [9.40 µs - 12.80 µs] | SUCCESS |
+| `nested_stencil` (Multi-Pass Clamped 2D Stencil) | **GCC-O3** | 7.85 µs | 0.40 µs | 7.20 µs | [7.30 µs - 11.40 µs] | SUCCESS |
 
 ---
 

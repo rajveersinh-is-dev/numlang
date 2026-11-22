@@ -998,3 +998,169 @@ fn test_distillation_generic_involution_identity() {
     assert_eq!(code_res, 12, "3 + 4 + 5 must equal 12");
 }
 
+// ---------------------------------------------------------------------------
+// Algebraic producer/consumer fusion (constant-argument list pipelines)
+// ---------------------------------------------------------------------------
+//
+// These tests deliberately rename *every* identifier and vary the enum field
+// layout / constants.  Nothing may be keyed to a benchmark name or a literal
+// such as `1, 10`; the producer, concatenator and fold must be discovered from
+// the MIR structure and the compile-time arguments found there.
+
+#[test]
+fn test_algebraic_fusion_renamed_producer_append_fold() {
+    let code = r#"
+    enum Segment {
+        Void,
+        Step(Box<Segment>, i64),
+    }
+
+    // Flat arithmetic-series producer: elements seed, seed+1, ..., seed+count-1.
+    // The recursive tail is payload 0 and the head is payload 1 (swapped layout).
+    fn sprout(seed: i64, count: i64) -> Segment {
+        if count <= 0 {
+            return Void;
+        } else {
+            return Step(box(sprout(seed + 1, count - 1)), seed);
+        }
+    }
+
+    fn fasten(first: Segment, second: Segment) -> Segment {
+        return match first {
+            Void => second,
+            Step(rest, value) => Step(box(fasten(deref(rest), second)), value),
+        };
+    }
+
+    fn weigh(items: Segment) -> i64 {
+        return match items {
+            Void => 0,
+            Step(rest, value) => value + weigh(deref(rest)),
+        };
+    }
+
+    fn main() -> i64 {
+        let a: Segment = sprout(1, 10);
+        let b: Segment = sprout(11, 10);
+        let c: Segment = sprout(21, 10);
+        let joined: Segment = fasten(fasten(a, b), c);
+        return weigh(joined);
+    }
+    "#;
+
+    let baseline_cost;
+    {
+        let baseline = get_mir(code);
+        baseline_cost = total_cost(&baseline, &["sprout", "fasten", "weigh"]);
+    }
+
+    let mut mir = get_pipeline_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.loops_collapsed > 0 || stats.knots_tied > 0,
+        "Algebraic fusion must be recognised: {:?}",
+        stats
+    );
+
+    let main_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("main must exist");
+    assert_eq!(count_calls_to(main_func, "sprout"), 0);
+    assert_eq!(count_calls_to(main_func, "fasten"), 0);
+    assert_eq!(count_calls_to(main_func, "weigh"), 0);
+    assert_eq!(
+        count_allocation_sites(main_func),
+        0,
+        "The whole list pipeline must collapse to closed-form arithmetic"
+    );
+    assert!(calculate_function_cost(main_func) <= baseline_cost);
+
+    // (1..10) + (11..20) + (21..30) = 55 + 155 + 255 = 465.
+    let (code_res, _) = compile_and_run_distill(code, "algebraic_renamed_append_fold");
+    assert_eq!(code_res, expected_exit(465));
+}
+
+#[test]
+fn test_algebraic_fusion_varying_constants_and_single_producer() {
+    // Completely different constants and a single producer (no append chain):
+    // the closed form must come from the MIR arguments, not a baked-in value.
+    let code = r#"
+    enum Row {
+        Stop,
+        Cell(i64, Box<Row>),
+    }
+
+    fn build(begin: i64, amount: i64) -> Row {
+        if amount <= 0 {
+            return Stop;
+        } else {
+            return Cell(begin, box(build(begin + 1, amount - 1)));
+        }
+    }
+
+    fn add_up(xs: Row) -> i64 {
+        return match xs {
+            Stop => 0,
+            Cell(head, tail) => head + add_up(deref(tail)),
+        };
+    }
+
+    fn main() -> i64 {
+        let r: Row = build(100, 3);
+        return add_up(r);
+    }
+    "#;
+
+    let (code_res, _) = compile_and_run_distill(code, "algebraic_varying_constants");
+    // 100 + 101 + 102 = 303.
+    assert_eq!(code_res, expected_exit(303));
+}
+
+#[test]
+fn test_algebraic_fusion_keeps_identity_involution() {
+    // The involution win must survive the new algebraic pass: a double invert
+    // followed by a fold over a *non-constant* input cannot be folded to a
+    // constant, so the identity specialisation must remain intact.
+    let code = r#"
+    enum Bundle {
+        Atom(i64),
+        Pair(Box<Bundle>, Box<Bundle>),
+    }
+
+    fn twist(t: Bundle) -> Bundle {
+        return match t {
+            Atom(v) => Atom(v),
+            Pair(l, r) => Pair(box(twist(deref(r))), box(twist(deref(l)))),
+        };
+    }
+
+    fn measure(t: Bundle) -> i64 {
+        return match t {
+            Atom(v) => v,
+            Pair(l, r) => measure(deref(l)) + measure(deref(r)),
+        };
+    }
+
+    fn twist_twice(t: Bundle) -> Bundle {
+        return twist(twist(t));
+    }
+
+    fn main() -> i64 {
+        let t: Bundle = Pair(box(Atom(3)), box(Pair(box(Atom(4)), box(Atom(5)))));
+        return measure(twist_twice(t));
+    }
+    "#;
+
+    let mut mir = get_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0 || stats.loops_collapsed > 0,
+        "Involution fusion must still fire: {:?}",
+        stats
+    );
+    let (code_res, _) = compile_and_run_distill(code, "algebraic_keeps_involution");
+    assert_eq!(code_res, 12);
+}
+

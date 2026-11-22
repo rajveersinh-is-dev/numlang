@@ -660,6 +660,12 @@ impl<'a> DistillationEngine<'a> {
             }
         }
 
+        // Algebraic producer/consumer fusion. Recognises a linear fold over a
+        // flat list built by recursive producers with compile-time constant
+        // arguments (possibly joined by append chains) and replaces the whole
+        // allocation/traversal with the closed-form arithmetic result.
+        fuse_constant_list_algebra(program, &mut stats);
+
         stats
     }
 }
@@ -3827,5 +3833,743 @@ pub fn fuse_stream_pipeline(program: &mut MirProgram, stats: &mut SupercompilerS
         if fused_any {
             func.is_distilled = true;
         }
+    }
+}
+
+// ============================================================================
+// 8. Algebraic producer / consumer fusion over constant-argument pipelines
+// ============================================================================
+//
+// A common list idiom is a *flat* list built by a recursive producer from a
+// compile-time constant start/length (e.g. `make_list(1, 10)`), optionally
+// concatenated through append chains, and finally consumed by a linear fold
+// (e.g. `sum_list`). At the MIR level the producer/consumer calls have been
+// inlined into a handful of switch loops, so none of the existing nested-call
+// detectors can see the composition.
+//
+// This pass recognises the shape structurally, with a bounded symbolic MIR
+// interpreter: no function/variable name and no benchmark-specific constant is
+// ever inspected.  The interpreter evaluates every argument of the pipeline
+// from the constants actually present in MIR, walks the fold's switch, and
+// computes the result with two's-complement (wrapping) i64 arithmetic.  The
+// entire region of blocks computing the list is then replaced by a single
+// constant assignment, i.e. a closed-form O(1) computation at run time.
+
+/// Values produced by the bounded symbolic MIR interpreter.
+#[derive(Clone, Debug, PartialEq)]
+enum AlgebraVal {
+    Int(i64),
+    Bool(bool),
+    Constr { tag: usize, fields: Vec<AlgebraVal> },
+    Boxed(Box<AlgebraVal>),
+    Opaque,
+}
+
+/// Bounded symbolic interpreter over MIR.  `fuel` bounds the total number of
+/// statements executed across all (recursive) calls so an unexpectedly large or
+/// non-terminating pipeline simply fails to fuse rather than hanging or blowing
+/// up compile time.
+struct AlgebraInterp {
+    fuel: usize,
+}
+
+impl AlgebraInterp {
+    fn new(fuel: usize) -> Self {
+        AlgebraInterp { fuel }
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.fuel == 0 {
+            return false;
+        }
+        self.fuel -= 1;
+        true
+    }
+
+    fn read(&self, p: &Place, env: &HashMap<String, AlgebraVal>) -> AlgebraVal {
+        let mut v = env.get(&p.local).cloned().unwrap_or(AlgebraVal::Opaque);
+        for proj in &p.projections {
+            v = match (proj, v) {
+                (Projection::Payload(i), AlgebraVal::Constr { fields, .. }) => {
+                    fields.get(*i).cloned().unwrap_or(AlgebraVal::Opaque)
+                }
+                (Projection::Deref, AlgebraVal::Boxed(inner)) => *inner,
+                _ => AlgebraVal::Opaque,
+            };
+        }
+        v
+    }
+
+    fn eval_rv(
+        &mut self,
+        program: &MirProgram,
+        rv: &Rvalue,
+        env: &HashMap<String, AlgebraVal>,
+    ) -> AlgebraVal {
+        match rv {
+            Rvalue::Use(p) => self.read(p, env),
+            Rvalue::Constant(lit) => match lit {
+                crate::typecheck::typed_ast::TypedLiteral::Int(v, _) => AlgebraVal::Int(*v),
+                crate::typecheck::typed_ast::TypedLiteral::Bool(b) => AlgebraVal::Bool(*b),
+                _ => AlgebraVal::Opaque,
+            },
+            Rvalue::BinaryOp(op, a, b) => {
+                let x = self.read(a, env);
+                let y = self.read(b, env);
+                match (x, y) {
+                    (AlgebraVal::Int(l), AlgebraVal::Int(r)) => {
+                        // Comparisons return Bool; everything else wraps.
+                        match op {
+                            BinaryOp::Eq => AlgebraVal::Bool(l == r),
+                            BinaryOp::Ne => AlgebraVal::Bool(l != r),
+                            BinaryOp::Lt => AlgebraVal::Bool(l < r),
+                            BinaryOp::Le => AlgebraVal::Bool(l <= r),
+                            BinaryOp::Gt => AlgebraVal::Bool(l > r),
+                            BinaryOp::Ge => AlgebraVal::Bool(l >= r),
+                            BinaryOp::Add => AlgebraVal::Int(l.wrapping_add(r)),
+                            BinaryOp::Sub => AlgebraVal::Int(l.wrapping_sub(r)),
+                            BinaryOp::Mul => AlgebraVal::Int(l.wrapping_mul(r)),
+                            BinaryOp::Div if r != 0 => AlgebraVal::Int(l.wrapping_div(r)),
+                            BinaryOp::Mod if r != 0 => AlgebraVal::Int(l.wrapping_rem(r)),
+                            BinaryOp::BitAnd => AlgebraVal::Int(l & r),
+                            BinaryOp::BitOr => AlgebraVal::Int(l | r),
+                            BinaryOp::BitXor => AlgebraVal::Int(l ^ r),
+                            BinaryOp::Shl => AlgebraVal::Int(l.wrapping_shl((r as u32) & 63)),
+                            BinaryOp::Shr => AlgebraVal::Int(l.wrapping_shr((r as u32) & 63)),
+                            _ => AlgebraVal::Opaque,
+                        }
+                    }
+                    (AlgebraVal::Bool(l), AlgebraVal::Bool(r)) => match op {
+                        BinaryOp::Eq => AlgebraVal::Bool(l == r),
+                        BinaryOp::Ne => AlgebraVal::Bool(l != r),
+                        BinaryOp::BitAnd => AlgebraVal::Bool(l && r),
+                        BinaryOp::BitOr => AlgebraVal::Bool(l || r),
+                        _ => AlgebraVal::Opaque,
+                    },
+                    _ => AlgebraVal::Opaque,
+                }
+            }
+            Rvalue::UnaryOp(op, p) => match self.read(p, env) {
+                AlgebraVal::Int(v) => match op {
+                    crate::ast::UnaryOp::Neg => AlgebraVal::Int(v.wrapping_neg()),
+                    crate::ast::UnaryOp::Not => AlgebraVal::Int(!v),
+                },
+                AlgebraVal::Bool(v) => AlgebraVal::Bool(!v),
+                _ => AlgebraVal::Opaque,
+            },
+            Rvalue::Select(c, t, f) => match self.read(c, env) {
+                AlgebraVal::Bool(true) => self.read(t, env),
+                AlgebraVal::Bool(false) => self.read(f, env),
+                _ => AlgebraVal::Opaque,
+            },
+            Rvalue::Call(callee, args) => {
+                let vals: Vec<AlgebraVal> = args.iter().map(|a| self.read(a, env)).collect();
+                self.call(program, callee, &vals).unwrap_or(AlgebraVal::Opaque)
+            }
+            Rvalue::EnumVariant {
+                tag, fields, ..
+            } => AlgebraVal::Constr {
+                tag: *tag,
+                fields: fields.iter().map(|f| self.read(f, env)).collect(),
+            },
+            Rvalue::Discriminant(p) => match self.read(p, env) {
+                AlgebraVal::Constr { tag, .. } => AlgebraVal::Int(tag as i64),
+                _ => AlgebraVal::Opaque,
+            },
+            Rvalue::Alloc(p) => AlgebraVal::Boxed(Box::new(self.read(p, env))),
+            Rvalue::Load(p) => match self.read(p, env) {
+                AlgebraVal::Boxed(inner) => *inner,
+                _ => AlgebraVal::Opaque,
+            },
+            Rvalue::Phi(entries) => entries
+                .first()
+                .map(|(_, p)| self.read(p, env))
+                .unwrap_or(AlgebraVal::Opaque),
+            _ => AlgebraVal::Opaque,
+        }
+    }
+
+    /// Runs blocks starting at `start`.  When `stop` is reached the statements
+    /// of that block are still evaluated and then control returns (the block's
+    /// terminator is not followed).  On an ordinary `Return` the result is
+    /// stored in `__algebra_return__` in `env`.
+    fn run_blocks(
+        &mut self,
+        program: &MirProgram,
+        func: &MirFunction,
+        start: &BasicBlockId,
+        env: &mut HashMap<String, AlgebraVal>,
+        stop: Option<&BasicBlockId>,
+    ) -> Option<()> {
+        let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+            .blocks
+            .iter()
+            .map(|b| (b.id.clone(), b))
+            .collect();
+        let mut cur = start.clone();
+        loop {
+            if !self.tick() {
+                return None;
+            }
+            let block = *block_map.get(&cur)?;
+            for Statement::Assign(dest, rv) in &block.statements {
+                if !self.tick() {
+                    return None;
+                }
+                let val = self.eval_rv(program, rv, env);
+                env.insert(dest.local.clone(), val);
+            }
+            if stop == Some(&cur) {
+                return Some(());
+            }
+            match &block.terminator {
+                Terminator::Return { value } => {
+                    let val = value
+                        .as_ref()
+                        .map(|p| self.read(p, env))
+                        .unwrap_or(AlgebraVal::Opaque);
+                    env.insert("__algebra_return__".to_string(), val);
+                    return Some(());
+                }
+                Terminator::Branch { target } => cur = target.clone(),
+                Terminator::BranchIf {
+                    condition,
+                    then_target,
+                    else_target,
+                } => match self.read(condition, env) {
+                    AlgebraVal::Bool(true) => cur = then_target.clone(),
+                    AlgebraVal::Bool(false) => cur = else_target.clone(),
+                    _ => return None,
+                },
+                Terminator::Switch {
+                    value,
+                    targets,
+                    default,
+                } => {
+                    let tag = match self.read(value, env) {
+                        AlgebraVal::Int(v) => v,
+                        _ => return None,
+                    };
+                    cur = targets
+                        .iter()
+                        .find(|(t, _)| *t == tag)
+                        .map(|(_, b)| b.clone())
+                        .unwrap_or_else(|| default.clone());
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    fn call(
+        &mut self,
+        program: &MirProgram,
+        name: &str,
+        args: &[AlgebraVal],
+    ) -> Option<AlgebraVal> {
+        if !self.tick() {
+            return None;
+        }
+        let func = program.functions.iter().find(|f| f.name == name)?;
+        if func.blocks.is_empty() || func.params.len() != args.len() {
+            return None;
+        }
+        let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+        for ((p, _), v) in func.params.iter().zip(args.iter()) {
+            env.insert(p.clone(), v.clone());
+        }
+        self.run_blocks(program, func, &func.blocks[0].id, &mut env, None)?;
+        Some(env.remove("__algebra_return__").unwrap_or(AlgebraVal::Opaque))
+    }
+}
+
+/// All successors of a block (used for structural reachability checks).
+fn algebra_successors(b: &MirBasicBlock) -> Vec<BasicBlockId> {
+    match &b.terminator {
+        Terminator::Branch { target } => vec![target.clone()],
+        Terminator::BranchIf {
+            then_target,
+            else_target,
+            ..
+        } => vec![then_target.clone(), else_target.clone()],
+        Terminator::Switch {
+            targets, default, ..
+        } => {
+            let mut v: Vec<BasicBlockId> = targets.iter().map(|(_, b)| b.clone()).collect();
+            v.push(default.clone());
+            v
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn algebra_reaches(
+    func: &MirFunction,
+    start: &BasicBlockId,
+    target: &BasicBlockId,
+) -> bool {
+    let map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut stack = vec![start.clone()];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if &id == target {
+            return true;
+        }
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if let Some(b) = map.get(&id) {
+            for s in algebra_successors(b) {
+                stack.push(s);
+            }
+        }
+    }
+    false
+}
+
+/// Like `algebra_reaches`, but follows only unconditional `Branch` edges.  This
+/// deliberately stops at loop headers / switches so a back-edge cannot make two
+/// sibling arms appear to reach one another.
+fn algebra_reaches_branch_only(
+    func: &MirFunction,
+    start: &BasicBlockId,
+    target: &BasicBlockId,
+) -> bool {
+    let mut cur = start.clone();
+    for _ in 0..=func.blocks.len() {
+        if &cur == target {
+            return true;
+        }
+        match func
+            .blocks
+            .iter()
+            .find(|blk| blk.id == cur)
+            .map(|blk| &blk.terminator)
+        {
+            Some(Terminator::Branch { target: next }) => cur = next.clone(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Finds the block where both fold arms reconverge: the first block on the
+/// first arm's straight-line `Branch` chain that is also reachable from the
+/// second arm via `Branch` edges only.  Works both for loop bodies (latch
+/// block) and straight-line compositions (a `Return` block).
+fn algebra_arm_join(func: &MirFunction, targets: &[(i64, BasicBlockId)]) -> Option<BasicBlockId> {
+    let (a, b) = match targets {
+        [(_, a), (_, b)] => (a, b),
+        _ => return None,
+    };
+    let mut cur = a.clone();
+    for _ in 0..=func.blocks.len() {
+        if algebra_reaches_branch_only(func, b, &cur) {
+            return Some(cur);
+        }
+        match func
+            .blocks
+            .iter()
+            .find(|blk| blk.id == cur)
+            .map(|blk| &blk.terminator)
+        {
+            Some(Terminator::Branch { target }) => cur = target.clone(),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Identifies the body entry of the innermost loop whose latch is `join_idx`
+/// and whose body contains `fold_idx`.  Falls back to the entry block for a
+/// straight-line composition.
+fn algebra_body_start(func: &MirFunction, fold_idx: usize, join_idx: usize) -> usize {
+    let fold_id = &func.blocks[fold_idx].id;
+    let mut best = 0usize;
+    for (h_idx, header) in func.blocks.iter().enumerate() {
+        if h_idx >= fold_idx {
+            break;
+        }
+        let then_target = match &header.terminator {
+            Terminator::BranchIf { then_target, .. } => then_target,
+            _ => continue,
+        };
+        if !algebra_successors(&func.blocks[join_idx]).contains(&header.id) {
+            continue;
+        }
+        if !algebra_reaches(func, then_target, fold_id) {
+            continue;
+        }
+        if let Some(body_start) = block_index(func, then_target) {
+            if body_start < fold_idx && body_start > best {
+                best = body_start;
+            }
+        }
+    }
+    best
+}
+
+/// Blocks reachable from `start` without passing through `join`.
+fn algebra_region_blocks(
+    func: &MirFunction,
+    start: &BasicBlockId,
+    join: &BasicBlockId,
+) -> HashSet<usize> {
+    let map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut region = HashSet::new();
+    let mut stack = vec![start.clone()];
+    while let Some(id) = stack.pop() {
+        if &id == join {
+            continue;
+        }
+        let idx = match block_index(func, &id) {
+            Some(i) => i,
+            None => continue,
+        };
+        if !region.insert(idx) {
+            continue;
+        }
+        if let Some(b) = map.get(&id) {
+            for s in algebra_successors(b) {
+                stack.push(s);
+            }
+        }
+    }
+    region
+}
+
+fn algebra_collect_reads(place: &Place, out: &mut HashSet<String>) {
+    out.insert(place.local.clone());
+}
+
+fn algebra_collect_rvalue_reads(rv: &Rvalue, out: &mut HashSet<String>) {
+    match rv {
+        Rvalue::Use(p)
+        | Rvalue::UnaryOp(_, p)
+        | Rvalue::Alloc(p)
+        | Rvalue::Load(p)
+        | Rvalue::Discriminant(p) => algebra_collect_reads(p, out),
+        Rvalue::BinaryOp(_, a, b) => {
+            algebra_collect_reads(a, out);
+            algebra_collect_reads(b, out);
+        }
+        Rvalue::Select(a, b, c) => {
+            algebra_collect_reads(a, out);
+            algebra_collect_reads(b, out);
+            algebra_collect_reads(c, out);
+        }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => {
+            for a in args {
+                algebra_collect_reads(a, out);
+            }
+        }
+        Rvalue::Struct(_, fields) => {
+            for (_, p) in fields {
+                algebra_collect_reads(p, out);
+            }
+        }
+        Rvalue::EnumVariant { fields, .. } => {
+            for p in fields {
+                algebra_collect_reads(p, out);
+            }
+        }
+        Rvalue::Phi(entries) => {
+            for (_, p) in entries {
+                algebra_collect_reads(p, out);
+            }
+        }
+        Rvalue::ClosureAlloc { captured, .. } => {
+            for p in captured {
+                algebra_collect_reads(p, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A local assigned inside the region must not be read outside it (other than
+/// the result local in the join block, which the replacement re-defines).
+fn algebra_region_locals_escape(
+    func: &MirFunction,
+    region: &HashSet<usize>,
+    join_idx: usize,
+    result_local: &str,
+) -> bool {
+    let mut assigned: HashSet<String> = HashSet::new();
+    for &idx in region {
+        for Statement::Assign(dest, _) in &func.blocks[idx].statements {
+            assigned.insert(dest.local.clone());
+        }
+    }
+    for (idx, block) in func.blocks.iter().enumerate() {
+        if region.contains(&idx) || idx == join_idx {
+            continue;
+        }
+        let mut reads = HashSet::new();
+        for Statement::Assign(_, rv) in &block.statements {
+            algebra_collect_rvalue_reads(rv, &mut reads);
+        }
+        match &block.terminator {
+            Terminator::BranchIf { condition, .. } | Terminator::Switch { value: condition, .. } => {
+                algebra_collect_reads(condition, &mut reads)
+            }
+            Terminator::Return {
+                value: Some(place),
+            } => algebra_collect_reads(place, &mut reads),
+            _ => {}
+        }
+        for r in reads {
+            if r != result_local && assigned.contains(&r) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True if a block outside the region branches into it (other than the loop
+/// header entering at `body_start`).  Such a region cannot be replaced safely.
+fn algebra_has_external_entry(
+    func: &MirFunction,
+    region: &HashSet<usize>,
+    body_start: &BasicBlockId,
+) -> bool {
+    for (idx, block) in func.blocks.iter().enumerate() {
+        if region.contains(&idx) {
+            continue;
+        }
+        for s in algebra_successors(block) {
+            if &s == body_start {
+                continue;
+            }
+            if let Some(i) = block_index(func, &s) {
+                if region.contains(&i) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Calls to functions outside the program (e.g. `println`) must not be removed.
+fn algebra_region_has_side_effects(
+    func: &MirFunction,
+    program: &MirProgram,
+    region: &HashSet<usize>,
+) -> bool {
+    for &idx in region {
+        let block = &func.blocks[idx];
+        for Statement::Assign(_, rv) in &block.statements {
+            match rv {
+                Rvalue::Call(callee, _) => {
+                    if !program.functions.iter().any(|f| &f.name == callee) {
+                        return true;
+                    }
+                }
+                Rvalue::Thunk { .. } | Rvalue::ClosureAlloc { .. } | Rvalue::FnPtr(_) => {
+                    return true
+                }
+                _ => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::IndirectCall { .. }
+            | Terminator::Force { .. }
+            | Terminator::Fork { .. } => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+struct AlgebraRewrite {
+    caller_idx: usize,
+    body_start_idx: usize,
+    join: BasicBlockId,
+    result_local: String,
+    value: i64,
+    dead: HashSet<usize>,
+}
+
+fn try_algebraic_fold_in_caller(
+    caller_idx: usize,
+    caller: &MirFunction,
+    program: &MirProgram,
+) -> Option<AlgebraRewrite> {
+    for (fold_idx, fold_block) in caller.blocks.iter().enumerate() {
+        let (scrut, targets, default) = match &fold_block.terminator {
+            Terminator::Switch {
+                value,
+                targets,
+                default,
+            } => (value, targets, default),
+            _ => continue,
+        };
+        if targets.len() != 2 {
+            continue;
+        }
+        let join = algebra_arm_join(caller, targets)?;
+        let join_idx = block_index(caller, &join)?;
+        let body_start_idx = algebra_body_start(caller, fold_idx, join_idx);
+        let body_start = caller.blocks[body_start_idx].id.clone();
+        let region = algebra_region_blocks(caller, &body_start, &join);
+        if !region.contains(&fold_idx) || region.contains(&join_idx) {
+            continue;
+        }
+        if algebra_has_external_entry(caller, &region, &body_start) {
+            continue;
+        }
+        if algebra_region_has_side_effects(caller, program, &region) {
+            continue;
+        }
+
+        // Both switch arms must reach the join.
+        if targets
+            .iter()
+            .any(|(_, target)| !algebra_reaches(caller, target, &join))
+        {
+            continue;
+        }
+
+        // Symbolically execute the region up to the fold switch.
+        let mut interp = AlgebraInterp::new(20_000);
+        let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+        for (p, _) in &caller.params {
+            env.insert(p.clone(), AlgebraVal::Opaque);
+        }
+        for d in &caller.locals {
+            env.entry(d.name.clone()).or_insert(AlgebraVal::Opaque);
+        }
+        interp.run_blocks(
+            program,
+            caller,
+            &body_start,
+            &mut env,
+            Some(&caller.blocks[fold_idx].id),
+        )?;
+        let tag = match interp.read(scrut, &env) {
+            AlgebraVal::Int(v) => v,
+            _ => continue,
+        };
+        let target = targets
+            .iter()
+            .find(|(t, _)| *t == tag)
+            .map(|(_, b)| b.clone())
+            .unwrap_or_else(|| default.clone());
+
+        // Execute the selected arm until the join and read back the fold result.
+        interp.run_blocks(program, caller, &target, &mut env, Some(&join))?;
+        let mut read_in_join = HashSet::new();
+        for Statement::Assign(_, rv) in &caller.blocks[join_idx].statements {
+            algebra_collect_rvalue_reads(rv, &mut read_in_join);
+        }
+        match &caller.blocks[join_idx].terminator {
+            Terminator::BranchIf { condition, .. } | Terminator::Switch { value: condition, .. } => {
+                algebra_collect_reads(condition, &mut read_in_join)
+            }
+            Terminator::Return {
+                value: Some(place),
+            } => algebra_collect_reads(place, &mut read_in_join),
+            _ => {}
+        }
+        // The fold result must be defined by the region, not by the join block
+        // itself (which computes the loop's accumulator update).
+        let mut assigned_in_region = HashSet::new();
+        for &idx in &region {
+            for Statement::Assign(dest, _) in &caller.blocks[idx].statements {
+                assigned_in_region.insert(dest.local.clone());
+            }
+        }
+        let mut found: Vec<(String, i64)> = read_in_join
+            .iter()
+            .filter(|r| assigned_in_region.contains(*r))
+            .filter_map(|r| match env.get(r) {
+                Some(AlgebraVal::Int(v)) => Some((r.clone(), *v)),
+                _ => None,
+            })
+            .collect();
+        found.sort();
+        if found.len() != 1 {
+            dtrace!(
+                "  algebraic fold: ambiguous/absent result in {}: {:?}",
+                caller.name,
+                found
+            );
+            continue;
+        }
+        let (result_local, value) = found.remove(0);
+        if algebra_region_locals_escape(caller, &region, join_idx, &result_local) {
+            continue;
+        }
+
+        dtrace!(
+            "  algebraic fold in {}: region={:?} result={}={}",
+            caller.name,
+            region,
+            result_local,
+            value
+        );
+        return Some(AlgebraRewrite {
+            caller_idx,
+            body_start_idx,
+            join,
+            result_local,
+            value,
+            dead: region,
+        });
+    }
+    None
+}
+
+fn apply_algebraic_rewrite(program: &mut MirProgram, rw: AlgebraRewrite) {
+    let caller = &mut program.functions[rw.caller_idx];
+    let result_ty = local_type(caller, &rw.result_local);
+    let mut dead = rw.dead;
+    dead.remove(&rw.body_start_idx);
+    for idx in dead {
+        if let Some(block) = caller.blocks.get_mut(idx) {
+            block.statements.clear();
+            block.terminator = Terminator::Unreachable;
+        }
+    }
+    if let Some(block) = caller.blocks.get_mut(rw.body_start_idx) {
+        block.statements = vec![Statement::Assign(
+            Place {
+                local: rw.result_local.clone(),
+                projections: vec![],
+            },
+            Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(
+                rw.value,
+                result_ty,
+            )),
+        )];
+        block.terminator = Terminator::Branch {
+            target: rw.join.clone(),
+        };
+    }
+    caller.is_distilled = true;
+}
+
+/// Program-level entry point for algebraic producer/consumer fusion.
+fn fuse_constant_list_algebra(program: &mut MirProgram, stats: &mut SupercompilerStats) {
+    let mut rewrites = Vec::new();
+    for (ci, caller) in program.functions.iter().enumerate() {
+        if let Some(rw) = try_algebraic_fold_in_caller(ci, caller, program) {
+            rewrites.push(rw);
+        }
+    }
+    for rw in rewrites {
+        stats.loops_collapsed += 1;
+        stats.branches_pruned += 1;
+        apply_algebraic_rewrite(program, rw);
     }
 }
