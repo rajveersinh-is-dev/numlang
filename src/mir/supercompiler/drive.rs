@@ -553,14 +553,19 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         let current_state = self.nodes[node_id.0].state.clone();
-        let (statements, terminator) = match self.block_map.get(&current_state.block) {
-            Some(b) => (b.statements.clone(), b.terminator.clone()),
+        // The block map stores `&'a MirBasicBlock`; copying the reference detaches
+        // it from the `&self` borrow, so statements/terminator can be borrowed
+        // directly instead of deep-cloned for every process node.
+        let block = match self.block_map.get(&current_state.block).copied() {
+            Some(b) => b,
             None => return,
         };
+        let statements = &block.statements;
+        let terminator = &block.terminator;
 
         // Step 1: Drive all statements in current block sequentially
         let mut working_state = current_state;
-        for stmt in &statements {
+        for stmt in statements {
             let is_impure = match stmt {
                 Statement::Assign(_, Rvalue::Call(callee, _)) => {
                     callee == "println" || callee == "print" || callee == "exit"
@@ -577,7 +582,7 @@ impl<'a> SupercompilerDriver<'a> {
         }
 
         // Step 2: Handle block terminator
-        match &terminator {
+        match terminator {
             Terminator::Return { value } => {
                 let ret_term = value.as_ref().and_then(|p| working_state.get_value(p));
                 self.nodes[node_id.0].return_term = ret_term;
@@ -1747,8 +1752,19 @@ impl<'a> SupercompilerDriver<'a> {
             }
 
             for &anc_id in ancestor_stack.iter().rev() {
-                let anc_state = self.nodes[anc_id.0].state.clone();
-                if state_embeds(&anc_state, &next_state, &self.active_places, &self.interner) {
+                // `state_embeds` only needs a shared view of the ancestor. Cloning
+                // every ancestor state here made each ordinary transition pay for
+                // the whole env/refinement/constraint table even when the whistle
+                // never fired. Clone just the firing ancestor below, where the
+                // generalization paths need an owned state.
+                let embeds = state_embeds(
+                    &self.nodes[anc_id.0].state,
+                    &next_state,
+                    &self.active_places,
+                    &self.interner,
+                );
+                if embeds {
+                    let anc_state = self.nodes[anc_id.0].state.clone();
                     // Whistle blew! Growth detected across iterations.
                     // Try recurrence solver on mutating induction places:
                     let first_header_anc = ancestor_stack

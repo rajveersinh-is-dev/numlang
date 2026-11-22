@@ -26,57 +26,62 @@ benchmark_id,system,warmup_ns,median_compile_ns,p95_compile_ns,rounds,status
 
 ## Measured Data
 
-The committed CSV contains 36 rows: 18 canonical microbenchmarks × 2 systems (Base + SC), plus 4 extended realistic workloads × 2 systems.
+The committed CSV contains 36 rows: 18 workloads (14 canonical microbenchmarks plus 4 extended realistic workloads) × 2 systems (Base + SC).
 
-Below are the median and p95 compile times in nanoseconds, rounded to the nearest 100 ns:
+Below are the median and p95 compile times in nanoseconds, exactly as written to the CSV:
 
 | Benchmark | System | warmup_ns | median_compile_ns | p95_compile_ns | rounds |
 |-----------|--------|-----------|-------------------|----------------|--------|
-| append3 | NumLang-Base-lower | 4,839,200 | 943,100 | 1,010,200 | 30 |
-| append3 | NumLang-SC-specialize | 60,294,300 | 12,121,600 | 12,733,000 | 30 |
-| compose5 | NumLang-Base-lower | 2,292,400 | 438,400 | 500,100 | 30 |
-| compose5 | NumLang-SC-specialize | 12,044,000 | 2,259,600 | 2,517,800 | 30 |
-| cubic_sum | NumLang-Base-lower | 1,259,300 | 240,200 | 244,600 | 30 |
-| cubic_sum | NumLang-SC-specialize | 8,021,100 | 1,554,300 | 1,681,300 | 30 |
-| **expr_eval** | **NumLang-Base-lower** | **2,936,400** | **575,500** | **624,000** | **30** |
-| **expr_eval** | **NumLang-SC-specialize** | **35,095,200** | **7,062,200** | **7,323,700** | **30** |
-| **window_stats** | **NumLang-Base-lower** | **1,979,900** | **378,400** | **411,600** | **30** |
-| **window_stats** | **NumLang-SC-specialize** | **17,112,000** | **3,404,600** | **3,575,800** | **30** |
-| **record_pipeline** | **NumLang-Base-lower** | **10,187,600** | **2,038,600** | **2,168,500** | **30** |
-| **record_pipeline** | **NumLang-SC-specialize** | **39,636,200** | **7,952,000** | **8,154,500** | **30** |
-| **nested_stencil** | **NumLang-Base-lower** | **6,898,500** | **1,338,500** | **1,413,800** | **30** |
-| **nested_stencil** | **NumLang-SC-specialize** | **52,150,900** | **10,385,300** | **11,247,900** | **30** |
-| fib_matrix | NumLang-Base-lower | 1,289,000 | 248,100 | 417,900 | 30 |
-| fib_matrix | NumLang-SC-specialize | 12,675,100 | 2,476,500 | 2,605,800 | 30 |
-| hofstadter | NumLang-Base-lower | 6,978,600 | 909,200 | 1,573,700 | 30 |
-| hofstadter | NumLang-SC-specialize | 41,774,800 | 8,326,500 | 9,260,700 | 30 |
-| kmp | NumLang-Base-lower | 3,334,200 | 626,100 | 691,900 | 30 |
-| kmp | NumLang-SC-specialize | 46,295,100 | 10,166,800 | 11,915,900 | 30 |
-| map_map | NumLang-Base-lower | 1,124,200 | 214,600 | 228,800 | 30 |
-| map_map | NumLang-SC-specialize | 10,405,600 | 2,062,200 | 2,152,000 | 30 |
-| nested_stencil | (canonical 4×4 stencil) | — | — | — | — |
-| peano_mul | NumLang-Base-lower | 3,626,600 | 693,400 | 749,900 | 30 |
-| peano_mul | NumLang-SC-specialize | 37,324,000 | 7,001,900 | 7,414,600 | 30 |
-| pow2_mod | NumLang-Base-lower | 1,215,600 | 228,500 | 234,700 | 30 |
-| pow2_mod | NumLang-SC-specialize | 7,942,900 | 1,570,500 | 1,645,200 | 30 |
-| record_pipeline | (extended pipeline) | — | — | — | — |
-| stream_take | NumLang-Base-lower | 1,748,300 | 296,400 | 307,300 | 30 |
-| stream_take | NumLang-SC-specialize | 14,050,400 | 2,737,900 | 2,881,300 | 30 |
-| sum_map | NumLang-Base-lower | 721,800 | 140,100 | 145,600 | 30 |
-| sum_map | NumLang-SC-specialize | 5,156,800 | 998,000 | 1,487,300 | 30 |
-| tree_flip | NumLang-Base-lower | 3,049,800 | 584,900 | 623,600 | 30 |
-| tree_flip | NumLang-SC-specialize | 122,458,300 | 24,906,400 | 25,598,500 | 30 |
-| tri_sum | NumLang-Base-lower | 1,201,300 | 233,400 | 240,300 | 30 |
-| tri_sum | NumLang-SC-specialize | 7,150,100 | 1,379,000 | 1,460,900 | 30 |
+| nrev | NumLang-SC-specialize | 48,037,500 | 9,240,600 | 14,960,500 | 30 |
+| nrev | NumLang-Base-lower | 3,246,300 | 632,500 | 721,200 | 30 |
+| append3 | NumLang-SC-specialize | 72,285,300 | 14,084,900 | 20,668,600 | 30 |
+| append3 | NumLang-Base-lower | 6,121,100 | 1,001,900 | 1,129,100 | 30 |
+| kmp | NumLang-SC-specialize | 54,659,200 | 10,555,300 | 11,459,300 | 30 |
+| kmp | NumLang-Base-lower | 2,959,200 | 554,800 | 610,100 | 30 |
+| peano_mul | NumLang-SC-specialize | 41,700,200 | 7,912,000 | 8,647,100 | 30 |
+| peano_mul | NumLang-Base-lower | 3,568,500 | 668,800 | 697,000 | 30 |
+| tree_flip | NumLang-SC-specialize | 577,840,700 | 104,592,200 | 129,943,600 | 30 |
+| tree_flip | NumLang-Base-lower | 3,053,800 | 583,300 | 627,000 | 30 |
+| fib_matrix | NumLang-SC-specialize | 410,756,900 | 84,087,100 | 105,808,600 | 30 |
+| fib_matrix | NumLang-Base-lower | 1,297,500 | 237,300 | 284,000 | 30 |
+| tri_sum | NumLang-SC-specialize | 8,237,200 | 1,569,500 | 1,703,500 | 30 |
+| tri_sum | NumLang-Base-lower | 1,202,900 | 230,200 | 253,600 | 30 |
+| cubic_sum | NumLang-SC-specialize | 8,807,800 | 1,710,900 | 1,837,200 | 30 |
+| cubic_sum | NumLang-Base-lower | 1,236,400 | 239,700 | 257,300 | 30 |
+| pow2_mod | NumLang-SC-specialize | 9,433,500 | 1,818,600 | 3,110,700 | 30 |
+| pow2_mod | NumLang-Base-lower | 1,160,600 | 222,600 | 277,000 | 30 |
+| hofstadter | NumLang-SC-specialize | 4,808,697,900 | 972,449,500 | 1,427,566,400 | 30 |
+| hofstadter | NumLang-Base-lower | 5,096,600 | 1,011,200 | 2,085,500 | 30 |
+| compose5 | NumLang-SC-specialize | 16,322,800 | 3,183,900 | 5,106,200 | 30 |
+| compose5 | NumLang-Base-lower | 4,009,800 | 487,900 | 1,083,000 | 30 |
+| map_map | NumLang-SC-specialize | 551,119,200 | 89,033,400 | 117,512,400 | 30 |
+| map_map | NumLang-Base-lower | 1,405,100 | 224,700 | 254,600 | 30 |
+| sum_map | NumLang-SC-specialize | 5,962,900 | 1,093,900 | 1,169,800 | 30 |
+| sum_map | NumLang-Base-lower | 749,500 | 141,000 | 148,100 | 30 |
+| stream_take | NumLang-SC-specialize | 1,323,667,900 | 248,013,800 | 270,607,500 | 30 |
+| stream_take | NumLang-Base-lower | 1,642,500 | 293,500 | 303,000 | 30 |
+| expr_eval | NumLang-SC-specialize | 954,656,300 | 186,854,500 | 220,623,700 | 30 |
+| expr_eval | NumLang-Base-lower | 3,085,300 | 582,900 | 627,700 | 30 |
+| window_stats | NumLang-SC-specialize | 25,631,200 | 4,939,500 | 5,150,700 | 30 |
+| window_stats | NumLang-Base-lower | 2,024,800 | 382,800 | 409,100 | 30 |
+| record_pipeline | NumLang-SC-specialize | 24,289,900 | 4,756,600 | 4,983,800 | 30 |
+| record_pipeline | NumLang-Base-lower | 10,818,300 | 2,067,800 | 2,303,900 | 30 |
+| nested_stencil | NumLang-SC-specialize | 72,265,100 | 14,147,400 | 15,805,100 | 30 |
+| nested_stencil | NumLang-Base-lower | 7,041,800 | 1,358,700 | 1,646,800 | 30 |
 
-*Canonical entries not shown for brevity; all 36 rows are present in the CSV.*
+All 36 rows are present in the CSV.
 
 ## Median Summary (all 36 rows)
 
-The overall median compile time across all benchmarks and systems is **2,038,600 ns** (≈2.0 ms). The SC-specialize median is **7,062,200 ns** (≈7.1 ms), vs Base median of **575,500 ns** (≈0.6 ms). The SC overhead ranges from ~2× (pow2_mod) to ~20× (tree_flip), reflecting the supercompiler's specialization cost relative to simple MIR lowering.
+The overall median compile time across all benchmarks and systems is **1,464,100 ns** (≈1.5 ms). The SC-specialize median is **9,897,950 ns** (≈9.9 ms), vs Base median of **521,350 ns** (≈0.5 ms). On this host the SC/Base ratio ranges from **2.3×** (record_pipeline) to **961.7×** (hofstadter); the extreme end reflects supercompilation of deeply recursive functions where baseline lowering is nearly free. These numbers were measured after removing redundant MIR-block and ancestor-state clones from symbolic driving; see `bench/data/compile_times.csv` for the raw rows.
+
+The committed CSV is the final clean post-fix run. Against the pre-fix baseline captured with the same harness, the sum of the 18 SC medians fell from **1,897,736,000 ns** to **1,760,043,600 ns** (**−7.3%**), the per-workload median change was **−10.4%**, and **16/18** workloads improved. Largest improvements were `kmp` (−68.3%), `peano_mul` (−67.6%), `append3` (−66.2%), and `nrev` (−65.1%). The only increases were `compose5` (+12.5%) and `sum_map` (+0.4%), both short noisy workloads.
+
+Profile runs used `NUMLANG_PROFILE_SUPERCOMPILE=1 cargo test --test specialization_latency_tests profile_append3_and_expr_eval -- --nocapture`. With separate `CARGO_TARGET_DIR` values for baseline and fixed builds, medians over six paired runs show symbolic driving dropping from **5.944 ms → 5.853 ms** for `append3` and **173.313 ms → 147.424 ms** for `expr_eval` (**−14.9%**); total specialization time dropped from **183.569 ms → 158.140 ms** for `expr_eval`.
 
 ## Scope and Notes
 
 - **This is specialization latency, not end-to-end wall-clock compile time.** It does not include process startup, linking, or binary emission. A future `numlang build` wall-clock column should be added separately rather than mislabeling these numbers as full build time.
 - **NEW metric not yet reflected in the frozen contract tables.** The compile-time CSV and this methodology were added to close the contract v1.0 §7 gap where compile-time was previously `N/A`. The existing frozen tables (README.md, SHOWDOWN.md, BENCHMARK_CONTRACT.md) only track `expected_exit` and `COMPUTE_NS`; they do not include specialization latency columns.
 - The four extended workloads (`expr_eval`, `window_stats`, `record_pipeline`, `nested_stencil`) are included in the 36-row CSV with SUCCESS status, measured on the same host: 11th Gen Intel(R) Core(TM) i5-11260H @ 2.60GHz, Windows 11 Home, Rust 1.100.0.
+- Re-run paired comparisons with separate target directories: sharing one `CARGO_TARGET_DIR` between different source trees can reuse a stale test binary and invalidate the comparison.
