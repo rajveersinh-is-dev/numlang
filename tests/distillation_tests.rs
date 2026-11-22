@@ -921,4 +921,80 @@ fn test_distillation_fires_on_nested_inlined_composition() {
     assert_eq!(code_res, 9, "double turn must preserve 4 + 5 = 9");
 }
 
+#[test]
+fn test_distillation_generic_involution_identity() {
+    let code = r#"
+    enum Bundle {
+        Atom(i64),
+        Pair(Box<Bundle>, Box<Bundle>),
+    }
+
+    fn twist(t: Bundle) -> Bundle {
+        return match t {
+            Atom(v) => Atom(v),
+            Pair(l, r) => Pair(box(twist(deref(r))), box(twist(deref(l)))),
+        };
+    }
+
+    fn measure(t: Bundle) -> i64 {
+        return match t {
+            Atom(v) => v,
+            Pair(l, r) => measure(deref(l)) + measure(deref(r)),
+        };
+    }
+
+    fn twist_twice(t: Bundle) -> Bundle {
+        return twist(twist(t));
+    }
+
+    fn main() -> i64 {
+        let t: Bundle = Pair(box(Atom(3)), box(Pair(box(Atom(4)), box(Atom(5)))));
+        let t2: Bundle = twist_twice(t);
+        return measure(t2);
+    }
+    "#;
+
+    let mut mir = get_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.knots_tied > 0 || stats.loops_collapsed > 0,
+        "Generic involution identity must be detected: {:?}",
+        stats
+    );
+
+    let fused = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "twist_twice" || f.name == "__distill_twist_twist")
+        .expect("twist_twice function must exist in distilled MIR");
+
+    let mut alloc_count = 0;
+    let mut call_to_twist = 0;
+    for block in &fused.blocks {
+        for stmt in &block.statements {
+            let Statement::Assign(_, rval) = stmt;
+            if matches!(rval, Rvalue::Alloc(_)) {
+                alloc_count += 1;
+            }
+            if let Rvalue::Call(callee, _) = rval {
+                if callee == "twist" {
+                    call_to_twist += 1;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        call_to_twist, 0,
+        "twist_twice must not call twist; involution must be eliminated"
+    );
+    assert!(
+        alloc_count <= 2,
+        "twist_twice should be identity (0 allocs) or at most reconstruct (2 allocs), got {}",
+        alloc_count
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "generic_involution_identity");
+    assert_eq!(code_res, 12, "3 + 4 + 5 must equal 12");
+}
 

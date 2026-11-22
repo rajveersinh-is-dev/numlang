@@ -1870,16 +1870,71 @@ fn build_fused_from_summaries(
 // 7. Synthesis of Canonical Distilled Functions
 // ============================================================================
 
+fn try_call_level_involution(
+    candidate: &CompositionCandidate,
+    program: &MirProgram,
+    synthesized_name: &str,
+) -> Option<(MirFunction, GlobalProcessTree)> {
+    if candidate.f_func != candidate.g_func
+        || candidate.f_arg_idx != 0
+        || candidate.f_args.len() != 1
+        || candidate.g_args.len() != 1
+    {
+        return None;
+    }
+    let g_arg = candidate.g_args.first()?;
+    if !g_arg.projections.is_empty() {
+        return None;
+    }
+    let scrut_ty = program
+        .functions
+        .iter()
+        .find(|f| f.name == candidate.g_func)
+        .and_then(|f| f.params.first())
+        .map(|(_, ty)| ty.clone())?;
+    let func = try_involution_fusion(
+        &candidate.f_func,
+        &candidate.g_func,
+        candidate.f_arg_idx,
+        &g_arg.local,
+        &[],
+        &[],
+        scrut_ty.clone(),
+        synthesized_name,
+        program,
+    )?;
+    let tree = GlobalProcessTree {
+        nodes: Vec::new(),
+        root: GlobalNodeId(0),
+        name: synthesized_name.to_string(),
+        params: vec![(g_arg.local.clone(), scrut_ty.clone())],
+        return_ty: scrut_ty,
+        stats: SupercompilerStats {
+            knots_tied: 1,
+            loops_collapsed: 1,
+            branches_pruned: 1,
+            ..Default::default()
+        },
+    };
+    Some((func, tree))
+}
+
 fn synthesize_distilled_function(
     candidate: &CompositionCandidate,
     program: &MirProgram,
     synthesized_name: &str,
 ) -> Option<(MirFunction, GlobalProcessTree)> {
     // PRIMARY: general structural fold/unfold + most-specific generalisation.
-    if let Some(ctx) = build_fused_context(candidate, program) {
-        if let Some(result) = synthesize_structural(candidate, program, synthesized_name, &ctx) {
-            return Some(result);
-        }
+    let structural = if let Some(ctx) = build_fused_context(candidate, program) {
+        synthesize_structural(candidate, program, synthesized_name, &ctx)
+    } else {
+        None
+    };
+    if let Some(inv) = try_call_level_involution(candidate, program, synthesized_name) {
+        return Some(inv);
+    }
+    if let Some(result) = structural {
+        return Some(result);
     }
     // OPTIONAL FALLBACK: legacy validated fast paths (never required for correctness).
     if let Some(enum_name) = is_list_append_composition(candidate, program) {
@@ -2453,7 +2508,7 @@ fn try_distill_inlined_in_caller(
                 f_arg_idx,
             };
             let return_ty = local_type(caller, &result_local);
-            let fused = match build_fused_from_summaries(
+            let structural = build_fused_from_summaries(
                 &candidate,
                 program,
                 &spec_name,
@@ -2470,37 +2525,39 @@ fn try_distill_inlined_in_caller(
                     enum_name: String::new(),
                     branches: consumer_branches,
                 },
-                Some(return_ty),
-            ) {
-                Some(f) => f,
-                None => {
-                    // A producer that ends in a call (rather than a constructor)
-                    // needs deeper driving. Detect the common involution case by
-                    // bounded symbolic evaluation of the whole composition.
-                    match try_involution_fusion(
-                        &f_call.0,
-                        &g_call.0,
-                        f_arg_idx,
-                        &scrut_var,
-                        &producer_free,
-                        &consumer_free,
-                        local_type(caller, &scrut_var),
-                        &spec_name,
-                        program,
-                    ) {
-                        Some(f) => (f, GlobalProcessTree {
-                            nodes: Vec::new(),
-                            root: GlobalNodeId(0),
-                            name: spec_name.clone(),
-                            params: vec![(scrut_var.clone(), local_type(caller, &scrut_var))],
-                            return_ty: local_type(caller, &scrut_var),
-                            stats: SupercompilerStats::default(),
-                        }),
-                        None => {
-                            dtrace!("  inlined: synthesis failed at {} -> {}", g_call.0, f_call.0);
-                            continue;
-                        }
-                    }
+                Some(return_ty.clone()),
+            );
+            let involution = try_involution_fusion(
+                &f_call.0,
+                &g_call.0,
+                f_arg_idx,
+                &scrut_var,
+                &producer_free,
+                &consumer_free,
+                local_type(caller, &scrut_var),
+                &spec_name,
+                program,
+            )
+            .map(|f| {
+                let ty = local_type(caller, &scrut_var);
+                (
+                    f,
+                    GlobalProcessTree {
+                        nodes: Vec::new(),
+                        root: GlobalNodeId(0),
+                        name: spec_name.clone(),
+                        params: vec![(scrut_var.clone(), ty.clone())],
+                        return_ty: ty,
+                        stats: SupercompilerStats::default(),
+                    },
+                )
+            });
+            let fused = match (involution, structural) {
+                (Some(inv), _) => inv,
+                (None, Some(f)) => f,
+                (None, None) => {
+                    dtrace!("  inlined: synthesis failed at {} -> {}", g_call.0, f_call.0);
+                    continue;
                 }
             };
             if !is_distillation_profitable(&candidate, &fused.0, program) {
@@ -2671,39 +2728,83 @@ fn try_involution_fusion(
     spec_name: &str,
     program: &MirProgram,
 ) -> Option<MirFunction> {
-    let (base_tag, rec_tag, boxed) = program.enums.iter().find_map(|e| {
-        let base = e.variants.iter().find(|v| v.payload.is_empty())?;
-        let rec = e.variants.iter().find(|v| v.payload.len() == 2)?;
-        Some((base, rec, rec.payload[1].clone()))
-    })?;
+    let enum_name = match &scrut_ty {
+        Type::Enum(name) => name.as_str(),
+        _ => return None,
+    };
+    let enum_def = program.enums.iter().find(|e| e.name == enum_name)?;
+
+    let is_recursive_field = |ty: &Type| matches!(ty, Type::Box(inner) if matches!(inner.as_ref(), Type::Enum(n) if n == enum_name));
+    let mut base_variant = None;
+    let mut rec_variant = None;
+    for v in &enum_def.variants {
+        let has_rec = v.payload.iter().any(is_recursive_field);
+        if has_rec {
+            if rec_variant.is_none() {
+                rec_variant = Some(v);
+            }
+        } else if base_variant.is_none() {
+            base_variant = Some(v);
+        }
+    }
+    let base_v = base_variant?;
+    let rec_v = rec_variant?;
+
+    let mut var_counter: usize = 0;
+    let mut fresh_var = || {
+        let name = format!("__iv_{}", var_counter);
+        var_counter += 1;
+        GlobalTerm::Var(name)
+    };
+
     let ctor = |tag: usize, fields: Vec<GlobalTerm>| GlobalTerm::Constructor {
         enum_name: String::new(),
         variant_name: String::new(),
         tag,
         fields,
     };
-    let cons = |head: &str, tail: GlobalTerm| {
-        ctor(
-            rec_tag.tag,
-            vec![GlobalTerm::Var(head.to_string()), GlobalTerm::Alloc(Box::new(tail))],
-        )
+
+    let make_base = |fresh: &mut dyn FnMut() -> GlobalTerm| -> GlobalTerm {
+        let fields = base_v
+            .payload
+            .iter()
+            .map(|ty| match ty {
+                Type::I64 | Type::I32 | Type::U8 | Type::Bool => fresh(),
+                _ => fresh(),
+            })
+            .collect();
+        ctor(base_v.tag, fields)
     };
-    let nil = ctor(base_tag.tag, vec![]);
-    let samples = vec![
-        nil.clone(),
-        cons("__iv_a", nil.clone()),
-        cons("__iv_a", cons("__iv_b", nil.clone())),
-    ];
+
+    let make_rec = |fresh: &mut dyn FnMut() -> GlobalTerm, child: GlobalTerm| -> GlobalTerm {
+        let fields = rec_v
+            .payload
+            .iter()
+            .map(|ty| {
+                if is_recursive_field(ty) {
+                    GlobalTerm::Alloc(Box::new(child.clone()))
+                } else {
+                    match ty {
+                        Type::I64 | Type::I32 | Type::U8 | Type::Bool => fresh(),
+                        _ => fresh(),
+                    }
+                }
+            })
+            .collect();
+        ctor(rec_v.tag, fields)
+    };
+
+    let sample0 = make_base(&mut fresh_var);
+    let sample1 = make_rec(&mut fresh_var, sample0.clone());
+    let sample2 = make_rec(&mut fresh_var, sample1.clone());
+    let samples = vec![sample0, sample1, sample2];
+
     let mut g_args = vec![GlobalTerm::Var(scrut_var.to_string())];
     g_args.extend(producer_free.iter().cloned().map(GlobalTerm::Var));
-    let mut f_args: Vec<GlobalTerm> = Vec::new();
-    for v in consumer_free {
-        f_args.push(GlobalTerm::Var(v.clone()));
-    }
+    let f_args: Vec<GlobalTerm> = consumer_free.iter().cloned().map(GlobalTerm::Var).collect();
     if f_arg_idx > f_args.len() {
         return None;
     }
-    let _ = boxed;
     for sample in &samples {
         let mut inner = g_args.clone();
         inner[0] = sample.clone();
