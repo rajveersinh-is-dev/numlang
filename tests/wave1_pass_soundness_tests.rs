@@ -1043,13 +1043,12 @@ fn test_randomized_differential_fuzz() {
 // Known bugs found by this suite (kept as ignored, runnable reproducers).
 // ===========================================================================
 
-/// BUG 1 (wave-1, `fold_constant_computation_prefix`, commit 1d2d4a5):
-/// supercompilation of this program does not terminate.  The prefix folder
-/// fires for both `kernel` and `main`, clears the visited then-arm block (B1)
-/// and the entry block, but leaves the sibling else-arm block (B2) reachable
-/// in the CFG with its own definition of `s`.  B2 then has no predecessors but
-/// is not marked `Unreachable`, so the folded local has two reaching
-/// definitions and Pass 2's symbolic driver loops forever.
+/// REGRESSION TEST (bug found by this suite and fixed): the prefix folder used
+/// to clear the visited then-arm block (B1) and the entry block but leave the
+/// sibling else-arm block (B2) with its own definition of `s`.  B2 then had no
+/// predecessors but was not marked `Unreachable`, so the folded local had two
+/// reaching definitions and Pass 2's symbolic driver did not terminate.  The
+/// pass now prunes every block unreachable from the rewritten entry.
 ///
 /// Minimal reproducer (also works in `--mode classic`):
 ///   fn kernel(sel: i64) -> i64 {
@@ -1062,16 +1061,11 @@ fn test_randomized_differential_fuzz() {
 ///   }
 ///   fn main() -> i64 { let v = kernel(0); println(v); return v; }
 ///
-/// Suggested conservative guard: after applying a constant-prefix fold,
-/// recompute reachability from the entry block and set every unreached
-/// block's terminator to `Terminator::Unreachable` (and optionally clear its
-/// statements) before Pass 2.  Verified experimentally: adding exactly that
-/// cleanup makes this program supercompile to the correct value 306.  A
-/// stricter analysis-time alternative is to bail out unless every predecessor
-/// of the stop block is in `visited`.
+/// Fix: after applying a constant-prefix fold, reachability from the entry
+/// block is recomputed and every unreached block is marked `Unreachable`
+/// before Pass 2.  The program now supercompiles to the correct value 306.
 #[test]
-#[ignore = "known fold_constant_computation_prefix hang; see comment above"]
-fn test_known_prefix_fold_dangling_sibling_hang() {
+fn test_prefix_fold_dangling_sibling_is_pruned() {
     let code = subst(PREFIX_CONST_DIFF_PATHS, &[("{SEL}", 0)]);
     let base = run_numlang(&code, false);
     let sc = run_numlang(&code, true);

@@ -4995,6 +4995,21 @@ pub fn fold_constant_computation_prefix(
         };
         func.locals.extend(fold.fresh_locals);
         func.is_distilled = true;
+
+        // A compile-time-constant branch inside the removed prefix leaves its
+        // untaken sibling arm without predecessors.  If that arm keeps a
+        // competing definition of a folded local, later symbolic passes can
+        // see two reaching definitions and fail to terminate.  Prune every
+        // block that is unreachable from the (rewritten) entry so the residual
+        // CFG has a single definition per folded local.
+        let reachable = algebra_reachable(func, &entry_id);
+        for block in &mut func.blocks {
+            if !reachable.contains(&block.id) {
+                block.statements.clear();
+                block.terminator = Terminator::Unreachable;
+            }
+        }
+
         stats.loops_collapsed += 1;
         stats.branches_pruned += 1;
     }
