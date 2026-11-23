@@ -89,6 +89,7 @@ enum ScPass {
     LoopFusion,
     MapFilter,
     Polyhedral,
+    ConstantPrefixFold,
     Distillation,
     Snapshot,
     Hashing,
@@ -98,15 +99,17 @@ enum ScPass {
     Compact,
     StrengthReduce,
     ProgramStrengthReduce,
+    ModularAccumulators,
 }
 
 impl ScPass {
-    const ALL: [ScPass; 14] = [
+    const ALL: [ScPass; 16] = [
         ScPass::Fusion,
         ScPass::FusionCandidates,
         ScPass::LoopFusion,
         ScPass::MapFilter,
         ScPass::Polyhedral,
+        ScPass::ConstantPrefixFold,
         ScPass::Distillation,
         ScPass::Snapshot,
         ScPass::Hashing,
@@ -116,6 +119,7 @@ impl ScPass {
         ScPass::Compact,
         ScPass::StrengthReduce,
         ScPass::ProgramStrengthReduce,
+        ScPass::ModularAccumulators,
     ];
 
     fn label(self) -> &'static str {
@@ -125,6 +129,7 @@ impl ScPass {
             ScPass::LoopFusion => "  of which loop fusion",
             ScPass::MapFilter => "  of which map/filter fusion",
             ScPass::Polyhedral => "  of which polyhedral stencils",
+            ScPass::ConstantPrefixFold => "Pass 1.2 constant-prefix folding",
             ScPass::Distillation => "Pass 1.5 distillation",
             ScPass::Snapshot => "Pass 2 program snapshot",
             ScPass::Hashing => "Pass 2 cache-key hashing",
@@ -134,6 +139,7 @@ impl ScPass {
             ScPass::Compact => "  of which compaction",
             ScPass::StrengthReduce => "  of which strength reduction (per fn)",
             ScPass::ProgramStrengthReduce => "Final program strength reduction",
+            ScPass::ModularAccumulators => "Final modular accumulator collapse",
         }
     }
 }
@@ -141,7 +147,7 @@ impl ScPass {
 #[derive(Default)]
 struct ScProfile {
     started: Option<Instant>,
-    sections: [Duration; 14],
+    sections: [Duration; 16],
 }
 
 thread_local! {
@@ -158,7 +164,7 @@ fn sc_profile_begin() {
         SC_PROFILE.with(|slot| {
             *slot.borrow_mut() = Some(ScProfile {
                 started: Some(Instant::now()),
-                sections: [Duration::ZERO; 14],
+                sections: [Duration::ZERO; 16],
             });
         });
     }
@@ -288,7 +294,9 @@ pub fn supercompile_mir_program_with_cache(
     // symbolic interpreter and replaced with their final concrete values.  No
     // function/variable name or benchmark-specific constant is inspected; any
     // Opaque value or side effect in the prefix makes the pass bail out.
-    fold_constant_computation_prefix(program, &mut total_stats);
+    sc_timed!(ScPass::ConstantPrefixFold, {
+        fold_constant_computation_prefix(program, &mut total_stats);
+    });
 
     // Pass 1.5: Whole-Program Hamilton Global Process-Tree Distillation
     sc_timed!(ScPass::Distillation, {
@@ -643,8 +651,9 @@ pub fn supercompile_mir_program_with_cache(
     // O(1) closed form for modular affine accumulators with a runtime trip
     // count (e.g. `sum = (sum + C) % M` after a constant producer has been
     // collapsed).  Runs last so it sees the fully residualised MIR.
-    total_stats.loops_collapsed +=
-        crate::mir::supercompiler::distill::collapse_modular_accumulators(program);
+    total_stats.loops_collapsed += sc_timed!(ScPass::ModularAccumulators, {
+        crate::mir::supercompiler::distill::collapse_modular_accumulators(program)
+    });
 
     // The closed-form passes run last and can leave the producer loops they
     // replaced (and their algebraic chain) in the residual MIR.  Re-run the

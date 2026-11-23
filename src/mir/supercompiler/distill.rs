@@ -3874,6 +3874,16 @@ enum AlgebraVal {
     Opaque,
 }
 
+/// Constant-prefix folding only ever pays off for a short, fully concrete
+/// prefix.  The old 500k-step budget let front-end-constant-propagated loops
+/// (e.g. a 50M-iteration producer with a concrete trip count) burn the entire
+/// budget before bailing out, which dominated supercompile latency.  Keep a
+/// generous absolute budget but also cap the number of times a single block may
+/// be re-entered: a prefix that loops more than this many times on one block is
+/// not a constant *prefix* in any useful sense and the fold is rejected.
+const CONST_PREFIX_FUEL: usize = 100_000;
+const CONST_PREFIX_MAX_BLOCK_VISITS: usize = 4096;
+
 /// Bounded symbolic interpreter over MIR.  `fuel` bounds the total number of
 /// statements executed across all (recursive) calls so an unexpectedly large or
 /// non-terminating pipeline simply fails to fuse rather than hanging or blowing
@@ -4111,6 +4121,7 @@ impl AlgebraInterp {
         func: &MirFunction,
         start: &BasicBlockId,
         env: &mut HashMap<String, AlgebraVal>,
+        max_block_visits: usize,
     ) -> Option<(BasicBlockId, HashSet<BasicBlockId>)> {
         let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
             .blocks
@@ -4118,9 +4129,18 @@ impl AlgebraInterp {
             .map(|b| (b.id.clone(), b))
             .collect();
         let mut visited: HashSet<BasicBlockId> = HashSet::new();
+        let mut block_visits: HashMap<BasicBlockId, usize> = HashMap::new();
         let mut cur = start.clone();
         loop {
             if !self.tick() {
+                return None;
+            }
+            // Reject a concrete loop whose trip count is far larger than any
+            // prefix fold could justify before interpreting all of its
+            // iterations.  This is a pure bail-out: it never changes a fold.
+            let visits = block_visits.entry(cur.clone()).or_insert(0);
+            *visits += 1;
+            if *visits > max_block_visits {
                 return None;
             }
             let block = *block_map.get(&cur)?;
@@ -4781,7 +4801,7 @@ fn analyze_constant_prefix(func: &MirFunction, program: &MirProgram) -> Option<C
     // an observable operation (a Call or a Return).  The set of executed blocks
     // *on this path* is the prefix; using block order instead of the actual
     // executed path would be wrong for functions with branches and inlining.
-    let mut interp = AlgebraInterp::new(500_000);
+    let mut interp = AlgebraInterp::new(CONST_PREFIX_FUEL);
     let mut env: HashMap<String, AlgebraVal> = HashMap::new();
     for (p, _) in &func.params {
         env.insert(p.clone(), AlgebraVal::Opaque);
@@ -4789,7 +4809,20 @@ fn analyze_constant_prefix(func: &MirFunction, program: &MirProgram) -> Option<C
     for d in &func.locals {
         env.entry(d.name.clone()).or_insert(AlgebraVal::Opaque);
     }
-    let (stop_block, visited) = interp.run_prefix(program, func, &func.blocks[0].id, &mut env)?;
+    let (stop_block, visited) = interp.run_prefix(
+        program,
+        func,
+        &func.blocks[0].id,
+        &mut env,
+        CONST_PREFIX_MAX_BLOCK_VISITS,
+    )?;
+    let steps_used = CONST_PREFIX_FUEL.saturating_sub(interp.fuel);
+    dtrace!(
+        "constant-prefix interp fn={} steps={} visited={}",
+        func.name,
+        steps_used,
+        visited.len()
+    );
     if visited.len() < 2 {
         return None;
     }
@@ -4925,7 +4958,18 @@ pub fn fold_constant_computation_prefix(
     stats: &mut SupercompilerStats,
 ) {
     for fi in 0..program.functions.len() {
-        let Some(fold) = analyze_constant_prefix(&program.functions[fi], program) else {
+        let started = std::time::Instant::now();
+        let analyzed = analyze_constant_prefix(&program.functions[fi], program);
+        let elapsed = started.elapsed();
+        if elapsed.as_millis() >= 1 {
+            dtrace!(
+                "constant-prefix scan fn={} {:?} folded={}",
+                program.functions[fi].name,
+                elapsed,
+                analyzed.is_some()
+            );
+        }
+        let Some(fold) = analyzed else {
             continue;
         };
         if fold.assignments.is_empty() {
@@ -5631,14 +5675,14 @@ fn acc_find_loop(func: &MirFunction) -> Option<AccLoopPlan> {
                 continue;
             };
 
-            // Derive the values of the accumulator, its addend and the modulus
-            // at the loop header.  The Fibonacci producer loop (which has a
-            // constant trip count) is executed concretely as part of this step.
-            let Some(envs) = acc_derive_envs(func, &h.id, 100_000) else {
-                continue;
-            };
-
-            let mut candidate: Option<(String, i64, i64, i64)> = None;
+            // Cheap, environment-free shape test FIRST.  `acc_derive_envs`
+            // concretely executes every path from the entry to this header,
+            // which can be a long constant-trip-count producer loop.  Running
+            // it for a loop that cannot possibly be a modular affine
+            // accumulator is pure waste, so gather all plausible shapes before
+            // paying for that path exploration.  This is only a reordering of
+            // bail-out checks: every candidate and its order are preserved.
+            let mut shapes: Vec<(String, &Place, &Place)> = Vec::new();
             for Statement::Assign(dest, rv) in &body.statements {
                 let Rvalue::BinaryOp(BinaryOp::Mod, add_p, mod_p) = rv else {
                     continue;
@@ -5658,7 +5702,32 @@ fn acc_find_loop(func: &MirFunction) -> Option<AccLoopPlan> {
                 if x_is_acc == y_is_acc {
                     continue;
                 }
-                let addend_p = if x_is_acc { y } else { x };
+                if body
+                    .statements
+                    .iter()
+                    .filter(|Statement::Assign(d, _)| d.local == acc_name)
+                    .count()
+                    != 1
+                {
+                    continue;
+                }
+                if !acc_loop_locals_are_private(func, h, body, &acc_name) {
+                    continue;
+                }
+                shapes.push((acc_name, if x_is_acc { y } else { x }, mod_p));
+            }
+            if shapes.is_empty() {
+                continue;
+            }
+
+            // Derive the values of the accumulator, its addend and the modulus
+            // at the loop header only for loops that have a modular shape.
+            let Some(envs) = acc_derive_envs(func, &h.id, 100_000) else {
+                continue;
+            };
+
+            let mut candidate: Option<(String, i64, i64, i64)> = None;
+            for (acc_name, addend_p, mod_p) in shapes {
                 let Some(AccConst::Int(c)) = acc_resolve_in_block_all(addend_p, &bdefs, &envs)
                 else {
                     continue;
@@ -5671,19 +5740,7 @@ fn acc_find_loop(func: &MirFunction) -> Option<AccLoopPlan> {
                 else {
                     continue;
                 };
-                if body
-                    .statements
-                    .iter()
-                    .filter(|Statement::Assign(d, _)| d.local == acc_name)
-                    .count()
-                    != 1
-                {
-                    continue;
-                }
                 if !(0 < c && c < m && m <= i32::MAX as i64 && 0 <= s0 && s0 < m) {
-                    continue;
-                }
-                if !acc_loop_locals_are_private(func, h, body, &acc_name) {
                     continue;
                 }
                 candidate = Some((acc_name, c, m, s0));
@@ -5835,7 +5892,18 @@ fn acc_apply_plan(func: &mut MirFunction, plan: &AccLoopPlan) {
 pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
     let mut plans = Vec::new();
     for (fi, func) in program.functions.iter().enumerate() {
-        if let Some(plan) = acc_find_loop(func) {
+        let started = std::time::Instant::now();
+        let plan = acc_find_loop(func);
+        let elapsed = started.elapsed();
+        if elapsed.as_millis() >= 1 {
+            dtrace!(
+                "modular-accumulator scan fn={} {:?} matched={}",
+                func.name,
+                elapsed,
+                plan.is_some()
+            );
+        }
+        if let Some(plan) = plan {
             plans.push((fi, plan));
         }
     }
