@@ -134,8 +134,8 @@ All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly valida
 | **CLM-06** | Self-applicable specializer `minspec.nl` structures Futamura 1, 2, and 3 projections | **TESTED** | `0aa6825` |
 | **CLM-07** | Lean 4 mechanized operational models have zero `sorry` and zero unproven axioms | **PROVEN (abstract model only)** | `0aa6825` |
 | **CLM-08** | Process tree termination formalization via homeomorphic embedding and sequence pigeonhole | **PARTIAL** | `0aa6825` |
-| **CLM-09** | NumLang supercompiler has zero regressions against all six comparators; 3 wins, 2 ties, 17 sub-500 ns folds vs Base; geomean leader (Clang-O3 6.86x comparator/SC) | **TESTED** | `100019d` |
-| **CLM-10** | Recurrence collapse drives `tri_sum` below the 500 ns timing floor (historically 12445.11x at `240be0c`) | **TESTED** | `100019d` |
+| **CLM-09** | NumLang supercompiler has zero regressions against all six comparators; 3 outright wins, 2 ties, 17 sub-500 ns folds vs NumLang-Base, and leads every measured system's geomean (Clang-O3 6.86x comparator/SC) | **TESTED** | `100019d` |
+| **CLM-10** | Algorithmic recurrence collapse drives `tri_sum` below the 500 ns timing floor | **TESTED** | `100019d` |
 | **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | **TESTED** | `0aa6825` |
 | **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | **TESTED** | `0aa6825` |
 | **CLM-13** | Zero panic in codegen and lowering pipelines | **TESTED** | `0aa6825` |
