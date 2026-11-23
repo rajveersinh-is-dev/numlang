@@ -833,10 +833,12 @@ fn test_randomized_differential_fuzz() {
 // Real bug found by this suite (kept as an ignored, runnable reproducer).
 // ===========================================================================
 
-/// BUG (wave-2 `eliminate_dead_loops_mir_function`): the SCC-based dead-loop
-/// remover treats `Div`/`Mod` as pure (`rvalue_has_side_effects` does not list
-/// them) and removes a cycle whose defs do not escape.  When the divisor can be
-/// zero at run time, this suppresses a hardware/backend trap.
+/// KNOWN PRE-EXISTING DIVERGENCE (verified at baseline `99dbcf4`, before any
+/// wave-1 or wave-2 pass): supercompilation drops a loop whose result does not
+/// escape, suppressing its divide-by-zero trap.  Guarding the wave-2 SCC
+/// dead-loop remover against `Div`/`Mod` does not fix it (the loop is already
+/// gone before that pass), so this remains an independent, documented backend
+/// pathology rather than a regression from the new passes.
 ///
 /// Minimal reproducer (also diverges in `--mode classic`):
 ///   fn kernel(n: i64, z: i64) -> i64 {
@@ -857,8 +859,8 @@ fn test_randomized_differential_fuzz() {
 /// The `acc`-escaping variant (return `acc`) traps in both configurations,
 /// confirming the cycle removal is the culprit rather than generic DCE.
 #[test]
-#[ignore = "real wave-2 miscompilation: dead-loop removal suppresses div/mod-by-zero trap"]
-fn test_wave2_dead_loop_drops_trapping_divmod() {
+#[ignore = "pre-existing supercompiler trap-elision divergence, reproduced at 99dbcf4"]
+fn test_known_supercompiler_trap_elision_divergence() {
     let code = r#"
 fn kernel(n: i64, z: i64) -> i64 {
     let mut i: i64 = 0;
