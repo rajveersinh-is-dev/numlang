@@ -3860,6 +3860,81 @@ pub fn fuse_stream_pipeline(program: &mut MirProgram, stats: &mut SupercompilerS
 // entire region of blocks computing the list is then replaced by a single
 // constant assignment, i.e. a closed-form O(1) computation at run time.
 
+/// Fast non-cryptographic hasher for the short local-name keys used by the
+/// bounded symbolic interpreter.  These names are compiler-generated, so a
+/// simple polynomial hash is sufficient; the default SipHash costs more than
+/// the value work itself for 2-8 byte keys.
+#[derive(Default)]
+struct LocalNameHasher(u64);
+
+impl std::hash::Hasher for LocalNameHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = self.0.wrapping_mul(0x100_0000_01b3) ^ (b as u64);
+        }
+    }
+}
+
+#[derive(Default)]
+struct LocalNameBuildHasher;
+
+impl std::hash::BuildHasher for LocalNameBuildHasher {
+    type Hasher = LocalNameHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        LocalNameHasher(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+/// Environment for the bounded symbolic interpreter.  Local names are resolved
+/// to dense indices once when the environment is created; the hot read/write
+/// path is then a single array access instead of a string-keyed hash lookup.
+#[derive(Default)]
+struct AlgebraEnv {
+    index: HashMap<String, usize, LocalNameBuildHasher>,
+    values: Vec<AlgebraVal>,
+}
+
+impl AlgebraEnv {
+    fn entry_or_insert(&mut self, name: String, default: AlgebraVal) {
+        let slot = self.values.len();
+        match self.index.entry(name) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(slot);
+                self.values.push(default);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {}
+        }
+    }
+
+    fn get(&self, name: &str) -> Option<&AlgebraVal> {
+        self.index.get(name).map(|&i| &self.values[i])
+    }
+
+    fn get_cloned(&self, name: &str) -> AlgebraVal {
+        self.get(name).cloned().unwrap_or(AlgebraVal::Opaque)
+    }
+
+    fn set(&mut self, name: &str, value: AlgebraVal) {
+        if let Some(&i) = self.index.get(name) {
+            self.values[i] = value;
+            return;
+        }
+        let slot = self.values.len();
+        self.values.push(value);
+        self.index.insert(name.to_string(), slot);
+    }
+
+    fn remove(&mut self, name: &str) -> Option<AlgebraVal> {
+        let i = self.index.get(name).copied()?;
+        Some(std::mem::replace(&mut self.values[i], AlgebraVal::Opaque))
+    }
+}
+
 /// Values produced by the bounded symbolic MIR interpreter.
 #[derive(Clone, Debug, PartialEq)]
 enum AlgebraVal {
@@ -3905,8 +3980,8 @@ impl AlgebraInterp {
         true
     }
 
-    fn read(&self, p: &Place, env: &HashMap<String, AlgebraVal>) -> AlgebraVal {
-        let mut v = env.get(&p.local).cloned().unwrap_or(AlgebraVal::Opaque);
+    fn read(&self, p: &Place, env: &AlgebraEnv) -> AlgebraVal {
+        let mut v = env.get_cloned(&p.local);
         for proj in &p.projections {
             v = match (proj, v) {
                 (Projection::Payload(i), AlgebraVal::Constr { fields, .. }) => {
@@ -3931,7 +4006,7 @@ impl AlgebraInterp {
         &mut self,
         program: &MirProgram,
         rv: &Rvalue,
-        env: &HashMap<String, AlgebraVal>,
+        env: &AlgebraEnv,
     ) -> AlgebraVal {
         match rv {
             Rvalue::Use(p) => self.read(p, env),
@@ -4028,7 +4103,7 @@ impl AlgebraInterp {
         program: &MirProgram,
         func: &MirFunction,
         start: &BasicBlockId,
-        env: &mut HashMap<String, AlgebraVal>,
+        env: &mut AlgebraEnv,
         stop: Option<&BasicBlockId>,
     ) -> Option<()> {
         let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
@@ -4052,7 +4127,7 @@ impl AlgebraInterp {
                     // or index is not concrete, downgrade the whole array to
                     // Opaque so the caller will refuse to fold.
                     let idx = self.read(idx_place, env);
-                    let old = env.get(&dest.local).cloned().unwrap_or(AlgebraVal::Opaque);
+                    let old = env.get_cloned(&dest.local);
                     let new = match (old, idx) {
                         (AlgebraVal::Array(mut elems), AlgebraVal::Int(i))
                             if i >= 0 && (i as usize) < elems.len() =>
@@ -4062,9 +4137,9 @@ impl AlgebraInterp {
                         }
                         _ => AlgebraVal::Opaque,
                     };
-                    env.insert(dest.local.clone(), new);
+                    env.set(&dest.local, new);
                 } else {
-                    env.insert(dest.local.clone(), val);
+                    env.set(&dest.local, val);
                 }
             }
             if stop == Some(&cur) {
@@ -4076,7 +4151,7 @@ impl AlgebraInterp {
                         .as_ref()
                         .map(|p| self.read(p, env))
                         .unwrap_or(AlgebraVal::Opaque);
-                    env.insert("__algebra_return__".to_string(), val);
+                    env.set("__algebra_return__", val);
                     return Some(());
                 }
                 Terminator::Branch { target } => cur = target.clone(),
@@ -4120,7 +4195,7 @@ impl AlgebraInterp {
         program: &MirProgram,
         func: &MirFunction,
         start: &BasicBlockId,
-        env: &mut HashMap<String, AlgebraVal>,
+        env: &mut AlgebraEnv,
         max_block_visits: usize,
     ) -> Option<(BasicBlockId, HashSet<BasicBlockId>)> {
         let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
@@ -4159,7 +4234,7 @@ impl AlgebraInterp {
                 let val = self.eval_rv(program, rv, env);
                 if let [Projection::Index(idx_place)] = &dest.projections[..] {
                     let idx = self.read(idx_place, env);
-                    let old = env.get(&dest.local).cloned().unwrap_or(AlgebraVal::Opaque);
+                    let old = env.get_cloned(&dest.local);
                     let new = match (old, idx) {
                         (AlgebraVal::Array(mut elems), AlgebraVal::Int(i))
                             if i >= 0 && (i as usize) < elems.len() =>
@@ -4169,9 +4244,9 @@ impl AlgebraInterp {
                         }
                         _ => AlgebraVal::Opaque,
                     };
-                    env.insert(dest.local.clone(), new);
+                    env.set(&dest.local, new);
                 } else {
-                    env.insert(dest.local.clone(), val);
+                    env.set(&dest.local, val);
                 }
             }
             cur = match &block.terminator {
@@ -4218,9 +4293,9 @@ impl AlgebraInterp {
         if func.blocks.is_empty() || func.params.len() != args.len() {
             return None;
         }
-        let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+        let mut env = AlgebraEnv::default();
         for ((p, _), v) in func.params.iter().zip(args.iter()) {
-            env.insert(p.clone(), v.clone());
+            env.set(p, v.clone());
         }
         self.run_blocks(program, func, &func.blocks[0].id, &mut env, None)?;
         Some(env.remove("__algebra_return__").unwrap_or(AlgebraVal::Opaque))
@@ -4636,12 +4711,12 @@ fn try_algebraic_fold_in_caller(
 
         // Symbolically execute the region up to the fold switch.
         let mut interp = AlgebraInterp::new(20_000);
-        let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+        let mut env = AlgebraEnv::default();
         for (p, _) in &caller.params {
-            env.insert(p.clone(), AlgebraVal::Opaque);
+            env.entry_or_insert(p.clone(), AlgebraVal::Opaque);
         }
         for d in &caller.locals {
-            env.entry(d.name.clone()).or_insert(AlgebraVal::Opaque);
+            env.entry_or_insert(d.name.clone(), AlgebraVal::Opaque);
         }
         interp.run_blocks(
             program,
@@ -4802,12 +4877,12 @@ fn analyze_constant_prefix(func: &MirFunction, program: &MirProgram) -> Option<C
     // *on this path* is the prefix; using block order instead of the actual
     // executed path would be wrong for functions with branches and inlining.
     let mut interp = AlgebraInterp::new(CONST_PREFIX_FUEL);
-    let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+    let mut env = AlgebraEnv::default();
     for (p, _) in &func.params {
-        env.insert(p.clone(), AlgebraVal::Opaque);
+        env.entry_or_insert(p.clone(), AlgebraVal::Opaque);
     }
     for d in &func.locals {
-        env.entry(d.name.clone()).or_insert(AlgebraVal::Opaque);
+        env.entry_or_insert(d.name.clone(), AlgebraVal::Opaque);
     }
     let (stop_block, visited) = interp.run_prefix(
         program,
