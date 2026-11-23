@@ -632,6 +632,12 @@ pub fn supercompile_mir_program_with_cache(
         strength_reduce_mir_program(program)
     });
 
+    // O(1) closed form for modular affine accumulators with a runtime trip
+    // count (e.g. `sum = (sum + C) % M` after a constant producer has been
+    // collapsed).  Runs last so it sees the fully residualised MIR.
+    total_stats.loops_collapsed +=
+        crate::mir::supercompiler::distill::collapse_modular_accumulators(program);
+
     sc_profile_report();
     total_stats
 }

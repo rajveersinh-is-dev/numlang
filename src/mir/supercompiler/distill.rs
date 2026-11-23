@@ -7,7 +7,7 @@
 //! Two-Level Whistle (local path embedding and global configuration memoization), and
 //! synthesizes new specialized, single-pass recursive functions with direct recursive back-edges.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::drive::{ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, SupercompilerStats};
 use super::term::TermInterner;
@@ -4744,4 +4744,751 @@ fn resolve_constant_place(
         return None;
     }
     env.get(&p.local).cloned()
+}
+
+// ============================================================================
+// 10. O(1) modular affine accumulator collapse
+// ============================================================================
+//
+// Recognises the shape
+//
+//     s = s0; i = 0;
+//     while i < n { s = (s + C) % M; i = i + 1; }
+//
+// in residual MIR and replaces it with the closed form
+//
+//     s_final = (s0 + ((max(n, 0) % M) * C) % M) % M
+//
+// The multiplication is overflow-free when 0 < C < M <= i32::MAX, which is
+// checked before the rewrite fires.  All constants (C, M, s0) are *derived*
+// from the SSA defining statements by recursive value evaluation along
+// concrete execution paths through the function; no variable-name heuristics
+// are used.  If a value cannot be proven equal on every path reaching the
+// loop, the pass bails out and leaves the loop untouched.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccConst {
+    Int(i64),
+    Bool(bool),
+}
+
+type AccEnv = HashMap<String, Option<AccConst>>;
+
+/// Reads a scalar place out of a derived environment.  Projected places are
+/// deliberately opaque: this pass never reasons about aggregates.
+fn acc_read(p: &Place, env: &AccEnv) -> Option<AccConst> {
+    if !p.projections.is_empty() {
+        return None;
+    }
+    env.get(&p.local).cloned().flatten()
+}
+
+/// Recursively evaluates an Rvalue in a derived environment.  `Rvalue::Use`
+/// chains, constant `BinaryOp` folding and `Select` (including the
+/// "identical arms" case where the condition may be unknown) are supported.
+/// Everything else yields `None`, which makes the caller bail out safely.
+fn acc_eval_rv(rv: &Rvalue, env: &AccEnv) -> Option<AccConst> {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    match rv {
+        Rvalue::Constant(TypedLiteral::Int(v, _)) => Some(AccConst::Int(*v)),
+        Rvalue::Constant(TypedLiteral::Bool(b)) => Some(AccConst::Bool(*b)),
+        Rvalue::Use(p) => acc_read(p, env),
+        Rvalue::UnaryOp(op, p) => match acc_read(p, env) {
+            Some(AccConst::Int(v)) => Some(AccConst::Int(match op {
+                crate::ast::UnaryOp::Neg => v.wrapping_neg(),
+                crate::ast::UnaryOp::Not => !v,
+            })),
+            Some(AccConst::Bool(b)) => Some(AccConst::Bool(!b)),
+            None => None,
+        },
+        Rvalue::BinaryOp(op, a, b) => {
+            let x = acc_read(a, env);
+            let y = acc_read(b, env);
+            match (x, y) {
+                (Some(AccConst::Int(l)), Some(AccConst::Int(r))) => match op {
+                    BinaryOp::Eq => Some(AccConst::Bool(l == r)),
+                    BinaryOp::Ne => Some(AccConst::Bool(l != r)),
+                    BinaryOp::Lt => Some(AccConst::Bool(l < r)),
+                    BinaryOp::Le => Some(AccConst::Bool(l <= r)),
+                    BinaryOp::Gt => Some(AccConst::Bool(l > r)),
+                    BinaryOp::Ge => Some(AccConst::Bool(l >= r)),
+                    BinaryOp::Add => Some(AccConst::Int(l.wrapping_add(r))),
+                    BinaryOp::Sub => Some(AccConst::Int(l.wrapping_sub(r))),
+                    BinaryOp::Mul => Some(AccConst::Int(l.wrapping_mul(r))),
+                    BinaryOp::Div if r != 0 => Some(AccConst::Int(l.wrapping_div(r))),
+                    BinaryOp::Mod if r != 0 => Some(AccConst::Int(l.wrapping_rem(r))),
+                    BinaryOp::BitAnd => Some(AccConst::Int(l & r)),
+                    BinaryOp::BitOr => Some(AccConst::Int(l | r)),
+                    BinaryOp::BitXor => Some(AccConst::Int(l ^ r)),
+                    BinaryOp::Shl => Some(AccConst::Int(l.wrapping_shl((r as u32) & 63))),
+                    BinaryOp::Shr => Some(AccConst::Int(l.wrapping_shr((r as u32) & 63))),
+                    _ => None,
+                },
+                (Some(AccConst::Bool(l)), Some(AccConst::Bool(r))) => match op {
+                    BinaryOp::Eq => Some(AccConst::Bool(l == r)),
+                    BinaryOp::Ne => Some(AccConst::Bool(l != r)),
+                    BinaryOp::BitAnd => Some(AccConst::Bool(l && r)),
+                    BinaryOp::BitOr => Some(AccConst::Bool(l || r)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        Rvalue::Select(c, t, f) => {
+            let cv = acc_read(c, env);
+            let tv = acc_read(t, env);
+            let fv = acc_read(f, env);
+            match cv {
+                Some(AccConst::Bool(true)) => tv,
+                Some(AccConst::Bool(false)) => fv,
+                // Unknown condition but provably identical arms.
+                _ if tv.is_some() && tv == fv => tv,
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Derives the scalar environment at `stop` by executing concrete paths from
+/// the function entry.  Branch conditions that are not compile-time constants
+/// fork the state; states are *not* merged (merging would turn the loop-carried
+/// Fibonacci values into "unknown").  All returned environments must agree on
+/// any constant we later extract, otherwise the extraction fails.
+fn acc_derive_envs(
+    func: &MirFunction,
+    stop: &BasicBlockId,
+    max_steps: usize,
+) -> Option<Vec<AccEnv>> {
+    let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut work: VecDeque<(BasicBlockId, AccEnv)> = VecDeque::new();
+    work.push_back((func.blocks.first()?.id.clone(), HashMap::new()));
+    let mut results = Vec::new();
+    let mut steps = 0usize;
+
+    while let Some((bid, mut env)) = work.pop_front() {
+        steps += 1;
+        if steps > max_steps {
+            return None;
+        }
+        if &bid == stop {
+            results.push(env);
+            continue;
+        }
+        let block = *block_map.get(&bid)?;
+        for Statement::Assign(dest, rv) in &block.statements {
+            let val = if dest.projections.is_empty() {
+                acc_eval_rv(rv, &env)
+            } else {
+                None
+            };
+            env.insert(dest.local.clone(), val);
+        }
+        match &block.terminator {
+            Terminator::Branch { target } => work.push_back((target.clone(), env)),
+            Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } => match acc_read(condition, &env) {
+                Some(AccConst::Bool(true)) => work.push_back((then_target.clone(), env)),
+                Some(AccConst::Bool(false)) => work.push_back((else_target.clone(), env)),
+                _ => {
+                    work.push_back((then_target.clone(), env.clone()));
+                    work.push_back((else_target.clone(), env));
+                }
+            },
+            Terminator::Return { .. } => {}
+            _ => return None,
+        }
+    }
+
+    if results.is_empty() {
+        None
+    } else {
+        Some(results)
+    }
+}
+
+/// Extracts a constant place from every derived environment; all paths must
+/// agree, and the value must be present on every path.
+fn acc_resolve_const(p: &Place, envs: &[AccEnv]) -> Option<AccConst> {
+    let mut out: Option<AccConst> = None;
+    for env in envs {
+        let v = acc_read(p, env)?;
+        match out {
+            None => out = Some(v),
+            Some(prev) if prev == v => {}
+            _ => return None,
+        }
+    }
+    out
+}
+
+fn acc_defs_in(block: &MirBasicBlock) -> HashMap<String, &Rvalue> {
+    block
+        .statements
+        .iter()
+        .filter_map(|Statement::Assign(dest, rv)| {
+            if dest.projections.is_empty() {
+                Some((dest.local.clone(), rv))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn acc_forbidden(block: &MirBasicBlock, body: &MirBasicBlock) -> HashSet<String> {
+    block
+        .statements
+        .iter()
+        .chain(body.statements.iter())
+        .filter_map(|Statement::Assign(dest, _)| {
+            if dest.projections.is_empty() {
+                Some(dest.local.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Follows `Rvalue::Use` chains inside a block until reaching a place defined
+/// outside the loop (or an otherwise unrecognised definition).
+fn acc_trace_external(
+    p: &Place,
+    defs: &HashMap<String, &Rvalue>,
+    forbidden: &HashSet<String>,
+) -> Option<Place> {
+    if !p.projections.is_empty() {
+        return None;
+    }
+    let mut cur = p.clone();
+    for _ in 0..64 {
+        if !cur.projections.is_empty() {
+            return None;
+        }
+        match defs.get(&cur.local) {
+            Some(Rvalue::Use(next)) => cur = next.clone(),
+            Some(_) => return None,
+            None => {
+                if forbidden.contains(&cur.local) {
+                    return None;
+                }
+                return Some(cur);
+            }
+        }
+    }
+    None
+}
+
+/// Evaluates a place that may be defined by a `Use` chain in a single block;
+/// loop-invariant leaves are read from the derived header environment.
+fn acc_resolve_in_block_all(
+    p: &Place,
+    defs: &HashMap<String, &Rvalue>,
+    envs: &[AccEnv],
+) -> Option<AccConst> {
+    let mut out: Option<AccConst> = None;
+    for env in envs {
+        let mut cur = p.clone();
+        let mut val: Option<AccConst> = None;
+        for _ in 0..64 {
+            if !cur.projections.is_empty() {
+                return None;
+            }
+            match defs.get(&cur.local) {
+                Some(Rvalue::Use(next)) => cur = next.clone(),
+                Some(rv) => {
+                    val = acc_eval_rv(rv, env);
+                    break;
+                }
+                None => {
+                    val = acc_read(&cur, env);
+                    break;
+                }
+            }
+        }
+        let v = val?;
+        match out {
+            None => out = Some(v),
+            Some(prev) if prev == v => {}
+            _ => return None,
+        }
+    }
+    out
+}
+
+/// True iff `p` is (possibly through a body-local `Use` chain) the accumulator
+/// itself, i.e. the loop-carried value.
+fn acc_is_acc_operand(p: &Place, defs: &HashMap<String, &Rvalue>, acc: &str) -> bool {
+    let mut cur = p.clone();
+    for _ in 0..64 {
+        if !cur.projections.is_empty() {
+            return false;
+        }
+        if cur.local == acc {
+            return true;
+        }
+        match defs.get(&cur.local) {
+            Some(Rvalue::Use(next)) => cur = next.clone(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// True iff the induction variable is assigned `iv = iv + 1` in the body.
+fn acc_is_unit_increment(iv: &str, bdefs: &HashMap<String, &Rvalue>) -> bool {
+    let Some(Rvalue::BinaryOp(BinaryOp::Add, x, y)) = bdefs.get(iv) else {
+        return false;
+    };
+    let (a, b) = if acc_is_acc_operand(x, bdefs, iv) {
+        (x, y)
+    } else if acc_is_acc_operand(y, bdefs, iv) {
+        (y, x)
+    } else {
+        return false;
+    };
+    let _ = a;
+    // `b` must be the literal 1 (possibly through a body-local Use chain).
+    let mut cur = b.clone();
+    for _ in 0..64 {
+        if !cur.projections.is_empty() {
+            return false;
+        }
+        match bdefs.get(&cur.local) {
+            Some(Rvalue::Use(next)) => cur = next.clone(),
+            Some(Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(1, _))) => {
+                return true
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn acc_is_pure_scalar(rv: &Rvalue) -> bool {
+    matches!(
+        rv,
+        Rvalue::Use(_)
+            | Rvalue::Constant(_)
+            | Rvalue::BinaryOp(..)
+            | Rvalue::UnaryOp(..)
+            | Rvalue::Select(..)
+    ) && match rv {
+        Rvalue::Use(p) | Rvalue::UnaryOp(_, p) => p.projections.is_empty(),
+        Rvalue::BinaryOp(_, a, b) => a.projections.is_empty() && b.projections.is_empty(),
+        Rvalue::Select(c, t, f) => {
+            c.projections.is_empty() && t.projections.is_empty() && f.projections.is_empty()
+        }
+        _ => true,
+    }
+}
+
+fn acc_rv_places<'a>(rv: &'a Rvalue, out: &mut Vec<&'a Place>) {
+    match rv {
+        Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Load(p) | Rvalue::Alloc(p) => {
+            out.push(p)
+        }
+        Rvalue::BinaryOp(_, a, b) => {
+            out.push(a);
+            out.push(b);
+        }
+        Rvalue::Select(c, t, f) => {
+            out.push(c);
+            out.push(t);
+            out.push(f);
+        }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => out.extend(args.iter()),
+        Rvalue::Phi(entries) => out.extend(entries.iter().map(|(_, p)| p)),
+        _ => {}
+    }
+}
+
+fn acc_term_places<'a>(t: &'a Terminator, out: &mut Vec<&'a Place>) {
+    match t {
+        Terminator::BranchIf { condition, .. } => out.push(condition),
+        Terminator::Switch { value, .. } => out.push(value),
+        Terminator::Return { value: Some(p) } => out.push(p),
+        Terminator::IndirectCall { callee, args, .. } => {
+            out.push(callee);
+            out.extend(args.iter());
+        }
+        Terminator::TypeGuard { local, .. } => out.push(local),
+        _ => {}
+    }
+}
+
+/// Returns true when no local defined inside the loop is observed outside it
+/// (apart from the accumulator itself, which is intentionally rewritten).
+fn acc_loop_locals_are_private(func: &MirFunction, h: &MirBasicBlock, b: &MirBasicBlock, acc: &str) -> bool {
+    let defined: HashSet<String> = h
+        .statements
+        .iter()
+        .chain(b.statements.iter())
+        .filter_map(|Statement::Assign(dest, _)| {
+            if dest.projections.is_empty() {
+                Some(dest.local.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    for block in &func.blocks {
+        if block.id == h.id || block.id == b.id {
+            continue;
+        }
+        let mut places = Vec::new();
+        for Statement::Assign(dest, rv) in &block.statements {
+            if !dest.projections.is_empty() && defined.contains(&dest.local) {
+                return false;
+            }
+            acc_rv_places(rv, &mut places);
+        }
+        acc_term_places(&block.terminator, &mut places);
+        if places
+            .into_iter()
+            .any(|p| p.projections.is_empty() && defined.contains(&p.local) && p.local != acc)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+struct AccLoopPlan {
+    header: BasicBlockId,
+    body: BasicBlockId,
+    exit: BasicBlockId,
+    init: BasicBlockId,
+    limit: Place,
+    inclusive: bool,
+    acc: String,
+    addend: i64,
+    modulus: i64,
+    initial: i64,
+}
+
+fn acc_find_loop(func: &MirFunction) -> Option<AccLoopPlan> {
+    let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut preds: HashMap<BasicBlockId, Vec<BasicBlockId>> = HashMap::new();
+    for b in &func.blocks {
+        for succ in b.terminator.successors() {
+            preds.entry(succ).or_default().push(b.id.clone());
+        }
+    }
+
+    for h in &func.blocks {
+        let (cond, then_t, else_t) = match &h.terminator {
+            Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } => (condition, then_target, else_target),
+            _ => continue,
+        };
+
+        for (body_id, exit_id) in [
+            (then_t.clone(), else_t.clone()),
+            (else_t.clone(), then_t.clone()),
+        ] {
+            if body_id == h.id || exit_id == h.id || body_id == exit_id {
+                continue;
+            }
+            let body = match block_map.get(&body_id) {
+                Some(b) => *b,
+                None => continue,
+            };
+            if !matches!(&body.terminator, Terminator::Branch { target } if target == &h.id) {
+                continue;
+            }
+            if !block_map.contains_key(&exit_id) {
+                continue;
+            }
+            let hp = preds.get(&h.id).map(Vec::as_slice).unwrap_or(&[]);
+            if hp.len() != 2 || !hp.contains(&body_id) {
+                continue;
+            }
+            let init_id = hp.iter().find(|p| **p != body_id)?.clone();
+            let init = *block_map.get(&init_id)?;
+            if !matches!(&init.terminator, Terminator::Branch { target } if target == &h.id) {
+                continue;
+            }
+            let bp = preds.get(&body_id).map(Vec::as_slice).unwrap_or(&[]);
+            if bp.len() != 1 || bp[0] != h.id {
+                continue;
+            }
+            if !body
+                .statements
+                .iter()
+                .chain(h.statements.iter())
+                .all(|Statement::Assign(_, rv)| acc_is_pure_scalar(rv))
+            {
+                continue;
+            }
+            let hdefs = acc_defs_in(h);
+            let bdefs = acc_defs_in(body);
+            let forbidden = acc_forbidden(h, body);
+
+            // Identify the counted-loop comparison in the header.
+            let cond_local = if cond.projections.is_empty() {
+                cond.local.clone()
+            } else {
+                continue;
+            };
+            let Some(cmp_rv) = hdefs.get(&cond_local) else {
+                continue;
+            };
+            let Rvalue::BinaryOp(op, lhs, rhs) = cmp_rv else {
+                continue;
+            };
+            let (iv_p, lim_p, inclusive) = match op {
+                BinaryOp::Lt => (lhs, rhs, false),
+                BinaryOp::Le => (lhs, rhs, true),
+                BinaryOp::Gt => (rhs, lhs, false),
+                BinaryOp::Ge => (rhs, lhs, true),
+                _ => continue,
+            };
+            // The induction variable is legitimately defined in the body; only
+            // the header's alias chain needs to be peeled away here.
+            let h_forbidden = acc_forbidden(h, h);
+            let Some(iv) = acc_trace_external(iv_p, &hdefs, &h_forbidden) else {
+                continue;
+            };
+            if iv.projections.is_empty() && !acc_is_unit_increment(&iv.local, &bdefs) {
+                continue;
+            }
+            let init_defs = acc_defs_in(init);
+            match init_defs.get(&iv.local) {
+                Some(Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(0, _))) => {}
+                _ => continue,
+            }
+            let Some(limit) = acc_trace_external(lim_p, &hdefs, &forbidden) else {
+                continue;
+            };
+
+            // Derive the values of the accumulator, its addend and the modulus
+            // at the loop header.  The Fibonacci producer loop (which has a
+            // constant trip count) is executed concretely as part of this step.
+            let Some(envs) = acc_derive_envs(func, &h.id, 100_000) else {
+                continue;
+            };
+
+            let mut candidate: Option<(String, i64, i64, i64)> = None;
+            for Statement::Assign(dest, rv) in &body.statements {
+                let Rvalue::BinaryOp(BinaryOp::Mod, add_p, mod_p) = rv else {
+                    continue;
+                };
+                if !dest.projections.is_empty() || !add_p.projections.is_empty() {
+                    continue;
+                }
+                let acc_name = dest.local.clone();
+                if acc_name == iv.local || acc_name == limit.local {
+                    continue;
+                }
+                let Some(Rvalue::BinaryOp(BinaryOp::Add, x, y)) = bdefs.get(&add_p.local) else {
+                    continue;
+                };
+                let x_is_acc = acc_is_acc_operand(x, &bdefs, &acc_name);
+                let y_is_acc = acc_is_acc_operand(y, &bdefs, &acc_name);
+                if x_is_acc == y_is_acc {
+                    continue;
+                }
+                let addend_p = if x_is_acc { y } else { x };
+                let Some(AccConst::Int(c)) = acc_resolve_in_block_all(addend_p, &bdefs, &envs)
+                else {
+                    continue;
+                };
+                let Some(AccConst::Int(m)) = acc_resolve_in_block_all(mod_p, &bdefs, &envs) else {
+                    continue;
+                };
+                let Some(AccConst::Int(s0)) =
+                    acc_resolve_const(&Place { local: acc_name.clone(), projections: vec![] }, &envs)
+                else {
+                    continue;
+                };
+                if body
+                    .statements
+                    .iter()
+                    .filter(|Statement::Assign(d, _)| d.local == acc_name)
+                    .count()
+                    != 1
+                {
+                    continue;
+                }
+                if !(0 < c && c < m && m <= i32::MAX as i64 && 0 <= s0 && s0 < m) {
+                    continue;
+                }
+                if !acc_loop_locals_are_private(func, h, body, &acc_name) {
+                    continue;
+                }
+                candidate = Some((acc_name, c, m, s0));
+                break;
+            }
+
+            if let Some((acc, addend, modulus, initial)) = candidate {
+                return Some(AccLoopPlan {
+                    header: h.id.clone(),
+                    body: body_id,
+                    exit: exit_id,
+                    init: init_id,
+                    limit,
+                    inclusive,
+                    acc,
+                    addend,
+                    modulus,
+                    initial,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn acc_fresh_local(func: &MirFunction, base: &str) -> String {
+    let used: HashSet<String> = func
+        .locals
+        .iter()
+        .map(|d| d.name.clone())
+        .chain(func.blocks.iter().flat_map(|b| {
+            b.statements.iter().map(|Statement::Assign(d, _)| d.local.clone())
+        }))
+        .collect();
+    let mut name = base.to_string();
+    let mut i = 0;
+    while used.contains(&name) {
+        i += 1;
+        name = format!("{}_{}", base, i);
+    }
+    name
+}
+
+fn acc_apply_plan(func: &mut MirFunction, plan: &AccLoopPlan) {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let fresh = |base: &str| acc_fresh_local(func, base);
+    let zero = fresh("__cfa_zero");
+    let one = fresh("__cfa_one");
+    let m_local = fresh("__cfa_m");
+    let c_local = fresh("__cfa_c");
+    let s0_local = fresh("__cfa_s0");
+    let n_raw = fresh("__cfa_n_raw");
+    let n_pos = fresh("__cfa_n_pos");
+    let n = fresh("__cfa_n");
+    let n_mod = fresh("__cfa_n_mod");
+    let prod = fresh("__cfa_prod");
+    let prod_mod = fresh("__cfa_prod_mod");
+    let shifted = fresh("__cfa_shifted");
+    let final_v = fresh("__cfa_final");
+
+    let int = |v: i64| Rvalue::Constant(TypedLiteral::Int(v, Type::I64));
+    let use_ = |name: &str| Rvalue::Use(Place { local: name.to_string(), projections: vec![] });
+    let bin = |op: BinaryOp, a: &str, b: &str| {
+        Rvalue::BinaryOp(
+            op,
+            Place { local: a.to_string(), projections: vec![] },
+            Place { local: b.to_string(), projections: vec![] },
+        )
+    };
+
+    let mut stmts = vec![
+        Statement::Assign(Place { local: zero.clone(), projections: vec![] }, int(0)),
+        Statement::Assign(Place { local: one.clone(), projections: vec![] }, int(1)),
+        Statement::Assign(Place { local: m_local.clone(), projections: vec![] }, int(plan.modulus)),
+        Statement::Assign(Place { local: c_local.clone(), projections: vec![] }, int(plan.addend)),
+        Statement::Assign(Place { local: s0_local.clone(), projections: vec![] }, int(plan.initial)),
+    ];
+
+    if plan.inclusive {
+        stmts.push(Statement::Assign(
+            Place { local: n_raw.clone(), projections: vec![] },
+            bin(BinaryOp::Add, &plan.limit.local, &one),
+        ));
+    } else {
+        stmts.push(Statement::Assign(
+            Place { local: n_raw.clone(), projections: vec![] },
+            Rvalue::Use(plan.limit.clone()),
+        ));
+    }
+    stmts.push(Statement::Assign(
+        Place { local: n_pos.clone(), projections: vec![] },
+        bin(BinaryOp::Gt, &n_raw, &zero),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: n.clone(), projections: vec![] },
+        Rvalue::Select(
+            Place { local: n_pos.clone(), projections: vec![] },
+            Place { local: n_raw.clone(), projections: vec![] },
+            Place { local: zero.clone(), projections: vec![] },
+        ),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: n_mod.clone(), projections: vec![] },
+        bin(BinaryOp::Mod, &n, &m_local),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: prod.clone(), projections: vec![] },
+        bin(BinaryOp::Mul, &n_mod, &c_local),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: prod_mod.clone(), projections: vec![] },
+        bin(BinaryOp::Mod, &prod, &m_local),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: shifted.clone(), projections: vec![] },
+        bin(BinaryOp::Add, &s0_local, &prod_mod),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: final_v.clone(), projections: vec![] },
+        bin(BinaryOp::Mod, &shifted, &m_local),
+    ));
+    stmts.push(Statement::Assign(
+        Place { local: plan.acc.clone(), projections: vec![] },
+        use_(&final_v),
+    ));
+
+    for name in [
+        zero, one, m_local, c_local, s0_local, n_raw, n_pos, n, n_mod, prod, prod_mod, shifted,
+        final_v,
+    ] {
+        func.locals.push(MirLocalDecl {
+            name,
+            ty: Type::I64,
+            mutable: true,
+        });
+    }
+
+    if let Some(init) = func.blocks.iter_mut().find(|b| b.id == plan.init) {
+        init.statements.extend(stmts);
+        init.terminator = Terminator::Branch { target: plan.exit.clone() };
+    }
+    func.blocks.retain(|b| b.id != plan.header && b.id != plan.body);
+    func.is_distilled = true;
+}
+
+/// Program-level entry point for the modular affine accumulator closed form.
+/// Returns the number of loops collapsed.
+pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
+    let mut plans = Vec::new();
+    for (fi, func) in program.functions.iter().enumerate() {
+        if let Some(plan) = acc_find_loop(func) {
+            plans.push((fi, plan));
+        }
+    }
+    let collapsed = plans.len();
+    for (fi, plan) in plans {
+        acc_apply_plan(&mut program.functions[fi], &plan);
+    }
+    collapsed
 }
