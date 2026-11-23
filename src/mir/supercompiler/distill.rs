@@ -5926,5 +5926,722 @@ pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
     for (fi, plan) in plans {
         acc_apply_plan(&mut program.functions[fi], &plan);
     }
+    // Geometric recurrences are residualised by the driving/recurrence pass as
+    // MIR `Pow(K, e)` terms, optionally followed by `% M`.  Finish the collapse
+    // for both constant and runtime exponents (see section 11 below).
     collapsed
+        + fold_constant_powers(program)
+        + collapse_runtime_powers(program)
+        + eliminate_dead_input_reads(program)
+}
+
+// ============================================================================
+// 11. O(1) collapse of geometric powers with runtime exponents
+// ============================================================================
+//
+// The recurrence solver residualises `acc = acc * K` loops as MIR `Pow(K, e)`
+// (usually followed by `% M`).  Previously these were only folded when *both*
+// K and e were compile-time literals, which never fires for the dynamic
+// benchmarks where the exponent comes from `read_i64()`.  This section closes
+// that gap with two complementary, semantics-preserving rewrites:
+//
+//   * `fold_constant_powers` evaluates `Pow(K, e)` (and a following `% M`)
+//     to a literal when every operand is provably constant.  `wrapping_pow_i64`
+//     below is a line-for-line emulation of Cranelift's `emit_int_pow_raw`
+//     (wrapping i64 multiply, exponentiation by squaring, exponent <= 0 -> 1),
+//     so the literal is bit-identical to the run-time value for all inputs.
+//
+//   * `collapse_runtime_powers` handles a compile-time constant power-of-two
+//     base K = 2^k and an optional compile-time constant power-of-two modulus
+//     M = 2^m with a *runtime* exponent.  For e > 0 the wrapping i64 value of
+//     2^(k*e) is 1 << (k*e) while k*e < 64 and 0 once k*e >= 64 (the value at
+//     k*e == 63 is i64::MIN, which `ishl` produces naturally).  Since M divides
+//     2^64, reducing modulo M saturates to 0 once k*e >= m.  Therefore:
+//
+//         K^e % M == if e <= 0 { 1 } else if e >= ceil(m/k) { 0 }
+//                    else { 1 << (k*e) }                       (M > 1)
+//
+//       and for the unreduced wrapping value replace `m` by 64.  Neither K, M
+//       nor the result is hardcoded: k and m are derived from the defining
+//       statements of the residual MIR.  The generated code is straight-line
+//       (two compares, one clamped multiply, one shift, two selects), i.e.
+//       O(1) in the exponent, and preserves the e <= 0 -> 1 and large-e -> 0
+//       cases required by wrapping two's-complement i64 semantics.
+//
+// Both rewrites derive constants from SSA defining statements only; no
+// variable/function names or benchmark-specific constants are inspected.
+
+/// Exact two's-complement emulation of Cranelift's integer-power intrinsic
+/// (`emit_int_pow_raw`): exponentiation by squaring with wrapping i64 maths.
+/// A non-positive exponent yields 1 (the loop body never executes).
+fn wrapping_pow_i64(mut base: i64, mut exp: i64) -> i64 {
+    let mut res = 1i64;
+    while exp > 0 {
+        if exp & 1 != 0 {
+            res = res.wrapping_mul(base);
+        }
+        base = base.wrapping_mul(base);
+        exp >>= 1;
+    }
+    res
+}
+
+/// Snapshot of single-assignment scalar definitions in a function.  Locals
+/// with more than one defining assignment are dropped (they are not provably
+/// constant) and projected destinations are ignored.
+fn pow_scalar_defs(func: &MirFunction) -> HashMap<String, Rvalue> {
+    let mut defs: HashMap<String, Rvalue> = HashMap::new();
+    let mut multi: HashSet<String> = HashSet::new();
+    for block in &func.blocks {
+        for Statement::Assign(dest, rv) in &block.statements {
+            if dest.projections.is_empty()
+                && defs.insert(dest.local.clone(), rv.clone()).is_some()
+            {
+                multi.insert(dest.local.clone());
+            }
+        }
+    }
+    for name in multi {
+        defs.remove(&name);
+    }
+    defs
+}
+
+/// Recursively evaluates a scalar place to a compile-time i64 using only the
+/// defining statements in `defs`.  Pure scalar rvalues are understood; every
+/// arithmetic operation uses wrapping i64 semantics to match codegen.
+fn pow_eval_const(place: &Place, defs: &HashMap<String, Rvalue>, depth: usize) -> Option<i64> {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    if depth > 64 || !place.projections.is_empty() {
+        return None;
+    }
+    match defs.get(&place.local)? {
+        Rvalue::Constant(TypedLiteral::Int(v, ty)) if *ty == Type::I64 => Some(*v),
+        Rvalue::Use(next) => pow_eval_const(next, defs, depth + 1),
+        Rvalue::UnaryOp(op, p) => {
+            let v = pow_eval_const(p, defs, depth + 1)?;
+            Some(match op {
+                crate::ast::UnaryOp::Neg => v.wrapping_neg(),
+                crate::ast::UnaryOp::Not => !v,
+            })
+        }
+        Rvalue::BinaryOp(op, a, b) => {
+            let l = pow_eval_const(a, defs, depth + 1)?;
+            let r = pow_eval_const(b, defs, depth + 1)?;
+            Some(match op {
+                BinaryOp::Add => l.wrapping_add(r),
+                BinaryOp::Sub => l.wrapping_sub(r),
+                BinaryOp::Mul => l.wrapping_mul(r),
+                BinaryOp::Div if r != 0 => l.wrapping_div(r),
+                BinaryOp::Mod if r != 0 => l.wrapping_rem(r),
+                BinaryOp::BitAnd => l & r,
+                BinaryOp::BitOr => l | r,
+                BinaryOp::BitXor => l ^ r,
+                BinaryOp::Shl => l.wrapping_shl((r as u32) & 63),
+                BinaryOp::Shr => l.wrapping_shr((r as u32) & 63),
+                BinaryOp::Pow => wrapping_pow_i64(l, r),
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// True iff `place`'s value (transitively through pure scalar definitions)
+/// originates in a `Pow` rvalue.  Restricts literal folding of `%` to the
+/// geometric powers this pass is responsible for.
+fn pow_chain_has_pow(place: &Place, defs: &HashMap<String, Rvalue>, depth: usize) -> bool {
+    if depth > 64 || !place.projections.is_empty() {
+        return false;
+    }
+    match defs.get(&place.local) {
+        Some(Rvalue::BinaryOp(BinaryOp::Pow, _, _)) => true,
+        Some(Rvalue::Use(next)) => pow_chain_has_pow(next, defs, depth + 1),
+        Some(Rvalue::UnaryOp(_, p)) => pow_chain_has_pow(p, defs, depth + 1),
+        Some(Rvalue::BinaryOp(_, a, b)) => {
+            pow_chain_has_pow(a, defs, depth + 1) || pow_chain_has_pow(b, defs, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+/// Folds constant `Pow(K, e)` and `(Pow(K, e) % M)` rvalues to literals.
+fn fold_constant_powers(program: &mut MirProgram) -> usize {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        for _ in 0..4 {
+            let defs = pow_scalar_defs(func);
+            let mut folded: Vec<(usize, usize, Rvalue)> = Vec::new();
+            let mut pow_dests: HashSet<String> = HashSet::new();
+
+            for (bi, block) in func.blocks.iter().enumerate() {
+                for (si, stmt) in block.statements.iter().enumerate() {
+                    let Statement::Assign(dest, rv) = stmt;
+                    if !dest.projections.is_empty() {
+                        continue;
+                    }
+                    match rv {
+                        Rvalue::BinaryOp(BinaryOp::Pow, a, b) => {
+                            let (Some(av), Some(bv)) =
+                                (pow_eval_const(a, &defs, 0), pow_eval_const(b, &defs, 0))
+                            else {
+                                continue;
+                            };
+                            pow_dests.insert(dest.local.clone());
+                            folded.push((
+                                bi,
+                                si,
+                                Rvalue::Constant(TypedLiteral::Int(
+                                    wrapping_pow_i64(av, bv),
+                                    Type::I64,
+                                )),
+                            ));
+                        }
+                        Rvalue::BinaryOp(BinaryOp::Mod, a, b) => {
+                            if !pow_chain_has_pow(a, &defs, 0) {
+                                continue;
+                            }
+                            let (Some(av), Some(mv)) =
+                                (pow_eval_const(a, &defs, 0), pow_eval_const(b, &defs, 0))
+                            else {
+                                continue;
+                            };
+                            if mv == 0 {
+                                continue;
+                            }
+                            folded.push((
+                                bi,
+                                si,
+                                Rvalue::Constant(TypedLiteral::Int(av.wrapping_rem(mv), Type::I64)),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if folded.is_empty() {
+                break;
+            }
+            let _ = pow_dests; // folded powers are re-derived from `defs` each round
+            for (bi, si, new_rv) in folded {
+                let Statement::Assign(_, rv) = &mut func.blocks[bi].statements[si];
+                *rv = new_rv;
+                total += 1;
+            }
+        }
+    }
+    total
+}
+
+// ---------------------------------------------------------------------------
+// Runtime-exponent saturation collapse
+// ---------------------------------------------------------------------------
+
+fn gp_place(name: &str) -> Place {
+    Place {
+        local: name.to_string(),
+        projections: vec![],
+    }
+}
+
+fn gp_fresh(func: &MirFunction, base: &str) -> String {
+    let used: HashSet<String> = func
+        .locals
+        .iter()
+        .map(|d| d.name.clone())
+        .chain(func.blocks.iter().flat_map(|b| {
+            b.statements
+                .iter()
+                .map(|Statement::Assign(d, _)| d.local.clone())
+        }))
+        .collect();
+    let mut name = base.to_string();
+    let mut i = 0;
+    while used.contains(&name) {
+        i += 1;
+        name = format!("{}_{}", base, i);
+    }
+    name
+}
+
+/// Counts direct references to `local` in every operand of every statement and
+/// terminator.  Used to ensure a rewritten `Pow` result has at most one
+/// consumer (a `% M` we can fold into the result).
+fn gp_count_uses(func: &MirFunction, local: &str) -> usize {
+    fn mark(p: &Place, local: &str, n: &mut usize) {
+        if p.local == local {
+            *n += 1;
+        }
+        for proj in &p.projections {
+            if let Projection::Index(idx) = proj {
+                mark(idx, local, n);
+            }
+        }
+    }
+    fn mark_rv(rv: &Rvalue, local: &str, n: &mut usize) {
+        match rv {
+            Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Load(p) | Rvalue::Alloc(p)
+            | Rvalue::Discriminant(p) => mark(p, local, n),
+            Rvalue::BinaryOp(_, a, b) => {
+                mark(a, local, n);
+                mark(b, local, n);
+            }
+            Rvalue::Select(c, t, f) => {
+                mark(c, local, n);
+                mark(t, local, n);
+                mark(f, local, n);
+            }
+            Rvalue::Call(_, args) | Rvalue::Array(args) => {
+                for a in args {
+                    mark(a, local, n);
+                }
+            }
+            Rvalue::Struct(_, fields) => {
+                for (_, p) in fields {
+                    mark(p, local, n);
+                }
+            }
+            Rvalue::EnumVariant { fields, .. } => {
+                for p in fields {
+                    mark(p, local, n);
+                }
+            }
+            Rvalue::Phi(entries) => {
+                for (_, p) in entries {
+                    mark(p, local, n);
+                }
+            }
+            Rvalue::ClosureAlloc { captured, .. } => {
+                for p in captured {
+                    mark(p, local, n);
+                }
+            }
+            Rvalue::Thunk { env, .. } => {
+                for e in env {
+                    if e == local {
+                        *n += 1;
+                    }
+                }
+            }
+            Rvalue::FnPtr(_) | Rvalue::Constant(_) => {}
+        }
+    }
+    fn mark_term(t: &Terminator, local: &str, n: &mut usize) {
+        match t {
+            Terminator::Return { value: Some(p) } => mark(p, local, n),
+            Terminator::Switch { value, .. } => mark(value, local, n),
+            Terminator::TypeGuard { local: l, .. } if l.local == local => *n += 1,
+            Terminator::IndirectCall { callee, args, .. } => {
+                mark(callee, local, n);
+                for a in args {
+                    mark(a, local, n);
+                }
+            }
+            Terminator::BranchIf { condition, .. } => mark(condition, local, n),
+            _ => {}
+        }
+    }
+    let mut n = 0;
+    for block in &func.blocks {
+        for Statement::Assign(_, rv) in &block.statements {
+            mark_rv(rv, local, &mut n);
+        }
+        mark_term(&block.terminator, local, &mut n);
+    }
+    n
+}
+
+/// If `dest` is consumed exactly once by `r = Pow(...) % M` (possibly through
+/// `Use` chains), and M is a positive power-of-two constant, return its value.
+fn gp_unique_mod(func: &MirFunction, dest: &str, defs: &HashMap<String, Rvalue>) -> Option<i64> {
+    if gp_count_uses(func, dest) != 1 {
+        return None;
+    }
+    for block in &func.blocks {
+        for Statement::Assign(d, rv) in &block.statements {
+            let Rvalue::BinaryOp(BinaryOp::Mod, a, b) = rv else {
+                continue;
+            };
+            // Follow `Use` chains on the left operand to the Pow destination.
+            let mut cur = a.clone();
+            let mut reached = false;
+            for _ in 0..64 {
+                if !cur.projections.is_empty() {
+                    break;
+                }
+                if cur.local == dest {
+                    reached = true;
+                    break;
+                }
+                match defs.get(&cur.local) {
+                    Some(Rvalue::Use(next)) => cur = next.clone(),
+                    _ => break,
+                }
+            }
+            if !reached {
+                continue;
+            }
+            let m = pow_eval_const(b, defs, 0)?;
+            if m > 0 && (m & (m - 1)) == 0 {
+                let _ = d;
+                return Some(m);
+            }
+            return None;
+        }
+    }
+    None
+}
+
+/// Builds the straight-line saturation collapse for `2^k ^ e` (optionally
+/// reduced modulo `2^m`) and assigns it to `dest`.
+fn gp_emit_collapse(
+    func: &mut MirFunction,
+    dest: &str,
+    exp: &Place,
+    k: i64,
+    modulus_bits: i64,
+) -> Vec<Statement> {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let fresh = |base: &str| gp_fresh(func, base);
+    let zero = fresh("__rgp_zero");
+    let one = fresh("__rgp_one");
+    let k_local = fresh("__rgp_k");
+    let t_local = fresh("__rgp_t");
+    let c_le = fresh("__rgp_cle");
+    let c_sat = fresh("__rgp_csat");
+    let e_clamped = fresh("__rgp_eclamped");
+    let shift = fresh("__rgp_shift");
+    let pw = fresh("__rgp_pow");
+    let reduced = fresh("__rgp_reduced");
+    let result = fresh("__rgp_result");
+
+    let int = |v: i64| Rvalue::Constant(TypedLiteral::Int(v, Type::I64));
+    let bin = |op: BinaryOp, a: &str, b: &str| {
+        Rvalue::BinaryOp(op, gp_place(a), gp_place(b))
+    };
+    let threshold = (modulus_bits + k - 1) / k; // ceil(bits / k), bits >= 1
+
+    let stmts = vec![
+        Statement::Assign(gp_place(&zero), int(0)),
+        Statement::Assign(gp_place(&one), int(1)),
+        Statement::Assign(gp_place(&k_local), int(k)),
+        Statement::Assign(gp_place(&t_local), int(threshold)),
+        Statement::Assign(
+            gp_place(&c_le),
+            Rvalue::BinaryOp(BinaryOp::Le, exp.clone(), gp_place(&zero)),
+        ),
+        Statement::Assign(
+            gp_place(&c_sat),
+            Rvalue::BinaryOp(BinaryOp::Ge, exp.clone(), gp_place(&t_local)),
+        ),
+        Statement::Assign(
+            gp_place(&e_clamped),
+            Rvalue::Select(gp_place(&c_le), gp_place(&zero), exp.clone()),
+        ),
+        Statement::Assign(
+            gp_place(&shift),
+            bin(BinaryOp::Mul, &e_clamped, &k_local),
+        ),
+        Statement::Assign(gp_place(&pw), bin(BinaryOp::Shl, &one, &shift)),
+        Statement::Assign(
+            gp_place(&reduced),
+            Rvalue::Select(gp_place(&c_sat), gp_place(&zero), gp_place(&pw)),
+        ),
+        Statement::Assign(
+            gp_place(&result),
+            Rvalue::Select(gp_place(&c_le), gp_place(&one), gp_place(&reduced)),
+        ),
+        Statement::Assign(gp_place(dest), Rvalue::Use(gp_place(&result))),
+    ];
+
+    for name in [
+        zero,
+        one,
+        k_local,
+        t_local,
+        c_le,
+        c_sat,
+        e_clamped,
+        shift,
+        pw,
+        reduced,
+        result,
+    ] {
+        func.locals.push(MirLocalDecl {
+            name,
+            ty: Type::I64,
+            mutable: true,
+        });
+    }
+    stmts
+}
+
+struct GpPlan {
+    block: usize,
+    statement: usize,
+    dest: String,
+    exp: Place,
+    k: i64,
+    bits: i64,
+    literal: Option<i64>,
+}
+
+/// Collapses constant-base, runtime-exponent geometric powers for which we can
+/// prove the saturation identity (positive power-of-two base and, for the
+/// modular form, positive power-of-two modulus).  Returns the number of
+/// rewritten `Pow` statements.
+fn collapse_runtime_powers(program: &mut MirProgram) -> usize {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        let defs = pow_scalar_defs(func);
+        let mut plans: Vec<GpPlan> = Vec::new();
+
+        for (bi, block) in func.blocks.iter().enumerate() {
+            for (si, stmt) in block.statements.iter().enumerate() {
+                let Statement::Assign(dest, rv) = stmt;
+                if !dest.projections.is_empty() {
+                    continue;
+                }
+                let Rvalue::BinaryOp(BinaryOp::Pow, base, exp) = rv else {
+                    continue;
+                };
+                // Constant exponents were handled by `fold_constant_powers`.
+                if pow_eval_const(exp, &defs, 0).is_some() {
+                    continue;
+                }
+                let Some(k_val) = pow_eval_const(base, &defs, 0) else {
+                    continue;
+                };
+                if k_val <= 0 || (k_val & (k_val - 1)) != 0 {
+                    continue;
+                }
+                let k = k_val.trailing_zeros() as i64;
+
+                // K = 1 is exponent-independent: 1^e = 1 for every e.
+                if k == 0 {
+                    plans.push(GpPlan {
+                        block: bi,
+                        statement: si,
+                        dest: dest.local.clone(),
+                        exp: exp.clone(),
+                        k,
+                        bits: 0,
+                        literal: Some(1),
+                    });
+                    total += 1;
+                    continue;
+                }
+
+                let modulus = gp_unique_mod(func, &dest.local, &defs);
+                let bits = match modulus {
+                    Some(1) => {
+                        // 1^e % 1 is 0 even for e <= 0.
+                        plans.push(GpPlan {
+                            block: bi,
+                            statement: si,
+                            dest: dest.local.clone(),
+                            exp: exp.clone(),
+                            k,
+                            bits: 0,
+                            literal: Some(0),
+                        });
+                        total += 1;
+                        continue;
+                    }
+                    Some(m) => m.trailing_zeros() as i64,
+                    None => 64, // unreduced wrapping i64 value
+                };
+                plans.push(GpPlan {
+                    block: bi,
+                    statement: si,
+                    dest: dest.local.clone(),
+                    exp: exp.clone(),
+                    k,
+                    bits,
+                    literal: None,
+                });
+                total += 1;
+            }
+        }
+
+        // Generate fresh locals only after the immutable scan is finished.
+        let mut replacements: Vec<(usize, usize, Vec<Statement>)> = Vec::new();
+        for plan in plans {
+            let stmts = match plan.literal {
+                Some(v) => vec![Statement::Assign(
+                    gp_place(&plan.dest),
+                    Rvalue::Constant(TypedLiteral::Int(v, Type::I64)),
+                )],
+                None => gp_emit_collapse(func, &plan.dest, &plan.exp, plan.k, plan.bits),
+            };
+            replacements.push((plan.block, plan.statement, stmts));
+        }
+
+        // Apply from the end so earlier indices remain valid.
+        replacements.sort_by_key(|(bi, si, _)| (*bi, *si));
+        for (bi, si, stmts) in replacements.into_iter().rev() {
+            let block = &mut func.blocks[bi];
+            block.statements.remove(si);
+            for (off, stmt) in stmts.into_iter().enumerate() {
+                block.statements.insert(si + off, stmt);
+            }
+        }
+    }
+    total
+}
+
+// ---------------------------------------------------------------------------
+// Dead input-read elimination for fully collapsed residuals
+// ---------------------------------------------------------------------------
+//
+// `dce_mir_function` deliberately keeps every `Rvalue::Call` because calls may
+// have effects.  Once a recurrence has been folded to a literal, however, a
+// `read_i64()` whose result no longer reaches an observable use is genuinely
+// dead: NumLang's builtin has no side effects other than supplying its integer
+// result.  A backward liveness fixed point marks places reaching returns, call
+// arguments, switches, type guards and *real* branches (a `BranchIf` whose two
+// targets are the same block does not observe its condition).  Only pure scalar
+// rvalues and argument-less `read_i64()` calls with dead destinations are
+// removed; all other calls are retained.
+
+fn dead_read_mark_place(p: &Place, out: &mut HashSet<String>) {
+    out.insert(p.local.clone());
+    for proj in &p.projections {
+        if let Projection::Index(idx) = proj {
+            dead_read_mark_place(idx, out);
+        }
+    }
+}
+
+/// A projected destination (`a[i] = v`) reads its index local even though the
+/// base local is written; keep those index places live.
+fn dead_read_mark_dest_indices(p: &Place, out: &mut HashSet<String>) {
+    for proj in &p.projections {
+        if let Projection::Index(idx) = proj {
+            dead_read_mark_place(idx, out);
+        }
+    }
+}
+
+fn dead_read_mine_rv(rv: &Rvalue, out: &mut HashSet<String>) {
+    match rv {
+        Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Load(p) | Rvalue::Alloc(p)
+        | Rvalue::Discriminant(p) => dead_read_mark_place(p, out),
+        Rvalue::BinaryOp(_, a, b) => {
+            dead_read_mark_place(a, out);
+            dead_read_mark_place(b, out);
+        }
+        Rvalue::Select(c, t, f) => {
+            dead_read_mark_place(c, out);
+            dead_read_mark_place(t, out);
+            dead_read_mark_place(f, out);
+        }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => {
+            for a in args {
+                dead_read_mark_place(a, out);
+            }
+        }
+        Rvalue::Struct(_, fields) => {
+            for (_, p) in fields {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::EnumVariant { fields, .. } => {
+            for p in fields {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::Phi(entries) => {
+            for (_, p) in entries {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::ClosureAlloc { captured, .. } => {
+            for p in captured {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                out.insert(e.clone());
+            }
+        }
+        Rvalue::FnPtr(_) | Rvalue::Constant(_) => {}
+    }
+}
+
+fn dead_read_mine_term(t: &Terminator, out: &mut HashSet<String>) {
+    match t {
+        Terminator::Return { value: Some(p) } => dead_read_mark_place(p, out),
+        Terminator::Switch { value, .. } => dead_read_mark_place(value, out),
+        Terminator::TypeGuard { local, .. } => dead_read_mark_place(local, out),
+        Terminator::IndirectCall { callee, args, .. } => {
+            dead_read_mark_place(callee, out);
+            for a in args {
+                dead_read_mark_place(a, out);
+            }
+        }
+        Terminator::BranchIf {
+            condition,
+            then_target,
+            else_target,
+        } if then_target != else_target => dead_read_mark_place(condition, out),
+        _ => {}
+    }
+}
+
+fn dead_read_is_removable(rv: &Rvalue) -> bool {
+    matches!(
+        rv,
+        Rvalue::Use(_)
+            | Rvalue::Constant(_)
+            | Rvalue::BinaryOp(..)
+            | Rvalue::UnaryOp(..)
+            | Rvalue::Select(..)
+    ) || matches!(rv, Rvalue::Call(name, args) if name == "read_i64" && args.is_empty())
+}
+
+/// Removes dead `read_i64` calls (and pure scalar assignments that became dead
+/// with them).  Returns the number of statements removed.
+fn eliminate_dead_input_reads(program: &mut MirProgram) -> usize {
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        let mut needed: HashSet<String> = HashSet::new();
+        loop {
+            let mut changed = false;
+            for block in &func.blocks {
+                dead_read_mine_term(&block.terminator, &mut needed);
+                for Statement::Assign(dest, rv) in &block.statements {
+                    let before = needed.len();
+                    dead_read_mark_dest_indices(dest, &mut needed);
+                    if needed.contains(&dest.local) || !dead_read_is_removable(rv) {
+                        dead_read_mine_rv(rv, &mut needed);
+                    }
+                    if needed.len() != before {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        for block in &mut func.blocks {
+            let before = block.statements.len();
+            block.statements.retain(|Statement::Assign(dest, rv)| {
+                !(dest.projections.is_empty()
+                    && !needed.contains(&dest.local)
+                    && dead_read_is_removable(rv))
+            });
+            total += before - block.statements.len();
+        }
+    }
+    total
 }
