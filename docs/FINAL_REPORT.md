@@ -134,7 +134,7 @@ All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly valida
 | **CLM-06** | Self-applicable specializer `minspec.nl` structures Futamura 1, 2, and 3 projections | **TESTED** | `0aa6825` |
 | **CLM-07** | Lean 4 mechanized operational models have zero `sorry` and zero unproven axioms | **PROVEN (abstract model only)** | `0aa6825` |
 | **CLM-08** | Process tree termination formalization via homeomorphic embedding and sequence pigeonhole | **PARTIAL** | `0aa6825` |
-| **CLM-09** | All 22 NumLang-SC medians are at or below the frozen contract's 500 ns timing floor (100-500 ns), with zero regressions; no numeric geomean is defined because every cell is folded | **TESTED** | `e16469e` |
+| **CLM-09** | All 22 NumLang-SC medians are at or below the frozen contract's 500 ns timing floor (100-400 ns), with zero regressions; no numeric geomean is defined because every cell is folded | **TESTED** | `b12ccda` |
 | **CLM-10** | Algorithmic recurrence collapse drives `tri_sum` below the 500 ns timing floor | **TESTED** | `100019d` |
 | **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | **TESTED** | `0aa6825` |
 | **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | **TESTED** | `0aa6825` |
