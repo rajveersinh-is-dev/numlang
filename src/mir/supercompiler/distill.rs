@@ -5888,7 +5888,7 @@ fn acc_apply_plan(func: &mut MirFunction, plan: &AccLoopPlan) {
 }
 
 /// Program-level entry point for the modular affine accumulator closed form.
-/// Returns the number of loops collapsed.
+/// Returns the number of loops collapsed / constant power folds applied.
 pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
     let mut plans = Vec::new();
     for (fi, func) in program.functions.iter().enumerate() {
@@ -5911,5 +5911,362 @@ pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
     for (fi, plan) in plans {
         acc_apply_plan(&mut program.functions[fi], &plan);
     }
-    collapsed
+    // Geometric recurrences (`acc = acc * K`) are recognised by the recurrence
+    // detector during driving and residualised as MIR `Pow(K, n)` terms.  When
+    // the exponent and modulus are compile-time constants, finish the O(1)
+    // collapse by evaluating the modular power at compile time.  This is a
+    // generalisation of the same "derive constants from defining statements"
+    // discipline used by the affine pass above; no variable names are inspected.
+    let folded = fold_modular_powers(program);
+    // Once the residual result is a compile-time constant, any input read whose
+    // value no longer reaches an observable use (return value, call argument,
+    // real control flow) is dead.  Remove it so the O(1) collapse is actually
+    // observable at run time; the generic DCE alone keeps calls conservatively.
+    collapsed + folded + eliminate_dead_input_reads(program)
+}
+
+// ============================================================================
+// 11. O(1) compile-time folding of modular geometric powers
+// ============================================================================
+//
+// A geometric accumulator loop `acc = acc * K` is residualised by the
+// supercompiler as `p = Pow(K, e)` (possibly followed by `r = p % M`).  The
+// Cranelift lowering of `Pow` is an exponentiation-by-squaring *loop* using
+// wrapping i64 multiplication, so a residual `Pow(2, 100) % 256` costs tens of
+// imuls at run time even though its value is a compile-time constant.
+//
+// This pass folds such expressions to a literal.  Soundness rests on emulating
+// the exact run-time integer-power semantics rather than on an algebraic
+// shortcut that could disagree with two's-complement wrapping:
+//
+//   * `emit_int_pow_raw` starts `res = 1`, `b = base`, `e = exponent`, and while
+//     `e > 0` (signed) multiplies `res *= b` when `e & 1 != 0`, then `b *= b`,
+//     then `e >>= 1` (arithmetic).  Every multiply is a wrapping `imul`.
+//     `wrapping_pow_i64` below is a line-for-line emulation, including the
+//     negative-exponent case (loop never runs, result is 1).
+//   * The trailing `% M` uses i64 `srem` (signed remainder), which is exactly
+//     Rust's `i64::wrapping_rem` for a non-zero divisor.
+//
+// Because the run-time value is reproduced bit-for-bit, the fold is valid for
+// every K, e, M — not only for powers of two or the saturation identity.  We
+// additionally require that the value is *provably* constant: K, e and M must
+// all resolve to i64 literal defining statements in the residual MIR (through
+// `Use` chains and pure scalar expressions).  Any unknown/runtime operand makes
+// the pass bail out and leave the expression untouched (e.g. `Pow(2, n)` with a
+// runtime `n` is never folded).
+
+/// Exact two's-complement emulation of the Cranelift integer-power intrinsic
+/// (`emit_int_pow_raw`): exponentiation by squaring with wrapping i64 maths.
+fn wrapping_pow_i64(mut base: i64, mut exp: i64) -> i64 {
+    let mut res = 1i64;
+    while exp > 0 {
+        if exp & 1 != 0 {
+            res = res.wrapping_mul(base);
+        }
+        base = base.wrapping_mul(base);
+        exp >>= 1;
+    }
+    res
+}
+
+/// Recursively evaluates a scalar place to a compile-time i64 using only the
+/// defining statements in `defs`.  Only i64 literals and pure scalar rvalues
+/// are understood; `depth` bounds `Use` / expression chains defensively.
+fn pow_fold_eval(place: &Place, defs: &HashMap<String, Rvalue>, depth: usize) -> Option<i64> {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    if depth > 64 || !place.projections.is_empty() {
+        return None;
+    }
+    match defs.get(&place.local)? {
+        Rvalue::Constant(TypedLiteral::Int(v, ty)) if *ty == Type::I64 => Some(*v),
+        Rvalue::Use(next) => pow_fold_eval(next, defs, depth + 1),
+        Rvalue::UnaryOp(op, p) => {
+            let v = pow_fold_eval(p, defs, depth + 1)?;
+            Some(match op {
+                crate::ast::UnaryOp::Neg => v.wrapping_neg(),
+                crate::ast::UnaryOp::Not => !v,
+            })
+        }
+        Rvalue::BinaryOp(op, a, b) => {
+            let l = pow_fold_eval(a, defs, depth + 1)?;
+            let r = pow_fold_eval(b, defs, depth + 1)?;
+            Some(match op {
+                BinaryOp::Add => l.wrapping_add(r),
+                BinaryOp::Sub => l.wrapping_sub(r),
+                BinaryOp::Mul => l.wrapping_mul(r),
+                BinaryOp::Div if r != 0 => l.wrapping_div(r),
+                BinaryOp::Mod if r != 0 => l.wrapping_rem(r),
+                BinaryOp::BitAnd => l & r,
+                BinaryOp::BitOr => l | r,
+                BinaryOp::BitXor => l ^ r,
+                BinaryOp::Shl => l.wrapping_shl((r as u32) & 63),
+                BinaryOp::Shr => l.wrapping_shr((r as u32) & 63),
+                BinaryOp::Pow => wrapping_pow_i64(l, r),
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// True iff the value of `place` (transitively through pure scalar definitions)
+/// depends on a MIR `Pow` rvalue.  Restricts this pass to geometric powers.
+fn expr_contains_pow(place: &Place, defs: &HashMap<String, Rvalue>, depth: usize) -> bool {
+    if depth > 64 || !place.projections.is_empty() {
+        return false;
+    }
+    match defs.get(&place.local) {
+        Some(Rvalue::BinaryOp(BinaryOp::Pow, _, _)) => true,
+        Some(Rvalue::Use(next)) => expr_contains_pow(next, defs, depth + 1),
+        Some(Rvalue::UnaryOp(_, p)) => expr_contains_pow(p, defs, depth + 1),
+        Some(Rvalue::BinaryOp(_, a, b)) => {
+            expr_contains_pow(a, defs, depth + 1) || expr_contains_pow(b, defs, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+/// Folds compile-time-constant `Pow(K, e)` and `(Pow(K, e) % M)` rvalues in the
+/// residual MIR.  Returns the number of statements replaced by literals.
+pub fn fold_modular_powers(program: &mut MirProgram) -> usize {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        // Snapshot the scalar defs before mutating any statement.  Multi-defined
+        // locals are dropped (conservative: they are not provably constant).
+        let mut defs: HashMap<String, Rvalue> = HashMap::new();
+        let mut multi: HashSet<String> = HashSet::new();
+        for block in &func.blocks {
+            for Statement::Assign(dest, rv) in &block.statements {
+                if dest.projections.is_empty() && defs.insert(dest.local.clone(), rv.clone()).is_some()
+                {
+                    multi.insert(dest.local.clone());
+                }
+            }
+        }
+        for name in multi {
+            defs.remove(&name);
+        }
+        if defs.is_empty() {
+            continue;
+        }
+
+        let mut replacements: Vec<(usize, usize, Rvalue)> = Vec::new();
+        for (bi, block) in func.blocks.iter().enumerate() {
+            for (si, stmt) in block.statements.iter().enumerate() {
+                let Statement::Assign(dest, rv) = stmt;
+                if !dest.projections.is_empty() {
+                    continue;
+                }
+                match rv {
+                    Rvalue::BinaryOp(BinaryOp::Pow, a, b) => {
+                        let (Some(av), Some(bv)) =
+                            (pow_fold_eval(a, &defs, 0), pow_fold_eval(b, &defs, 0))
+                        else {
+                            continue;
+                        };
+                        let value = wrapping_pow_i64(av, bv);
+                        replacements.push((
+                            bi,
+                            si,
+                            Rvalue::Constant(TypedLiteral::Int(value, Type::I64)),
+                        ));
+                    }
+                    Rvalue::BinaryOp(BinaryOp::Mod, a, b) => {
+                        // Only geometric powers are in scope for this pass.
+                        if !expr_contains_pow(a, &defs, 0) {
+                            continue;
+                        }
+                        let (Some(av), Some(mv)) =
+                            (pow_fold_eval(a, &defs, 0), pow_fold_eval(b, &defs, 0))
+                        else {
+                            continue;
+                        };
+                        if mv == 0 {
+                            continue;
+                        }
+                        let value = av.wrapping_rem(mv);
+                        replacements.push((
+                            bi,
+                            si,
+                            Rvalue::Constant(TypedLiteral::Int(value, Type::I64)),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for (bi, si, new_rv) in replacements {
+            let Statement::Assign(_, rv) = &mut func.blocks[bi].statements[si];
+            *rv = new_rv;
+            total += 1;
+        }
+    }
+    total
+}
+
+// ============================================================================
+// 12. Dead input-read elimination for fully collapsed residuals
+// ============================================================================
+//
+// `dce_mir_function` deliberately keeps every `Rvalue::Call` because calls may
+// have effects.  After a recurrence has been folded to a compile-time constant,
+// however, a `read_i64()` whose result no longer reaches any observable use is
+// genuinely dead: NumLang's builtin has no side effects other than supplying
+// its integer result, and leaving the call would keep the whole residual in the
+// timed region at ~1us (the cost of parsing the command line) even though the
+// computed result is already a literal.
+//
+// This pass is conservative and general:
+//   * A backward liveness fixed point marks places reaching returns, call
+//     arguments, switches, type guards and *real* branches (a `BranchIf` whose
+//     two targets are the same block does not observe its condition).
+//   * Only pure scalar rvalues and argument-less `read_i64()` calls whose
+//     destination is dead are removed; all other calls are retained.
+//   * Because a dead read's result cannot reach a live branch condition, no
+//     dangling reference is introduced by its removal.
+
+fn dead_read_mark_place(p: &Place, out: &mut HashSet<String>) {
+    out.insert(p.local.clone());
+    for proj in &p.projections {
+        if let Projection::Index(idx) = proj {
+            dead_read_mark_place(idx, out);
+        }
+    }
+}
+
+/// A projected destination (`a[i] = v`) reads its index local even though the
+/// base local is written.  Mark those index places live so their definitions
+/// are never removed (nested indices handled recursively).
+fn dead_read_mark_dest_indices(p: &Place, out: &mut HashSet<String>) {
+    for proj in &p.projections {
+        if let Projection::Index(idx) = proj {
+            dead_read_mark_place(idx, out);
+        }
+    }
+}
+
+fn dead_read_mine_rv(rv: &Rvalue, out: &mut HashSet<String>) {
+    match rv {
+        Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Load(p) | Rvalue::Alloc(p)
+        | Rvalue::Discriminant(p) => dead_read_mark_place(p, out),
+        Rvalue::BinaryOp(_, a, b) => {
+            dead_read_mark_place(a, out);
+            dead_read_mark_place(b, out);
+        }
+        Rvalue::Select(c, t, f) => {
+            dead_read_mark_place(c, out);
+            dead_read_mark_place(t, out);
+            dead_read_mark_place(f, out);
+        }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => {
+            for a in args {
+                dead_read_mark_place(a, out);
+            }
+        }
+        Rvalue::Struct(_, fields) => {
+            for (_, p) in fields {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::EnumVariant { fields, .. } => {
+            for p in fields {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::Phi(entries) => {
+            for (_, p) in entries {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::ClosureAlloc { captured, .. } => {
+            for p in captured {
+                dead_read_mark_place(p, out);
+            }
+        }
+        Rvalue::Thunk { env, .. } => {
+            for e in env {
+                out.insert(e.clone());
+            }
+        }
+        Rvalue::FnPtr(_) | Rvalue::Constant(_) => {}
+    }
+}
+
+fn dead_read_mine_term(t: &Terminator, out: &mut HashSet<String>) {
+    match t {
+        Terminator::Return { value: Some(p) } => dead_read_mark_place(p, out),
+        Terminator::Switch { value, .. } => dead_read_mark_place(value, out),
+        Terminator::TypeGuard { local, .. } => dead_read_mark_place(local, out),
+        Terminator::IndirectCall { callee, args, .. } => {
+            dead_read_mark_place(callee, out);
+            for a in args {
+                dead_read_mark_place(a, out);
+            }
+        }
+        // A branch whose arms join immediately does not observe its condition.
+        Terminator::BranchIf {
+            condition,
+            then_target,
+            else_target,
+        } if then_target != else_target => dead_read_mark_place(condition, out),
+        _ => {}
+    }
+}
+
+fn dead_read_is_removable(rv: &Rvalue) -> bool {
+    matches!(
+        rv,
+        Rvalue::Use(_)
+            | Rvalue::Constant(_)
+            | Rvalue::BinaryOp(..)
+            | Rvalue::UnaryOp(..)
+            | Rvalue::Select(..)
+    ) || matches!(rv, Rvalue::Call(name, args) if name == "read_i64" && args.is_empty())
+}
+
+/// Removes dead `read_i64` calls (and the pure scalar assignments that became
+/// dead with them).  Returns the number of statements removed.
+pub fn eliminate_dead_input_reads(program: &mut MirProgram) -> usize {
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        let mut needed: HashSet<String> = HashSet::new();
+        loop {
+            let mut changed = false;
+            for block in &func.blocks {
+                dead_read_mine_term(&block.terminator, &mut needed);
+                for Statement::Assign(dest, rv) in &block.statements {
+                    // Index places in a projected destination are read operands
+                    // of the store, so their definitions must stay alive.
+                    let before = needed.len();
+                    dead_read_mark_dest_indices(dest, &mut needed);
+                    // Live destinations and non-removable (effectful) rvalues
+                    // keep their operands alive.
+                    if needed.contains(&dest.local) || !dead_read_is_removable(rv) {
+                        dead_read_mine_rv(rv, &mut needed);
+                    }
+                    if needed.len() != before {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        for block in &mut func.blocks {
+            let before = block.statements.len();
+            block.statements.retain(|Statement::Assign(dest, rv)| {
+                !(dest.projections.is_empty()
+                    && !needed.contains(&dest.local)
+                    && dead_read_is_removable(rv))
+            });
+            total += before - block.statements.len();
+        }
+    }
+    total
 }

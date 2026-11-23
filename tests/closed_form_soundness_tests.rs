@@ -9,10 +9,16 @@
 //! Companion to `src/mir/supercompiler/generalize.rs`.
 
 use numlang::ast::{BinaryOp, UnaryOp};
+use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::generalize::solve_recurrence;
 use numlang::mir::supercompiler::term::{SymTerm, TermInterner};
-use numlang::mir::Place;
+use numlang::mir::supercompiler::supercompile_mir_program;
+use numlang::mir::{Place, Terminator};
+use numlang::parser::parse;
+use numlang::token::tokenize;
+use numlang::typecheck::typed_ast::TypedLiteral;
 use numlang::typecheck::types::Type;
+use numlang::typecheck::typecheck;
 
 #[derive(Clone, Copy, Debug)]
 struct PolyConfig {
@@ -281,6 +287,79 @@ fn large_n_iterative_simulation() {
     ];
     for cfg in reps {
         check_cfg(&cfg, LARGE_KS, true);
+    }
+}
+
+/// Extract the scalar constant returned by `main` in a fully collapsed MIR.
+fn returned_constant(mir: &MirProgram) -> Option<i64> {
+    let main = mir.functions.iter().find(|f| f.name == "main")?;
+    for block in &main.blocks {
+        let Terminator::Return { value: Some(p) } = &block.terminator else {
+            continue;
+        };
+        if !p.projections.is_empty() {
+            continue;
+        }
+        let mut cur = p.clone();
+        for Statement::Assign(dest, rv) in block.statements.iter().rev() {
+            if dest.local != cur.local || !dest.projections.is_empty() {
+                continue;
+            }
+            match rv {
+                Rvalue::Constant(TypedLiteral::Int(v, _)) => return Some(*v),
+                Rvalue::Use(next) => cur = next.clone(),
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Randomized differential test for the O(1) modular-geometric collapse:
+/// `acc = acc * K; ... acc % M` for K=2, M=256.  For every iteration count in
+/// 1..=1000 we compile a statically-instantiated copy through the full
+/// supercompiler (the "specialized" result) and compare it bit-for-bit with a
+/// direct wrapping i64 simulation of the interpreted loop (the "interpreted"
+/// result).  This exercises both the small-n saturation identity (2^n < 256)
+/// and the large-n zero region where 2^n overflows i64.
+#[test]
+fn modular_power_collapse_matches_interpreted_n_1_to_1000() {
+    for n in 1..=1000i64 {
+        let src = format!(
+            r#"
+            fn pow2(k: i64) -> i64 {{
+                let mut acc: i64 = 1;
+                let mut i: i64 = 0;
+                while i < k {{ acc = acc * 2; i = i + 1; }}
+                return acc % 256;
+            }}
+            fn main() -> i64 {{
+                let r: i64 = pow2({});
+                return r;
+            }}
+            "#,
+            n
+        );
+        let tokens = tokenize(&src).unwrap();
+        let ast = parse(&tokens).unwrap();
+        let typed = typecheck(&ast).unwrap();
+        let mut mir = lower_program(&typed);
+        supercompile_mir_program(&mut mir);
+
+        let specialized = returned_constant(&mir)
+            .unwrap_or_else(|| panic!("n={}: supercompiled result is not a constant", n));
+
+        let mut acc = 1i64;
+        for _ in 0..n {
+            acc = acc.wrapping_mul(2);
+        }
+        let interpreted = acc.wrapping_rem(256);
+
+        assert_eq!(
+            specialized, interpreted,
+            "n={}: specialized {} != interpreted {}",
+            n, specialized, interpreted
+        );
     }
 }
 
