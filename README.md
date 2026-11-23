@@ -113,28 +113,28 @@ Full empirical benchmark evaluation against industrial compilers is documented i
 
 | Benchmark | Category | NumLang-SC | NumLang-Base | Rustc-O3 | MSVC-O2 | Clang-O3 | GCC-O3 | GHC-O2 | Result vs Base (95% CI) |
 |:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Naive Reverse (Double nrev) (`nrev`) | G1: Deforestation | 1.70 µs | 216.20 µs | 1.29 ms | 53.90 µs | 49.60 µs | 26.90 µs | 22.10 µs | **NumLang-SC Win (123.88x [49.56-201.82])** |
-| Triple List Append (`append3`) | G1: Deforestation | 1.90 µs | 84.00 µs | 444.90 µs | 15.00 µs | 14.00 µs | 8.80 µs | 7.60 µs | **NumLang-SC Win (43.97x [17.46-65.57])** |
-| Knuth-Morris-Pratt DFA (`kmp`) | G1: Deforestation | 27.70 µs | 28.20 µs | 223.50 µs | 61.30 µs | 61.80 µs | 208.70 µs | 7.60 µs | **Tie (0.98x [0.68-1.24])** |
-| Peano Multiplication (`peano_mul`) | G1: Deforestation | 1.80 µs | 28.40 µs | 132.10 µs | 187.20 µs | 186.70 µs | 194.80 µs | 7.40 µs | **NumLang-SC Win (17.10x [9.54-21.67])** |
-| Double Tree Inversion (`tree_flip`) | G1: Deforestation | 1.90 µs | 93.80 µs | 532.40 µs | 526.90 µs | 508.60 µs | 627.70 µs | 14.00 µs | **NumLang-SC Win (51.21x [20.68-63.00])** |
-| Coupled Fibonacci Recurrence Matrix Power (`fib_matrix`) | G2: Recurrences | 1.60 µs | 115.20 µs | 3.40 µs | 34.80 µs | 3.10 µs | 2.50 µs | 5.90 µs | **NumLang-SC Win (71.81x [50.17-82.29])** |
-| Triangular Summation (50M) (`tri_sum`) | G2: Recurrences | 1.70 µs | 20.46 ms | ≤ 500 ns* | 9.39 ms | ≤ 500 ns* | ≤ 500 ns* | 16.24 ms | **NumLang-SC Win (12445.11x [9197.86-14819.57])** |
-| Sum of Squares 1^2+...+10M^2 (Degree-3) (`cubic_sum`) | G2: Recurrences | 1.60 µs | 5.00 ms | ≤ 500 ns* | 3.57 ms | ≤ 500 ns* | 1.42 ms | 4.44 ms | **NumLang-SC Win (2952.59x [1254.21-4104.79])** |
-| Geometric Power Loop (100) (`pow2_mod`) | G2: Recurrences | 1.60 µs | 1.70 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | **Tie (1.07x [0.82-1.40])** |
-| Hofstadter Mutual Linear Recurrence (`hofstadter`) | G2: Recurrences | 3.40 µs | 3.50 µs | 4.40 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 18.00 µs | **Tie (1.09x [0.70-1.73])** |
-| Dynamic Triangular Summation (50M) (`tri_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | 2.00 µs | 20.37 ms | 6.27 ms | 12.31 ms | ≤ 500 ns* | 5.05 ms | 16.45 ms | **NumLang-SC Win (9923.11x [5306.69-12540.38])** |
-| Dynamic Sum of Squares (10M) (`cubic_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | 2.40 µs | 4.53 ms | 4.10 ms | 3.55 ms | ≤ 500 ns* | 1.43 ms | 4.34 ms | **NumLang-SC Win (1874.04x [1442.03-2261.40])** |
-| Dynamic Fibonacci Matrix Power (1000) (`fib_matrix_dyn`) | G2-Dyn: Recurrences (Runtime) | 5.50 µs | 5.60 µs | 4.50 µs | 3.40 µs | 3.10 µs | 3.10 µs | 93.70 µs | **Tie (1.01x [0.70-1.36])** |
-| Dynamic Geometric Power Loop (100) (`pow2_mod_dyn`) | G2-Dyn: Recurrences (Runtime) | 2.10 µs | 2.30 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | **Tie (1.19x [0.77-2.24])** |
-| 5-Deep Function Composition Chain (`compose5`) | G3: Higher-Order | 1.90 µs | 2.40 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | **Tie (1.21x [0.92-2.59])** |
-| Map-Map Pipeline Deforestation (`map_map`) | G3: Higher-Order | 1.80 µs | 1.90 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 6.10 µs | **Tie (1.06x [0.77-9.58])** |
-| Sum-Map Stream Fusion (1M) (`sum_map`) | G3: Higher-Order | 2.00 µs | 454.60 µs | ≤ 500 ns* | 355.40 µs | ≤ 500 ns* | ≤ 500 ns* | 410.30 µs | **NumLang-SC Win (237.44x [151.57-444.56])** |
-| Stream Pipeline Filter-Sum (`stream_take`) | G3: Higher-Order | 1.70 µs | 52.20 µs | ≤ 500 ns* | 36.40 µs | ≤ 500 ns* | 25.80 µs | WRONG_OUTPUT(actual=1;expected=0) | **NumLang-SC Win (31.59x [13.23-36.93])** |
-| Bytecode Expression Evaluator (`expr_eval`) | G4: Extended Realistic | 1.90 µs | 2.30 µs | 29.30 µs | 5.10 µs | 8.50 µs | 7.90 µs | NOT_INSTALLED | **Tie (1.21x [0.28-3.73])** |
-| Sliding-Window Sensor Statistics (`window_stats`) | G4: Extended Realistic | 2.50 µs | 2.80 µs | 27.50 µs | 5.40 µs | 8.70 µs | 7.70 µs | NOT_INSTALLED | **Tie (1.10x [0.52-1.67])** |
-| Struct Record Transform Pipeline (`record_pipeline`) | G4: Extended Realistic | 1.80 µs | 3.20 µs | 28.80 µs | 6.40 µs | 9.20 µs | 7.60 µs | NOT_INSTALLED | **Tie (1.76x [0.84-4.11])** |
-| Multi-Pass Clamped 2D Stencil (`nested_stencil`) | G4: Extended Realistic | 6.90 µs | 6.20 µs | 30.80 µs | 12.70 µs | 11.10 µs | 9.00 µs | NOT_INSTALLED | **Tie (0.90x [0.65-1.27])** |
+| Naive Reverse (Double nrev) (`nrev`) | G1: Deforestation | ≤ 500 ns* | 229.90 µs | 1.30 ms | 53.70 µs | 52.10 µs | 26.80 µs | 24.50 µs | **Folded (≤500ns)*** |
+| Triple List Append (`append3`) | G1: Deforestation | ≤ 500 ns* | 83.00 µs | 444.10 µs | 15.10 µs | 14.00 µs | 8.80 µs | 7.90 µs | **Folded (≤500ns)*** |
+| Knuth-Morris-Pratt DFA (`kmp`) | G1: Deforestation | ≤ 500 ns* | 28.30 µs | 224.20 µs | 61.70 µs | 61.50 µs | 210.10 µs | 9.00 µs | **Folded (≤500ns)*** |
+| Peano Multiplication (`peano_mul`) | G1: Deforestation | ≤ 500 ns* | 28.40 µs | 132.50 µs | 187.60 µs | 187.50 µs | 229.10 µs | 8.10 µs | **Folded (≤500ns)*** |
+| Double Tree Inversion (`tree_flip`) | G1: Deforestation | ≤ 500 ns* | 95.60 µs | 531.10 µs | 505.80 µs | 509.60 µs | 628.20 µs | 18.40 µs | **Folded (≤500ns)*** |
+| Coupled Fibonacci Recurrence Matrix Power (`fib_matrix`) | G2: Recurrences | ≤ 500 ns* | 114.60 µs | 3.40 µs | 34.80 µs | 3.10 µs | 2.50 µs | 5.80 µs | **Folded (≤500ns)*** |
+| Triangular Summation (50M) (`tri_sum`) | G2: Recurrences | ≤ 500 ns* | 20.50 ms | ≤ 500 ns* | 9.44 ms | ≤ 500 ns* | ≤ 500 ns* | 16.30 ms | **Folded (≤500ns)*** |
+| Sum of Squares 1^2+...+10M^2 (Degree-3) (`cubic_sum`) | G2: Recurrences | ≤ 500 ns* | 4.52 ms | ≤ 500 ns* | 3.55 ms | ≤ 500 ns* | 1.42 ms | 4.43 ms | **Folded (≤500ns)*** |
+| Geometric Power Loop (100) (`pow2_mod`) | G2: Recurrences | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | **Folded (≤500ns)*** |
+| Hofstadter Mutual Linear Recurrence (`hofstadter`) | G2: Recurrences | ≤ 500 ns* | 2.30 µs | 4.50 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 18.90 µs | **Folded (≤500ns)*** |
+| Dynamic Triangular Summation (50M) (`tri_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | 0.90 µs | 20.39 ms | 6.27 ms | 12.67 ms | ≤ 500 ns* | 5.04 ms | 16.46 ms | **NumLang-SC Win (22589.50x [13590.87-45984.43])** |
+| Dynamic Sum of Squares (10M) (`cubic_sum_dyn`) | G2-Dyn: Recurrences (Runtime) | 0.60 µs | 4.60 ms | 4.12 ms | 3.56 ms | ≤ 500 ns* | 1.43 ms | 4.25 ms | **NumLang-SC Win (7179.88x [3663.25-10024.60])** |
+| Dynamic Fibonacci Matrix Power (1000) (`fib_matrix_dyn`) | G2-Dyn: Recurrences (Runtime) | 0.80 µs | 4.10 µs | 4.50 µs | 3.40 µs | 3.10 µs | 3.10 µs | 112.90 µs | **NumLang-SC Win (5.00x [2.50-8.80])** |
+| Dynamic Geometric Power Loop (100) (`pow2_mod_dyn`) | G2-Dyn: Recurrences (Runtime) | 0.70 µs | 0.90 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | WRONG_OUTPUT(actual=1;expected=0) | **Tie (1.10x [0.67-3.00])** |
+| 5-Deep Function Composition Chain (`compose5`) | G3: Higher-Order | ≤ 500 ns* | 0.70 µs | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | **Folded (≤500ns)*** |
+| Map-Map Pipeline Deforestation (`map_map`) | G3: Higher-Order | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | ≤ 500 ns* | 7.20 µs | **Folded (≤500ns)*** |
+| Sum-Map Stream Fusion (1M) (`sum_map`) | G3: Higher-Order | ≤ 500 ns* | 452.60 µs | ≤ 500 ns* | 355.40 µs | ≤ 500 ns* | ≤ 500 ns* | 410.10 µs | **Folded (≤500ns)*** |
+| Stream Pipeline Filter-Sum (`stream_take`) | G3: Higher-Order | ≤ 500 ns* | 47.50 µs | ≤ 500 ns* | 37.10 µs | ≤ 500 ns* | 26.00 µs | WRONG_OUTPUT(actual=1;expected=0) | **Folded (≤500ns)*** |
+| Bytecode Expression Evaluator (`expr_eval`) | G4: Extended Realistic | ≤ 500 ns* | ≤ 500 ns* | 29.30 µs | 5.60 µs | 8.90 µs | 8.70 µs | NOT_INSTALLED | **Folded (≤500ns)*** |
+| Sliding-Window Sensor Statistics (`window_stats`) | G4: Extended Realistic | 0.80 µs | 1.00 µs | 28.50 µs | 5.90 µs | 8.90 µs | 8.20 µs | NOT_INSTALLED | **Tie (1.29x [0.91-2.25])** |
+| Struct Record Transform Pipeline (`record_pipeline`) | G4: Extended Realistic | ≤ 500 ns* | 1.70 µs | 28.30 µs | 6.20 µs | 9.00 µs | 8.50 µs | NOT_INSTALLED | **Folded (≤500ns)*** |
+| Multi-Pass Clamped 2D Stencil (`nested_stencil`) | G4: Extended Realistic | ≤ 500 ns* | 4.50 µs | 30.70 µs | 11.10 µs | 10.40 µs | 9.10 µs | NOT_INSTALLED | **Folded (≤500ns)*** |
 
 > **Honest Comparison Note**: Both NumLang-SC and LLVM-based compilers (`rustc -C opt-level=3`) collapse constant-bound arithmetic loops like Triangular Summation down to instantaneous $O(1)$ scalar answers at compile time using scalar evolution (SCEV). Entries marked `≤ 500 ns*` evaluate within the hardware performance counter quantization floor ($\le 500$ ns) and are classified transparently as folded/invalid rather than claimed as numeric wins.
 
