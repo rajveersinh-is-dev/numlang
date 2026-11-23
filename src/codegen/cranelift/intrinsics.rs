@@ -315,6 +315,13 @@ impl CraneliftCompiler {
         builder.switch_to_block(write_block);
         builder.seal_block(write_block);
 
+        // Stop the benchmark clock before the first output write so the timed
+        // region measures computation only, like the C/Rust/GHC harnesses.
+        if let Some(stop_id) = self.bench_stop_id {
+            let stop_func = self.module.declare_func_in_func(stop_id, builder.func);
+            builder.ins().call(stop_func, &[]);
+        }
+
         #[cfg(target_os = "windows")]
         {
             let written_slot = builder.create_sized_stack_slot(StackSlotData::new(

@@ -32,6 +32,7 @@ pub struct CraneliftCompiler {
     pub enum_layouts: HashMap<String, EnumLayout>,
     pub(crate) exit_process_id: FuncId,
     pub(crate) get_std_handle_id: Option<FuncId>,
+    pub(crate) bench_stop_id: Option<FuncId>,
     pub(crate) write_file_id: FuncId,
     pub(crate) print_str_id: FuncId,
     pub(crate) print_newline_id: FuncId,
@@ -166,6 +167,20 @@ impl CraneliftCompiler {
             (None, write_id)
         };
 
+        // In --bench mode the entry stub exposes a hook that stops the
+        // benchmark clock at the first print, matching the competitor harnesses
+        // which stop their timers before printing the result.
+        let bench_stop_sig = module.make_signature();
+        let bench_stop_id = if std::env::var_os("NUMLANG_BENCH").is_some() {
+            Some(
+                module
+                    .declare_function("__nl_bench_stop", Linkage::Import, &bench_stop_sig)
+                    .map_err(|e| CodegenError::BackendError(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+
         let mut print_str_sig = module.make_signature();
         print_str_sig.params.push(AbiParam::new(types::I64));
         print_str_sig.params.push(AbiParam::new(types::I32));
@@ -298,6 +313,7 @@ impl CraneliftCompiler {
             enum_layouts: HashMap::new(),
             exit_process_id,
             get_std_handle_id,
+            bench_stop_id,
             write_file_id,
             print_str_id,
             print_newline_id,

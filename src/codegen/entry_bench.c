@@ -5,12 +5,28 @@
 
 extern long long main(void);
 
+static LARGE_INTEGER g_bench_stop;
+static int g_bench_stopped = 0;
+
+/* Called by generated print helpers so the timed region excludes I/O, matching
+   the C/Rust/GHC harnesses which stop their clocks before printing. */
+void __nl_bench_stop(void) {
+    if (!g_bench_stopped) {
+        QueryPerformanceCounter(&g_bench_stop);
+        g_bench_stopped = 1;
+    }
+}
+
 void mainCRTStartup() {
     LARGE_INTEGER freq, t0, t1;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
     long long ret = main();
-    QueryPerformanceCounter(&t1);
+    if (g_bench_stopped) {
+        t1 = g_bench_stop;
+    } else {
+        QueryPerformanceCounter(&t1);
+    }
 
     long long ns = (t1.QuadPart - t0.QuadPart) * 1000000000LL / freq.QuadPart;
 
@@ -67,6 +83,16 @@ long long __nl_read_i64(void) {
 
 extern long long numlang_main(void);
 
+static struct timespec g_bench_stop;
+static int g_bench_stopped = 0;
+
+void __nl_bench_stop(void) {
+    if (!g_bench_stopped) {
+        clock_gettime(CLOCK_MONOTONIC, &g_bench_stop);
+        g_bench_stopped = 1;
+    }
+}
+
 long long __nl_read_i64(void) {
     char buf[64];
     ssize_t n = read(0, buf, sizeof(buf) - 1);
@@ -81,7 +107,11 @@ int main(void) {
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long long ret = numlang_main();
-    clock_gettime(CLOCK_MONOTONIC, &t1);
+    if (g_bench_stopped) {
+        t1 = g_bench_stop;
+    } else {
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    }
 
     long long ns = (t1.tv_sec - t0.tv_sec) * 1000000000LL + (t1.tv_nsec - t0.tv_nsec);
     char buf[64];
