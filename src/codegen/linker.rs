@@ -184,6 +184,19 @@ extern "C" {
     fn main() -> i64;
 }
 
+static mut BENCH_STOP: i64 = 0;
+static mut BENCH_STOPPED: i32 = 0;
+
+#[no_mangle]
+pub unsafe extern "C" fn __nl_bench_stop() {
+    if core::ptr::read_volatile(core::ptr::addr_of!(BENCH_STOPPED)) == 0 {
+        let mut t: i64 = 0;
+        QueryPerformanceCounter(&mut t);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(BENCH_STOP), t);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(BENCH_STOPPED), 1);
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn __nl_read_i64() -> i64 {
     let mut p = GetCommandLineA();
@@ -210,11 +223,21 @@ pub unsafe extern "C" fn __nl_read_i64() -> i64 {
 pub unsafe extern "C" fn mainCRTStartup() -> ! {
     let mut freq: i64 = 0;
     let mut t0: i64 = 0;
-    let mut t1: i64 = 0;
+    /* Fault in the zero-initialized page holding the stop-hook state before t0;
+       otherwise the first access in __nl_bench_stop charges a demand-zero page
+       fault to the timed region. */
+    core::ptr::write_volatile(core::ptr::addr_of_mut!(BENCH_STOPPED), 0);
+    core::ptr::write_volatile(core::ptr::addr_of_mut!(BENCH_STOP), 0);
     QueryPerformanceFrequency(&mut freq);
     QueryPerformanceCounter(&mut t0);
     let ret = main();
-    QueryPerformanceCounter(&mut t1);
+    let t1 = if core::ptr::read_volatile(core::ptr::addr_of!(BENCH_STOPPED)) != 0 {
+        core::ptr::read_volatile(core::ptr::addr_of!(BENCH_STOP))
+    } else {
+        let mut t: i64 = 0;
+        QueryPerformanceCounter(&mut t);
+        t
+    };
 
     let ns = if freq > 0 {
         ((t1.wrapping_sub(t0)).wrapping_mul(1_000_000_000)) / freq

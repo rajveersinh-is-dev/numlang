@@ -19,6 +19,11 @@ void __nl_bench_stop(void) {
 
 void mainCRTStartup() {
     LARGE_INTEGER freq, t0, t1;
+    /* The stop hook touches g_bench_stopped/g_bench_stop, which live in the
+       zero-initialized .data page.  Fault that page in before t0 so the
+       demand-zero page fault is not charged to the timed region. */
+    *(volatile int *)&g_bench_stopped = 0;
+    *(volatile LARGE_INTEGER *)&g_bench_stop = g_bench_stop;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t0);
     long long ret = main();
@@ -105,6 +110,11 @@ long long __nl_read_i64(void) {
 
 int main(void) {
     struct timespec t0, t1;
+    /* Fault in the zero-initialized page holding the stop-hook state before t0;
+       otherwise the first read of g_bench_stopped in __nl_bench_stop charges a
+       demand-zero page fault to the timed region. */
+    *(volatile int *)&g_bench_stopped = 0;
+    *(volatile struct timespec *)&g_bench_stop = g_bench_stop;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long long ret = numlang_main();
     if (g_bench_stopped) {
