@@ -552,6 +552,63 @@ fn test_fib_matrix_static_collapse_and_dynamic_correctness() {
 }
 
 #[test]
+fn test_constant_mutual_array_recurrence_folds_to_constants() {
+    // A renamed, general mutual-recurrence kernel over two local arrays with a
+    // compile-time trip count.  The constant-computation-prefix folder must
+    // evaluate the whole loop at compile time (no name/constant special cases)
+    // while preserving the exact result.
+    let src = r#"
+    fn coupled(limit: i64) -> i64 {
+        let mut p: [i64; 33] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut q: [i64; 33] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        p[0] = 1;
+        q[0] = 0;
+        let mut k: i64 = 1;
+        while k <= limit {
+            let pv: i64 = p[k - 1];
+            p[k] = k - q[pv];
+            let qv: i64 = q[k - 1];
+            q[k] = k - p[qv];
+            k = k + 1;
+        }
+        return q[limit];
+    }
+    fn main() -> i64 {
+        let r: i64 = coupled(32);
+        println(r);
+        return r % 256;
+    }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let typed = typecheck(&ast).unwrap();
+    let obj_bytes = compile_supercompiled_to_obj(&typed).expect("codegen");
+    let test_dir = std::env::temp_dir().join("numlang_mutual_array_fold");
+    fs::create_dir_all(&test_dir).unwrap();
+    let obj_path = test_dir.join("k.obj");
+    let exe_path = test_dir.join("k.exe");
+    fs::write(&obj_path, obj_bytes).unwrap();
+    assert!(link_executable(&obj_path, &exe_path).is_ok());
+    let out = Command::new(&exe_path).output().expect("run");
+    let code = out.status.code().unwrap_or(-1);
+
+    // Reference simulation of the same recurrence.
+    let mut p = vec![0i64; 33];
+    let mut q = vec![0i64; 33];
+    p[0] = 1;
+    for k in 1..=32 {
+        let pv = p[k - 1];
+        p[k] = k as i64 - q[pv as usize];
+        let qv = q[k - 1];
+        q[k] = k as i64 - p[qv as usize];
+    }
+    assert_eq!(code, (q[32] % 256) as i32);
+}
+
+#[test]
 fn test_constant_array_store_load_fold_generic() {
     // Generic renamed kernel: constant arrays with constant-index stores/loads
     // should be folded away by const propagation + DCE.

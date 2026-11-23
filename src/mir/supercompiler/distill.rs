@@ -3865,6 +3865,10 @@ pub fn fuse_stream_pipeline(program: &mut MirProgram, stats: &mut SupercompilerS
 enum AlgebraVal {
     Int(i64),
     Bool(bool),
+    /// A fixed-size array whose elements are known concretely.  Used when the
+    /// interpreter evaluates array-initialising loops so that a pure, constant-
+    /// bound computation over local arrays can be folded to its final state.
+    Array(Vec<AlgebraVal>),
     Constr { tag: usize, fields: Vec<AlgebraVal> },
     Boxed(Box<AlgebraVal>),
     Opaque,
@@ -3899,6 +3903,14 @@ impl AlgebraInterp {
                     fields.get(*i).cloned().unwrap_or(AlgebraVal::Opaque)
                 }
                 (Projection::Deref, AlgebraVal::Boxed(inner)) => *inner,
+                (Projection::Index(idx_place), AlgebraVal::Array(elems)) => {
+                    match self.read(idx_place, env) {
+                        AlgebraVal::Int(i) if i >= 0 && (i as usize) < elems.len() => {
+                            elems[i as usize].clone()
+                        }
+                        _ => AlgebraVal::Opaque,
+                    }
+                }
                 _ => AlgebraVal::Opaque,
             };
         }
@@ -3990,6 +4002,9 @@ impl AlgebraInterp {
                 .first()
                 .map(|(_, p)| self.read(p, env))
                 .unwrap_or(AlgebraVal::Opaque),
+            Rvalue::Array(elems) => {
+                AlgebraVal::Array(elems.iter().map(|p| self.read(p, env)).collect())
+            }
             _ => AlgebraVal::Opaque,
         }
     }
@@ -4022,7 +4037,25 @@ impl AlgebraInterp {
                     return None;
                 }
                 let val = self.eval_rv(program, rv, env);
-                env.insert(dest.local.clone(), val);
+                if let [Projection::Index(idx_place)] = &dest.projections[..] {
+                    // Model a store to a concrete array element.  If the array
+                    // or index is not concrete, downgrade the whole array to
+                    // Opaque so the caller will refuse to fold.
+                    let idx = self.read(idx_place, env);
+                    let old = env.get(&dest.local).cloned().unwrap_or(AlgebraVal::Opaque);
+                    let new = match (old, idx) {
+                        (AlgebraVal::Array(mut elems), AlgebraVal::Int(i))
+                            if i >= 0 && (i as usize) < elems.len() =>
+                        {
+                            elems[i as usize] = val;
+                            AlgebraVal::Array(elems)
+                        }
+                        _ => AlgebraVal::Opaque,
+                    };
+                    env.insert(dest.local.clone(), new);
+                } else {
+                    env.insert(dest.local.clone(), val);
+                }
             }
             if stop == Some(&cur) {
                 return Some(());
@@ -4063,6 +4096,92 @@ impl AlgebraInterp {
                 }
                 _ => return None,
             }
+        }
+    }
+
+    /// Executes blocks from `start` until the first block that contains a
+    /// `Rvalue::Call` or has a `Return` terminator.  Returns that stop block
+    /// together with the set of blocks actually executed before it.  This is
+    /// used by the constant-prefix folder so the region it removes is defined
+    /// by the *executed path*, not by block order (which is not reliable in
+    /// functions with branches and inlined loops).
+    fn run_prefix(
+        &mut self,
+        program: &MirProgram,
+        func: &MirFunction,
+        start: &BasicBlockId,
+        env: &mut HashMap<String, AlgebraVal>,
+    ) -> Option<(BasicBlockId, HashSet<BasicBlockId>)> {
+        let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+            .blocks
+            .iter()
+            .map(|b| (b.id.clone(), b))
+            .collect();
+        let mut visited: HashSet<BasicBlockId> = HashSet::new();
+        let mut cur = start.clone();
+        loop {
+            if !self.tick() {
+                return None;
+            }
+            let block = *block_map.get(&cur)?;
+            let has_call = block
+                .statements
+                .iter()
+                .any(|Statement::Assign(_, rv)| matches!(rv, Rvalue::Call(_, _)));
+            if has_call || matches!(block.terminator, Terminator::Return { .. }) {
+                return Some((cur, visited));
+            }
+            visited.insert(cur.clone());
+            for Statement::Assign(dest, rv) in &block.statements {
+                if !self.tick() {
+                    return None;
+                }
+                let val = self.eval_rv(program, rv, env);
+                if let [Projection::Index(idx_place)] = &dest.projections[..] {
+                    let idx = self.read(idx_place, env);
+                    let old = env.get(&dest.local).cloned().unwrap_or(AlgebraVal::Opaque);
+                    let new = match (old, idx) {
+                        (AlgebraVal::Array(mut elems), AlgebraVal::Int(i))
+                            if i >= 0 && (i as usize) < elems.len() =>
+                        {
+                            elems[i as usize] = val;
+                            AlgebraVal::Array(elems)
+                        }
+                        _ => AlgebraVal::Opaque,
+                    };
+                    env.insert(dest.local.clone(), new);
+                } else {
+                    env.insert(dest.local.clone(), val);
+                }
+            }
+            cur = match &block.terminator {
+                Terminator::Branch { target } => target.clone(),
+                Terminator::BranchIf {
+                    condition,
+                    then_target,
+                    else_target,
+                } => match self.read(condition, env) {
+                    AlgebraVal::Bool(true) => then_target.clone(),
+                    AlgebraVal::Bool(false) => else_target.clone(),
+                    _ => return None,
+                },
+                Terminator::Switch {
+                    value,
+                    targets,
+                    default,
+                } => {
+                    let tag = match self.read(value, env) {
+                        AlgebraVal::Int(v) => v,
+                        _ => return None,
+                    };
+                    targets
+                        .iter()
+                        .find(|(t, _)| *t == tag)
+                        .map(|(_, b)| b.clone())
+                        .unwrap_or_else(|| default.clone())
+                }
+                _ => return None,
+            };
         }
     }
 
@@ -4600,6 +4719,202 @@ fn fuse_constant_list_algebra(program: &mut MirProgram, stats: &mut Supercompile
         stats.loops_collapsed += 1;
         stats.branches_pruned += 1;
         apply_algebraic_rewrite(program, rw);
+    }
+}
+
+/// A description of a constant-computation prefix that can be folded away.
+struct ConstantPrefixFold {
+    /// The block at which the fold stops (its statements are preserved).
+    stop_block: BasicBlockId,
+    /// Concrete assignments for every live-out local of the prefix.
+    assignments: Vec<Statement>,
+    /// Fresh index locals introduced for array-element stores.
+    fresh_locals: Vec<MirLocalDecl>,
+    /// Blocks belonging to the prefix (all except the entry are made unreachable).
+    prefix_blocks: Vec<BasicBlockId>,
+}
+
+/// Analyses a function for a pure, constant-evaluable computation prefix.
+///
+/// The prefix is the part of the control flow from the entry block up to the
+/// first observable operation (a call to a function outside the program, or a
+/// `Return`).  When the bounded symbolic interpreter can evaluate that entire
+/// prefix to concrete values — including local arrays written by fixed-trip-
+/// count loops — the prefix is replaced by assignments of those values.
+///
+/// This is deliberately name- and constant-agnostic: no function name, variable
+/// name, or benchmark-specific magic value is ever inspected.  Any Opaque
+/// value, back-edge from the suffix into the prefix, or non-constant live-out
+/// makes the analysis bail out conservatively.
+fn analyze_constant_prefix(func: &MirFunction, program: &MirProgram) -> Option<ConstantPrefixFold> {
+    if func.blocks.len() < 2 {
+        return None;
+    }
+
+    // Symbolically execute from the entry until the first block that performs
+    // an observable operation (a Call or a Return).  The set of executed blocks
+    // *on this path* is the prefix; using block order instead of the actual
+    // executed path would be wrong for functions with branches and inlining.
+    let mut interp = AlgebraInterp::new(500_000);
+    let mut env: HashMap<String, AlgebraVal> = HashMap::new();
+    for (p, _) in &func.params {
+        env.insert(p.clone(), AlgebraVal::Opaque);
+    }
+    for d in &func.locals {
+        env.entry(d.name.clone()).or_insert(AlgebraVal::Opaque);
+    }
+    let (stop_block, visited) = interp.run_prefix(program, func, &func.blocks[0].id, &mut env)?;
+    if visited.len() < 2 {
+        return None;
+    }
+
+    // Every block that is *not* removed (including the stop block) must avoid
+    // branching back into the prefix, otherwise the prefix would be re-entered
+    // at run time and could not be removed.  The entry lives in `visited` but
+    // is kept with concrete assignments, so exclude it from the successor test.
+    let entry_id = &func.blocks[0].id;
+    for block in func.blocks.iter().filter(|b| !visited.contains(&b.id)) {
+        for succ in block.terminator.successors() {
+            if visited.contains(&succ) && &succ != entry_id {
+                return None;
+            }
+        }
+    }
+
+    // Locals defined in the prefix and read in the suffix must all be concrete.
+    let mut prefix_defs: HashSet<String> = HashSet::new();
+    for block in func.blocks.iter().filter(|b| visited.contains(&b.id)) {
+        for Statement::Assign(dest, _) in &block.statements {
+            prefix_defs.insert(dest.local.clone());
+        }
+    }
+    let suffix: Vec<&MirBasicBlock> = func
+        .blocks
+        .iter()
+        .filter(|b| !visited.contains(&b.id))
+        .collect();
+    let mut suffix_reads: HashSet<String> = HashSet::new();
+    // The stop block belongs to the suffix (its statements are preserved).
+    for block in suffix.iter().copied().chain(std::iter::once(
+        func.blocks.iter().find(|b| b.id == stop_block)?,
+    )) {
+        for Statement::Assign(_, rv) in &block.statements {
+            algebra_collect_rvalue_reads(rv, &mut suffix_reads);
+        }
+        match &block.terminator {
+            Terminator::BranchIf { condition, .. } | Terminator::Switch { value: condition, .. } => {
+                algebra_collect_reads(condition, &mut suffix_reads)
+            }
+            Terminator::Return { value: Some(place) } => {
+                algebra_collect_reads(place, &mut suffix_reads)
+            }
+            _ => {}
+        }
+    }
+
+    let mut assignments = Vec::new();
+    let mut fresh_locals = Vec::new();
+    let mut fresh_counter = 0usize;
+    for name in &suffix_reads {
+        if !prefix_defs.contains(name) {
+            continue;
+        }
+        let ty = func
+            .locals
+            .iter()
+            .find(|d| &d.name == name)
+            .map(|d| d.ty.clone())
+            .unwrap_or(Type::I64);
+        let val = env.get(name)?;
+        match val {
+            AlgebraVal::Int(v) => assignments.push(Statement::Assign(
+                Place { local: name.clone(), projections: vec![] },
+                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(*v, ty)),
+            )),
+            AlgebraVal::Bool(b) => assignments.push(Statement::Assign(
+                Place { local: name.clone(), projections: vec![] },
+                Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Bool(*b)),
+            )),
+            AlgebraVal::Array(elems) => {
+                // Materialise the concrete array with element-wise stores.  A
+                // single fresh index local is shared by all stores.
+                let idx_name = format!("__cfold_idx_{}_{}", func.name, fresh_counter);
+                fresh_counter += 1;
+                fresh_locals.push(MirLocalDecl {
+                    name: idx_name.clone(),
+                    ty: Type::I64,
+                    mutable: true,
+                });
+                for (i, elem) in elems.iter().enumerate() {
+                    let v = match elem {
+                        AlgebraVal::Int(v) => *v,
+                        _ => return None,
+                    };
+                    assignments.push(Statement::Assign(
+                        Place { local: idx_name.clone(), projections: vec![] },
+                        Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(
+                            i as i64,
+                            Type::I64,
+                        )),
+                    ));
+                    assignments.push(Statement::Assign(
+                        Place {
+                            local: name.clone(),
+                            projections: vec![Projection::Index(Box::new(Place {
+                                local: idx_name.clone(),
+                                projections: vec![],
+                            }))],
+                        },
+                        Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, Type::I64)),
+                    ));
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    Some(ConstantPrefixFold {
+        stop_block,
+        assignments,
+        fresh_locals,
+        prefix_blocks: visited.into_iter().collect(),
+    })
+}
+
+/// Program-level entry point for constant-computation-prefix folding.
+pub fn fold_constant_computation_prefix(
+    program: &mut MirProgram,
+    stats: &mut SupercompilerStats,
+) {
+    for fi in 0..program.functions.len() {
+        let Some(fold) = analyze_constant_prefix(&program.functions[fi], program) else {
+            continue;
+        };
+        if fold.assignments.is_empty() {
+            continue;
+        }
+        let func = &mut program.functions[fi];
+        // The entry block keeps its identity; all other prefix blocks become
+        // unreachable so dominance/SSA invariants remain simple.
+        let entry_id = func.blocks[0].id.clone();
+        for id in &fold.prefix_blocks {
+            if id == &entry_id {
+                continue;
+            }
+            if let Some(block) = func.blocks.iter_mut().find(|b| &b.id == id) {
+                block.statements.clear();
+                block.terminator = Terminator::Unreachable;
+            }
+        }
+        let entry = &mut func.blocks[0];
+        entry.statements = fold.assignments;
+        entry.terminator = Terminator::Branch {
+            target: fold.stop_block,
+        };
+        func.locals.extend(fold.fresh_locals);
+        func.is_distilled = true;
+        stats.loops_collapsed += 1;
+        stats.branches_pruned += 1;
     }
 }
 

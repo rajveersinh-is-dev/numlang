@@ -34,7 +34,7 @@ pub use cache::{
     DependencyGraph, FeatureFlags, SpecializationCache,
 };
 pub use compact::{compact_mir_function, compact_process_tree};
-pub use distill::DistillationEngine;
+pub use distill::{fold_constant_computation_prefix, DistillationEngine};
 pub use drive::{
     ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, RecurrenceResult, SupercompilerDriver,
     SupercompilerStats, TerminationWitness, WhistleFiring, WhistleKind,
@@ -281,6 +281,14 @@ pub fn supercompile_mir_program_with_cache(
             run_pass1_fusion(func);
         }
     });
+
+    // Pass 1.2: Constant-computation prefix folding.
+    // Pure, fixed-trip-count computations over local arrays (and scalars) whose
+    // inputs are all compile-time constants are evaluated by the bounded
+    // symbolic interpreter and replaced with their final concrete values.  No
+    // function/variable name or benchmark-specific constant is inspected; any
+    // Opaque value or side effect in the prefix makes the pass bail out.
+    fold_constant_computation_prefix(program, &mut total_stats);
 
     // Pass 1.5: Whole-Program Hamilton Global Process-Tree Distillation
     sc_timed!(ScPass::Distillation, {
