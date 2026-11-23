@@ -6,7 +6,7 @@
 //! 3. Power-of-2 division: `x / 2^k` -> `x >> k` (STRENGTH-04)
 //! 4. Identity operations: `x * 0 -> 0`, `x * 1 -> x`, `x * -1 -> -x`, `x / 1 -> x`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::mir::lower::{MirBasicBlock, MirFunction, MirLocalDecl, MirProgram, Rvalue, Statement};
@@ -1044,6 +1044,389 @@ pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
     func.blocks = updated_blocks;
     reductions += dce_mir_function(func);
     reductions
+}
+
+/// Collect every local name mentioned by an rvalue, including projection
+/// index expressions and phi incoming places.  Used by dead-loop elimination
+/// to prove that a cycle's definitions never escape the cycle.
+fn rvalue_local_reads(rv: &Rvalue, out: &mut HashSet<String>) {
+    let mut bump = |p: &Place| {
+        out.insert(p.local.clone());
+        for proj in &p.projections {
+            if let Projection::Index(idx) = proj {
+                out.insert(idx.local.clone());
+                for ip in &idx.projections {
+                    if let Projection::Index(ii) = ip {
+                        out.insert(ii.local.clone());
+                    }
+                }
+            }
+        }
+    };
+    match rv {
+        Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Discriminant(p)
+        | Rvalue::Alloc(p) | Rvalue::Load(p) => bump(p),
+        Rvalue::BinaryOp(_, l, r) => { bump(l); bump(r); }
+        Rvalue::Select(c, t, e) => { bump(c); bump(t); bump(e); }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => { for a in args { bump(a); } }
+        Rvalue::Struct(_, fields) => { for (_, p) in fields { bump(p); } }
+        Rvalue::EnumVariant { fields, .. } => { for p in fields { bump(p); } }
+        Rvalue::Phi(incoming) => { for (_, p) in incoming { bump(p); } }
+        Rvalue::ClosureAlloc { captured, .. } => { for p in captured { bump(p); } }
+        Rvalue::Thunk { .. } | Rvalue::Constant(_) | Rvalue::FnPtr(_) => {}
+    }
+}
+
+fn terminator_local_reads(term: &crate::mir::Terminator, out: &mut HashSet<String>) {
+    use crate::mir::Terminator;
+    match term {
+        Terminator::BranchIf { condition, .. } => { out.insert(condition.local.clone()); }
+        Terminator::Switch { value, .. } => { out.insert(value.local.clone()); }
+        Terminator::Return { value: Some(v) } => { out.insert(v.local.clone()); }
+        Terminator::IndirectCall { callee, args, .. } => {
+            out.insert(callee.local.clone());
+            for a in args { out.insert(a.local.clone()); }
+        }
+        Terminator::Force { thunk, .. } => { out.insert(thunk.clone()); }
+        Terminator::TypeGuard { local, .. } => { out.insert(local.local.clone()); }
+        Terminator::Branch { .. } | Terminator::Return { value: None }
+        | Terminator::Unreachable | Terminator::Fork { .. } => {}
+    }
+}
+
+/// Tarjan's strongly-connected-components algorithm over a successor graph.
+fn tarjan_scc(succ: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    #[allow(clippy::too_many_arguments)]
+    fn visit(
+        v: usize,
+        succ: &[Vec<usize>],
+        index: &mut usize,
+        indices: &mut [Option<usize>],
+        low: &mut [usize],
+        stack: &mut Vec<usize>,
+        on_stack: &mut [bool],
+        out: &mut Vec<Vec<usize>>,
+    ) {
+        indices[v] = Some(*index);
+        low[v] = *index;
+        *index += 1;
+        stack.push(v);
+        on_stack[v] = true;
+        for &w in &succ[v] {
+            if indices[w].is_none() {
+                visit(w, succ, index, indices, low, stack, on_stack, out);
+                low[v] = low[v].min(low[w]);
+            } else if on_stack[w] {
+                if let Some(iw) = indices[w] {
+                    low[v] = low[v].min(iw);
+                }
+            }
+        }
+        if indices[v] == Some(low[v]) {
+            let mut comp = Vec::new();
+            while let Some(w) = stack.pop() {
+                on_stack[w] = false;
+                comp.push(w);
+                if w == v { break; }
+            }
+            out.push(comp);
+        }
+    }
+    let n = succ.len();
+    let mut index = 0;
+    let mut indices = vec![None; n];
+    let mut low = vec![0usize; n];
+    let mut stack = Vec::new();
+    let mut on_stack = vec![false; n];
+    let mut out = Vec::new();
+    for v in 0..n {
+        if indices[v].is_none() {
+            visit(v, succ, &mut index, &mut indices, &mut low, &mut stack, &mut on_stack, &mut out);
+        }
+    }
+    out
+}
+
+/// Redirect every edge that enters one of `members` to `new_target`.
+fn redirect_edges_into(
+    blocks: &mut [MirBasicBlock],
+    members: &HashSet<usize>,
+    new_target: crate::mir::BasicBlockId,
+) {
+    use crate::mir::Terminator;
+    let member_ids: Vec<crate::mir::BasicBlockId> = members
+        .iter()
+        .map(|&i| blocks[i].id.clone())
+        .collect();
+    let enters = |t: &crate::mir::BasicBlockId| member_ids.contains(t);
+    for (i, block) in blocks.iter_mut().enumerate() {
+        if members.contains(&i) { continue; }
+        match &mut block.terminator {
+            Terminator::Branch { target } => {
+                if enters(target) { *target = new_target.clone(); }
+            }
+            Terminator::BranchIf { then_target, else_target, .. } => {
+                if enters(then_target) { *then_target = new_target.clone(); }
+                if enters(else_target) { *else_target = new_target.clone(); }
+            }
+            Terminator::Switch { targets, default, .. } => {
+                for (_, t) in targets.iter_mut() {
+                    if enters(t) { *t = new_target.clone(); }
+                }
+                if enters(default) { *default = new_target.clone(); }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Eliminate control-flow cycles whose computation is no longer observable.
+///
+/// A cycle (strongly connected component with a back edge) can be replaced by
+/// a direct branch when it has a single entry predecessor and a single exit
+/// target, contains no side-effecting statements, and none of the locals it
+/// defines are read outside the cycle (e.g. the producer loop for a value a
+/// closed-form pass has since replaced by a constant).  This is a general MIR
+/// peephole: it never inspects function or local names.
+pub fn eliminate_dead_loops_mir_function(func: &mut MirFunction) -> usize {
+    let mut total = 0usize;
+    for _ in 0..4 {
+        let n = func.blocks.len();
+        let mut succ: Vec<Vec<usize>> = Vec::with_capacity(n);
+        for block in &func.blocks {
+            let targets = block.terminator.successors();
+            succ.push(
+                targets
+                    .iter()
+                    .filter_map(|t| func.blocks.iter().position(|b| b.id == *t))
+                    .collect(),
+            );
+        }
+        let mut removed_this_round = 0usize;
+        for comp in tarjan_scc(&succ) {
+            let is_cycle = comp.len() > 1 || (comp.len() == 1 && succ[comp[0]].contains(&comp[0]));
+            if !is_cycle { continue; }
+            let members: HashSet<usize> = comp.iter().copied().collect();
+
+            // Single entry predecessor and single exit target.
+            let mut entry_preds: HashSet<usize> = HashSet::new();
+            let mut exit_targets: HashSet<usize> = HashSet::new();
+            for (u, succ_u) in succ.iter().enumerate() {
+                if members.contains(&u) { continue; }
+                for &v in succ_u {
+                    if members.contains(&v) { entry_preds.insert(u); }
+                }
+            }
+            for &v in &comp {
+                for &t in &succ[v] {
+                    if !members.contains(&t) { exit_targets.insert(t); }
+                }
+            }
+            if entry_preds.len() != 1 || exit_targets.len() != 1 { continue; }
+            let Some(&exit_idx) = exit_targets.iter().next() else { continue; };
+            let exit_id = func.blocks[exit_idx].id.clone();
+
+            // No side effects and no projected stores inside the cycle.
+            let mut safe = true;
+            let mut defs: HashSet<String> = HashSet::new();
+            for &i in &comp {
+                let block = &func.blocks[i];
+                if matches!(
+                    block.terminator,
+                    crate::mir::Terminator::IndirectCall { .. }
+                        | crate::mir::Terminator::Force { .. }
+                        | crate::mir::Terminator::Fork { .. }
+                ) { safe = false; break; }
+                for Statement::Assign(dest, rv) in &block.statements {
+                    if rvalue_has_side_effects(rv) || !dest.projections.is_empty() {
+                        safe = false;
+                        break;
+                    }
+                    defs.insert(dest.local.clone());
+                }
+                if !safe { break; }
+            }
+            if !safe { continue; }
+
+            // Definitions must not escape the cycle.  Phi predecessors in
+            // outside blocks that mention a removed block are also disallowed.
+            let mut reads_outside: HashSet<String> = HashSet::new();
+            for (i, block) in func.blocks.iter().enumerate() {
+                if members.contains(&i) { continue; }
+                for Statement::Assign(_, rv) in &block.statements {
+                    if let Rvalue::Phi(incoming) = rv {
+                        if incoming.iter().any(|(bid, _)| comp.iter().any(|&m| func.blocks[m].id == *bid)) {
+                            safe = false;
+                            break;
+                        }
+                    }
+                    rvalue_local_reads(rv, &mut reads_outside);
+                }
+                if !safe { break; }
+                terminator_local_reads(&block.terminator, &mut reads_outside);
+            }
+            if !safe || defs.iter().any(|d| reads_outside.contains(d)) { continue; }
+
+            // Safe: bypass the cycle and drop its blocks.
+            redirect_edges_into(&mut func.blocks, &members, exit_id);
+            for &i in &comp {
+                func.blocks[i].statements.clear();
+                func.blocks[i].terminator = crate::mir::Terminator::Unreachable;
+            }
+            removed_this_round += comp.len();
+        }
+        total += removed_this_round;
+        if removed_this_round == 0 { break; }
+    }
+    if total > 0 {
+        // The bypass can leave dead assignments to the cycle's former locals.
+        dce_mir_function(func);
+    }
+    total
+}
+
+/// Algebraic peepholes that the closed-form emitter does not perform itself:
+/// additive identities and removal of a modulo that is applied twice with the
+/// same positive divisor.  All rewrites are semantics-preserving for wrapping
+/// i64 arithmetic (`(x % m) % m == x % m` for m > 0).
+pub fn algebraic_identity_peephole_mir_function(func: &mut MirFunction) -> usize {
+    let mut assign_counts: HashMap<String, usize> = HashMap::new();
+    for block in &func.blocks {
+        for Statement::Assign(dest, _) in &block.statements {
+            if dest.projections.is_empty() {
+                *assign_counts.entry(dest.local.clone()).or_default() += 1;
+            }
+        }
+    }
+    let single: HashSet<String> = assign_counts
+        .iter()
+        .filter(|(_, &c)| c == 1)
+        .map(|(n, _)| n.clone())
+        .collect();
+    let consts = collect_single_assignment_constants(func);
+
+    // Locals that are the result of `% m` (m > 0) or a plain copy of such a
+    // local, restricted to single-assignment locals so the fact stays valid.
+    let mut mod_divisor: HashMap<String, i64> = HashMap::new();
+    let mut copy_of: HashMap<String, String> = HashMap::new();
+    for _ in 0..8 {
+        let mut changed = false;
+        for block in &func.blocks {
+            for Statement::Assign(dest, rv) in &block.statements {
+                if dest.projections.is_empty() && !single.contains(&dest.local) { continue; }
+                match rv {
+                    Rvalue::BinaryOp(BinaryOp::Mod, l, r) => {
+                        if let Some((m, _)) = r.projections.is_empty().then(|| consts.get(&r.local)).flatten() {
+                            if *m > 0 && !mod_divisor.contains_key(&dest.local) {
+                                mod_divisor.insert(dest.local.clone(), *m);
+                                changed = true;
+                            }
+                        }
+                        let _ = l;
+                    }
+                    Rvalue::Use(p) if p.projections.is_empty() && !copy_of.contains_key(&dest.local) => {
+                        copy_of.insert(dest.local.clone(), p.local.clone());
+                        changed = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if !changed { break; }
+    }
+
+    fn resolve_mod_divisor(
+        local: &str,
+        mod_divisor: &HashMap<String, i64>,
+        copy_of: &HashMap<String, String>,
+    ) -> Option<i64> {
+        let mut cur = local;
+        let mut seen = HashSet::new();
+        loop {
+            if let Some(&m) = mod_divisor.get(cur) { return Some(m); }
+            let next = copy_of.get(cur)?;
+            if !seen.insert(cur.to_string()) { return None; }
+            cur = next;
+        }
+    }
+
+    let dest_types: HashMap<String, Type> = func
+        .locals
+        .iter()
+        .map(|d| (d.name.clone(), d.ty.clone()))
+        .collect();
+
+    let mut folded = 0usize;
+    for block in &mut func.blocks {
+        let mut block_consts = consts.clone();
+        for Statement::Assign(dest, rv) in &mut block.statements {
+            let const_int = |p: &Place| -> Option<i64> {
+                if p.projections.is_empty() { block_consts.get(&p.local).map(|(v, _)| *v) } else { None }
+            };
+            match rv {
+                Rvalue::BinaryOp(BinaryOp::Add, l, r) => {
+                    if const_int(r) == Some(0) {
+                        *rv = Rvalue::Use(l.clone()); folded += 1;
+                    } else if const_int(l) == Some(0) {
+                        *rv = Rvalue::Use(r.clone()); folded += 1;
+                    }
+                }
+                Rvalue::BinaryOp(BinaryOp::Sub, _l, r) => {
+                    if const_int(r) == Some(0) {
+                        *rv = Rvalue::Use(_l.clone()); folded += 1;
+                    }
+                }
+                Rvalue::BinaryOp(BinaryOp::Mod, l, r) => {
+                    if let Some(m) = const_int(r) {
+                        if m == 1 {
+                            let ty = dest_types.get(&dest.local).cloned().unwrap_or(Type::I64);
+                            *rv = Rvalue::Constant(TypedLiteral::Int(0, ty)); folded += 1;
+                        } else if m > 0
+                            && l.projections.is_empty()
+                            && resolve_mod_divisor(&l.local, &mod_divisor, &copy_of) == Some(m)
+                        {
+                            *rv = Rvalue::Use(l.clone()); folded += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if let Rvalue::Constant(TypedLiteral::Int(v, ty)) = rv {
+                if dest.projections.is_empty() {
+                    block_consts.insert(dest.local.clone(), (*v, ty.clone()));
+                }
+            } else if let Rvalue::Use(p) = rv {
+                if dest.projections.is_empty() {
+                    if let Some((v, ty)) = block_consts.get(&p.local).cloned() {
+                        block_consts.insert(dest.local.clone(), (v, ty));
+                    } else {
+                        block_consts.remove(&dest.local);
+                    }
+                }
+            } else if dest.projections.is_empty() {
+                block_consts.remove(&dest.local);
+            }
+        }
+    }
+    if folded > 0 { dce_mir_function(func); }
+    folded
+}
+
+/// Final cleanup after the closed-form passes, which run after the normal
+/// strength-reduction pipeline.  Removes producer loops made dead by a closed
+/// form and simplifies the algebraic chain the closed-form emitter leaves.
+pub fn post_collapse_cleanup_mir_program(program: &mut MirProgram) -> usize {
+    let mut total = 0;
+    for func in &mut program.functions {
+        total += const_propagate_mir_function(func);
+        total += eliminate_dead_loops_mir_function(func);
+        // Run twice: the first pass folds `x + 0` into a copy, which the
+        // second pass then recognises when chasing redundant-modulo chains.
+        total += algebraic_identity_peephole_mir_function(func);
+        total += algebraic_identity_peephole_mir_function(func);
+        total += const_propagate_mir_function(func);
+    }
+    total
 }
 
 /// Applies strength reduction to every function in a MirProgram.

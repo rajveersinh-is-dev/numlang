@@ -646,6 +646,14 @@ pub fn supercompile_mir_program_with_cache(
     total_stats.loops_collapsed +=
         crate::mir::supercompiler::distill::collapse_modular_accumulators(program);
 
+    // The closed-form passes run last and can leave the producer loops they
+    // replaced (and their algebraic chain) in the residual MIR.  Re-run the
+    // general cleanup now that those locals are dead.
+    let _post_cleanup = sc_timed!(
+        ScPass::StrengthReduce,
+        strength_reduce::post_collapse_cleanup_mir_program(program)
+    );
+
     sc_profile_report();
     total_stats
 }
