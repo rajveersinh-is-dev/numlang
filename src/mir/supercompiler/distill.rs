@@ -4162,10 +4162,34 @@ fn algebra_reaches_branch_only(
     false
 }
 
+/// Like `algebra_reaches_branch_only`, but the *first* edge out of `start` may
+/// be any control-flow edge.  A common producer/consumer shape has the first
+/// fold arm fall straight through to the join while the second arm immediately
+/// switches on another value that the symbolic interpreter already knows to be
+/// constant.  Requiring that second arm's entry edge to be a plain `Branch`
+/// hid the join (and therefore prevented the whole fold from being recognised).
+/// All edges after the first must still be plain `Branch` edges, so a back-edge
+/// cannot make two sibling arms appear to reconverge spuriously.
+fn algebra_reaches_from_arm_entry(
+    func: &MirFunction,
+    start: &BasicBlockId,
+    target: &BasicBlockId,
+) -> bool {
+    if start == target {
+        return true;
+    }
+    let Some(start_block) = func.blocks.iter().find(|blk| blk.id == *start) else {
+        return false;
+    };
+    algebra_successors(start_block)
+        .into_iter()
+        .any(|next| algebra_reaches_branch_only(func, &next, target))
+}
+
 /// Finds the block where both fold arms reconverge: the first block on the
 /// first arm's straight-line `Branch` chain that is also reachable from the
-/// second arm via `Branch` edges only.  Works both for loop bodies (latch
-/// block) and straight-line compositions (a `Return` block).
+/// second arm (whose entry edge may itself be a switch/branch).  Works both for
+/// loop bodies (latch block) and straight-line compositions (a `Return` block).
 fn algebra_arm_join(func: &MirFunction, targets: &[(i64, BasicBlockId)]) -> Option<BasicBlockId> {
     let (a, b) = match targets {
         [(_, a), (_, b)] => (a, b),
@@ -4173,7 +4197,7 @@ fn algebra_arm_join(func: &MirFunction, targets: &[(i64, BasicBlockId)]) -> Opti
     };
     let mut cur = a.clone();
     for _ in 0..=func.blocks.len() {
-        if algebra_reaches_branch_only(func, b, &cur) {
+        if algebra_reaches_from_arm_entry(func, b, &cur) {
             return Some(cur);
         }
         match func

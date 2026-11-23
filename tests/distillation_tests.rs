@@ -1083,6 +1083,94 @@ fn test_algebraic_fusion_renamed_producer_append_fold() {
 }
 
 #[test]
+fn test_algebraic_fusion_consumer_arm_starts_with_switch() {
+    // Regression: the second arm of the outer fold switch immediately switches
+    // again on the element tag (a small DFA consumer).  The arms' join must
+    // still be found so the whole deterministic generate-and-consume pipeline
+    // can be evaluated by the bounded symbolic interpreter and folded away.
+    let code = r#"
+    enum Rope {
+        Empty,
+        Node(i64, Box<Rope>),
+    }
+
+    fn state_x(s: Rope) -> i64 {
+        return match s {
+            Empty => 0,
+            Node(ch, more) => match ch {
+                1 => state_y(deref(more)),
+                _ => state_x(deref(more)),
+            },
+        };
+    }
+
+    fn state_y(s: Rope) -> i64 {
+        return match s {
+            Empty => 0,
+            Node(ch, more) => match ch {
+                0 => state_z(deref(more)),
+                _ => state_y(deref(more)),
+            },
+        };
+    }
+
+    fn state_z(s: Rope) -> i64 {
+        return match s {
+            Empty => 0,
+            Node(ch, more) => match ch {
+                1 => 1 + state_y(deref(more)),
+                _ => state_x(deref(more)),
+            },
+        };
+    }
+
+    fn weave(m: i64) -> Rope {
+        if m <= 0 {
+            return Empty;
+        } else {
+            let bit: i64 = (m * 73 + 19) % 2;
+            return Node(bit, box(weave(m - 1)));
+        }
+    }
+
+    fn main() -> i64 {
+        let mut total: i64 = 0;
+        for pass in 0..100 {
+            let r: Rope = weave(5);
+            total = total + state_x(r);
+        }
+        println(total);
+        return total % 128;
+    }
+    "#;
+
+    let mut mir = get_pipeline_mir(code);
+    let stats = supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    assert!(
+        stats.loops_collapsed > 0,
+        "DFA producer/consumer fusion must be recognised: {:?}",
+        stats
+    );
+    let main_func = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "main")
+        .expect("main must exist");
+    assert_eq!(count_calls_to(main_func, "state_x"), 0);
+    assert_eq!(count_calls_to(main_func, "state_y"), 0);
+    assert_eq!(count_calls_to(main_func, "state_z"), 0);
+    assert_eq!(count_calls_to(main_func, "weave"), 0);
+    assert_eq!(
+        count_allocation_sites(main_func),
+        0,
+        "The whole producer/consumer pipeline must collapse to a constant"
+    );
+
+    let (code_res, _) = compile_and_run_distill(code, "algebraic_consumer_arm_switch");
+    assert_eq!(code_res, expected_exit(100));
+}
+
+#[test]
 fn test_algebraic_fusion_varying_constants_and_single_producer() {
     // Completely different constants and a single producer (no append chain):
     // the closed form must come from the MIR arguments, not a baked-in value.
