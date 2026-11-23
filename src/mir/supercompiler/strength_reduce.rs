@@ -1412,18 +1412,175 @@ pub fn algebraic_identity_peephole_mir_function(func: &mut MirFunction) -> usize
     folded
 }
 
+/// Simplify branches that no longer distinguish anything at run time.
+///
+/// Two general cases are handled:
+///   * `BranchIf c, T, T` is the same as `Branch T` (the condition becomes
+///     dead and can be removed by DCE).
+///   * A `BranchIf c, A, B` where `A` is an effect-free block that only
+///     branches to `B`, and none of `A`'s definitions are read outside `A`.
+///     Taking `B` directly is observationally identical.
+///
+/// Closed-form passes often collapse both arms of a guard to the same value,
+/// leaving exactly these shapes behind.  No local or function names are used.
+pub fn simplify_degenerate_branches_mir_function(func: &mut MirFunction) -> usize {
+    let mut total = 0usize;
+    loop {
+        let mut changed = 0usize;
+        for bi in 0..func.blocks.len() {
+            let (then_id, else_id) = match &func.blocks[bi].terminator {
+                crate::mir::Terminator::BranchIf { then_target, else_target, .. } => {
+                    (then_target.clone(), else_target.clone())
+                }
+                _ => continue,
+            };
+            if then_id == else_id {
+                func.blocks[bi].terminator =
+                    crate::mir::Terminator::Branch { target: then_id };
+                changed += 1;
+                continue;
+            }
+            let then_idx = func.blocks.iter().position(|b| b.id == then_id);
+            let else_idx = func.blocks.iter().position(|b| b.id == else_id);
+            let (Some(ti), Some(ei)) = (then_idx, else_idx) else { continue; };
+
+            // Try bypassing either arm; the bypassed arm must be a pure
+            // forwarding block whose definitions never escape it.
+            for (bypass_idx, keep_id) in [(ti, else_id.clone()), (ei, then_id.clone())] {
+                let bypass = &func.blocks[bypass_idx];
+                let jump_target = match &bypass.terminator {
+                    crate::mir::Terminator::Branch { target } => target.clone(),
+                    _ => continue,
+                };
+                if jump_target != keep_id { continue; }
+                let mut pure = true;
+                let mut defs: HashSet<String> = HashSet::new();
+                for Statement::Assign(dest, rv) in &bypass.statements {
+                    if rvalue_has_side_effects(rv) || !dest.projections.is_empty() {
+                        pure = false;
+                        break;
+                    }
+                    defs.insert(dest.local.clone());
+                }
+                if !pure { continue; }
+                let mut reads_outside: HashSet<String> = HashSet::new();
+                for (i, block) in func.blocks.iter().enumerate() {
+                    if i == bypass_idx { continue; }
+                    for Statement::Assign(_, rv) in &block.statements {
+                        rvalue_local_reads(rv, &mut reads_outside);
+                    }
+                    terminator_local_reads(&block.terminator, &mut reads_outside);
+                }
+                if defs.iter().any(|d| reads_outside.contains(d)) { continue; }
+                func.blocks[bi].terminator =
+                    crate::mir::Terminator::Branch { target: keep_id };
+                changed += 1;
+                break;
+            }
+        }
+        if changed == 0 { break; }
+        total += changed;
+    }
+    if total > 0 { dce_mir_function(func); }
+    total
+}
+
+/// Remove dead calls to observation-free runtime intrinsics.
+///
+/// `read_i64()` only parses the process command line; it neither mutates
+/// program state nor consumes a stream.  When its result is not read, the
+/// call is pure dead work.  Closed-form folding and branch simplification can
+/// leave such calls behind, so this is a general cleanup rather than a
+/// kernel-specific rewrite.
+pub fn eliminate_dead_pure_calls_mir_function(func: &mut MirFunction) -> usize {
+    let mut removed = 0usize;
+    for _ in 0..4 {
+        let reads = count_local_reads(func);
+        let mut changed = 0usize;
+        for block in &mut func.blocks {
+            let before = block.statements.len();
+            block.statements.retain(|stmt| {
+                let Statement::Assign(dest, rv) = stmt;
+                if !dest.projections.is_empty() { return true; }
+                if let Rvalue::Call(callee, _) = rv {
+                    if callee == "read_i64"
+                        && reads.get(&dest.local).copied().unwrap_or(0) == 0
+                    {
+                        return false;
+                    }
+                }
+                true
+            });
+            changed += before - block.statements.len();
+        }
+        removed += changed;
+        if changed == 0 { break; }
+    }
+    removed
+}
+
+/// Remove arena resets from programs that never use the default arena.
+///
+/// `__nl_loop_reset` only rewinds the default arena's bump pointer.  If no
+/// function in the whole program allocates, loads through a box, writes an
+/// indexed array slot, builds a closure/thunk, or calls an arena helper, that
+/// reset cannot affect any value the program can observe.  Closed-form passes
+/// frequently leave one reset per former loop iteration path, so dropping
+/// them is a general whole-program strength reduction.
+fn eliminate_dead_arena_resets(program: &mut MirProgram) -> usize {
+    let mut uses_arena = false;
+    for func in &program.functions {
+        for block in &func.blocks {
+            for Statement::Assign(dest, rv) in &block.statements {
+                if dest.projections.iter().any(|p| matches!(p, Projection::Index(_))) {
+                    uses_arena = true;
+                }
+                match rv {
+                    Rvalue::Alloc(_)
+                    | Rvalue::Load(_)
+                    | Rvalue::Thunk { .. }
+                    | Rvalue::ClosureAlloc { .. }
+                    | Rvalue::Array(_) => uses_arena = true,
+                    Rvalue::Call(callee, _) if callee.starts_with("__nl_arena") => {
+                        uses_arena = true;
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(block.terminator, crate::mir::Terminator::Force { .. }) {
+                uses_arena = true;
+            }
+        }
+    }
+    if uses_arena { return 0; }
+    let mut removed = 0usize;
+    for func in &mut program.functions {
+        for block in &mut func.blocks {
+            let before = block.statements.len();
+            block.statements.retain(|stmt| {
+                let Statement::Assign(_, rv) = stmt;
+                !matches!(rv, Rvalue::Call(callee, _) if callee == "__nl_loop_reset")
+            });
+            removed += before - block.statements.len();
+        }
+    }
+    removed
+}
+
 /// Final cleanup after the closed-form passes, which run after the normal
 /// strength-reduction pipeline.  Removes producer loops made dead by a closed
 /// form and simplifies the algebraic chain the closed-form emitter leaves.
 pub fn post_collapse_cleanup_mir_program(program: &mut MirProgram) -> usize {
-    let mut total = 0;
+    let mut total = eliminate_dead_arena_resets(program);
     for func in &mut program.functions {
         total += const_propagate_mir_function(func);
+        total += simplify_degenerate_branches_mir_function(func);
         total += eliminate_dead_loops_mir_function(func);
         // Run twice: the first pass folds `x + 0` into a copy, which the
         // second pass then recognises when chasing redundant-modulo chains.
         total += algebraic_identity_peephole_mir_function(func);
         total += algebraic_identity_peephole_mir_function(func);
+        total += eliminate_dead_pure_calls_mir_function(func);
         total += const_propagate_mir_function(func);
     }
     total
