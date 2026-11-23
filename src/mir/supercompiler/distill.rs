@@ -4227,6 +4227,32 @@ fn algebra_successors(b: &MirBasicBlock) -> Vec<BasicBlockId> {
     }
 }
 
+/// Forward reachability from `start` over every terminator successor.  Unlike
+/// the symbolic interpreter this ignores branch conditions, so it is a safe
+/// over-approximation: any block that can execute after `start` is included.
+fn algebra_reachable(func: &MirFunction, start: &BasicBlockId) -> HashSet<BasicBlockId> {
+    let map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut stack = vec![start.clone()];
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if let Some(b) = map.get(&id) {
+            // Use the canonical successor enumeration so indirect calls, forks,
+            // guards, etc. are followed too — never miss a possible back-edge.
+            for s in b.terminator.successors() {
+                stack.push(s);
+            }
+        }
+    }
+    seen
+}
+
 fn algebra_reaches(
     func: &MirFunction,
     start: &BasicBlockId,
@@ -4768,12 +4794,24 @@ fn analyze_constant_prefix(func: &MirFunction, program: &MirProgram) -> Option<C
         return None;
     }
 
-    // Every block that is *not* removed (including the stop block) must avoid
-    // branching back into the prefix, otherwise the prefix would be re-entered
-    // at run time and could not be removed.  The entry lives in `visited` but
-    // is kept with concrete assignments, so exclude it from the successor test.
+    // Only blocks that can actually execute *after* the prefix matter here.
+    // The symbolic interpreter follows the single concrete path through every
+    // branch, so arms of compile-time-constant branches inside the prefix are
+    // never visited; their back-edges into loop headers are dead at run time
+    // and disappear together with the removed prefix.  Treating those dead
+    // arms as residual suffix blocks was far too conservative.
+    //
+    // Forward reachability from `stop_block` over *all* terminator successors
+    // is a safe over-approximation of the residual suffix: it includes unknown
+    // branches, so a genuine back-edge from the suffix into the prefix is
+    // still detected and makes the fold bail out.
+    let suffix_reachable = algebra_reachable(func, &stop_block);
     let entry_id = &func.blocks[0].id;
-    for block in func.blocks.iter().filter(|b| !visited.contains(&b.id)) {
+    for block in func
+        .blocks
+        .iter()
+        .filter(|b| suffix_reachable.contains(&b.id))
+    {
         for succ in block.terminator.successors() {
             if visited.contains(&succ) && &succ != entry_id {
                 return None;

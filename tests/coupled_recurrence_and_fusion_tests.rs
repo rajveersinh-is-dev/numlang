@@ -8,7 +8,11 @@ use numlang::mir::lower::{lower_program, Rvalue, Statement};
 use numlang::mir::supercompiler::generalize::{
     solve_coupled_2var_recurrence, solve_order2_recurrence, solve_order3_recurrence,
 };
-use numlang::mir::supercompiler::{supercompile_mir_program, supercompile_mir_program_with_mode, SupercompileMode};
+use numlang::mir::supercompiler::{
+    fold_constant_computation_prefix, supercompile_mir_program, supercompile_mir_program_with_mode,
+    SupercompilerStats, SupercompileMode,
+};
+use numlang::mir::Terminator;
 use numlang::mir::supercompiler::term::{SymTerm, TermInterner};
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -646,4 +650,123 @@ fn test_constant_array_store_load_fold_generic() {
     );
 
     assert_eq!(compile_and_run_supercompiled(src, "const_array_fold_generic"), 40);
+}
+
+#[test]
+fn test_constant_sliding_window_with_dead_branch_backedges_folds() {
+    // Regression shape: a concrete local array is indexed by an index that is
+    // itself derived only from compile-time constants, and two nested loops run
+    // with constant trip counts.  The inner body contains data-dependent
+    // branch arms; the arms that are never taken still carry back-edges into
+    // the loop header.  Those arms are dead at run time, so a back-edge check
+    // over *all* residual blocks is too conservative and must not prevent the
+    // constant-computation prefix from being folded.
+    let src = r#"
+    fn main() -> i64 {
+        let cfg: [i64; 3] = [4, 7, 2];
+        let span: i64 = cfg[0];
+        let count: i64 = cfg[1];
+        let rate: i64 = cfg[2];
+        let vals: [i64; 8] = [3, 9, 5, 12, 1, 8, 6, 10];
+        let mut total: i64 = 0;
+        let mut pos: i64 = 0;
+        while pos + span <= count {
+            let mut s: i64 = 0;
+            let mut low: i64 = vals[pos];
+            let mut high: i64 = low;
+            let mut k: i64 = 0;
+            while k < span {
+                let v: i64 = vals[pos + k];
+                s = s + v;
+                if v < low { low = v; }
+                if v > high { high = v; }
+                k = k + 1;
+            }
+            let score: i64 = high - low + s % 5;
+            if pos % rate == 0 {
+                total = total + score;
+            } else {
+                total = total + score / 2;
+            }
+            pos = pos + 1;
+        }
+        println(total);
+        return total % 128;
+    }
+    "#;
+
+    let tokens = tokenize(src).unwrap();
+    let ast = parse(&tokens).unwrap();
+    let typed = typecheck(&ast).unwrap();
+    let mut mir = lower_program(&typed);
+    // Earlier passes can leave a dead block whose terminator branches into the
+    // executed loop region (this is what made window_stats bail).  The block
+    // has no predecessors, so it can never run at runtime; its edge must not
+    // disqualify an otherwise fully concrete prefix.
+    {
+        let main = mir.functions.iter_mut().find(|f| f.name == "main").unwrap();
+        let header = match &main.blocks[0].terminator {
+            Terminator::Branch { target } => target.clone(),
+            other => panic!("unexpected entry terminator: {:?}", other),
+        };
+        let next_id = main.blocks.iter().map(|b| b.id.0).max().unwrap() + 1;
+        main.blocks.push(numlang::mir::lower::MirBasicBlock {
+            id: numlang::mir::BasicBlockId(next_id),
+            arguments: vec![],
+            statements: vec![],
+            terminator: Terminator::Branch { target: header },
+        });
+    }
+
+    let mut stats = SupercompilerStats::default();
+    fold_constant_computation_prefix(&mut mir, &mut stats);
+    assert!(stats.loops_collapsed > 0, "prefix folder must fire");
+
+    let main = mir.functions.iter().find(|f| f.name == "main").unwrap();
+    let print_block = main
+        .blocks
+        .iter()
+        .find(|b| {
+            b.statements.iter().any(|s| {
+                matches!(s, Statement::Assign(_, Rvalue::Call(name, _)) if name == "println")
+            })
+        })
+        .expect("println block must exist");
+    // Before the fix the entry branched into the first loop header because a
+    // never-taken branch arm had a back-edge into the symbolic prefix.
+    assert_eq!(
+        main.blocks[0].terminator,
+        Terminator::Branch { target: print_block.id.clone() },
+        "entry must jump straight to the observable call after folding"
+    );
+    assert!(
+        main.blocks[0].statements.iter().any(|s| {
+            matches!(s, Statement::Assign(_, Rvalue::Constant(_)))
+        }),
+        "entry must contain concrete live-out assignments"
+    );
+
+    // Independent reference simulation of the same source semantics.
+    let cfg = [4i64, 7, 2];
+    let (span, count, rate) = (cfg[0], cfg[1], cfg[2]);
+    let vals = [3i64, 9, 5, 12, 1, 8, 6, 10];
+    let mut total = 0i64;
+    let mut pos = 0i64;
+    while pos + span <= count {
+        let mut s = 0i64;
+        let mut low = vals[pos as usize];
+        let mut high = low;
+        let mut k = 0i64;
+        while k < span {
+            let v = vals[(pos + k) as usize];
+            s += v;
+            if v < low { low = v; }
+            if v > high { high = v; }
+            k += 1;
+        }
+        let score = high - low + s % 5;
+        if pos % rate == 0 { total += score; } else { total += score / 2; }
+        pos += 1;
+    }
+    assert_eq!(compile_and_run_supercompiled(src, "const_sliding_window_fold"), (total % 128) as i32);
 }
