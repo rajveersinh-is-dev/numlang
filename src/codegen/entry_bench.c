@@ -55,9 +55,22 @@ void mainCRTStartup() {
 }
 
 long long __nl_read_i64(void) {
-    char* cmd = GetCommandLineA();
+    /* Read the authoritative Unicode command line straight from the PEB.
+       GetCommandLineA() transcodes the whole command line on its first call
+       (and GetCommandLineW() still crosses the Win32 import boundary); neither
+       is needed here because every character this parser consumes (quote,
+       blank, '-' and '0'..'9') has the same 16-bit code unit in Unicode and in
+       the process ANSI code page.  PEB->ProcessParameters->CommandLine.Buffer
+       is at [gs:0x60] -> +0x20 -> +0x78 on x86-64 Windows. */
+#if defined(_M_X64) || defined(__x86_64__)
+    unsigned char* peb = (unsigned char*)__readgsqword(0x60);
+    unsigned char* params = peb ? *(unsigned char**)(peb + 0x20) : 0;
+    const unsigned short* cmd = params ? *(const unsigned short**)(params + 0x78) : 0;
+#else
+    const unsigned short* cmd = (const unsigned short*)GetCommandLineW();
+#endif
     if (cmd) {
-        char* p = cmd;
+        const unsigned short* p = cmd;
         if (*p == '"') {
             p++;
             while (*p && *p != '"') p++;

@@ -177,11 +177,34 @@ extern "system" {
         lpOverlapped: *mut core::ffi::c_void,
     ) -> i32;
     fn ExitProcess(uExitCode: u32) -> !;
-    fn GetCommandLineA() -> *const u8;
+    #[allow(dead_code)]
+    fn GetCommandLineW() -> *const u16;
 }
 
 extern "C" {
     fn main() -> i64;
+}
+
+/* Read the authoritative UTF-16 command line from the PEB instead of going
+   through GetCommandLineA, which lazily transcodes the entire command line to
+   ANSI on its first call.  Every character this parser consumes (quote, blank,
+   '-', '0'..'9') has the same 16-bit code unit in both representations. */
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn nl_command_line() -> *const u16 {
+    let peb: u64;
+    core::arch::asm!("mov {}, gs:[0x60]", out(reg) peb, options(nostack, readonly));
+    let peb = peb as *const u8;
+    if peb.is_null() { return core::ptr::null(); }
+    let params = *(peb.add(0x20) as *const *const u8);
+    if params.is_null() { return core::ptr::null(); }
+    *(params.add(0x78) as *const *const u16)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline]
+unsafe fn nl_command_line() -> *const u16 {
+    GetCommandLineW()
 }
 
 static mut BENCH_STOP: i64 = 0;
@@ -199,21 +222,21 @@ pub unsafe extern "C" fn __nl_bench_stop() {
 
 #[no_mangle]
 pub unsafe extern "C" fn __nl_read_i64() -> i64 {
-    let mut p = GetCommandLineA();
+    let mut p = nl_command_line();
     if p.is_null() { return 0; }
-    if *p == b'"' {
+    if *p == '"' as u16 {
         p = p.add(1);
-        while *p != 0 && *p != b'"' { p = p.add(1); }
-        if *p == b'"' { p = p.add(1); }
+        while *p != 0 && *p != '"' as u16 { p = p.add(1); }
+        if *p == '"' as u16 { p = p.add(1); }
     } else {
-        while *p != 0 && *p != b' ' && *p != b'\t' { p = p.add(1); }
+        while *p != 0 && *p != ' ' as u16 && *p != '\t' as u16 { p = p.add(1); }
     }
-    while *p == b' ' || *p == b'\t' { p = p.add(1); }
+    while *p == ' ' as u16 || *p == '\t' as u16 { p = p.add(1); }
     let mut neg = false;
-    if *p == b'-' { neg = true; p = p.add(1); }
+    if *p == '-' as u16 { neg = true; p = p.add(1); }
     let mut v: i64 = 0;
-    while *p >= b'0' && *p <= b'9' {
-        v = v.wrapping_mul(10).wrapping_add((*p - b'0') as i64);
+    while *p >= '0' as u16 && *p <= '9' as u16 {
+        v = v.wrapping_mul(10).wrapping_add((*p - '0' as u16) as i64);
         p = p.add(1);
     }
     if neg { -v } else { v }
