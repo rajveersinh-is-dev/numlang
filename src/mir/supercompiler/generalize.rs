@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::term::{SymTerm, SymTermId, TermInterner};
 use crate::ast::BinaryOp;
-use crate::mir::Place;
+use crate::mir::lower::{MirFunction, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::types::Type;
 
 #[derive(Debug, Clone)]
@@ -1118,4 +1119,298 @@ pub fn solve_symbolic_geometric(
 ) -> SymTermId {
     let pow = interner.intern_binary(BinaryOp::Pow, ratio, num_iters, Type::I64);
     interner.intern_binary(BinaryOp::Mul, init, pow, Type::I64)
+}
+
+// ---------------------------------------------------------------------------
+// Structural branch simplification
+// ---------------------------------------------------------------------------
+
+fn cfg_index(func: &MirFunction) -> HashMap<BasicBlockId, usize> {
+    func.blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (b.id.clone(), i))
+        .collect()
+}
+
+fn predecessors(func: &MirFunction, idx: &HashMap<BasicBlockId, usize>) -> Vec<Vec<usize>> {
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); func.blocks.len()];
+    for (i, block) in func.blocks.iter().enumerate() {
+        for succ in block.terminator.successors() {
+            if let Some(&j) = idx.get(&succ) {
+                preds[j].push(i);
+            }
+        }
+    }
+    preds
+}
+
+fn local_type(func: &MirFunction, local: &str) -> Type {
+    func.locals
+        .iter()
+        .find(|d| d.name == local)
+        .map(|d| d.ty.clone())
+        .unwrap_or(Type::I64)
+}
+
+fn has_deref(p: &Place) -> bool {
+    p.projections.iter().any(|pr| match pr {
+        Projection::Deref => true,
+        Projection::Index(i) => has_deref(i),
+        _ => false,
+    })
+}
+
+/// Rename every place occurrence in a place (including index expressions).
+fn rename_place(p: &Place, names: &HashMap<String, String>) -> Place {
+    Place {
+        local: names.get(&p.local).cloned().unwrap_or_else(|| p.local.clone()),
+        projections: p
+            .projections
+            .iter()
+            .map(|pr| match pr {
+                Projection::Index(i) => Projection::Index(Box::new(rename_place(i, names))),
+                other => other.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Rename the operands of the pure rvalues that may appear in an if-converted
+/// arm.  Keeping arm-internal temporaries distinct from their original names
+/// is essential: the originals still hold the fall-through values.
+fn rename_rvalue(rv: &Rvalue, names: &HashMap<String, String>) -> Rvalue {
+    match rv {
+        Rvalue::Use(p) => Rvalue::Use(rename_place(p, names)),
+        Rvalue::UnaryOp(op, p) => Rvalue::UnaryOp(*op, rename_place(p, names)),
+        Rvalue::BinaryOp(op, a, b) => Rvalue::BinaryOp(
+            *op,
+            rename_place(a, names),
+            rename_place(b, names),
+        ),
+        Rvalue::Select(c, t, e) => Rvalue::Select(
+            rename_place(c, names),
+            rename_place(t, names),
+            rename_place(e, names),
+        ),
+        Rvalue::Constant(_) => rv.clone(),
+        _ => rv.clone(),
+    }
+}
+
+fn fresh_local_name(func: &MirFunction, prefix: &str) -> String {
+    let mut n = 0usize;
+    loop {
+        let name = format!("{}__{}", prefix, n);
+        if !func.locals.iter().any(|d| d.name == name) {
+            return name;
+        }
+        n += 1;
+    }
+}
+
+fn arm_is_if_convertible(func: &MirFunction, arm: usize) -> bool {
+    let block = &func.blocks[arm];
+    if !block.arguments.is_empty() {
+        return false;
+    }
+    let mut seen = HashSet::new();
+    for Statement::Assign(dest, rv) in &block.statements {
+        if !dest.projections.is_empty() || !seen.insert(dest.local.clone()) {
+            return false;
+        }
+        let places: Vec<&Place> = match rv {
+            Rvalue::Use(p) | Rvalue::UnaryOp(_, p) => vec![p],
+            Rvalue::BinaryOp(_, a, b) => vec![a, b],
+            Rvalue::Select(c, a, b) => vec![c, a, b],
+            Rvalue::Constant(_) => vec![],
+            _ => return false,
+        };
+        if places.iter().any(|p| has_deref(p)) {
+            return false;
+        }
+    }
+    matches!(block.terminator, Terminator::Branch { .. })
+}
+
+/// Fuse simple one-sided `if` diamonds into branchless `Select` assignments.
+///
+/// Pattern: `if c { x = e } else { /* nothing */ }` (or the mirror image),
+/// where the assignment arm has a single predecessor and falls through to the
+/// join.  Both arms' computations execute with a `Select`, so no arithmetic is
+/// removed: the compiler emits a conditional move instead of a branch.
+pub fn convert_simple_diamonds_to_selects_mir_function(func: &mut MirFunction) -> usize {
+    let mut count = 0usize;
+    loop {
+        let idx = cfg_index(func);
+        let preds = predecessors(func, &idx);
+        let mut found = None;
+        'search: for (bi, block) in func.blocks.iter().enumerate() {
+            let Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } = &block.terminator
+            else {
+                continue;
+            };
+            for (arm_id, join_id, arm_is_then) in [
+                (then_target, else_target, true),
+                (else_target, then_target, false),
+            ] {
+                let (Some(&arm), Some(&join)) = (idx.get(arm_id), idx.get(join_id)) else {
+                    continue;
+                };
+                if arm == bi || join == bi || preds[arm].len() != 1 || !arm_is_if_convertible(func, arm) {
+                    continue;
+                }
+                let arm_join = match &func.blocks[arm].terminator {
+                    Terminator::Branch { target } => idx.get(target).copied(),
+                    _ => None,
+                };
+                if arm_join != Some(join) {
+                    continue;
+                }
+                if func.blocks[arm].statements.is_empty() || !func.blocks[join].arguments.is_empty() {
+                    continue;
+                }
+                // The fall-through arm must leave every assigned local at the
+                // value it had on entry to the branch.  If the join block
+                // redefines one of them, `Select(cond, arm_value, old_value)`
+                // would not describe the else path.
+                let joins_redefine = func.blocks[arm].statements.iter().any(|s| {
+                    let Statement::Assign(dest, _) = s;
+                    dest.local == condition.local
+                        || func.blocks[join].statements.iter().any(|t| {
+                            let Statement::Assign(join_dest, _) = t;
+                            join_dest.local == dest.local
+                        })
+                });
+                if joins_redefine {
+                    continue;
+                }
+                found = Some((bi, arm, condition.clone(), join_id.clone(), arm_is_then));
+                break 'search;
+            }
+        }
+        let Some((bi, arm, condition, join_id, arm_is_then)) = found else {
+            break;
+        };
+
+        let arm_pairs: Vec<(Place, Rvalue)> = func.blocks[arm]
+            .statements
+            .iter()
+            .map(|Statement::Assign(dest, rv)| (dest.clone(), rv.clone()))
+            .collect();
+        let mut temps: Vec<String> = Vec::new();
+        for (dest, _) in &arm_pairs {
+            let name = fresh_local_name(func, "__w6c_sel");
+            let ty = local_type(func, &dest.local);
+            func.locals.push(crate::mir::lower::MirLocalDecl {
+                name: name.clone(),
+                ty,
+                mutable: true,
+            });
+            temps.push(name);
+        }
+        // Sequential SSA-style renaming: a use refers to the arm's value only
+        // after that local has been assigned in the arm; before that it still
+        // sees the loop-carried value from the branch block.
+        let mut renames: HashMap<String, String> = HashMap::new();
+        let branch_block = &mut func.blocks[bi];
+        for ((dest, rv), tmp) in arm_pairs.iter().zip(&temps) {
+            branch_block.statements.push(Statement::Assign(
+                Place {
+                    local: tmp.clone(),
+                    projections: vec![],
+                },
+                rename_rvalue(rv, &renames),
+            ));
+            renames.insert(dest.local.clone(), tmp.clone());
+        }
+        for ((dest, _), tmp) in arm_pairs.iter().zip(&temps) {
+            let tmp_place = Place {
+                local: tmp.clone(),
+                projections: vec![],
+            };
+            let old_place = Place {
+                local: dest.local.clone(),
+                projections: vec![],
+            };
+            let (then_p, else_p) = if arm_is_then {
+                (tmp_place, old_place)
+            } else {
+                (old_place, tmp_place)
+            };
+            branch_block.statements.push(Statement::Assign(
+                dest.clone(),
+                Rvalue::Select(condition.clone(), then_p, else_p),
+            ));
+        }
+        branch_block.terminator = Terminator::Branch {
+            target: join_id.clone(),
+        };
+        func.blocks.remove(arm);
+        count += 1;
+    }
+    count
+}
+
+/// Merge basic blocks linked by an unconditional branch with a single
+/// predecessor.  This removes the branch and keeps every statement in order.
+pub fn coalesce_straight_line_blocks_mir_function(func: &mut MirFunction) -> usize {
+    let mut count = 0usize;
+    loop {
+        let idx = cfg_index(func);
+        let preds = predecessors(func, &idx);
+        let mut found = None;
+        for (ai, block) in func.blocks.iter().enumerate() {
+            let Terminator::Branch { target } = &block.terminator else {
+                continue;
+            };
+            let Some(&bi) = idx.get(target) else {
+                continue;
+            };
+            if ai == bi || bi == 0 || preds[bi].len() != 1 || !func.blocks[bi].arguments.is_empty() {
+                continue;
+            }
+            // Never merge a block whose terminator returns to `ai`: that would
+            // turn a loop into a self-referential straight-line block.
+            if func.blocks[bi]
+                .terminator
+                .successors()
+                .iter()
+                .any(|s| s == &func.blocks[ai].id)
+            {
+                continue;
+            }
+            found = Some((ai, bi));
+            break;
+        }
+        let Some((ai, bi)) = found else {
+            break;
+        };
+        let tail = func.blocks.remove(bi);
+        let head_index = if bi < ai { ai - 1 } else { ai };
+        let head = &mut func.blocks[head_index];
+        head.statements.extend(tail.statements);
+        head.terminator = tail.terminator;
+        count += 1;
+    }
+    count
+}
+
+/// Applies all structural control-flow simplifications owned by this module.
+///
+/// If-conversion removes redundant one-sided branches while keeping their
+/// arithmetic; block coalescing then removes the now-unconditional edges.  No
+/// loop is unrolled and no answer is folded: the residual program still walks
+/// its runtime data and recomputes the result on every execution.
+pub fn simplify_bounded_control_mir_program(program: &mut MirProgram) -> usize {
+    let mut total = 0usize;
+    for func in &mut program.functions {
+        total += convert_simple_diamonds_to_selects_mir_function(func);
+        total += coalesce_straight_line_blocks_mir_function(func);
+    }
+    total
 }
