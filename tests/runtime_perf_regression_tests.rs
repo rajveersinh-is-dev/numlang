@@ -28,7 +28,7 @@ use numlang::codegen::compile_mir_to_obj;
 use numlang::codegen::linker::link_executable;
 use numlang::compiler::{distill_and_optimize, CompilerConfig};
 use numlang::mir::lower::{lower_program, Rvalue, Statement};
-use numlang::mir::supercompiler::supercompile_mir_program;
+use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::{Projection, Terminator};
 use numlang::parser::parse;
 use numlang::runtime_input::set_ast_runtime_computation_guard;
@@ -112,7 +112,8 @@ fn residual_profile(src: &str) -> Profile {
     set_ast_runtime_computation_guard(previous_guard);
     let mut mir = lower_program(&typed);
     mir.enforce_runtime_computation = true;
-    supercompile_mir_program(&mut mir);
+    // Published benchmark claims use distill mode; audit exactly that pipeline.
+    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
 
     let mut profile = Profile::default();
     let mut interesting = BTreeSet::new();
@@ -209,7 +210,8 @@ fn compile_and_run(src: &str, tag: &str) -> (i32, String) {
     // explicitly because a test process is not marked as the compiler driver.
     let mut mir = lower_program(&typed);
     mir.enforce_runtime_computation = true;
-    supercompile_mir_program(&mut mir);
+    // Published benchmark claims use distill mode; audit exactly that pipeline.
+    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
     let obj = compile_mir_to_obj(&mir).expect("supercompiled codegen");
     fs::write(&obj_path, obj).expect("write object");
     let linked = link_executable(&obj_path, &exe_path);
@@ -230,7 +232,7 @@ fn compile_and_run(src: &str, tag: &str) -> (i32, String) {
 
 const TRI_N: i64 = 12;
 const CUBIC_N: i64 = 8;
-const MAT_EXP: usize = 10;
+const MAT_EXP: usize = 40;
 const HOF_LIMIT: usize = 12;
 const KMP_STEPS: i64 = 15;
 const WINDOW_STEPS: usize = 12;
