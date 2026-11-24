@@ -682,11 +682,10 @@ pub fn supercompile_mir_program_with_cache(
     // count (e.g. `sum = (sum + C) % M` after a constant producer has been
     // collapsed).  Runs last so it sees the fully residualised MIR.
     total_stats.loops_collapsed += sc_timed!(ScPass::ModularAccumulators, {
-        if !guard_active {
-            crate::mir::supercompiler::distill::collapse_modular_accumulators(program)
-        } else {
-            0
-        }
+        crate::mir::supercompiler::distill::collapse_modular_accumulators_with_const_eval(
+            program,
+            !guard_active,
+        )
     });
 
     // The closed-form passes run last and can leave the producer loops they
@@ -695,6 +694,11 @@ pub fn supercompile_mir_program_with_cache(
     let _post_cleanup = sc_timed!(
         ScPass::StrengthReduce,
         strength_reduce::post_collapse_cleanup_mir_program_with_const_eval(program, !guard_active)
+    );
+
+    total_stats.loops_collapsed += sc_timed!(
+        ScPass::ModularAccumulators,
+        recurrence::collapse_mutual_array_recurrences(program)
     );
 
     sc_profile_report();
