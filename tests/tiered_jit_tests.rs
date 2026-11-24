@@ -475,6 +475,7 @@ fn test_block_outlining_extraction_and_call_replacement() {
         functions: vec![fn1, fn2],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
 
     let cfg = OutlinerConfig {

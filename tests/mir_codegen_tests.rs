@@ -221,6 +221,7 @@ fn test_mir_codegen_unsupported_rvalue_returns_structured_error() {
         }],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
 
     let err = compile_mir_to_obj(&mir).expect_err("unsupported rvalue should error");
@@ -272,6 +273,7 @@ fn test_llvm_mir_codegen_unsupported_rvalue_returns_structured_error() {
         }],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
 
     let mut compiler = LlvmCompiler::new(OptLevel::O2);

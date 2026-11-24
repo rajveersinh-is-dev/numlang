@@ -403,6 +403,9 @@ pub struct MultiResultEngine<'a> {
     program_funcs: &'a [MirFunction],
     contract: MrscProfitabilityContract,
     budget: ExplorationBudget,
+    /// Whether interprocedural constant evaluation is allowed.  Cleared by the
+    /// pipeline for programs with no runtime input.
+    fold_constants: bool,
     /// Observable telemetry for the most recent `explore_and_select*` call.
     last_decision: Mutex<Option<MrscSelectionDecision>>,
 }
@@ -414,8 +417,15 @@ impl<'a> MultiResultEngine<'a> {
             program_funcs,
             contract: MrscProfitabilityContract::default(),
             budget: ExplorationBudget::default(),
+            fold_constants: true,
             last_decision: Mutex::new(None),
         }
+    }
+
+    /// General runtime-input guard: set to false when the program is closed.
+    pub fn with_const_eval(mut self, fold_constants: bool) -> Self {
+        self.fold_constants = fold_constants;
+        self
     }
 
     /// Creates an engine with an explicit "never slower than baseline" contract.
@@ -496,8 +506,8 @@ impl<'a> MultiResultEngine<'a> {
             .with_config(DriverConfig {
                 max_depth: 128,
                 max_unroll_depth: 0,
-                solve_recurrences: true,
-                inline_calls: true,
+                solve_recurrences: self.fold_constants,
+                inline_calls: self.fold_constants,
                 ..DriverConfig::default()
             })
             .run();
@@ -520,8 +530,8 @@ impl<'a> MultiResultEngine<'a> {
             .with_config(DriverConfig {
                 max_depth: 128,
                 max_unroll_depth: 4,
-                solve_recurrences: true,
-                inline_calls: true,
+                solve_recurrences: self.fold_constants,
+                inline_calls: self.fold_constants,
                 ..DriverConfig::default()
             })
             .run();
@@ -545,7 +555,7 @@ impl<'a> MultiResultEngine<'a> {
                 max_depth: 128,
                 max_unroll_depth: 0,
                 solve_recurrences: false,
-                inline_calls: true,
+                inline_calls: self.fold_constants,
                 ..DriverConfig::default()
             })
             .run();
@@ -590,6 +600,8 @@ impl<'a> MultiResultEngine<'a> {
         // --------------------------------------------------------------------
         let tree_id = SupercompilerDriver::new(self.func)
             .with_program_functions(self.program_funcs)
+            .with_inlining(self.fold_constants)
+            .with_recurrence_solving(self.fold_constants)
             .run();
 
         let metrics_baseline = CandidateMetrics::new(self.func, &tree_id);
@@ -620,8 +632,8 @@ impl<'a> MultiResultEngine<'a> {
                     .with_config(DriverConfig {
                         max_depth: 128,
                         max_unroll_depth: *depth,
-                        solve_recurrences: true,
-                        inline_calls: true,
+                        solve_recurrences: self.fold_constants,
+                        inline_calls: self.fold_constants,
                         ..DriverConfig::default()
                     })
                     .run();
@@ -769,6 +781,8 @@ impl<'a> MultiResultEngine<'a> {
         let model = MrscCostModel::new();
         let baseline_tree = SupercompilerDriver::new(self.func)
             .with_program_functions(self.program_funcs)
+            .with_inlining(self.fold_constants)
+            .with_recurrence_solving(self.fold_constants)
             .run();
         let baseline_cost = model.evaluate_function(self.func, &baseline_tree.stats);
 

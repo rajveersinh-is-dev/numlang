@@ -482,6 +482,7 @@ fn test_direct_mir_thunk_loop_fusion() {
         functions: vec![func.clone()],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
 
     let mut stats = numlang::mir::supercompiler::SupercompilerStats::default();

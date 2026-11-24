@@ -673,8 +673,21 @@ fn fold_simple_diamonds_to_select(func: &mut MirFunction) -> usize {
 /// Performs strength reduction across all basic blocks of a MirFunction.
 /// Returns the number of operations reduced.
 pub fn strength_reduce_mir_function(func: &mut MirFunction) -> usize {
+    strength_reduce_mir_function_with_const_eval(func, true)
+}
+
+/// Strength reduction with an explicit switch for whole-program constant
+/// evaluation.  With `fold_constants = false`, scalar expressions made only of
+/// source literals are left as arithmetic instructions so they execute at run
+/// time; all other strength-reduction transforms are unchanged.
+pub fn strength_reduce_mir_function_with_const_eval(
+    func: &mut MirFunction,
+    fold_constants: bool,
+) -> usize {
     let mut reductions = 0;
-    reductions += const_propagate_mir_function(func);
+    if fold_constants {
+        reductions += const_propagate_mir_function(func);
+    }
     reductions += dce_mir_function(func);
     reductions += fold_simple_diamonds_to_select(func);
     let global_consts = collect_single_assignment_constants(func);
@@ -1571,9 +1584,20 @@ fn eliminate_dead_arena_resets(program: &mut MirProgram) -> usize {
 /// strength-reduction pipeline.  Removes producer loops made dead by a closed
 /// form and simplifies the algebraic chain the closed-form emitter leaves.
 pub fn post_collapse_cleanup_mir_program(program: &mut MirProgram) -> usize {
+    post_collapse_cleanup_mir_program_with_const_eval(program, true)
+}
+
+/// Post-closed-form cleanup with an explicit whole-program constant-evaluation
+/// guard.  See [`post_collapse_cleanup_mir_program`].
+pub fn post_collapse_cleanup_mir_program_with_const_eval(
+    program: &mut MirProgram,
+    fold_constants: bool,
+) -> usize {
     let mut total = eliminate_dead_arena_resets(program);
     for func in &mut program.functions {
-        total += const_propagate_mir_function(func);
+        if fold_constants {
+            total += const_propagate_mir_function(func);
+        }
         total += simplify_degenerate_branches_mir_function(func);
         total += eliminate_dead_loops_mir_function(func);
         // Run twice: the first pass folds `x + 0` into a copy, which the
@@ -1581,16 +1605,27 @@ pub fn post_collapse_cleanup_mir_program(program: &mut MirProgram) -> usize {
         total += algebraic_identity_peephole_mir_function(func);
         total += algebraic_identity_peephole_mir_function(func);
         total += eliminate_dead_pure_calls_mir_function(func);
-        total += const_propagate_mir_function(func);
+        if fold_constants {
+            total += const_propagate_mir_function(func);
+        }
     }
     total
 }
 
 /// Applies strength reduction to every function in a MirProgram.
 pub fn strength_reduce_mir_program(program: &mut MirProgram) -> usize {
+    strength_reduce_mir_program_with_const_eval(program, true)
+}
+
+/// Applies strength reduction with an explicit whole-program constant-evaluation
+/// guard to every function in a MirProgram.
+pub fn strength_reduce_mir_program_with_const_eval(
+    program: &mut MirProgram,
+    fold_constants: bool,
+) -> usize {
     let mut total = 0;
     for func in &mut program.functions {
-        total += strength_reduce_mir_function(func);
+        total += strength_reduce_mir_function_with_const_eval(func, fold_constants);
     }
     total
 }

@@ -187,6 +187,7 @@ fn test_order2_recurrence_cranelift_execution() {
         functions: vec![main_fn],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
 
     let obj_bytes = compile_mir_to_obj(&program).expect("compile_mir_to_obj");

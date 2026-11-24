@@ -16,6 +16,7 @@ pub mod mir;
 pub mod opt;
 pub mod parser;
 pub mod runtime;
+pub mod runtime_input;
 pub mod span;
 pub mod testing;
 pub mod token;

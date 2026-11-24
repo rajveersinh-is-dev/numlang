@@ -10,6 +10,15 @@ pub mod while_unroll;
 use crate::typecheck::typed_ast::TypedProgram;
 
 pub fn optimize_program(program: &mut TypedProgram) {
+    // A closed program (one with no runtime input) must still calculate its
+    // answer on execution.  Literal-argument propagation and bounded unrolling
+    // are the two AST passes that can evaluate such a program at compile time:
+    // they turn source literals into a fully concrete computation which later
+    // passes collapse into a single answer literal.  Programs that do read
+    // runtime input keep both passes exactly as before.
+    let guard_active = crate::runtime_input::ast_runtime_computation_guard()
+        && !crate::runtime_input::typed_program_has_runtime_input(program);
+
     // Monomorphize generic functions into concrete instantiations
     monomorphize::monomorphize(program);
 
@@ -20,8 +29,13 @@ pub fn optimize_program(program: &mut TypedProgram) {
     const MAX_FIXPOINT_ITERS: usize = 4;
     for _ in 0..MAX_FIXPOINT_ITERS {
         let snapshot = program.clone();
-        const_args::optimize_program(program);
-        inlining::optimize_program(program);
+        if !guard_active {
+            const_args::optimize_program(program);
+            // Inlining a call with literal arguments has the same effect as
+            // constant-argument propagation: it embeds a fully concrete
+            // computation into the caller, which later passes evaluate.
+            inlining::optimize_program(program);
+        }
         loop_opt::optimize_program(program);
         if *program == snapshot {
             break;
@@ -29,7 +43,9 @@ pub fn optimize_program(program: &mut TypedProgram) {
     }
 
     // Loop unrolling for remaining small or vectorizable loops
-    while_unroll::optimize_program(program);
+    if !guard_active {
+        while_unroll::optimize_program(program);
+    }
 
     // Array optimization (SROA / dynamic indexing)
     array_opt::optimize_arrays(program);

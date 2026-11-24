@@ -1375,21 +1375,27 @@ impl<'a> SupercompilerDriver<'a> {
                     })
                     .collect();
 
-                // Check for mutual recursion / inter-procedural call cycle
+                // Check for mutual recursion / inter-procedural call cycle.
+                // This solves the cycle by constant evaluation, so it obeys the
+                // same runtime-input guard as ordinary call inlining.
                 let mut cycle_res = None;
-                if let Some(cycle_start) = self.call_stack.iter().position(|(s, _)| s == callee) {
-                    let cycle: Vec<String> = self.call_stack[cycle_start..]
-                        .iter()
-                        .map(|(s, _)| s.clone())
-                        .collect();
-                    let has_distinct_funcs =
-                        cycle.iter().collect::<std::collections::HashSet<_>>().len() >= 2;
-                    if has_distinct_funcs {
-                        if let Some(closed_term) =
-                            self.try_solve_call_cycle(&cycle, callee, &arg_terms)
-                        {
-                            self.stats.loops_collapsed += 1;
-                            cycle_res = Some(closed_term);
+                if self.config.inline_calls {
+                    if let Some(cycle_start) =
+                        self.call_stack.iter().position(|(s, _)| s == callee)
+                    {
+                        let cycle: Vec<String> = self.call_stack[cycle_start..]
+                            .iter()
+                            .map(|(s, _)| s.clone())
+                            .collect();
+                        let has_distinct_funcs =
+                            cycle.iter().collect::<std::collections::HashSet<_>>().len() >= 2;
+                        if has_distinct_funcs {
+                            if let Some(closed_term) =
+                                self.try_solve_call_cycle(&cycle, callee, &arg_terms)
+                            {
+                                self.stats.loops_collapsed += 1;
+                                cycle_res = Some(closed_term);
+                            }
                         }
                     }
                 }
@@ -1773,7 +1779,19 @@ impl<'a> SupercompilerDriver<'a> {
                         .copied()
                         .unwrap_or(anc_id);
                     let first_header_state = self.nodes[first_header_anc.0].state.clone();
-                    match self.try_solve_loop_recurrence(&first_header_state, &next_state, &ancestor_stack) {
+                    // Respect the runtime-input guard here too: the whistle can
+                    // fire for fully concrete loops, and solving them here would
+                    // evaluate the whole computation at compile time.
+                    let recurrence_result = if self.config.solve_recurrences {
+                        self.try_solve_loop_recurrence(
+                            &first_header_state,
+                            &next_state,
+                            &ancestor_stack,
+                        )
+                    } else {
+                        RecurrenceResult::UnsolvableNoPattern
+                    };
+                    match recurrence_result {
                         RecurrenceResult::Solved(solved_state) => {
                             self.stats.loops_collapsed += 1;
                             let next_node = self.alloc_child_node(from_id, *solved_state);

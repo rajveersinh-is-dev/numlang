@@ -124,6 +124,9 @@ pub struct MrscOracleEngine<'a> {
     config: IddfsOracleConfig,
     cost_model: MrscCostModel,
     contract: MrscProfitabilityContract,
+    /// Whether interprocedural constant evaluation is allowed.  Cleared by the
+    /// pipeline for programs with no runtime input.
+    fold_constants: bool,
     last_decision: Mutex<Option<MrscSelectionDecision>>,
 }
 
@@ -140,8 +143,15 @@ impl<'a> MrscOracleEngine<'a> {
             config,
             cost_model: MrscCostModel::new(),
             contract,
+            fold_constants: true,
             last_decision: Mutex::new(None),
         }
+    }
+
+    /// General runtime-input guard: set to false when the program is closed.
+    pub fn with_const_eval(mut self, fold_constants: bool) -> Self {
+        self.fold_constants = fold_constants;
+        self
     }
 
     /// Creates an oracle with an explicit "never slower than baseline" contract.
@@ -187,6 +197,8 @@ impl<'a> MrscOracleEngine<'a> {
         // Baseline is always available as a deterministic fallback.
         let baseline_tree = SupercompilerDriver::new(self.func)
             .with_program_functions(self.program_funcs)
+            .with_inlining(self.fold_constants)
+            .with_recurrence_solving(self.fold_constants)
             .run();
         let baseline_cost = self.cost_model.evaluate(self.func, &baseline_tree);
         let baseline_score = self.cost_model.score(&baseline_cost, self.contract.objective);
@@ -211,8 +223,8 @@ impl<'a> MrscOracleEngine<'a> {
                 .with_config(DriverConfig {
                     max_depth: current_depth.max(20),
                     max_unroll_depth: unroll_d,
-                    solve_recurrences: true,
-                    inline_calls: true,
+                    solve_recurrences: self.fold_constants,
+                    inline_calls: self.fold_constants,
                     ..DriverConfig::default()
                 })
                 .run();
@@ -233,8 +245,8 @@ impl<'a> MrscOracleEngine<'a> {
                 .with_config(DriverConfig {
                     max_depth: current_depth,
                     max_unroll_depth: 0,
-                    solve_recurrences: true,
-                    inline_calls: true,
+                    solve_recurrences: self.fold_constants,
+                    inline_calls: self.fold_constants,
                     ..DriverConfig::default()
                 })
                 .run();
@@ -333,6 +345,8 @@ impl<'a> MrscOracleEngine<'a> {
 
         let baseline_tree = SupercompilerDriver::new(self.func)
             .with_program_functions(self.program_funcs)
+            .with_inlining(self.fold_constants)
+            .with_recurrence_solving(self.fold_constants)
             .run();
         let baseline_cost = self.cost_model.evaluate(self.func, &baseline_tree);
 

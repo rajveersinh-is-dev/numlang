@@ -302,6 +302,7 @@ fn compile_and_run(func: MirFunction, tag: &str) -> i32 {
         functions: vec![func],
         structs: vec![],
         enums: vec![],
+        enforce_runtime_computation: false,
     };
     let obj_bytes = compile_mir_to_obj(&program).expect("MIR codegen failed");
     let dir = std::env::temp_dir().join(format!(

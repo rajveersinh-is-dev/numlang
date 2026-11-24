@@ -781,6 +781,9 @@ pub fn compile_supercompiled_to_obj_with_cache(
         },
     );
     let mut mir_program = crate::mir::lower::lower_program(&typed);
+    // The compiler driver (not a direct library caller) owns the integrity
+    // policy: closed programs must keep their computation at run time.
+    mir_program.enforce_runtime_computation = crate::runtime_input::is_compiler_driver();
     crate::mir::supercompiler::supercompile_mir_program_with_cache(
         &mut mir_program,
         mode,

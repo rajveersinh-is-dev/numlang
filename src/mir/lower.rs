@@ -80,6 +80,11 @@ pub struct MirProgram {
     pub functions: Vec<MirFunction>,
     pub structs: Vec<crate::typecheck::typed_ast::TypedStructDef>,
     pub enums: Vec<crate::typecheck::typed_ast::TypedEnumDef>,
+    /// Set by the compiler driver before supercompilation.  When true, passes
+    /// that evaluate a fully concrete computation are disabled for programs
+    /// with no runtime input.  Direct library callers that lower a program
+    /// themselves keep the legacy behaviour.
+    pub enforce_runtime_computation: bool,
 }
 
 pub struct MirBuilder {
@@ -784,6 +789,7 @@ pub fn lower_program(program: &TypedProgram) -> MirProgram {
         functions: mir_funcs,
         structs: program.structs.clone(),
         enums: program.enums.clone(),
+        enforce_runtime_computation: false,
     };
     crate::mir::defunctionalize::defunctionalize_program(&mut mir_program);
     mir_program

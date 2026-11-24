@@ -439,7 +439,13 @@ impl<'a> DistillationEngine<'a> {
             if nodes.len() >= 2 {
                 let canonical = nodes[0];
                 for &duplicate in &nodes[1..] {
-                    if duplicate != canonical && !self.is_ancestor(canonical, duplicate, &children)
+                    // Two nodes with the same control-flow shape but different
+                    // symbolic states are not interchangeable: folding them
+                    // would silently drop the definitions produced by one of
+                    // the paths.  Require the full state to agree as well.
+                    if duplicate != canonical
+                        && !self.is_ancestor(canonical, duplicate, &children)
+                        && tree.nodes[canonical.0].state == tree.nodes[duplicate.0].state
                     {
                         for node in &mut tree.nodes {
                             for edge in &mut node.edges {
@@ -544,6 +550,18 @@ impl<'a> DistillationEngine<'a> {
     /// intermediate allocations (`deref(box(x)) -> x`), ties global knots across scopes,
     /// synthesizes specialized single-pass functions (`append3`), and rewrites caller sites.
     pub fn distill_program(program: &mut MirProgram) -> SupercompilerStats {
+        Self::distill_program_with_const_eval(program, true)
+    }
+
+    /// Whole-program distillation with an explicit guard on the two passes
+    /// that evaluate constant computations into literals.  All structural
+    /// fold/unfold and deforestation work still runs; only
+    /// `fuse_constant_list_algebra` and `fold_constant_pure_calls` are skipped
+    /// when `fold_constants` is false.
+    pub fn distill_program_with_const_eval(
+        program: &mut MirProgram,
+        fold_constants: bool,
+    ) -> SupercompilerStats {
         dtrace!("distill_program ENTER: {} functions", program.functions.len());
         let mut stats = SupercompilerStats::default();
 
@@ -664,12 +682,16 @@ impl<'a> DistillationEngine<'a> {
         // flat list built by recursive producers with compile-time constant
         // arguments (possibly joined by append chains) and replaces the whole
         // allocation/traversal with the closed-form arithmetic result.
-        fuse_constant_list_algebra(program, &mut stats);
+        if fold_constants {
+            fuse_constant_list_algebra(program, &mut stats);
+        }
 
         // Constant-fold pure function calls whose arguments are compile-time
         // constants. This collapses deterministic stream/filter/sum pipelines
         // (and any other pure constant-arg computation) to a scalar result.
-        fold_constant_pure_calls(program, &mut stats);
+        if fold_constants {
+            fold_constant_pure_calls(program, &mut stats);
+        }
 
         stats
     }
@@ -5980,6 +6002,19 @@ fn acc_apply_plan(func: &mut MirFunction, plan: &AccLoopPlan) {
 /// Program-level entry point for the modular affine accumulator closed form.
 /// Returns the number of loops collapsed.
 pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
+    collapse_modular_accumulators_with_const_eval(program, true)
+}
+
+/// Same as [`collapse_modular_accumulators`], with an explicit guard for
+/// whole-program constant evaluation.  The closed-form rewrite itself emits
+/// arithmetic (Mul/Mod/Add) and is always allowed; only the extra folding of
+/// `Pow` terms whose operands are all source literals is suppressed when
+/// `fold_constants` is false.  That keeps a closed program's formula executing
+/// at run time instead of turning it back into a literal answer.
+pub fn collapse_modular_accumulators_with_const_eval(
+    program: &mut MirProgram,
+    fold_constants: bool,
+) -> usize {
     let mut plans = Vec::new();
     for (fi, func) in program.functions.iter().enumerate() {
         let started = std::time::Instant::now();
@@ -6005,7 +6040,7 @@ pub fn collapse_modular_accumulators(program: &mut MirProgram) -> usize {
     // MIR `Pow(K, e)` terms, optionally followed by `% M`.  Finish the collapse
     // for both constant and runtime exponents (see section 11 below).
     collapsed
-        + fold_constant_powers(program)
+        + if fold_constants { fold_constant_powers(program) } else { 0 }
         + collapse_runtime_powers(program)
         + eliminate_dead_input_reads(program)
 }

@@ -281,6 +281,15 @@ pub fn supercompile_mir_program_with_cache(
     let mut total_stats = SupercompilerStats::default();
     sc_profile_begin();
 
+    // Integrity guard: a program whose results are derived purely from source
+    // literals has no runtime input, so none of the constant-evaluation passes
+    // below may replace its computation with the final answer.  This is a
+    // whole-program property; no function/variable name or literal value is
+    // inspected.  Programs that call `read_i64` (or otherwise obtain data from
+    // the host) keep the existing optimisation pipeline unchanged.
+    let has_runtime_input = crate::runtime_input::mir_program_has_runtime_input(program);
+    let guard_active = program.enforce_runtime_computation && !has_runtime_input;
+
     // Pass 1: Phase 6 Higher-Order Deforestation & Stream Fusion
     sc_timed!(ScPass::Fusion, {
         for func in &mut program.functions {
@@ -295,13 +304,19 @@ pub fn supercompile_mir_program_with_cache(
     // function/variable name or benchmark-specific constant is inspected; any
     // Opaque value or side effect in the prefix makes the pass bail out.
     sc_timed!(ScPass::ConstantPrefixFold, {
-        fold_constant_computation_prefix(program, &mut total_stats);
+        if !guard_active {
+            fold_constant_computation_prefix(program, &mut total_stats);
+        }
     });
 
     // Pass 1.5: Whole-Program Hamilton Global Process-Tree Distillation
     sc_timed!(ScPass::Distillation, {
         if mode == SupercompileMode::Distill {
-            let distill_stats = DistillationEngine::distill_program(program);
+            // Structural distillation always runs (it is needed for correct
+            // residualisation), but its two constant-folding subpasses are
+            // disabled for closed programs.
+            let distill_stats =
+                DistillationEngine::distill_program_with_const_eval(program, !guard_active);
             total_stats.nodes_explored += distill_stats.nodes_explored;
             total_stats.branches_pruned += distill_stats.branches_pruned;
             total_stats.loops_collapsed += distill_stats.loops_collapsed;
@@ -371,11 +386,13 @@ pub fn supercompile_mir_program_with_cache(
                     }
                 }
 
-                let (new_func, mut stats) = supercompile_mir_function_with_program_options(
-                    func,
-                    &funcs_snapshot,
-                    parallel_residualize,
-                );
+                let (new_func, mut stats) =
+                    supercompile_mir_function_with_program_options_with_const_eval(
+                        func,
+                        &funcs_snapshot,
+                        parallel_residualize,
+                        !guard_active,
+                    );
                 let baseline_blocks = func.blocks.len();
                 let residual_blocks = new_func.blocks.len();
                 let has_uncollapsed_array_loops =
@@ -433,7 +450,18 @@ pub fn supercompile_mir_program_with_cache(
                 }
             }
             SupercompileMode::Distill => {
-                let driver = SupercompilerDriver::new(func).with_program_functions(&funcs_snapshot);
+                let driver = SupercompilerDriver::new(func)
+                    .with_program_functions(&funcs_snapshot)
+                    // Interprocedural driving substitutes literal call arguments
+                    // into callees and evaluates their bodies symbolically.  For
+                    // a closed program that would turn the whole computation
+                    // into a literal answer, so keep calls as runtime calls.
+                    .with_inlining(!guard_active)
+                    // Closed forms are only bit-identical when the program has
+                    // a runtime operand to drive them.  With all operands
+                    // literal, algebraically equivalent formulas can overflow
+                    // in a different order, so keep the source loop executing.
+                    .with_recurrence_solving(!guard_active);
                 let budget = driver.config.max_inline_nodes;
                 let mut tree = sc_timed!(ScPass::Driving, driver.run());
                 let mut interner_clone = tree.interner.clone();
@@ -452,7 +480,7 @@ pub fn supercompile_mir_program_with_cache(
                     sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                 let _sr = sc_timed!(
                     ScPass::StrengthReduce,
-                    strength_reduce_mir_function(&mut new_func)
+                    strength_reduce_mir_function_with_const_eval(&mut new_func, !guard_active)
                 );
                 if _sr > 0 {
                     let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
@@ -508,7 +536,8 @@ pub fn supercompile_mir_program_with_cache(
                 total_stats.residual_stmt_count += stats.residual_stmt_count;
             }
             SupercompileMode::Mrsc => {
-                let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot);
+                let mrsc_engine = MultiResultEngine::new(func, &funcs_snapshot)
+                    .with_const_eval(!guard_active);
                 let (best_res, best_tree, _) = sc_timed!(ScPass::Mrsc, {
                     match objective {
                         "branch" => mrsc_engine.explore_and_select(&MinDynamicBranchObjective),
@@ -540,7 +569,7 @@ pub fn supercompile_mir_program_with_cache(
                         sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                     let _sr = sc_timed!(
                         ScPass::StrengthReduce,
-                        strength_reduce_mir_function(&mut new_func)
+                        strength_reduce_mir_function_with_const_eval(&mut new_func, !guard_active)
                     );
                     if _sr > 0 {
                         let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
@@ -574,7 +603,8 @@ pub fn supercompile_mir_program_with_cache(
                     objective: mrsc_obj,
                     exhaustive: true,
                 };
-                let oracle = MrscOracleEngine::new(func, &funcs_snapshot, config);
+                let oracle = MrscOracleEngine::new(func, &funcs_snapshot, config)
+                    .with_const_eval(!guard_active);
                 let (best_res, mut stats) = if let Some(cache) = opt_cache {
                     if let Ok((res, _cost, from_cache)) = oracle.run_with_cache(cache) {
                         let stats = SupercompilerStats {
@@ -614,7 +644,7 @@ pub fn supercompile_mir_program_with_cache(
                         sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
                     let _sr = sc_timed!(
                         ScPass::StrengthReduce,
-                        strength_reduce_mir_function(&mut new_func)
+                        strength_reduce_mir_function_with_const_eval(&mut new_func, !guard_active)
                     );
                     if _sr > 0 {
                         let _ = sc_timed!(ScPass::Compact, compact_mir_function(&mut new_func));
@@ -645,14 +675,18 @@ pub fn supercompile_mir_program_with_cache(
     }
 
     let _prog_sr = sc_timed!(ScPass::ProgramStrengthReduce, {
-        strength_reduce_mir_program(program)
+        strength_reduce_mir_program_with_const_eval(program, !guard_active)
     });
 
     // O(1) closed form for modular affine accumulators with a runtime trip
     // count (e.g. `sum = (sum + C) % M` after a constant producer has been
     // collapsed).  Runs last so it sees the fully residualised MIR.
     total_stats.loops_collapsed += sc_timed!(ScPass::ModularAccumulators, {
-        crate::mir::supercompiler::distill::collapse_modular_accumulators(program)
+        if !guard_active {
+            crate::mir::supercompiler::distill::collapse_modular_accumulators(program)
+        } else {
+            0
+        }
     });
 
     // The closed-form passes run last and can leave the producer loops they
@@ -660,7 +694,7 @@ pub fn supercompile_mir_program_with_cache(
     // general cleanup now that those locals are dead.
     let _post_cleanup = sc_timed!(
         ScPass::StrengthReduce,
-        strength_reduce::post_collapse_cleanup_mir_program(program)
+        strength_reduce::post_collapse_cleanup_mir_program_with_const_eval(program, !guard_active)
     );
 
     sc_profile_report();
@@ -839,7 +873,28 @@ pub fn supercompile_mir_function_with_program_options(
     program_funcs: &[MirFunction],
     parallel_residualize: bool,
 ) -> (MirFunction, SupercompilerStats) {
-    let driver = SupercompilerDriver::new(func).with_program_functions(program_funcs);
+    supercompile_mir_function_with_program_options_with_const_eval(
+        func,
+        program_funcs,
+        parallel_residualize,
+        true,
+    )
+}
+
+/// Same as [`supercompile_mir_function_with_program_options`] with an explicit
+/// guard on interprocedural constant evaluation.  When `fold_constants` is
+/// false the driver does not inline calls into this function, so a call with
+/// literal arguments keeps executing its callee at run time.
+pub fn supercompile_mir_function_with_program_options_with_const_eval(
+    func: &MirFunction,
+    program_funcs: &[MirFunction],
+    parallel_residualize: bool,
+    fold_constants: bool,
+) -> (MirFunction, SupercompilerStats) {
+    let driver = SupercompilerDriver::new(func)
+        .with_program_functions(program_funcs)
+        .with_inlining(fold_constants)
+        .with_recurrence_solving(fold_constants);
     let budget = driver.config.max_inline_nodes;
     let mut tree = sc_timed!(ScPass::Driving, driver.run());
     let mut stats = tree.stats.clone();

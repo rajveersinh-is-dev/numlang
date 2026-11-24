@@ -584,6 +584,7 @@ fn compile_program_to_obj_bytes(
         }
         Backend::Llvm => {
             let mut mir = numlang::mir::lower::lower_program(typed_program);
+            mir.enforce_runtime_computation = true;
             if supercompile || mode != numlang::mir::supercompiler::SupercompileMode::Classic {
                 numlang::mir::supercompiler::supercompile_mir_program_with_cache(
                     &mut mir,
@@ -897,6 +898,11 @@ fn main() -> Result<()> {
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
 
+    // The compiler driver (not a direct library caller) owns the integrity
+    // policy: closed programs must keep their computation executable.
+    numlang::runtime_input::set_ast_runtime_computation_guard(true);
+    numlang::runtime_input::mark_compiler_driver();
+
     if cli.bench {
         std::env::set_var("NUMLANG_BENCH", "1");
     }
@@ -1114,6 +1120,7 @@ fn real_main() -> Result<()> {
 
     if cli.emit_supercompiled_mir {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
+        mir_program.enforce_runtime_computation = true;
         let opt_cache = if !cli.no_cache {
             Some(numlang::mir::supercompiler::SpecializationCache::open(
                 &cli.cache_dir,
@@ -1189,6 +1196,7 @@ fn real_main() -> Result<()> {
 
     if cli.supercompile_stats {
         let mut mir_program = numlang::mir::lower::lower_program(&typed_program);
+        mir_program.enforce_runtime_computation = true;
         let opt_cache = if !cli.no_cache {
             Some(numlang::mir::supercompiler::SpecializationCache::open(
                 &cli.cache_dir,
@@ -1212,6 +1220,7 @@ fn real_main() -> Result<()> {
     if cli.verify_equivalence {
         let orig_mir = numlang::mir::lower::lower_program(&typed_program);
         let mut sc_mir = orig_mir.clone();
+        sc_mir.enforce_runtime_computation = true;
         numlang::mir::supercompiler::supercompile_mir_program_with_mode(
             &mut sc_mir,
             effective_mode,
