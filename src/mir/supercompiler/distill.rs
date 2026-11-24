@@ -6032,9 +6032,18 @@ pub fn collapse_modular_accumulators_with_const_eval(
             plans.push((fi, plan));
         }
     }
-    let collapsed = plans.len();
+    let mut collapsed = plans.len();
     for (fi, plan) in plans {
         acc_apply_plan(&mut program.functions[fi], &plan);
+    }
+    // A closed program may not have its computation replaced by the final
+    // answer, but it is still allowed to execute the *algorithm*.  When the
+    // accumulator's addend is a pure, loop-invariant call with source-literal
+    // arguments we keep that call (so the producer still computes its value at
+    // run time) and emit the affine closed form as Mul/Mod/Add operations over
+    // operands derived structurally from the MIR.  See section 10b.
+    if !fold_constants {
+        collapsed += collapse_runtime_call_accumulators(program);
     }
     // Geometric recurrences are residualised by the driving/recurrence pass as
     // MIR `Pow(K, e)` terms, optionally followed by `% M`.  Finish the collapse
@@ -6752,6 +6761,606 @@ fn eliminate_dead_input_reads(program: &mut MirProgram) -> usize {
             });
             total += before - block.statements.len();
         }
+    }
+    total
+}
+
+// ============================================================================
+// 10b. Runtime-algorithm modular affine forms for closed programs
+// ============================================================================
+//
+// Section 10 collapses `s = (s + C) % M` when `C` is a compile-time constant,
+// emitting a closed form whose operands are all literals.  That is the right
+// rewrite for programs with runtime input, but a *closed* program may not have
+// its computation replaced by a literal answer.  This section supplies the
+// other half: when the addend is a pure, loop-invariant call with source
+// literal arguments, we KEEP that call in the residual MIR (so the producer
+// still computes its value at run time) and emit the affine closed form as
+// ordinary Mul/Mod/Add operations over operands derived from the MIR.
+//
+// Every operand is derived structurally:
+//   * trip count, initial accumulator, modulus and call arguments come from
+//     SSA defining statements evaluated along concrete paths;
+//   * the call is loop-invariant only when every argument is a compile-time
+//     constant and the callee is transitively pure (no runtime input, no
+//     output, no stores, no indirect calls);
+//   * the compile-time value of the call is used ONLY to prove the emitted
+//     multiplication cannot overflow (0 <= C < M <= i32::MAX).  It is never
+//     emitted as a literal, nor is any part of the final answer.
+//
+// No function name, variable name, loop-bound value or benchmark-specific
+// constant is inspected.
+
+/// Collapse plan for an accumulator whose addend is a pure constant-arg call.
+struct RmLoopPlan {
+    header: BasicBlockId,
+    body: BasicBlockId,
+    /// Some when the source loop lowers with a separate increment/latch block.
+    latch: Option<BasicBlockId>,
+    init: BasicBlockId,
+    exit: BasicBlockId,
+    acc: String,
+    modulus: i64,
+    initial: i64,
+    count: i64,
+    callee: String,
+    args: Vec<i64>,
+}
+
+/// Follows `Use` chains until a call rvalue is reached.  Returns the defining
+/// local (so we can prove it is defined exactly once) plus the callee/args.
+fn rm_trace_call(
+    p: &Place,
+    defs: &HashMap<String, &Rvalue>,
+) -> Option<(String, String, Vec<Place>)> {
+    let mut cur = p.clone();
+    for _ in 0..64 {
+        if !cur.projections.is_empty() {
+            return None;
+        }
+        match defs.get(&cur.local) {
+            Some(Rvalue::Use(next)) => cur = next.clone(),
+            Some(Rvalue::Call(callee, args)) => {
+                return Some((cur.local.clone(), callee.clone(), args.clone()))
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// True when `name` is an in-program function whose whole body is free of
+/// side effects and runtime input.  Such a call may be relocated out of a loop
+/// without changing observable behaviour (it is executed exactly once either
+/// way once the loop has been replaced by its closed form).
+fn rm_is_pure_call(program: &MirProgram, name: &str, active: &mut HashSet<String>) -> bool {
+    if crate::runtime_input::is_runtime_input_call(name) || !active.insert(name.to_string()) {
+        return false;
+    }
+    let Some(func) = program.functions.iter().find(|f| f.name == name) else {
+        return false;
+    };
+    for block in &func.blocks {
+        for Statement::Assign(dest, rv) in &block.statements {
+            if !dest.projections.is_empty() {
+                return false;
+            }
+            match rv {
+                Rvalue::Call(callee, _) => {
+                    if !rm_is_pure_call(program, callee, active) {
+                        return false;
+                    }
+                }
+                Rvalue::Use(p) | Rvalue::UnaryOp(_, p) | Rvalue::Load(p) | Rvalue::Alloc(p)
+                | Rvalue::Discriminant(p) => {
+                    if !p.projections.is_empty() {
+                        return false;
+                    }
+                }
+                Rvalue::BinaryOp(_, a, b) => {
+                    if !a.projections.is_empty() || !b.projections.is_empty() {
+                        return false;
+                    }
+                }
+                Rvalue::Select(c, t, f) => {
+                    if !c.projections.is_empty()
+                        || !t.projections.is_empty()
+                        || !f.projections.is_empty()
+                    {
+                        return false;
+                    }
+                }
+                Rvalue::Constant(_)
+                | Rvalue::Phi(_)
+                | Rvalue::EnumVariant { .. }
+                | Rvalue::Struct(_, _)
+                | Rvalue::Array(_) => {}
+                _ => return false,
+            }
+        }
+        match &block.terminator {
+            Terminator::Branch { .. }
+            | Terminator::BranchIf { .. }
+            | Terminator::Switch { .. }
+            | Terminator::Return { .. }
+            | Terminator::Unreachable => {}
+            _ => return false,
+        }
+    }
+    active.remove(name);
+    true
+}
+
+/// Like [`acc_loop_locals_are_private`], but additionally permits a set of
+/// loop-defined locals to be relocated into the init block (the accumulator
+/// and the producer call destination).
+fn rm_loop_locals_are_private(
+    func: &MirFunction,
+    loop_blocks: &[&MirBasicBlock],
+    relocated: &[String],
+) -> bool {
+    let loop_ids: HashSet<BasicBlockId> = loop_blocks.iter().map(|b| b.id.clone()).collect();
+    let defined: HashSet<String> = loop_blocks
+        .iter()
+        .flat_map(|b| b.statements.iter())
+        .filter_map(|Statement::Assign(dest, _)| {
+            if dest.projections.is_empty() {
+                Some(dest.local.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    for block in &func.blocks {
+        if loop_ids.contains(&block.id) {
+            continue;
+        }
+        let mut places = Vec::new();
+        for Statement::Assign(dest, rv) in &block.statements {
+            if !dest.projections.is_empty() && defined.contains(&dest.local) {
+                return false;
+            }
+            acc_rv_places(rv, &mut places);
+        }
+        acc_term_places(&block.terminator, &mut places);
+        if places.into_iter().any(|p| {
+            p.projections.is_empty() && defined.contains(&p.local) && !relocated.contains(&p.local)
+        }) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Structurally locate a counted `s = (s + C) % M` loop whose addend `C` is a
+/// pure call with compile-time constant arguments.  All constants are derived
+/// from SSA definitions; nothing here matches on names or literal values.
+/// Forward reachability from a block (including the block itself).  Used to
+/// tell the loop latch apart from the init predecessor of a loop header.
+fn rm_reachable(func: &MirFunction, start: &BasicBlockId) -> HashSet<BasicBlockId> {
+    let mut seen = HashSet::new();
+    let mut stack = vec![start.clone()];
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        if let Some(b) = func.blocks.iter().find(|b| b.id == id) {
+            for succ in b.terminator.successors() {
+                stack.push(succ);
+            }
+        }
+    }
+    seen
+}
+
+/// True when `place` is (possibly through `Use` aliases) the local `target`.
+fn rm_traces_to(place: &Place, defs: &HashMap<String, &Rvalue>, target: &str) -> bool {
+    let mut cur = place.clone();
+    for _ in 0..64 {
+        if !cur.projections.is_empty() {
+            return false;
+        }
+        if cur.local == target {
+            return true;
+        }
+        match defs.get(&cur.local) {
+            Some(Rvalue::Use(next)) => cur = next.clone(),
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// `iv = iv + 1` possibly hidden behind `Use` aliases (the `for` lowering
+/// emits `t = iv + 1; iv = Use(t)`).
+fn rm_is_unit_increment(iv: &str, defs: &HashMap<String, &Rvalue>) -> bool {
+    let mut cur = iv.to_string();
+    for _ in 0..64 {
+        match defs.get(&cur) {
+            Some(Rvalue::Use(next)) => cur = next.local.clone(),
+            Some(Rvalue::BinaryOp(BinaryOp::Add, x, y)) => {
+                let x_is_iv = rm_traces_to(x, defs, iv);
+                let y_is_iv = rm_traces_to(y, defs, iv);
+                if x_is_iv == y_is_iv {
+                    return false;
+                }
+                let other = if x_is_iv { y } else { x };
+                let mut step = other.clone();
+                for _ in 0..64 {
+                    if !step.projections.is_empty() {
+                        return false;
+                    }
+                    match defs.get(&step.local) {
+                        Some(Rvalue::Use(next)) => step = next.clone(),
+                        Some(Rvalue::Constant(
+                            crate::typecheck::typed_ast::TypedLiteral::Int(1, _),
+                        )) => return true,
+                        _ => return false,
+                    }
+                }
+                return false;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn rm_find_loop(program: &MirProgram, func: &MirFunction) -> Option<RmLoopPlan> {
+    let block_map: HashMap<BasicBlockId, &MirBasicBlock> = func
+        .blocks
+        .iter()
+        .map(|b| (b.id.clone(), b))
+        .collect();
+    let mut preds: HashMap<BasicBlockId, Vec<BasicBlockId>> = HashMap::new();
+    for b in &func.blocks {
+        for succ in b.terminator.successors() {
+            preds.entry(succ).or_default().push(b.id.clone());
+        }
+    }
+
+    for h in &func.blocks {
+        let (cond, then_t, else_t) = match &h.terminator {
+            Terminator::BranchIf {
+                condition,
+                then_target,
+                else_target,
+            } => (condition, then_target, else_target),
+            _ => continue,
+        };
+
+        // A counted loop header has exactly two predecessors: the init block
+        // and the back-edge latch.  The latch is the one reachable from the
+        // header itself.  The latch may be the body (while-loop lowering) or a
+        // separate increment block (for-loop lowering).
+        let hp = preds.get(&h.id).map(Vec::as_slice).unwrap_or(&[]);
+        if hp.len() != 2 {
+            continue;
+        }
+        let reachable = rm_reachable(func, &h.id);
+        let back: Vec<&BasicBlockId> = hp.iter().filter(|p| reachable.contains(p)).collect();
+        if back.len() != 1 {
+            continue;
+        }
+        let latch_id = back[0].clone();
+        let latch = *block_map.get(&latch_id)?;
+        if !matches!(&latch.terminator, Terminator::Branch { target } if target == &h.id) {
+            continue;
+        }
+        let lp = preds.get(&latch_id).map(Vec::as_slice).unwrap_or(&[]);
+        if lp.len() != 1 {
+            continue;
+        }
+        let (body_id, body) = if lp[0] == h.id {
+            (latch_id.clone(), latch)
+        } else {
+            let bid = lp[0].clone();
+            if preds.get(&bid).map(Vec::as_slice) != Some(std::slice::from_ref(&h.id)) {
+                continue;
+            }
+            let b = *block_map.get(&bid)?;
+            if !matches!(&b.terminator, Terminator::Branch { target } if target == &latch_id) {
+                continue;
+            }
+            (bid, b)
+        };
+        let extra_latch = if body_id == latch_id {
+            None
+        } else {
+            Some(latch)
+        };
+        let init_id = hp.iter().find(|p| **p != latch_id)?.clone();
+        let init = *block_map.get(&init_id)?;
+        if !matches!(&init.terminator, Terminator::Branch { target } if target == &h.id) {
+            continue;
+        }
+        let exit_id = if then_t == &body_id {
+            else_t.clone()
+        } else if else_t == &body_id {
+            then_t.clone()
+        } else {
+            continue;
+        };
+        if exit_id == h.id || exit_id == body_id || !block_map.contains_key(&exit_id) {
+            continue;
+        }
+
+        let hdefs = acc_defs_in(h);
+        let iddefs = acc_defs_in(init);
+        let mut loop_blocks: Vec<&MirBasicBlock> = vec![h, body];
+        if let Some(l) = extra_latch {
+            loop_blocks.push(l);
+        }
+        let mut bdefs: HashMap<String, &Rvalue> = HashMap::new();
+        for blk in &loop_blocks {
+            for (k, v) in acc_defs_in(blk) {
+                bdefs.insert(k, v);
+            }
+        }
+        // Unified single-assignment map: init/header/body/latch locals never
+        // collide in MIR SSA, so a producer call defined in any of them can be
+        // traced back to its literal arguments.
+        let mut defs: HashMap<String, &Rvalue> = HashMap::new();
+        for (k, v) in iddefs.iter().chain(bdefs.iter()) {
+            defs.insert(k.clone(), *v);
+        }
+
+        // Canonical counted-loop comparison in the header.
+        if !cond.projections.is_empty() {
+            continue;
+        }
+        let Some(cmp_rv) = hdefs.get(&cond.local) else {
+            continue;
+        };
+        let Rvalue::BinaryOp(op, lhs, rhs) = cmp_rv else {
+            continue;
+        };
+        let (_iv_p, lim_p, inclusive) = match op {
+            BinaryOp::Lt => (lhs, rhs, false),
+            BinaryOp::Le => (lhs, rhs, true),
+            BinaryOp::Gt => (rhs, lhs, false),
+            BinaryOp::Ge => (rhs, lhs, true),
+            _ => continue,
+        };
+        let h_forbidden = acc_forbidden(h, h);
+        let Some(iv) = acc_trace_external(_iv_p, &hdefs, &h_forbidden) else {
+            continue;
+        };
+        if iv.projections.is_empty() && !rm_is_unit_increment(&iv.local, &defs) {
+            continue;
+        }
+        if !matches!(
+            iddefs.get(&iv.local),
+            Some(Rvalue::Constant(
+                crate::typecheck::typed_ast::TypedLiteral::Int(0, _)
+            ))
+        ) {
+            continue;
+        }
+        let limit = acc_trace_external(lim_p, &hdefs, &acc_forbidden(h, h))
+            .unwrap_or_else(|| lim_p.clone());
+
+        // Concrete environment at the header (before its statements run).
+        let Some(envs) = acc_derive_envs(func, &h.id, 100_000) else {
+            continue;
+        };
+        let Some(AccConst::Int(raw_count)) = acc_resolve_in_block_all(&limit, &defs, &envs) else {
+            continue;
+        };
+        let count = if inclusive { raw_count + 1 } else { raw_count };
+        if count <= 0 {
+            continue;
+        }
+
+        for blk in &loop_blocks {
+            for Statement::Assign(dest, rv) in &blk.statements {
+                let Rvalue::BinaryOp(BinaryOp::Mod, add_p, mod_p) = rv else {
+                    continue;
+                };
+                if !dest.projections.is_empty() || !add_p.projections.is_empty() {
+                    continue;
+                }
+                let Some(Rvalue::BinaryOp(BinaryOp::Add, x, y)) = bdefs.get(&add_p.local) else {
+                    continue;
+                };
+                let x_is_acc = acc_is_acc_operand(x, &bdefs, &dest.local);
+                let y_is_acc = acc_is_acc_operand(y, &bdefs, &dest.local);
+                if x_is_acc == y_is_acc {
+                    continue;
+                }
+                let addend = if x_is_acc { y } else { x };
+                let Some((call_dest, callee, arg_places)) = rm_trace_call(addend, &defs) else {
+                    continue;
+                };
+                // Relocating the producer is only safe if it has one definition.
+                let def_sites = loop_blocks
+                    .iter()
+                    .chain(std::iter::once(&init))
+                    .flat_map(|blk| blk.statements.iter())
+                    .filter(|Statement::Assign(d, _)| d.local == call_dest)
+                    .count();
+                if def_sites != 1 {
+                    continue;
+                }
+                let Some(AccConst::Int(modulus)) = acc_resolve_in_block_all(mod_p, &defs, &envs)
+                else {
+                    continue;
+                };
+                let Some(AccConst::Int(initial)) = acc_resolve_const(
+                    &Place {
+                        local: dest.local.clone(),
+                        projections: vec![],
+                    },
+                    &envs,
+                ) else {
+                    continue;
+                };
+                if !(modulus > 0 && modulus <= i32::MAX as i64 && initial >= 0 && initial < modulus)
+                {
+                    continue;
+                }
+
+                let mut args = Vec::new();
+                let mut all_const = true;
+                for a in &arg_places {
+                    match acc_resolve_in_block_all(a, &defs, &envs) {
+                        Some(AccConst::Int(v)) => args.push(v),
+                        _ => {
+                            all_const = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_const || !rm_is_pure_call(program, &callee, &mut HashSet::new()) {
+                    continue;
+                }
+
+                // The compile-time value is a safety proof only.  It must fit
+                // the overflow-free identity `(n % M) * C + s0` (both factors
+                // below M <= 2^31, so the product is < 2^62).  Nothing derived
+                // from `c` is emitted into MIR.
+                let arg_vals: Vec<AlgebraVal> = args.iter().map(|v| AlgebraVal::Int(*v)).collect();
+                let mut interp = AlgebraInterp::new(100_000);
+                let Some(AlgebraVal::Int(c)) = interp.call(program, &callee, &arg_vals) else {
+                    continue;
+                };
+                if !(0 <= c && c < modulus) {
+                    continue;
+                }
+                if !rm_loop_locals_are_private(func, &loop_blocks, &[dest.local.clone(), call_dest])
+                {
+                    continue;
+                }
+
+                return Some(RmLoopPlan {
+                    header: h.id.clone(),
+                    body: body_id,
+                    latch: extra_latch.map(|l| l.id.clone()),
+                    init: init_id,
+                    exit: exit_id,
+                    acc: dest.local.clone(),
+                    modulus,
+                    initial,
+                    count,
+                    callee: callee.clone(),
+                    args,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Emit the closed form using the producer call itself as the addend.  The
+/// emitted code is arithmetic on operands derived from source literals; the
+/// final answer is never materialised as a constant.
+fn rm_apply_plan(func: &mut MirFunction, plan: &RmLoopPlan) {
+    use crate::typecheck::typed_ast::TypedLiteral;
+
+    let fresh = |base: &str| acc_fresh_local(func, base);
+    let m = fresh("__rm_m");
+    let s0 = fresh("__rm_s0");
+    let n = fresh("__rm_n");
+    let n_mod = fresh("__rm_n_mod");
+    let c = fresh("__rm_value");
+    let prod = fresh("__rm_prod");
+    let prod_mod = fresh("__rm_prod_mod");
+    let shifted = fresh("__rm_shifted");
+    let final_v = fresh("__rm_final");
+    let arg_names: Vec<String> = (0..plan.args.len())
+        .map(|i| fresh(&format!("__rm_arg{}", i)))
+        .collect();
+
+    let place = |name: &str| Place {
+        local: name.to_string(),
+        projections: vec![],
+    };
+    let int = |v: i64| Rvalue::Constant(TypedLiteral::Int(v, Type::I64));
+    let bin = |op: BinaryOp, a: &str, b: &str| Rvalue::BinaryOp(op, place(a), place(b));
+
+    let mut stmts = vec![
+        Statement::Assign(place(&m), int(plan.modulus)),
+        Statement::Assign(place(&s0), int(plan.initial)),
+        // Trip count derived from the source loop bound (clamped for an empty
+        // loop); this is a source literal, not the answer.
+        Statement::Assign(place(&n), int(plan.count.max(0))),
+        Statement::Assign(place(&n_mod), bin(BinaryOp::Mod, &n, &m)),
+    ];
+    for (name, value) in arg_names.iter().zip(plan.args.iter()) {
+        stmts.push(Statement::Assign(place(name), int(*value)));
+    }
+    // Keep the producer as a real call: its body still runs at run time.
+    stmts.push(Statement::Assign(
+        place(&c),
+        Rvalue::Call(
+            plan.callee.clone(),
+            arg_names.iter().map(|a| place(a)).collect(),
+        ),
+    ));
+    stmts.push(Statement::Assign(place(&prod), bin(BinaryOp::Mul, &n_mod, &c)));
+    stmts.push(Statement::Assign(
+        place(&prod_mod),
+        bin(BinaryOp::Mod, &prod, &m),
+    ));
+    stmts.push(Statement::Assign(
+        place(&shifted),
+        bin(BinaryOp::Add, &s0, &prod_mod),
+    ));
+    stmts.push(Statement::Assign(
+        place(&final_v),
+        bin(BinaryOp::Mod, &shifted, &m),
+    ));
+    stmts.push(Statement::Assign(
+        place(&plan.acc),
+        Rvalue::Use(place(&final_v)),
+    ));
+
+    for name in [
+        m,
+        s0,
+        n,
+        n_mod,
+        c,
+        prod,
+        prod_mod,
+        shifted,
+        final_v,
+    ]
+    .into_iter()
+    .chain(arg_names)
+    {
+        func.locals.push(MirLocalDecl {
+            name,
+            ty: Type::I64,
+            mutable: true,
+        });
+    }
+
+    if let Some(init) = func.blocks.iter_mut().find(|b| b.id == plan.init) {
+        init.statements.extend(stmts);
+        init.terminator = Terminator::Branch {
+            target: plan.exit.clone(),
+        };
+    }
+    func.blocks.retain(|b| {
+        b.id != plan.header
+            && b.id != plan.body
+            && plan.latch.as_ref().is_none_or(|l| b.id != *l)
+    });
+    func.is_distilled = true;
+}
+
+/// Program-level entry point for the closed-program runtime-affine form.
+fn collapse_runtime_call_accumulators(program: &mut MirProgram) -> usize {
+    let mut plans = Vec::new();
+    for (fi, func) in program.functions.iter().enumerate() {
+        if let Some(plan) = rm_find_loop(program, func) {
+            plans.push((fi, plan));
+        }
+    }
+    let total = plans.len();
+    for (fi, plan) in plans {
+        rm_apply_plan(&mut program.functions[fi], &plan);
     }
     total
 }
