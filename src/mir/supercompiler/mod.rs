@@ -34,7 +34,9 @@ pub use cache::{
     DependencyGraph, FeatureFlags, SpecializationCache,
 };
 pub use compact::{compact_mir_function, compact_process_tree};
-pub use distill::{fold_constant_computation_prefix, DistillationEngine};
+pub use distill::{
+    deforest_scalar_stream_dfa, fold_constant_computation_prefix, DistillationEngine,
+};
 pub use drive::{
     ProcessEdge, ProcessNode, ProcessNodeId, ProcessTree, RecurrenceResult, SupercompilerDriver,
     SupercompilerStats, TerminationWitness, WhistleFiring, WhistleKind,
@@ -296,6 +298,14 @@ pub fn supercompile_mir_program_with_cache(
             run_pass1_fusion(func);
         }
     });
+
+    // Pass 1.1: generate-and-consume deforestation of scalar-generated
+    // algebraic streams consumed by mutually recursive DFAs.  This removes the
+    // per-element box allocation and the boxed-list walk by fusing the producer
+    // into a scalar loop that carries state and accumulator.  The transition
+    // semantics and the producer arithmetic are copied from the original MIR,
+    // so the result still computes at execution time.
+    let _sdf_fusions = deforest_scalar_stream_dfa(program);
 
     // Pass 1.2: Constant-computation prefix folding.
     // Pure, fixed-trip-count computations over local arrays (and scalars) whose

@@ -7427,3 +7427,1083 @@ fn collapse_runtime_call_accumulators(program: &mut MirProgram) -> usize {
     }
     total
 }
+
+// ============================================================================
+// 12. Scalar stream-DFA deforestation (generate-and-consume)
+// ============================================================================
+//
+// A frequent idiom builds a finite algebraic stream with a self-recursive
+// producer (`Cons(head, box(producer(n - 1)))`, terminating in a nullary
+// variant) and immediately walks it with a family of mutually tail-recursive
+// consumers that switch on the head and dispatch to another state through
+// `deref(tail)`.  Materialising the stream allocates one boxed node per
+// element and the walk performs a call plus a heap load per node.
+//
+// This pass recognises that shape *structurally*: it never inspects a function
+// name, a local name or a particular literal value.  It synthesises one
+// first-order loop that carries the remaining producer argument, the current
+// consumer state (as an integer tag) and an accumulator.  The producer's head
+// arithmetic and the consumers' transition tables are copied straight out of
+// the original MIR, so the fused function still performs the derivation at run
+// time with loops, branches and arithmetic -- nothing is folded to a literal.
+
+#[derive(Clone)]
+struct ScalarStreamProducer {
+    name: String,
+    enum_name: String,
+    nil_tag: i64,
+    cons_tag: i64,
+    param: String,
+    locals: Vec<MirLocalDecl>,
+    cond_stmts: Vec<Statement>,
+    cond_place: Place,
+    body_stmts: Vec<Statement>,
+    head_place: Place,
+    next_place: Place,
+}
+
+#[derive(Clone)]
+struct DfaTransition {
+    /// `None` denotes the switch's default arm.
+    head: Option<i64>,
+    /// `None` denotes a terminal arm (a constant return, no tail call).
+    target: Option<String>,
+    delta: i64,
+    terminal_value: i64,
+}
+
+#[derive(Clone)]
+struct DfaState {
+    name: String,
+    nil_value: i64,
+    transitions: Vec<DfaTransition>,
+}
+
+fn sdf_block<'a>(func: &'a MirFunction, id: &BasicBlockId) -> Option<&'a MirBasicBlock> {
+    func.blocks.iter().find(|b| &b.id == id)
+}
+
+fn sdf_plain(place: &Place) -> Option<&str> {
+    if place.projections.is_empty() {
+        Some(&place.local)
+    } else {
+        None
+    }
+}
+
+fn sdf_pure(rv: &Rvalue) -> bool {
+    matches!(
+        rv,
+        Rvalue::Constant(_)
+            | Rvalue::Use(_)
+            | Rvalue::BinaryOp(..)
+            | Rvalue::UnaryOp(..)
+            | Rvalue::Select(..)
+            | Rvalue::Phi(_)
+    )
+}
+
+fn sdf_const(rv: &Rvalue) -> Option<i64> {
+    match rv {
+        Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, _)) => Some(*v),
+        _ => None,
+    }
+}
+
+fn sdf_rv_places(rv: &Rvalue) -> Vec<&Place> {
+    match rv {
+        Rvalue::Use(p)
+        | Rvalue::Discriminant(p)
+        | Rvalue::Alloc(p)
+        | Rvalue::Load(p)
+        | Rvalue::UnaryOp(_, p) => vec![p],
+        Rvalue::BinaryOp(_, a, b) => vec![a, b],
+        Rvalue::Select(c, t, e) => vec![c, t, e],
+        Rvalue::Call(_, args) | Rvalue::Array(args) => args.iter().collect(),
+        Rvalue::Struct(_, fields) => fields.iter().map(|(_, p)| p).collect(),
+        Rvalue::EnumVariant { fields, .. }
+        | Rvalue::ClosureAlloc {
+            captured: fields, ..
+        } => fields.iter().collect(),
+        Rvalue::Phi(incoming) => incoming.iter().map(|(_, p)| p).collect(),
+        Rvalue::FnPtr(_) | Rvalue::Constant(_) | Rvalue::Thunk { .. } => vec![],
+    }
+}
+
+fn sdf_rename_place(place: &mut Place, from: &str, to: &str) {
+    if place.local == from {
+        place.local = to.to_string();
+    }
+    for proj in &mut place.projections {
+        if let Projection::Index(idx) = proj {
+            sdf_rename_place(idx, from, to);
+        }
+    }
+}
+
+fn sdf_rename_stmt(stmt: &mut Statement, from: &str, to: &str) {
+    let Statement::Assign(dest, rv) = stmt;
+    sdf_rename_place(dest, from, to);
+    match rv {
+        Rvalue::Use(p)
+        | Rvalue::Discriminant(p)
+        | Rvalue::Alloc(p)
+        | Rvalue::Load(p)
+        | Rvalue::UnaryOp(_, p) => sdf_rename_place(p, from, to),
+        Rvalue::BinaryOp(_, a, b) => {
+            sdf_rename_place(a, from, to);
+            sdf_rename_place(b, from, to);
+        }
+        Rvalue::Select(c, t, e) => {
+            sdf_rename_place(c, from, to);
+            sdf_rename_place(t, from, to);
+            sdf_rename_place(e, from, to);
+        }
+        Rvalue::Call(_, args) | Rvalue::Array(args) => {
+            for p in args.iter_mut() {
+                sdf_rename_place(p, from, to);
+            }
+        }
+        Rvalue::Struct(_, fields) => {
+            for (_, p) in fields.iter_mut() {
+                sdf_rename_place(p, from, to);
+            }
+        }
+        Rvalue::EnumVariant { fields, .. }
+        | Rvalue::ClosureAlloc {
+            captured: fields, ..
+        } => {
+            for p in fields.iter_mut() {
+                sdf_rename_place(p, from, to);
+            }
+        }
+        Rvalue::Phi(incoming) => {
+            for (_, p) in incoming.iter_mut() {
+                sdf_rename_place(p, from, to);
+            }
+        }
+        Rvalue::Thunk { env, .. } => {
+            for name in env.iter_mut() {
+                if name == from {
+                    *name = to.to_string();
+                }
+            }
+        }
+        Rvalue::FnPtr(_) | Rvalue::Constant(_) => {}
+    }
+}
+
+fn sdf_recognize_producer(func: &MirFunction) -> Option<ScalarStreamProducer> {
+    if func.params.len() != 1 || !func.params[0].1.is_integer() {
+        return None;
+    }
+    let param = func.params[0].0.clone();
+    let entry = func.blocks.first()?;
+    let (cond_place, base_id, cons_id) = match &entry.terminator {
+        Terminator::BranchIf {
+            condition,
+            then_target,
+            else_target,
+        } => (condition.clone(), then_target.clone(), else_target.clone()),
+        _ => return None,
+    };
+    if entry
+        .statements
+        .iter()
+        .any(|Statement::Assign(_, rv)| !sdf_pure(rv))
+    {
+        return None;
+    }
+    let base = sdf_block(func, &base_id)?;
+    let cons = sdf_block(func, &cons_id)?;
+
+    // Base arm: return a nullary constructor of some enum.
+    let (enum_name, nil_tag) = {
+        let ret = match &base.terminator {
+            Terminator::Return { value: Some(p) } => p.local.clone(),
+            _ => return None,
+        };
+        let rv = base
+            .statements
+            .iter()
+            .rev()
+            .find(|Statement::Assign(d, _)| d.local == ret)
+            .map(|Statement::Assign(_, rv)| rv)?;
+        let Rvalue::EnumVariant {
+            enum_name,
+            tag,
+            fields,
+            ..
+        } = rv
+        else {
+            return None;
+        };
+        if !fields.is_empty() {
+            return None;
+        }
+        (enum_name.clone(), *tag)
+    };
+
+    // Recursive arm: return a two-field constructor of the same enum whose
+    // second field is a boxed value.
+    let (cons_tag, head_place, boxed_place) = {
+        let ret = match &cons.terminator {
+            Terminator::Return { value: Some(p) } => p.local.clone(),
+            _ => return None,
+        };
+        let rv = cons
+            .statements
+            .iter()
+            .rev()
+            .find(|Statement::Assign(d, _)| d.local == ret)
+            .map(|Statement::Assign(_, rv)| rv)?;
+        let Rvalue::EnumVariant {
+            enum_name: en,
+            tag,
+            fields,
+            ..
+        } = rv
+        else {
+            return None;
+        };
+        if en != &enum_name || fields.len() != 2 {
+            return None;
+        }
+        let boxed_ty = func
+            .locals
+            .iter()
+            .find(|l| l.name == fields[1].local)
+            .map(|l| &l.ty);
+        if !matches!(boxed_ty, Some(Type::Box(_))) {
+            return None;
+        }
+        (*tag, fields[0].clone(), fields[1].clone())
+    };
+
+    // Locate the self call, the alloc that boxes its result and the enum build.
+    let (call_idx, call_dest, next_place) = {
+        let mut found = None;
+        for (i, stmt) in cons.statements.iter().enumerate() {
+            if let Statement::Assign(d, Rvalue::Call(callee, args)) = stmt {
+                if callee == &func.name && args.len() == 1 {
+                    found = Some((i, d.local.clone(), args[0].clone()));
+                    break;
+                }
+            }
+        }
+        found?
+    };
+    let alloc_idx = cons
+        .statements
+        .iter()
+        .enumerate()
+        .find(|(i, stmt)| {
+            *i != call_idx
+                && matches!(
+                    stmt,
+                    Statement::Assign(d, Rvalue::Alloc(p))
+                        if d.local == boxed_place.local && p.local == call_dest
+                )
+        })
+        .map(|(i, _)| i)?;
+
+    // Everything retained in the loop body must be pure scalar arithmetic and
+    // must not depend on the recursive call or on the freshly allocated box.
+    let mut body_stmts = Vec::new();
+    for (i, stmt) in cons.statements.iter().enumerate() {
+        if i == call_idx || i == alloc_idx {
+            continue;
+        }
+        let Statement::Assign(dest, rv) = stmt;
+        if matches!(rv, Rvalue::EnumVariant { .. }) {
+            continue;
+        }
+        if !sdf_pure(rv) || !dest.projections.is_empty() {
+            return None;
+        }
+        if sdf_rv_places(rv)
+            .iter()
+            .any(|p| p.local == call_dest || p.local == boxed_place.local)
+        {
+            return None;
+        }
+        body_stmts.push(stmt.clone());
+    }
+
+    let defines = |name: &str| {
+        name == param
+            || body_stmts
+                .iter()
+                .any(|Statement::Assign(d, _)| d.local == name)
+    };
+    if sdf_plain(&head_place).is_none()
+        || sdf_plain(&next_place).is_none()
+        || sdf_plain(&cond_place).is_none()
+        || !defines(sdf_plain(&head_place)?)
+        || !defines(sdf_plain(&next_place)?)
+        || !entry
+            .statements
+            .iter()
+            .any(|Statement::Assign(d, _)| d.local == cond_place.local)
+    {
+        return None;
+    }
+
+    Some(ScalarStreamProducer {
+        name: func.name.clone(),
+        enum_name,
+        nil_tag: nil_tag as i64,
+        cons_tag: cons_tag as i64,
+        param,
+        locals: func.locals.clone(),
+        cond_stmts: entry.statements.clone(),
+        cond_place,
+        body_stmts,
+        head_place,
+        next_place,
+    })
+}
+
+fn sdf_linear_path(func: &MirFunction, start: &BasicBlockId) -> Option<(Vec<Statement>, String)> {
+    let mut stmts = Vec::new();
+    let mut id = start.clone();
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(id.clone()) {
+            return None;
+        }
+        let block = sdf_block(func, &id)?;
+        stmts.extend(block.statements.iter().cloned());
+        match &block.terminator {
+            Terminator::Branch { target } => id = target.clone(),
+            Terminator::Return {
+                value: Some(place),
+            } => return Some((stmts, place.local.clone())),
+            _ => return None,
+        }
+    }
+}
+
+fn sdf_place_const(stmts: &[Statement], place: &Place) -> Option<i64> {
+    if !place.projections.is_empty() {
+        return None;
+    }
+    stmts
+        .iter()
+        .rev()
+        .find(|Statement::Assign(d, _)| d.local == place.local)
+        .and_then(|Statement::Assign(_, rv)| sdf_const(rv))
+}
+
+/// Analyses one arm of a consumer's head switch.  Returns the tail-call target
+/// (or `None` for a terminal arm) and the constant added to the recursive
+/// result on the way back up.
+fn sdf_analyze_arm(
+    func: &MirFunction,
+    start: &BasicBlockId,
+    tail_local: &str,
+) -> Option<(Option<String>, i64)> {
+    let (stmts, ret_local) = sdf_linear_path(func, start)?;
+    let tail_used = stmts.iter().any(|Statement::Assign(_, rv)| {
+        sdf_rv_places(rv)
+            .iter()
+            .any(|p| p.local == tail_local || p.local == ret_local)
+    });
+    if !tail_used {
+        return None;
+    }
+    let call = stmts.iter().enumerate().find_map(|(i, s)| {
+        if let Statement::Assign(d, Rvalue::Call(callee, args)) = s {
+            if args.len() == 1 {
+                return Some((i, d.local.clone(), callee.clone()));
+            }
+        }
+        let _ = i;
+        None
+    });
+    let ret_rv = stmts
+        .iter()
+        .rev()
+        .find(|Statement::Assign(d, _)| d.local == ret_local)
+        .map(|Statement::Assign(_, rv)| rv);
+    match (call, ret_rv) {
+        (Some((_, call_dest, callee)), Some(rv)) => {
+            let delta = match rv {
+                // The recursive call's result is returned directly.
+                Rvalue::Call(..) if call_dest == ret_local => 0,
+                Rvalue::Use(p) if p.local == call_dest => 0,
+                Rvalue::BinaryOp(BinaryOp::Add, a, b) if a.local == call_dest => {
+                    sdf_place_const(&stmts, b)?
+                }
+                Rvalue::BinaryOp(BinaryOp::Add, a, b) if b.local == call_dest => {
+                    sdf_place_const(&stmts, a)?
+                }
+                _ => return None,
+            };
+            Some((Some(callee), delta))
+        }
+        (None, Some(rv)) => Some((None, sdf_const(rv)?)),
+        _ => None,
+    }
+}
+
+fn sdf_recognize_consumer(
+    func: &MirFunction,
+    enum_name: &str,
+    nil_tag: i64,
+    cons_tag: i64,
+) -> Option<DfaState> {
+    if func.params.len() != 1
+        || func.return_ty != Type::I64
+        || func.params[0].1 != Type::Enum(enum_name.to_string())
+    {
+        return None;
+    }
+    let entry = func.blocks.first()?;
+    let (disc_place, nil_bb, cons_bb) = match &entry.terminator {
+        Terminator::Switch {
+            value, targets, ..
+        } => {
+            let n = targets.iter().find(|(t, _)| *t == nil_tag)?.1.clone();
+            let c = targets.iter().find(|(t, _)| *t == cons_tag)?.1.clone();
+            (value.clone(), n, c)
+        }
+        _ => return None,
+    };
+    // The discriminant must ultimately come from the enum-typed parameter.
+    let mut cur = disc_place.local.clone();
+    let mut saw_discriminant = false;
+    for _ in 0..func.locals.len() + 4 {
+        if cur == func.params[0].0 {
+            saw_discriminant = true;
+            break;
+        }
+        let def = func.blocks.iter().flat_map(|b| b.statements.iter()).find(
+            |Statement::Assign(d, _)| d.local == cur,
+        );
+        match def {
+            Some(Statement::Assign(_, Rvalue::Discriminant(p))) => {
+                if p.local == func.params[0].0 {
+                    saw_discriminant = true;
+                    break;
+                }
+                cur = p.local.clone();
+            }
+            Some(Statement::Assign(_, Rvalue::Use(p))) => cur = p.local.clone(),
+            _ => break,
+        }
+    }
+    if !saw_discriminant {
+        return None;
+    }
+
+    let (nil_stmts, nil_ret) = sdf_linear_path(func, &nil_bb)?;
+    let nil_value = sdf_place_const(&nil_stmts, &Place {
+        local: nil_ret,
+        projections: vec![],
+    })?;
+
+    let cons_block = sdf_block(func, &cons_bb)?;
+    let mut head_local = None;
+    let mut tail_local = None;
+    for Statement::Assign(d, rv) in &cons_block.statements {
+        if let Rvalue::Use(p) = rv {
+            if p.projections.len() == 1 && matches!(&p.projections[0], Projection::Payload(0)) {
+                head_local = Some(d.local.clone());
+            }
+            if p.projections.len() == 1 && matches!(&p.projections[0], Projection::Payload(1)) {
+                tail_local = Some(d.local.clone());
+            }
+        }
+    }
+    let head_local = head_local?;
+    let tail_local = tail_local?;
+    let (head_value, head_targets, default_target) = match &cons_block.terminator {
+        Terminator::Switch {
+            value,
+            targets,
+            default,
+        } => (value.clone(), targets.clone(), default.clone()),
+        _ => return None,
+    };
+    // Head switch must discriminate the head payload (possibly via a copy).
+    let mut cur = head_value.local.clone();
+    let mut saw_head = cur == head_local;
+    for _ in 0..func.locals.len() + 4 {
+        if cur == head_local {
+            saw_head = true;
+            break;
+        }
+        let def = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .find(|Statement::Assign(d, _)| d.local == cur);
+        match def {
+            Some(Statement::Assign(_, Rvalue::Use(p))) => cur = p.local.clone(),
+            _ => break,
+        }
+    }
+    if !saw_head {
+        return None;
+    }
+
+    let mut transitions = Vec::new();
+    for (value, arm) in &head_targets {
+        let (target, delta) = sdf_analyze_arm(func, arm, &tail_local)?;
+        transitions.push(DfaTransition {
+            head: Some(*value),
+            target,
+            delta,
+            terminal_value: 0,
+        });
+    }
+    let (target, delta) = sdf_analyze_arm(func, &default_target, &tail_local)?;
+    transitions.push(DfaTransition {
+        head: None,
+        target,
+        delta,
+        terminal_value: 0,
+    });
+
+    Some(DfaState {
+        name: func.name.clone(),
+        nil_value,
+        transitions,
+    })
+}
+
+fn sdf_discover_states(
+    program: &MirProgram,
+    initial: &str,
+    enum_name: &str,
+    nil_tag: i64,
+    cons_tag: i64,
+) -> Option<(Vec<DfaState>, HashMap<String, i64>)> {
+    let mut states: Vec<DfaState> = Vec::new();
+    let mut tags: HashMap<String, i64> = HashMap::new();
+    let mut queue = vec![initial.to_string()];
+    while let Some(name) = queue.pop() {
+        if tags.contains_key(&name) {
+            continue;
+        }
+        let func = program.functions.iter().find(|f| f.name == name)?;
+        let state = sdf_recognize_consumer(func, enum_name, nil_tag, cons_tag)?;
+        let tag = states.len() as i64;
+        for transition in &state.transitions {
+            if let Some(ref target) = transition.target {
+                if !tags.contains_key(target) {
+                    queue.push(target.clone());
+                }
+            }
+        }
+        tags.insert(name, tag);
+        states.push(state);
+    }
+    Some((states, tags))
+}
+
+fn sdf_build_function(
+    producer: &ScalarStreamProducer,
+    states: &[DfaState],
+    tags: &HashMap<String, i64>,
+    name: &str,
+) -> MirFunction {
+    let arg_n = "__sdf_arg_n";
+    let arg_state = "__sdf_arg_state";
+    let n_local = "__sdf_n";
+    let state_local = "__sdf_state";
+    let acc_local = "__sdf_acc";
+    let ret_local = "__sdf_ret";
+
+    let mut locals = producer.locals.clone();
+    for (local, ty) in [
+        (arg_n, Type::I64),
+        (arg_state, Type::I64),
+        (n_local, Type::I64),
+        (state_local, Type::I64),
+        (acc_local, Type::I64),
+        (ret_local, Type::I64),
+    ] {
+        if !locals.iter().any(|l| l.name == local) {
+            locals.push(MirLocalDecl {
+                name: local.to_string(),
+                ty,
+                mutable: true,
+            });
+        }
+    }
+
+    let place = |name: &str| Place {
+        local: name.to_string(),
+        projections: vec![],
+    };
+    let int = |v: i64| Rvalue::Constant(crate::typecheck::typed_ast::TypedLiteral::Int(v, Type::I64));
+    let assign = |name: &str, rv: Rvalue| Statement::Assign(place(name), rv);
+
+    let mut cond_stmts = producer.cond_stmts.clone();
+    for stmt in &mut cond_stmts {
+        sdf_rename_stmt(stmt, &producer.param, n_local);
+    }
+    let mut body_stmts = producer.body_stmts.clone();
+    for stmt in &mut body_stmts {
+        sdf_rename_stmt(stmt, &producer.param, n_local);
+    }
+    let mut head_place = producer.head_place.clone();
+    let mut next_place = producer.next_place.clone();
+    sdf_rename_place(&mut head_place, &producer.param, n_local);
+    sdf_rename_place(&mut next_place, &producer.param, n_local);
+
+    // Fixed low block ids: init, header, body, exit, latch.  All other blocks
+    // are allocated from `next_id` as they are built.
+    let init_id = BasicBlockId(0);
+    let header_id = BasicBlockId(1);
+    let body_id = BasicBlockId(2);
+    let exit_id = BasicBlockId(3);
+    let latch_id = BasicBlockId(4);
+    let mut next_id = 5usize;
+    let fresh_id = |next: &mut usize| {
+        let id = BasicBlockId(*next);
+        *next += 1;
+        id
+    };
+
+    let mut blocks = Vec::new();
+
+    // Entry: copy the scalar arguments into mutable loop locals and zero the
+    // accumulator.  The state tag is a plain integer, not a heap closure.
+    blocks.push(MirBasicBlock {
+        id: init_id.clone(),
+        arguments: vec![],
+        statements: vec![
+            assign(n_local, Rvalue::Use(place(arg_n))),
+            assign(state_local, Rvalue::Use(place(arg_state))),
+            assign(acc_local, int(0)),
+        ],
+        terminator: Terminator::Branch {
+            target: header_id.clone(),
+        },
+    });
+
+    // Header: the producer's own termination test, copied verbatim.  The
+    // `then` arm (nullary variant) exits; the `else` arm builds one element.
+    blocks.push(MirBasicBlock {
+        id: header_id.clone(),
+        arguments: vec![],
+        statements: cond_stmts,
+        terminator: Terminator::BranchIf {
+            condition: producer.cond_place.clone(),
+            then_target: exit_id.clone(),
+            else_target: body_id.clone(),
+        },
+    });
+
+    // Dispatch to the state-specific head switch.
+    let unreachable_id = fresh_id(&mut next_id);
+    let mut state_targets = Vec::new();
+    let mut transition_blocks = Vec::new();
+    for state in states {
+        let dispatch_id = fresh_id(&mut next_id);
+        let mut head_targets = Vec::new();
+        let mut default_id: Option<BasicBlockId> = None;
+        for transition in &state.transitions {
+            let trans_id = fresh_id(&mut next_id);
+            let mut stmts = Vec::new();
+            if let Some(target) = &transition.target {
+                if transition.delta != 0 {
+                    stmts.push(Statement::Assign(
+                        place(acc_local),
+                        Rvalue::BinaryOp(
+                            BinaryOp::Add,
+                            place(acc_local),
+                            place(&format!("__sdf_c_{}", trans_id.0)),
+                        ),
+                    ));
+                    // Materialise the delta constant just before the add.  A
+                    // fresh local keeps every Rvalue operand a Place, matching
+                    // the lowering convention used by the rest of the MIR.
+                    let delta_local = format!("__sdf_c_{}", trans_id.0);
+                    if !locals.iter().any(|l| l.name == delta_local) {
+                        locals.push(MirLocalDecl {
+                            name: delta_local.clone(),
+                            ty: Type::I64,
+                            mutable: true,
+                        });
+                    }
+                    stmts.insert(
+                        0,
+                        assign(&delta_local, int(transition.delta)),
+                    );
+                }
+                let target_tag = tags.get(target).copied().unwrap_or(0);
+                let tag_local = format!("__sdf_t_{}", trans_id.0);
+                if !locals.iter().any(|l| l.name == tag_local) {
+                    locals.push(MirLocalDecl {
+                        name: tag_local.clone(),
+                        ty: Type::I64,
+                        mutable: true,
+                    });
+                }
+                stmts.push(assign(&tag_local, int(target_tag)));
+                stmts.push(Statement::Assign(
+                    place(state_local),
+                    Rvalue::Use(place(&tag_local)),
+                ));
+                transition_blocks.push(MirBasicBlock {
+                    id: trans_id.clone(),
+                    arguments: vec![],
+                    statements: stmts,
+                    terminator: Terminator::Branch {
+                        target: latch_id.clone(),
+                    },
+                });
+            } else {
+                let val_local = format!("__sdf_v_{}", trans_id.0);
+                if !locals.iter().any(|l| l.name == val_local) {
+                    locals.push(MirLocalDecl {
+                        name: val_local.clone(),
+                        ty: Type::I64,
+                        mutable: true,
+                    });
+                }
+                stmts.push(assign(&val_local, int(transition.terminal_value)));
+                stmts.push(Statement::Assign(
+                    place(ret_local),
+                    Rvalue::BinaryOp(BinaryOp::Add, place(acc_local), place(&val_local)),
+                ));
+                transition_blocks.push(MirBasicBlock {
+                    id: trans_id.clone(),
+                    arguments: vec![],
+                    statements: stmts,
+                    terminator: Terminator::Return {
+                        value: Some(place(ret_local)),
+                    },
+                });
+            }
+            match transition.head {
+                Some(value) => head_targets.push((value, trans_id)),
+                None => default_id = Some(trans_id),
+            }
+        }
+        let default_id = default_id.unwrap_or_else(|| {
+            // A consumer with no explicit default arm still needs a valid
+            // successor; route impossible heads to the shared unreachable block.
+            unreachable_id.clone()
+        });
+        state_targets.push((tags.get(&state.name).copied().unwrap_or(0), dispatch_id.clone()));
+        blocks.push(MirBasicBlock {
+            id: dispatch_id,
+            arguments: vec![],
+            statements: vec![],
+            terminator: Terminator::Switch {
+                value: head_place.clone(),
+                targets: head_targets,
+                default: default_id,
+            },
+        });
+    }
+    blocks.extend(transition_blocks);
+
+    // Body: the producer's head arithmetic, then dispatch on the scalar state.
+    blocks.push(MirBasicBlock {
+        id: body_id.clone(),
+        arguments: vec![],
+        statements: body_stmts,
+        terminator: Terminator::Switch {
+            value: place(state_local),
+            targets: state_targets,
+            default: unreachable_id.clone(),
+        },
+    });
+
+    // Latch: advance the producer's scalar argument and loop.
+    blocks.push(MirBasicBlock {
+        id: latch_id,
+        arguments: vec![],
+        statements: vec![Statement::Assign(
+            place(n_local),
+            Rvalue::Use(next_place),
+        )],
+        terminator: Terminator::Branch {
+            target: header_id,
+        },
+    });
+
+    // Exit: add the nullary arm's value for the final state.
+    let mut exit_targets = Vec::new();
+    for state in states {
+        let exit_state_id = fresh_id(&mut next_id);
+        let val_local = format!("__sdf_nil_{}", exit_state_id.0);
+        if !locals.iter().any(|l| l.name == val_local) {
+            locals.push(MirLocalDecl {
+                name: val_local.clone(),
+                ty: Type::I64,
+                mutable: true,
+            });
+        }
+        blocks.push(MirBasicBlock {
+            id: exit_state_id.clone(),
+            arguments: vec![],
+            statements: vec![
+                assign(&val_local, int(state.nil_value)),
+                Statement::Assign(
+                    place(ret_local),
+                    Rvalue::BinaryOp(BinaryOp::Add, place(acc_local), place(&val_local)),
+                ),
+            ],
+            terminator: Terminator::Return {
+                value: Some(place(ret_local)),
+            },
+        });
+        exit_targets.push((tags.get(&state.name).copied().unwrap_or(0), exit_state_id));
+    }
+    blocks.push(MirBasicBlock {
+        id: exit_id,
+        arguments: vec![],
+        statements: vec![],
+        terminator: Terminator::Switch {
+            value: place(state_local),
+            targets: exit_targets,
+            default: unreachable_id.clone(),
+        },
+    });
+    blocks.push(MirBasicBlock {
+        id: unreachable_id,
+        arguments: vec![],
+        statements: vec![],
+        terminator: Terminator::Unreachable,
+    });
+
+    MirFunction {
+        name: name.to_string(),
+        params: vec![
+            (arg_n.to_string(), Type::I64),
+            (arg_state.to_string(), Type::I64),
+        ],
+        return_ty: Type::I64,
+        locals,
+        blocks,
+        is_distilled: true,
+    }
+}
+
+#[derive(Clone)]
+struct SdfCallSite {
+    func_idx: usize,
+    block_idx: usize,
+    producer_idx: usize,
+    consumer_idx: usize,
+    chain: HashSet<usize>,
+    producer_arg: Place,
+    consumer_dest: String,
+    consumer_name: String,
+}
+
+/// Follows `Use` copies from the consumer's argument back to the producer's
+/// destination inside one block and returns the indices of those copies.
+fn sdf_trace_chain(
+    stmts: &[Statement],
+    producer_idx: usize,
+    consumer_idx: usize,
+    producer_dest: &str,
+    consumer_arg: &str,
+) -> Option<HashSet<usize>> {
+    let mut chain = HashSet::new();
+    let mut current = consumer_arg.to_string();
+    for _ in 0..stmts.len() + 2 {
+        if current == producer_dest {
+            return Some(chain);
+        }
+        let idx = (producer_idx + 1..consumer_idx).find(|&i| {
+            matches!(
+                &stmts[i],
+                Statement::Assign(d, Rvalue::Use(p))
+                    if d.local == current && p.projections.is_empty()
+            )
+        })?;
+        let Statement::Assign(_, Rvalue::Use(p)) = &stmts[idx] else {
+            return None;
+        };
+        chain.insert(idx);
+        current = p.local.clone();
+    }
+    None
+}
+
+/// Whole-program generate-and-consume deforestation for scalar-generated
+/// algebraic streams consumed by a mutually recursive DFA.  Returns the number
+/// of call-site pairs that were fused.
+pub fn deforest_scalar_stream_dfa(program: &mut MirProgram) -> usize {
+    let producers: Vec<ScalarStreamProducer> = program
+        .functions
+        .iter()
+        .filter_map(sdf_recognize_producer)
+        .collect();
+    if producers.is_empty() {
+        return 0;
+    }
+
+    let mut total = 0usize;
+    for producer in &producers {
+        let mut sites = Vec::new();
+        for (fi, func) in program.functions.iter().enumerate() {
+            // Rewrite callers only: neither the producer nor a consumer-shaped
+            // function is a legitimate "outer" call site for this pattern.
+            if func.name == producer.name
+                || (func.params.len() == 1
+                    && func.params[0].1 == Type::Enum(producer.enum_name.clone())
+                    && func.return_ty == Type::I64)
+            {
+                continue;
+            }
+            for (bi, block) in func.blocks.iter().enumerate() {
+                for (pi, stmt) in block.statements.iter().enumerate() {
+                    let Statement::Assign(pd, Rvalue::Call(callee, pargs)) = stmt else {
+                        continue;
+                    };
+                    if callee != &producer.name || pargs.len() != 1 {
+                        continue;
+                    }
+                    for (ci, consumer_stmt) in block.statements.iter().enumerate().skip(pi + 1) {
+                        let Statement::Assign(cd, Rvalue::Call(ccallee, cargs)) = consumer_stmt
+                        else {
+                            continue;
+                        };
+                        if cargs.is_empty() {
+                            continue;
+                        }
+                        let Some(cfunc) = program.functions.iter().find(|f| &f.name == ccallee)
+                        else {
+                            continue;
+                        };
+                        if cfunc.return_ty != Type::I64
+                            || cfunc.params.len() != 1
+                            || cfunc.params[0].1 != Type::Enum(producer.enum_name.clone())
+                        {
+                            continue;
+                        }
+                        let Some(chain) = sdf_trace_chain(
+                            &block.statements,
+                            pi,
+                            ci,
+                            &pd.local,
+                            &cargs[0].local,
+                        ) else {
+                            continue;
+                        };
+                        sites.push(SdfCallSite {
+                            func_idx: fi,
+                            block_idx: bi,
+                            producer_idx: pi,
+                            consumer_idx: ci,
+                            chain,
+                            producer_arg: pargs[0].clone(),
+                            consumer_dest: cd.local.clone(),
+                            consumer_name: ccallee.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+        if sites.is_empty() {
+            continue;
+        }
+
+        let mut by_initial: HashMap<String, Vec<SdfCallSite>> = HashMap::new();
+        for site in sites {
+            by_initial
+                .entry(site.consumer_name.clone())
+                .or_default()
+                .push(site);
+        }
+
+        for (initial, group) in by_initial {
+            let Some((states, tags)) = sdf_discover_states(
+                program,
+                &initial,
+                &producer.enum_name,
+                producer.nil_tag,
+                producer.cons_tag,
+            ) else {
+                continue;
+            };
+            let initial_tag = tags.get(&initial).copied().unwrap_or(0);
+            let mut suffix = 0usize;
+            let mut fused_name = format!("__sdf_fused_{}", suffix);
+            while program.functions.iter().any(|f| f.name == fused_name) {
+                suffix += 1;
+                fused_name = format!("__sdf_fused_{}", suffix);
+            }
+            let fused = sdf_build_function(producer, &states, &tags, &fused_name);
+            let fused_name_rc = fused_name.clone();
+            program.functions.push(fused);
+
+            let mut group = group;
+            group.sort_by_key(|s| {
+                (
+                    s.func_idx,
+                    s.block_idx,
+                    std::cmp::Reverse(s.consumer_idx),
+                )
+            });
+            for site in group {
+                let func = &mut program.functions[site.func_idx];
+                let tag_temp = format!("__sdf_init_{}_{}", site.block_idx, site.consumer_idx);
+                if !func.locals.iter().any(|l| l.name == tag_temp) {
+                    func.locals.push(MirLocalDecl {
+                        name: tag_temp.clone(),
+                        ty: Type::I64,
+                        mutable: true,
+                    });
+                }
+                let block = &mut func.blocks[site.block_idx];
+                let mut remove = site.chain;
+                remove.insert(site.producer_idx);
+                let old = std::mem::take(&mut block.statements);
+                let mut new_stmts = Vec::with_capacity(old.len() + 2);
+                for (i, stmt) in old.into_iter().enumerate() {
+                    if remove.contains(&i) {
+                        continue;
+                    }
+                    if i == site.consumer_idx {
+                        new_stmts.push(Statement::Assign(
+                            Place {
+                                local: tag_temp.clone(),
+                                projections: vec![],
+                            },
+                            Rvalue::Constant(
+                                crate::typecheck::typed_ast::TypedLiteral::Int(
+                                    initial_tag,
+                                    Type::I64,
+                                ),
+                            ),
+                        ));
+                        new_stmts.push(Statement::Assign(
+                            Place {
+                                local: site.consumer_dest.clone(),
+                                projections: vec![],
+                            },
+                            Rvalue::Call(
+                                fused_name_rc.clone(),
+                                vec![
+                                    site.producer_arg.clone(),
+                                    Place {
+                                        local: tag_temp.clone(),
+                                        projections: vec![],
+                                    },
+                                ],
+                            ),
+                        ));
+                    } else {
+                        new_stmts.push(stmt);
+                    }
+                }
+                block.statements = new_stmts;
+                func.is_distilled = true;
+                total += 1;
+            }
+        }
+    }
+    total
+}
