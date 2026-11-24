@@ -15,8 +15,10 @@
 use numlang::ast::BinaryOp;
 use numlang::codegen::compile_mir_to_obj;
 use numlang::codegen::linker::link_executable;
+use numlang::compiler::{distill_and_optimize, CompilerConfig};
 use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::distill::collapse_modular_accumulators_with_const_eval;
+use numlang::mir::supercompiler::supercompile_mir_program;
 use numlang::mir::Terminator;
 use numlang::parser::parse;
 use numlang::token::tokenize;
@@ -100,6 +102,7 @@ struct Shape {
     mul: usize,
     mod_: usize,
     pure_calls: usize,
+    intrinsic_calls: usize,
     answer_literal: usize,
     const_stores: usize,
     main_branchy_blocks: usize,
@@ -117,7 +120,11 @@ fn profile(mir: &MirProgram, answer: i64) -> Shape {
                     Rvalue::BinaryOp(BinaryOp::Mul, _, _) => s.mul += 1,
                     Rvalue::BinaryOp(BinaryOp::Mod, _, _) => s.mod_ += 1,
                     Rvalue::Call(name, _) if name != "println" && name != "print" => {
-                        s.pure_calls += 1
+                        if name.starts_with("__nway_recurrence_") {
+                            s.intrinsic_calls += 1;
+                        } else {
+                            s.pure_calls += 1;
+                        }
                     }
                     Rvalue::Constant(TypedLiteral::Int(v, _)) => {
                         if *v == answer {
@@ -198,6 +205,52 @@ fn closed_program_still_computes_the_same_answer_at_runtime() {
     // The bench/runtime entry truncates the returned i64 to 8 bits on every
     // platform here; the audit suite documents the same behaviour.
     assert_eq!(code, 46, "wrong exit code");
+}
+
+/// The full driver pipeline first solves the producer's recurrence, so the
+/// producer body ends in a compiler-generated pure intrinsic call rather than
+/// the source loop.  The affine collapse must still recognise the accumulator
+/// and keep that producer as a runtime call.
+#[test]
+fn integrated_pipeline_emits_runtime_arithmetic() {
+    let tokens = tokenize(COUPLED_FIB).expect("tokenize");
+    let parsed = parse(&tokens).expect("parse");
+    let mut typed = typecheck(&parsed).expect("typecheck");
+    let previous = numlang::runtime_input::set_ast_runtime_computation_guard(true);
+    distill_and_optimize(
+        &mut typed,
+        &CompilerConfig {
+            ho_distill: true,
+            supercompile: true,
+            ..CompilerConfig::default()
+        },
+    );
+    numlang::runtime_input::set_ast_runtime_computation_guard(previous);
+    let mut mir = lower_program(&typed);
+    mir.enforce_runtime_computation = true;
+    supercompile_mir_program(&mut mir);
+
+    let shape = profile(&mir, 334_154_286);
+    assert_eq!(shape.answer_literal, 0, "answer literal emitted: {shape:?}");
+    assert!(shape.mul > 0 && shape.mod_ > 0, "no arithmetic: {shape:?}");
+    assert_eq!(shape.pure_calls, 1, "producer call lost: {shape:?}");
+    assert_eq!(
+        shape.main_branchy_blocks, 0,
+        "accumulator loop not collapsed: {shape:?}"
+    );
+    // The recurrence solver leaves a pure intrinsic call in the producer;
+    // the affine pass must have recognised it as a runtime computation.
+    let has_producer_intrinsic = mir.functions.iter().any(|f| {
+        f.blocks.iter().any(|b| {
+            b.statements.iter().any(|Statement::Assign(_, rv)| {
+                matches!(rv, Rvalue::Call(name, _) if name.starts_with("__nway_recurrence_"))
+            })
+        })
+    });
+    assert!(has_producer_intrinsic, "expected recurrence-solved producer");
+    let (code, out) = run_mir(&mir, "integrated");
+    assert_eq!(out, "334154286");
+    assert_eq!(code, 46);
 }
 
 #[test]

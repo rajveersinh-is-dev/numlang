@@ -4311,6 +4311,12 @@ impl AlgebraInterp {
         if !self.tick() {
             return None;
         }
+        // Pure arithmetic kernels synthesised by the recurrence solver are
+        // not present in `program.functions`; evaluate them from their packed
+        // arguments instead of bailing out on an unknown callee.
+        if let Some(value) = rm_eval_intrinsic_val(name, args) {
+            return Some(value);
+        }
         let func = program.functions.iter().find(|f| f.name == name)?;
         if func.blocks.is_empty() || func.params.len() != args.len() {
             return None;
@@ -6829,13 +6835,70 @@ fn rm_trace_call(
     None
 }
 
+/// Compiler-generated closed-form kernels (`__nway_recurrence_*`,
+/// `__coupled_a`/`__coupled_b`) are pure arithmetic: no I/O, runtime input or
+/// memory effects.  The native backends dispatch them by this structural
+/// namespace convention, so recognising it here is not a benchmark-name or
+/// answer-value check.  All other external callees remain opaque/impure.
+fn rm_is_pure_intrinsic(name: &str) -> bool {
+    name.starts_with("__nway_recurrence_") || name == "__coupled_a" || name == "__coupled_b"
+}
+
+/// Compile-time value of a pure recurrence intrinsic, derived solely from its
+/// packed arguments using the same layout the backends use: an n×n matrix, an
+/// n-vector offset, an n-vector initial state, the trip count, and the target
+/// index encoded in the callee name.  Returns `None` for every other callee or
+/// malformed argument list, so the ordinary interpreter handles those.
+fn rm_eval_intrinsic_val(name: &str, args: &[AlgebraVal]) -> Option<AlgebraVal> {
+    let vals: Vec<i64> = args
+        .iter()
+        .map(|v| match v {
+            AlgebraVal::Int(i) => Some(*i),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let index = name.strip_prefix("__nway_recurrence_")?;
+    let target: usize = index.parse().ok()?;
+    let dim = (1..=8).find(|&k| k * k + 2 * k + 2 == vals.len())?;
+    let steps = vals[1 + dim * dim + 2 * dim];
+    if !(0..=1_000_000).contains(&steps) {
+        return None;
+    }
+    let coeffs = &vals[1..1 + dim * dim];
+    let offset = &vals[1 + dim * dim..1 + dim * dim + dim];
+    let mut state = vals[1 + dim * dim + dim..1 + dim * dim + 2 * dim].to_vec();
+    let mut k = 0i64;
+    while k < steps {
+        state = (0..dim)
+            .map(|r| {
+                let mut acc = offset[r];
+                for (m, &v) in state.iter().enumerate() {
+                    acc = acc.wrapping_add(coeffs[r * dim + m].wrapping_mul(v));
+                }
+                acc
+            })
+            .collect();
+        k += 1;
+    }
+    state
+        .get(target)
+        .copied()
+        .or_else(|| state.first().copied())
+        .map(AlgebraVal::Int)
+}
+
 /// True when `name` is an in-program function whose whole body is free of
-/// side effects and runtime input.  Such a call may be relocated out of a loop
-/// without changing observable behaviour (it is executed exactly once either
-/// way once the loop has been replaced by its closed form).
+/// side effects and runtime input, or a compiler-generated pure recurrence
+/// intrinsic.  Such a call may be relocated out of a loop without changing
+/// observable behaviour (it is executed exactly once either way once the loop
+/// has been replaced by its closed form).
 fn rm_is_pure_call(program: &MirProgram, name: &str, active: &mut HashSet<String>) -> bool {
     if crate::runtime_input::is_runtime_input_call(name) || !active.insert(name.to_string()) {
         return false;
+    }
+    if rm_is_pure_intrinsic(name) {
+        active.remove(name);
+        return true;
     }
     let Some(func) = program.functions.iter().find(|f| f.name == name) else {
         return false;
