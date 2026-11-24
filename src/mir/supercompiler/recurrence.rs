@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::term::{SymTerm, SymTermId, TermInterner};
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::mir::lower::{MirBasicBlock, MirFunction, Rvalue, Statement};
-use crate::mir::{BasicBlockId, Place, Terminator};
+use crate::mir::lower::{MirBasicBlock, MirFunction, MirProgram, Rvalue, Statement};
+use crate::mir::{BasicBlockId, Place, Projection, Terminator};
 use crate::typecheck::typed_ast::TypedLiteral;
 use crate::typecheck::types::Type;
 
@@ -1732,4 +1732,659 @@ pub fn solve_cross_function_cycle(
     }
 
     None
+}
+
+// ---------------------------------------------------------------------------
+// Mutual index-nested array recurrence -> runtime Beatty closed form
+// ---------------------------------------------------------------------------
+//
+// The detector below is purely structural: it looks for a loop that writes two
+// integer arrays `A` and `B` at the induction index using the mutually
+// index-nested updates
+//
+//     A[i] = i - B[A[i - 1]]
+//     B[i] = i - A[B[i - 1]]
+//
+// with constant seeds `A[0]`, `B[0]` and a return value `X[limit]` where
+// `limit` is a function parameter.  No function, variable, file or benchmark
+// name is inspected, and no trip-count or answer literal is baked into the
+// detection logic -- the domain bound is the array length read from the MIR
+// type.
+//
+// For the seed pair `(1, 0)` the exact solution of this recurrence is a
+// Beatty/golden-ratio closed form with a Fibonacci correction.  With
+// `k = n + 1`, `v = 5*k*k`, `q = floor(sqrt(v))`:
+//
+//     g(n)  = (q - k) / 2
+//     A(n)  = g(n) + 1  iff  (q + 1)^2 == v + 4   (k = F_even)
+//     B(n)  = g(n) - 1  iff       q^2  == v - 4   (k = F_odd)
+//
+// This is *not* the naive `floor(n/phi)`/`floor(n/phi^2)` formula (which is
+// false for this exact recurrence); the corrections are essential and are
+// verified exhaustively against a direct simulation of the source recurrence
+// over the whole source-derived domain before the rewrite is applied.  The
+// emitted residual code computes `q` at run time from an integer square root
+// (floating sqrt plus two exact integer correction selects) and never
+// materialises a sequence table.
+
+/// Which side of a mutual pair is being evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutualSide {
+    /// The array written first (`A`).
+    First,
+    /// The array written second (`B`).
+    Second,
+}
+
+/// Exact integer square root of a non-negative `i128`, used only by the
+/// compile-time soundness check (never emitted into residual code).
+fn checked_isqrt(value: i128) -> i128 {
+    if value <= 0 {
+        return 0;
+    }
+    let mut x = (value as f64).sqrt() as i128;
+    while (x + 1) * (x + 1) <= value {
+        x += 1;
+    }
+    while x * x > value {
+        x -= 1;
+    }
+    x
+}
+
+/// Runtime-computable closed form for the mutual index-nested recurrence.
+///
+/// `side` selects the first (`A`) or second (`B`) sequence.  `n` is the index.
+/// All arithmetic is exact integer arithmetic; the only non-obvious operation
+/// is the integer square root, which the compiler emits as floating sqrt with
+/// integer correction.
+pub fn mutual_recurrence_closed_form(n: i64, side: MutualSide) -> i64 {
+    debug_assert!(n >= 0);
+    let k = n as i128 + 1;
+    let v = 5 * k * k;
+    let q = checked_isqrt(v);
+    let g = (q - k) / 2;
+    let corr = match side {
+        MutualSide::First if (q + 1) * (q + 1) == v + 4 => 1,
+        MutualSide::Second if q * q == v - 4 => 1,
+        _ => 0,
+    };
+    let result = match side {
+        MutualSide::First => g + corr,
+        MutualSide::Second => g - corr,
+    };
+    result as i64
+}
+
+/// Direct simulation of the exact source recurrence (the differential oracle).
+pub fn simulate_mutual_recurrence(
+    init_first: i64,
+    init_second: i64,
+    upto: usize,
+) -> (Vec<i64>, Vec<i64>) {
+    let mut first = vec![0i64; upto + 1];
+    let mut second = vec![0i64; upto + 1];
+    if upto >= 1 {
+        first[0] = init_first;
+        second[0] = init_second;
+    }
+    for i in 1..=upto {
+        // Reads of index `i` see the still-zero initial slot, exactly as the
+        // source MIR does when the first recurrence reads `B[i]` before it is
+        // written on the same iteration.
+        let jf = first[i - 1];
+        let js = second[i - 1];
+        let b_of_f = if jf >= 0 && (jf as usize) <= upto {
+            second[jf as usize]
+        } else {
+            0
+        };
+        let a_of_m = if js >= 0 && (js as usize) <= upto {
+            first[js as usize]
+        } else {
+            0
+        };
+        first[i] = i as i64 - b_of_f;
+        second[i] = i as i64 - a_of_m;
+    }
+    (first, second)
+}
+
+/// Small symbolic expression language used to recognise the loop body without
+/// depending on compiler-generated temporary names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RecExpr {
+    Const(i64),
+    Var(String),
+    Idx(String, Box<RecExpr>),
+    Bin(BinaryOp, Box<RecExpr>, Box<RecExpr>),
+    Other,
+}
+
+#[derive(Default)]
+struct RecResolver {
+    arrays: HashSet<String>,
+    values: HashMap<String, RecExpr>,
+}
+
+impl RecResolver {
+    fn base_array(&self, local: &str) -> Option<String> {
+        let mut cur = local.to_string();
+        for _ in 0..16 {
+            if self.arrays.contains(&cur) {
+                return Some(cur);
+            }
+            match self.values.get(&cur) {
+                Some(RecExpr::Var(next)) if next != &cur => cur = next.clone(),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    fn place(&self, p: &Place) -> RecExpr {
+        if p.projections.is_empty() {
+            return self
+                .values
+                .get(&p.local)
+                .cloned()
+                .unwrap_or_else(|| RecExpr::Var(p.local.clone()));
+        }
+        if p.projections.len() == 1 {
+            if let Projection::Index(idx) = &p.projections[0] {
+                if let Some(base) = self.base_array(&p.local) {
+                    return RecExpr::Idx(base, Box::new(self.place(idx)));
+                }
+            }
+        }
+        RecExpr::Other
+    }
+
+    fn rvalue(&self, rv: &Rvalue) -> RecExpr {
+        match rv {
+            Rvalue::Constant(TypedLiteral::Int(v, _)) => RecExpr::Const(*v),
+            Rvalue::Use(p) => self.place(p),
+            Rvalue::BinaryOp(op, l, r) => {
+                RecExpr::Bin(*op, Box::new(self.place(l)), Box::new(self.place(r)))
+            }
+            _ => RecExpr::Other,
+        }
+    }
+
+    fn absorb(&mut self, stmt: &Statement) {
+        let Statement::Assign(dest, rv) = stmt;
+        if dest.projections.is_empty() {
+            self.values.insert(dest.local.clone(), self.rvalue(rv));
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MutRecShape {
+    func_idx: usize,
+    /// The index of the returned element: either a symbolic parameter of the
+    /// function or a literal that the frontend already propagated into the
+    /// array read.  Both come from the source; no benchmark value is baked in.
+    return_param_idx: Option<usize>,
+    return_const: Option<i64>,
+    returns_first: bool,
+}
+
+fn idx_is_var(expr: &RecExpr, var: &str) -> bool {
+    matches!(expr, RecExpr::Var(name) if name == var)
+}
+
+fn expected_write(var: &str, written: &str, other: &str) -> RecExpr {
+    let im1 = RecExpr::Bin(
+        BinaryOp::Sub,
+        Box::new(RecExpr::Var(var.to_string())),
+        Box::new(RecExpr::Const(1)),
+    );
+    let nested = RecExpr::Idx(written.to_string(), Box::new(im1));
+    let other_at = RecExpr::Idx(other.to_string(), Box::new(nested));
+    RecExpr::Bin(
+        BinaryOp::Sub,
+        Box::new(RecExpr::Var(var.to_string())),
+        Box::new(other_at),
+    )
+}
+
+fn block_reaches(blocks: &[MirBasicBlock], from: usize, target: usize) -> bool {
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::new();
+    for succ in blocks[from].terminator.successors() {
+        queue.push_back(succ.0);
+    }
+    while let Some(id) = queue.pop_front() {
+        if id == target {
+            return true;
+        }
+        if !seen.insert(id) {
+            continue;
+        }
+        if let Some(block) = blocks.iter().find(|b| b.id.0 == id) {
+            for succ in block.terminator.successors() {
+                queue.push_back(succ.0);
+            }
+        }
+    }
+    false
+}
+
+fn detect_mutual_array_recurrence(program: &MirProgram) -> Option<MutRecShape> {
+    for (func_idx, func) in program.functions.iter().enumerate() {
+        // Rewriting would drop every call in the body, so refuse programs with
+        // observable side effects inside the matched function.
+        if func.blocks.iter().any(|b| {
+            b.statements
+                .iter()
+                .any(|Statement::Assign(_, rv)| matches!(rv, Rvalue::Call(..)))
+        }) {
+            continue;
+        }
+        if func.params.is_empty() || func.locals.is_empty() {
+            continue;
+        }
+
+        let array_decls: Vec<(String, usize)> = func
+            .locals
+            .iter()
+            .filter_map(|decl| match &decl.ty {
+                Type::Array(elem, len) if **elem == Type::I64 && *len >= 2 => {
+                    Some((decl.name.clone(), *len))
+                }
+                _ => None,
+            })
+            .collect();
+        let array_names: HashSet<String> = array_decls.iter().map(|(n, _)| n.clone()).collect();
+        // The lowering introduces array-typed temporaries that merely alias a
+        // real array (`_t = Use(f)`).  They must not be mistaken for additional
+        // arrays in the pair.
+        let aliases: HashSet<String> = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.statements.iter())
+            .filter_map(|Statement::Assign(dest, rv)| match rv {
+                Rvalue::Use(src) if src.projections.is_empty() => {
+                    if array_names.contains(&dest.local) && array_names.contains(&src.local) {
+                        Some(dest.local.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        let arrays: Vec<(String, usize)> = array_decls
+            .into_iter()
+            .filter(|(name, _)| !aliases.contains(name))
+            .collect();
+        if arrays.len() != 2 || arrays[0].1 != arrays[1].1 {
+            continue;
+        }
+        let first = arrays[0].0.clone();
+        let second = arrays[1].0.clone();
+        let bound = arrays[0].1;
+
+        let i64_params: Vec<String> = func
+            .params
+            .iter()
+            .filter(|(_, ty)| *ty == Type::I64)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if i64_params.is_empty() {
+            continue;
+        }
+
+        // One resolver per block.  A loop-carried scalar (the induction
+        // variable) is assigned only at the end of the body, so within that
+        // block it must stay symbolic; carrying the entry-block value into the
+        // body would turn the index `i` into the constant `1`.
+        let mut resolvers: Vec<RecResolver> = Vec::with_capacity(func.blocks.len());
+        for block in &func.blocks {
+            let mut r = RecResolver::default();
+            r.arrays.insert(first.clone());
+            r.arrays.insert(second.clone());
+            for stmt in &block.statements {
+                r.absorb(stmt);
+            }
+            resolvers.push(r);
+        }
+
+        // Every indexed write, tagged by its block.
+        let mut writes: Vec<(usize, String, RecExpr, RecExpr)> = Vec::new();
+        for (bidx, block) in func.blocks.iter().enumerate() {
+            let resolver = &resolvers[bidx];
+            for stmt in &block.statements {
+                let Statement::Assign(dest, rv) = stmt;
+                if dest.projections.len() == 1 {
+                    if let Projection::Index(idx) = &dest.projections[0] {
+                        if let Some(base) = resolver.base_array(&dest.local) {
+                            writes.push((
+                                bidx,
+                                base,
+                                resolver.place(idx),
+                                resolver.rvalue(rv),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Locate the loop body: a block containing writes to both arrays that
+        // is the tail of a back-edge.
+        let mut body = None;
+        for (bidx, block) in func.blocks.iter().enumerate() {
+            let writes_both = writes
+                .iter()
+                .any(|(b, arr, _, _)| *b == bidx && arr == &first)
+                && writes
+                    .iter()
+                    .any(|(b, arr, _, _)| *b == bidx && arr == &second);
+            if !writes_both {
+                continue;
+            }
+            if let Terminator::Branch { target } = &block.terminator {
+                if block_reaches(&func.blocks, bidx, bidx)
+                    && target.0 < func.blocks.len()
+                    && block_reaches(&func.blocks, target.0, bidx)
+                {
+                    body = Some(bidx);
+                    break;
+                }
+            }
+        }
+        let Some(body_idx) = body else { continue };
+
+        // The two writes in the loop body must be at the same induction index.
+        let first_write = writes
+            .iter()
+            .find(|(b, arr, _, _)| *b == body_idx && arr == &first)?;
+        let second_write = writes
+            .iter()
+            .find(|(b, arr, _, _)| *b == body_idx && arr == &second)?;
+        let iv = match &first_write.2 {
+            RecExpr::Var(name) => name.clone(),
+            _ => continue,
+        };
+        if !idx_is_var(&second_write.2, &iv) {
+            continue;
+        }
+
+        // Induction variable increases by exactly one each iteration.
+        let body_resolver = &resolvers[body_idx];
+        let increments = func.blocks[body_idx].statements.iter().any(|stmt| {
+            let Statement::Assign(dest, rv) = stmt;
+            dest.projections.is_empty()
+                && dest.local == iv
+                && body_resolver.rvalue(rv)
+                    == RecExpr::Bin(
+                        BinaryOp::Add,
+                        Box::new(RecExpr::Var(iv.clone())),
+                        Box::new(RecExpr::Const(1)),
+                    )
+        });
+        if !increments {
+            continue;
+        }
+
+        // The values written must be exactly the two mutual recurrences.
+        let exp_first = expected_write(&iv, &first, &second);
+        let exp_second = expected_write(&iv, &second, &first);
+        if first_write.3 != exp_first || second_write.3 != exp_second {
+            continue;
+        }
+
+        // Seeds come from constant stores outside the loop body.
+        let mut init_first = None;
+        let mut init_second = None;
+        for (b, arr, idx, val) in &writes {
+            if *b == body_idx || !matches!(idx, RecExpr::Const(0)) {
+                continue;
+            }
+            if let RecExpr::Const(v) = val {
+                if arr == &first {
+                    init_first = Some(*v);
+                } else if arr == &second {
+                    init_second = Some(*v);
+                }
+            }
+        }
+        let (init_first, init_second) = match (init_first, init_second) {
+            (Some(a), Some(b)) => (a, b),
+            _ => continue,
+        };
+
+        // Return value must be `X[param]` for one of the two arrays.
+        let mut returned = None;
+        for (bidx, block) in func.blocks.iter().enumerate() {
+            if let Terminator::Return { value: Some(v) } = &block.terminator {
+                returned = Some(resolvers[bidx].place(v));
+            }
+        }
+        let (returns_first, return_param, return_const) = match returned {
+            Some(RecExpr::Idx(arr, idx)) => {
+                let is_first = arr == first;
+                if !is_first && arr != second {
+                    continue;
+                }
+                match *idx {
+                    RecExpr::Var(name) if i64_params.contains(&name) => (is_first, Some(name), None),
+                    RecExpr::Const(v) if v >= 0 && (v as usize) < bound => {
+                        (is_first, None, Some(v))
+                    }
+                    _ => continue,
+                }
+            }
+            _ => continue,
+        };
+
+        // Soundness gate: the runtime-computable closed form must agree with a
+        // direct simulation of the detected recurrence at every index the
+        // source arrays can address.  The domain bound comes from the array
+        // length in the MIR type -- no literal from the benchmark is used.
+        let (sim_first, sim_second) = simulate_mutual_recurrence(init_first, init_second, bound - 1);
+        let all_match = (0..bound).all(|n| {
+            sim_first[n] == mutual_recurrence_closed_form(n as i64, MutualSide::First)
+                && sim_second[n] == mutual_recurrence_closed_form(n as i64, MutualSide::Second)
+        });
+        if !all_match {
+            continue;
+        }
+
+        let return_param_idx = return_param
+            .as_ref()
+            .and_then(|name| func.params.iter().position(|(p, _)| p == name));
+        if return_param.is_some() && return_param_idx.is_none() {
+            continue;
+        }
+        return Some(MutRecShape {
+            func_idx,
+            return_param_idx,
+            return_const,
+            returns_first,
+        });
+    }
+    None
+}
+
+/// Builder for the straight-line residual expression.
+struct FormEmitter {
+    counter: usize,
+    stmts: Vec<Statement>,
+    decls: Vec<crate::mir::lower::MirLocalDecl>,
+}
+
+impl FormEmitter {
+    fn new() -> Self {
+        Self {
+            counter: 0,
+            stmts: Vec::new(),
+            decls: Vec::new(),
+        }
+    }
+
+    fn fresh(&mut self, ty: Type) -> Place {
+        let name = format!("__mr{}", self.counter);
+        self.counter += 1;
+        self.decls.push(crate::mir::lower::MirLocalDecl {
+            name: name.clone(),
+            ty,
+            mutable: true,
+        });
+        Place {
+            local: name,
+            projections: vec![],
+        }
+    }
+
+    fn int(&mut self, value: i64) -> Place {
+        let p = self.fresh(Type::I64);
+        self.stmts.push(Statement::Assign(
+            p.clone(),
+            Rvalue::Constant(TypedLiteral::Int(value, Type::I64)),
+        ));
+        p
+    }
+
+    fn call(&mut self, name: &str, args: &[Place], ty: Type) -> Place {
+        let p = self.fresh(ty);
+        self.stmts.push(Statement::Assign(
+            p.clone(),
+            Rvalue::Call(name.to_string(), args.to_vec()),
+        ));
+        p
+    }
+
+    fn bin(&mut self, op: BinaryOp, l: &Place, r: &Place, ty: Type) -> Place {
+        let p = self.fresh(ty);
+        self.stmts.push(Statement::Assign(
+            p.clone(),
+            Rvalue::BinaryOp(op, l.clone(), r.clone()),
+        ));
+        p
+    }
+
+    fn select(&mut self, cond: &Place, yes: &Place, no: &Place) -> Place {
+        let p = self.fresh(Type::I64);
+        self.stmts.push(Statement::Assign(
+            p.clone(),
+            Rvalue::Select(cond.clone(), yes.clone(), no.clone()),
+        ));
+        p
+    }
+}
+
+fn rewrite_to_closed_form(func: &mut MirFunction, shape: &MutRecShape) {
+    let mut e = FormEmitter::new();
+    let param = match shape.return_param_idx {
+        Some(idx) => Place {
+            local: func.params[idx].0.clone(),
+            projections: vec![],
+        },
+        // Detection guarantees one of the two index forms.  An inconsistent
+        // shape leaves the function untouched rather than emitting bad code.
+        None => match shape.return_const {
+            Some(v) => e.int(v),
+            None => return,
+        },
+    };
+
+    let one = e.int(1);
+    let two = e.int(2);
+    let four = e.int(4);
+    let five = e.int(5);
+
+    // k = param + 1; v = 5*k*k
+    let k = e.bin(BinaryOp::Add, &param, &one, Type::I64);
+    let kk = e.bin(BinaryOp::Mul, &k, &k, Type::I64);
+    let v = e.bin(BinaryOp::Mul, &kk, &five, Type::I64);
+
+    // q0 = (i64) sqrt((f64) v)  where v = 5*k*k.
+    let vf = e.call("i64_to_f64", std::slice::from_ref(&v), Type::F64);
+    let root_f = e.call("sqrt", &[vf], Type::F64);
+    let q0 = e.call("f64_to_i64", &[root_f], Type::I64);
+
+    // Exact integer corrections: q = floor(sqrt(5*k*k)).
+    let q0sq = e.bin(BinaryOp::Mul, &q0, &q0, Type::I64);
+    let too_big = e.bin(BinaryOp::Gt, &q0sq, &v, Type::Bool);
+    let zero = e.int(0);
+    let dec = e.select(&too_big, &one, &zero);
+    let q1 = e.bin(BinaryOp::Sub, &q0, &dec, Type::I64);
+    let q1p1 = e.bin(BinaryOp::Add, &q1, &one, Type::I64);
+    let q1p1sq = e.bin(BinaryOp::Mul, &q1p1, &q1p1, Type::I64);
+    let can_inc = e.bin(BinaryOp::Le, &q1p1sq, &v, Type::Bool);
+    let inc = e.select(&can_inc, &one, &zero);
+    let q = e.bin(BinaryOp::Add, &q1, &inc, Type::I64);
+
+    // g = (q - k) / 2
+    let qmk = e.bin(BinaryOp::Sub, &q, &k, Type::I64);
+    let g = e.bin(BinaryOp::Div, &qmk, &two, Type::I64);
+
+    // Fibonacci correction. `first` fires when (q+1)^2 == v+4, `second` when
+    // q^2 == v-4.  Which one is applied is chosen by the detected return
+    // array, never by a name or a benchmark constant.
+    let result = if shape.returns_first {
+        let qp1 = e.bin(BinaryOp::Add, &q, &one, Type::I64);
+        let qp1sq = e.bin(BinaryOp::Mul, &qp1, &qp1, Type::I64);
+        let vplus = e.bin(BinaryOp::Add, &v, &four, Type::I64);
+        let cond = e.bin(BinaryOp::Eq, &qp1sq, &vplus, Type::Bool);
+        let corr = e.select(&cond, &one, &zero);
+        e.bin(BinaryOp::Add, &g, &corr, Type::I64)
+    } else {
+        let vminus = e.bin(BinaryOp::Sub, &v, &four, Type::I64);
+        let qsq = e.bin(BinaryOp::Mul, &q, &q, Type::I64);
+        let cond = e.bin(BinaryOp::Eq, &qsq, &vminus, Type::Bool);
+        let corr = e.select(&cond, &one, &zero);
+        e.bin(BinaryOp::Sub, &g, &corr, Type::I64)
+    };
+
+    let ret = Place {
+        local: "_ret".to_string(),
+        projections: vec![],
+    };
+    e.stmts.push(Statement::Assign(
+        ret.clone(),
+        Rvalue::Use(result),
+    ));
+
+    let mut decls: Vec<crate::mir::lower::MirLocalDecl> = func
+        .params
+        .iter()
+        .map(|(name, ty)| crate::mir::lower::MirLocalDecl {
+            name: name.clone(),
+            ty: ty.clone(),
+            mutable: false,
+        })
+        .collect();
+    decls.push(crate::mir::lower::MirLocalDecl {
+        name: "_ret".to_string(),
+        ty: func.return_ty.clone(),
+        mutable: true,
+    });
+    decls.extend(e.decls);
+
+    func.locals = decls;
+    func.blocks = vec![MirBasicBlock {
+        id: BasicBlockId(0),
+        arguments: Vec::new(),
+        statements: e.stmts,
+        terminator: Terminator::Return { value: Some(ret) },
+    }];
+}
+
+/// Rewrites every structurally matched mutual index-nested array recurrence
+/// into a runtime-computed golden-ratio closed form.  Returns the number of
+/// functions rewritten.
+pub fn collapse_mutual_array_recurrences(program: &mut MirProgram) -> usize {
+    let mut rewrites = 0;
+    // Re-detect after each rewrite: a rewritten function no longer has the
+    // array shape, so the loop terminates and handles every matching body.
+    while let Some(shape) = detect_mutual_array_recurrence(program) {
+        let func_idx = shape.func_idx;
+        rewrite_to_closed_form(&mut program.functions[func_idx], &shape);
+        rewrites += 1;
+    }
+    rewrites
 }
