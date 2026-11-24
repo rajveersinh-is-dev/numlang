@@ -147,38 +147,123 @@ fn msg_helper(
     result
 }
 
-/// Constructs the triangular term (k * (k - 1) / 2) * coeff without intermediate overflow.
-/// If coeff is even, factors (coeff / 2) to eliminate division completely: k * (k - 1) * (coeff / 2).
-/// If coeff is odd, checks parity of k so the division by 2 is performed on the even factor
-/// before multiplication: (k / 2) * (k - 1) when k is even, or k * ((k - 1) / 2) when k is odd.
+/// Constructs the triangular term (k * (k - 1) / 2) * coeff without ever dividing
+/// a value that may already have wrapped.
+///
+/// The division by two is performed on one of the two consecutive factors
+/// *before* they are multiplied.  The classic parity `Select` cannot be used
+/// here: residualisation has to keep the calculation executable for a symbolic
+/// loop bound, and a `SymTerm::Select` is not a runtime arithmetic operation.
+/// The branchless identity below works for every non-negative k:
+///
+/// ```text
+/// k(k-1)/2 = (k/2)*(k-1) + (k%2)*((k-1)/2)
+/// ```
+///
+/// Both divisions are exact on the individual factors, so the identity also
+/// holds modulo 2^64 when the products wrap.  It is fully symbolic and
+/// name-agnostic: only the structure of "two consecutive integers" is used.
 pub fn build_triangular_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> SymTermId {
     let one_term = interner.intern_int(1);
     let two_term = interner.intern_int(2);
     let k_minus_1 = interner.intern_binary(BinaryOp::Sub, k, one_term, Type::I64);
 
-    if coeff % 2 == 0 {
-        let half_coeff = interner.intern_int(coeff / 2);
-        let k_times_k1 = interner.intern_binary(BinaryOp::Mul, k, k_minus_1, Type::I64);
-        interner.intern_binary(BinaryOp::Mul, k_times_k1, half_coeff, Type::I64)
+    let k_div_2 = interner.intern_binary(BinaryOp::Div, k, two_term, Type::I64);
+    let k1_div_2 = interner.intern_binary(BinaryOp::Div, k_minus_1, two_term, Type::I64);
+    let k_odd = interner.intern_binary(BinaryOp::Mod, k, two_term, Type::I64);
+
+    let even_half = interner.intern_binary(BinaryOp::Mul, k_div_2, k_minus_1, Type::I64);
+    let odd_half = interner.intern_binary(BinaryOp::Mul, k_odd, k1_div_2, Type::I64);
+    let tri_part = interner.intern_binary(BinaryOp::Add, even_half, odd_half, Type::I64);
+
+    if coeff == 1 {
+        tri_part
     } else {
-        let zero_term = interner.intern_int(0);
-        let bit_and = interner.intern_binary(BinaryOp::BitAnd, k, one_term, Type::I64);
-        let is_even = interner.intern_binary(BinaryOp::Eq, bit_and, zero_term, Type::I64);
-
-        let k_div_2 = interner.intern_binary(BinaryOp::Div, k, two_term, Type::I64);
-        let even_tri = interner.intern_binary(BinaryOp::Mul, k_div_2, k_minus_1, Type::I64);
-
-        let k1_div_2 = interner.intern_binary(BinaryOp::Div, k_minus_1, two_term, Type::I64);
-        let odd_tri = interner.intern_binary(BinaryOp::Mul, k, k1_div_2, Type::I64);
-
-        let tri_part = interner.intern_select(is_even, even_tri, odd_tri, Type::I64);
-        if coeff == 1 {
-            tri_part
-        } else {
-            let c_term = interner.intern_int(coeff);
-            interner.intern_binary(BinaryOp::Mul, tri_part, c_term, Type::I64)
-        }
+        let c_term = interner.intern_int(coeff);
+        interner.intern_binary(BinaryOp::Mul, tri_part, c_term, Type::I64)
     }
+}
+
+/// Returns `(q, fa, fb)` such that `q * fa * fb == k(k-1)(k-2)/3` exactly,
+/// with every division applied to a single factor before multiplication.
+///
+/// Write `k = 3q + r`, `r ∈ {0,1,2}`.  The factor divisible by three is always
+/// `3q`, so the quotient can be written `q * fa * fb` with
+///
+/// ```text
+/// r = 0: fa = k-1, fb = k-2
+/// r = 1: fa = k,   fb = k-2
+/// r = 2: fa = k,   fb = k-1
+/// ```
+///
+/// The exact 0/1 residue indicators `d1 = r(2-r)`, `d2 = r(r-1)/2`,
+/// `d0 = 1-d1-d2` give `fa = k - d0` and `fb = k - 2 + d2` branchlessly, with
+/// no `Select` in the emitted residual code.
+fn intern_div3_product_parts(
+    interner: &mut TermInterner,
+    k: SymTermId,
+) -> (SymTermId, SymTermId, SymTermId) {
+    let one = interner.intern_int(1);
+    let two = interner.intern_int(2);
+    let three = interner.intern_int(3);
+
+    let km2 = interner.intern_binary(BinaryOp::Sub, k, two, Type::I64);
+    let r = interner.intern_binary(BinaryOp::Mod, k, three, Type::I64);
+    let two_minus_r = interner.intern_binary(BinaryOp::Sub, two, r, Type::I64);
+    let d1 = interner.intern_binary(BinaryOp::Mul, r, two_minus_r, Type::I64);
+    let r_minus_one = interner.intern_binary(BinaryOp::Sub, r, one, Type::I64);
+    let d2_num = interner.intern_binary(BinaryOp::Mul, r, r_minus_one, Type::I64);
+    let d2 = interner.intern_binary(BinaryOp::Div, d2_num, two, Type::I64);
+    let d1_plus_d2 = interner.intern_binary(BinaryOp::Add, d1, d2, Type::I64);
+    let d0 = interner.intern_binary(BinaryOp::Sub, one, d1_plus_d2, Type::I64);
+
+    let fa = interner.intern_binary(BinaryOp::Sub, k, d0, Type::I64);
+    let fb = interner.intern_binary(BinaryOp::Add, km2, d2, Type::I64);
+    let q = interner.intern_binary(BinaryOp::Div, k, three, Type::I64);
+    (q, fa, fb)
+}
+
+/// Exact quotient of `a*b*c` by two, halving the first even factor.  The
+/// selectors are branchless 0/1 arithmetic; every division is applied to a
+/// single factor before any multiplication, so no wrapped value is divided.
+fn intern_halve_three(
+    interner: &mut TermInterner,
+    a: SymTermId,
+    b: SymTermId,
+    c: SymTermId,
+) -> SymTermId {
+    let one = interner.intern_int(1);
+    let two = interner.intern_int(2);
+
+    let a_mod_2 = interner.intern_binary(BinaryOp::Mod, a, two, Type::I64);
+    let b_mod_2 = interner.intern_binary(BinaryOp::Mod, b, two, Type::I64);
+    let c_mod_2 = interner.intern_binary(BinaryOp::Mod, c, two, Type::I64);
+    let even_a = interner.intern_binary(BinaryOp::Sub, one, a_mod_2, Type::I64);
+    let even_b = interner.intern_binary(BinaryOp::Sub, one, b_mod_2, Type::I64);
+    let even_c = interner.intern_binary(BinaryOp::Sub, one, c_mod_2, Type::I64);
+
+    let not_even_a = interner.intern_binary(BinaryOp::Sub, one, even_a, Type::I64);
+    let not_even_b = interner.intern_binary(BinaryOp::Sub, one, even_b, Type::I64);
+    let sel_b = interner.intern_binary(BinaryOp::Mul, even_b, not_even_a, Type::I64);
+    let prior_odd = interner.intern_binary(BinaryOp::Mul, not_even_a, not_even_b, Type::I64);
+    let sel_c = interner.intern_binary(BinaryOp::Mul, even_c, prior_odd, Type::I64);
+
+    let a_half = interner.intern_binary(BinaryOp::Div, a, two, Type::I64);
+    let b_half = interner.intern_binary(BinaryOp::Div, b, two, Type::I64);
+    let c_half = interner.intern_binary(BinaryOp::Div, c, two, Type::I64);
+
+    let ab = interner.intern_binary(BinaryOp::Mul, a, b, Type::I64);
+    let bc = interner.intern_binary(BinaryOp::Mul, b, c, Type::I64);
+    let ac = interner.intern_binary(BinaryOp::Mul, a, c, Type::I64);
+    let term_a = interner.intern_binary(BinaryOp::Mul, a_half, bc, Type::I64);
+    let term_b = interner.intern_binary(BinaryOp::Mul, b_half, ac, Type::I64);
+    let term_c = interner.intern_binary(BinaryOp::Mul, c_half, ab, Type::I64);
+
+    let part_a = interner.intern_binary(BinaryOp::Mul, even_a, term_a, Type::I64);
+    let part_b = interner.intern_binary(BinaryOp::Mul, sel_b, term_b, Type::I64);
+    let part_c = interner.intern_binary(BinaryOp::Mul, sel_c, term_c, Type::I64);
+    let sum_ab = interner.intern_binary(BinaryOp::Add, part_a, part_b, Type::I64);
+    interner.intern_binary(BinaryOp::Add, sum_ab, part_c, Type::I64)
 }
 
 /// Greatest common divisor of two unsigned integers.
@@ -211,11 +296,13 @@ fn intern_mod_eq(interner: &mut TermInterner, k: SymTermId, m: i64, r: i64) -> S
 /// a value that may already have wrapped (LANGUAGE.md §9).
 ///
 /// The divisor 6 = 2 * 3 is distributed into the individual consecutive factors
-/// *before* any multiplication: the factor selected by `k mod 3` is divided by 3
-/// (exact), and the even factor selected by the parity of `k` is halved (exact).
+/// *before* any multiplication: the factor selected branchlessly by `k mod 3`
+/// is divided by 3 (exact), and an even factor is halved (exact).
 /// `g = gcd(|coeff|, 6)` is folded into the coefficient at compile time.
 /// When `6 | coeff` (e.g. the common `d3 = 6`) no runtime division is emitted
-/// at all, preserving the historical closed-form shape exactly.
+/// at all.  The emitted expression contains only Add/Sub/Mul/Div/Mod, so it stays
+/// executable when the loop bound is a symbolic parameter of the residual
+/// function.
 fn build_cubic_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> SymTermId {
     let fold = gcd_u64(coeff.unsigned_abs(), 6) as i64;
     let folded_coeff = coeff / fold;
@@ -232,43 +319,18 @@ fn build_cubic_term(interner: &mut TermInterner, k: SymTermId, coeff: i64) -> Sy
         let k_times_k1 = interner.intern_binary(BinaryOp::Mul, k, k_minus_1, Type::I64);
         interner.intern_binary(BinaryOp::Mul, k_times_k1, k_minus_2, Type::I64)
     } else if divisor == 2 {
-        // 3 | coeff, 2 ∤ coeff: fold 3 and distribute only the halving, using
-        // the same parity-select shape as build_triangular_term (k, 1).
+        // 3 | coeff, 2 ∤ coeff: fold 3 and distribute only the halving.
         let tri = build_triangular_term(interner, k, 1);
         interner.intern_binary(BinaryOp::Mul, tri, k_minus_2, Type::I64)
+    } else if divisor == 3 {
+        // 2 | coeff, 3 ∤ coeff: divide the factor selected by `k mod 3`.
+        let (q, fa, fb) = intern_div3_product_parts(interner, k);
+        let p = interner.intern_binary(BinaryOp::Mul, q, fa, Type::I64);
+        interner.intern_binary(BinaryOp::Mul, p, fb, Type::I64)
     } else {
-        // divisor ∈ {3, 6}: distribute /3 over the factor selected by `k mod 3`,
-        // and (for divisor = 6) /2 over an even factor selected by parity.
-        let three = interner.intern_int(3);
-        let (fa, fb, fc) = if divisor % 3 == 0 {
-            let t0 = interner.intern_binary(BinaryOp::Div, k, three, Type::I64);
-            let t1 = interner.intern_binary(BinaryOp::Div, k_minus_1, three, Type::I64);
-            let t2 = interner.intern_binary(BinaryOp::Div, k_minus_2, three, Type::I64);
-            let c0 = intern_mod_eq(interner, k, 3, 0);
-            let c1 = intern_mod_eq(interner, k, 3, 1);
-            let c2 = intern_mod_eq(interner, k, 3, 2);
-            let fa = interner.intern_select(c0, t0, k, Type::I64);
-            let fb = interner.intern_select(c1, t1, k_minus_1, Type::I64);
-            let fc = interner.intern_select(c2, t2, k_minus_2, Type::I64);
-            (fa, fb, fc)
-        } else {
-            (k, k_minus_1, k_minus_2)
-        };
-
-        if divisor % 2 == 0 {
-            // divisor = 6: halve an even factor chosen by the parity of k.
-            let is_even = intern_is_even(interner, k);
-            let fa_div_2 = interner.intern_binary(BinaryOp::Div, fa, two, Type::I64);
-            let fb_div_2 = interner.intern_binary(BinaryOp::Div, fb, two, Type::I64);
-            let even_leaf = interner.intern_binary(BinaryOp::Mul, fa_div_2, fb, Type::I64);
-            let even_leaf = interner.intern_binary(BinaryOp::Mul, even_leaf, fc, Type::I64);
-            let odd_leaf = interner.intern_binary(BinaryOp::Mul, fa, fb_div_2, Type::I64);
-            let odd_leaf = interner.intern_binary(BinaryOp::Mul, odd_leaf, fc, Type::I64);
-            interner.intern_select(is_even, even_leaf, odd_leaf, Type::I64)
-        } else {
-            let p = interner.intern_binary(BinaryOp::Mul, fa, fb, Type::I64);
-            interner.intern_binary(BinaryOp::Mul, p, fc, Type::I64)
-        }
+        // divisor == 6: divide by three first, then halve an even factor.
+        let (q, fa, fb) = intern_div3_product_parts(interner, k);
+        intern_halve_three(interner, q, fa, fb)
     };
 
     interner.intern_binary(BinaryOp::Mul, product, folded_term, Type::I64)

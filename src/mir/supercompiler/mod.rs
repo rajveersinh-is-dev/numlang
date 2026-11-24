@@ -457,11 +457,10 @@ pub fn supercompile_mir_program_with_cache(
                     // a closed program that would turn the whole computation
                     // into a literal answer, so keep calls as runtime calls.
                     .with_inlining(!guard_active)
-                    // Closed forms are only bit-identical when the program has
-                    // a runtime operand to drive them.  With all operands
-                    // literal, algebraically equivalent formulas can overflow
-                    // in a different order, so keep the source loop executing.
-                    .with_recurrence_solving(!guard_active);
+                    // Formula emission is runtime computation: the bound is a
+                    // symbolic parameter of the residual function, so the
+                    // emitted Mul/Add/Div chain executes on every call.
+                    .with_recurrence_solving(true);
                 let budget = driver.config.max_inline_nodes;
                 let mut tree = sc_timed!(ScPass::Driving, driver.run());
                 let mut interner_clone = tree.interner.clone();
@@ -898,7 +897,11 @@ pub fn supercompile_mir_function_with_program_options_with_const_eval(
     let driver = SupercompilerDriver::new(func)
         .with_program_functions(program_funcs)
         .with_inlining(fold_constants)
-        .with_recurrence_solving(fold_constants);
+        // Closed-form emission is executable arithmetic.  Only the inlining
+        // of literal call arguments is gated by `fold_constants`; recurrence
+        // solving always runs so the residual function computes its result at
+        // run time from its (symbolic) parameters.
+        .with_recurrence_solving(true);
     let budget = driver.config.max_inline_nodes;
     let mut tree = sc_timed!(ScPass::Driving, driver.run());
     let mut stats = tree.stats.clone();
