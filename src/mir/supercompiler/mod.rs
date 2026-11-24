@@ -710,6 +710,10 @@ pub fn supercompile_mir_program_with_cache(
         recurrence::collapse_mutual_array_recurrences(program)
     );
 
+    // Fuse one-sided scalar diamonds into selects and coalesce straight-line
+    // blocks; computation stays executable at runtime (no answer folding).
+    let _ = generalize::simplify_bounded_control_mir_program(program);
+
     sc_profile_report();
     total_stats
 }
