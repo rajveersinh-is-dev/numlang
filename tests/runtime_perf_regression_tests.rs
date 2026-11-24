@@ -24,10 +24,17 @@
 //! binary with `--emit-supercompiled-mir` to prove that guard is active in the
 //! driver process, not merely in library callers.
 //!
-//! The second half of the file is a reusable `COMPUTE_NS` harness. It builds a
-//! kernel with `--bench` and reports the median in-process timing. The
-//! threshold assertions are `#[ignore]`d: the current baseline is the slow
-//! loop, so CI must not fail yet. After the fast closed forms land, run
+//! A later section audits the eight list/tree/fusion workloads (append3, nrev,
+//! tree_flip, peano_mul, sum_map, stream_take, compose5, nested_stencil) through
+//! the same pipeline with tiny, independently derived inputs. It proves each
+//! residual program still executes a derivation, never emits the independently
+//! computed answer as a literal or a dense precomputed table, still prints the
+//! reference result, and that the guard is active in the real CLI process.
+//!
+//! The final section is a reusable `COMPUTE_NS` harness. It builds a kernel with
+//! `--bench` and reports the median in-process timing. The threshold assertions
+//! are `#[ignore]`d: the current baseline is the slow loop, so CI must not fail
+//! yet. After the fast forms land, run
 //! `cargo test --test runtime_perf_regression_tests -- --ignored --nocapture`
 //! to enable them.
 
@@ -277,6 +284,29 @@ const RECUR_TRIPS: i64 = 1000;
 const RECUR_EXP: i64 = 40;
 const HOF_CAPACITY: usize = 24;
 
+// Parameters for the eight list/tree/fusion workloads under audit. All bounds
+// are deliberately tiny and unrelated to the published benchmarks; the
+// structural assertions (not the input sizes) are what catch a baked answer.
+// Identifiers in the generated sources are deliberately not benchmark names.
+const FUSION_APPEND_LEN: i64 = 4;
+const FUSION_APPEND_REPS: i64 = 3;
+const FUSION_NREV_N: i64 = 6;
+const FUSION_NREV_REPS: i64 = 3;
+const FUSION_TREE_DEPTH: usize = 3;
+const FUSION_TREE_VAL: i64 = 1;
+const FUSION_TREE_REPS: i64 = 3;
+const FUSION_PEANO_A: i64 = 3;
+const FUSION_PEANO_B: i64 = 4;
+const FUSION_PEANO_REPS: i64 = 3;
+const FUSION_SUM_MAP_N: i64 = 200;
+const FUSION_STREAM_M: i64 = 10;
+const FUSION_STREAM_REPS: i64 = 5;
+const FUSION_COMPOSE_COUNT: i64 = 20;
+const FUSION_STENCIL_PASSES: i64 = 2;
+const FUSION_STENCIL_DIM: i64 = 4;
+const FUSION_STENCIL_W0: i64 = 1;
+const FUSION_STENCIL_W1: i64 = 2;
+
 fn triangular_program(n: i64) -> String {
     format!(
         r#"
@@ -524,6 +554,360 @@ fn main() -> i64 {{
 }
 
 // ---------------------------------------------------------------------------
+// List/tree/fusion workload generators (small, non-benchmark identifiers)
+// ---------------------------------------------------------------------------
+//
+// These mirror the *shape* of the eight kernels now being fused (append of
+// three lists, double reverse, mirror of a binary tree, Peano multiplication,
+// mapped-square sum, filtered stream take, a five-stage composition chain and
+// a multi-pass clamped stencil) without reusing any benchmark identifier or
+// published input size. Every bound is a constant baked into the tiny source so
+// the program is closed: the integrity guard must keep a runtime derivation,
+// never fold the answer into a literal or a lookup table.
+
+fn append3_program(len: i64, reps: i64) -> String {
+    format!(
+        r#"
+enum Lst {{
+    Nl,
+    Cn(i64, Box<Lst>),
+}}
+fn link_up(xs: Lst, ys: Lst) -> Lst {{
+    return match xs {{
+        Nl => ys,
+        Cn(h, t) => Cn(h, box(link_up(deref(t), ys))),
+    }};
+}}
+fn tally(xs: Lst) -> i64 {{
+    return match xs {{
+        Nl => 0,
+        Cn(h, t) => h + tally(deref(t)),
+    }};
+}}
+fn build(s: i64, n: i64) -> Lst {{
+    if n <= 0 {{ return Nl; }}
+    return Cn(s, box(build(s + 1, n - 1)));
+}}
+fn main() -> i64 {{
+    let mut acc: i64 = 0;
+    for rep in 0..{reps} {{
+        let a: Lst = build(1, {len});
+        let b: Lst = build({len} + 1, {len});
+        let c: Lst = build(2 * {len} + 1, {len});
+        let joined: Lst = link_up(link_up(a, b), c);
+        acc = acc + tally(joined);
+    }}
+    println(acc);
+    return acc % 256;
+}}
+"#
+    )
+}
+
+/// Alpha-renamed twin of `append3_program`: identical derivation, completely
+/// different identifiers, proves the detector is name-agnostic.
+fn append3_program_renamed(len: i64, reps: i64) -> String {
+    format!(
+        r#"
+enum Seq {{
+    End,
+    Link(i64, Box<Seq>),
+}}
+fn glue(p: Seq, q: Seq) -> Seq {{
+    return match p {{
+        End => q,
+        Link(v, rest) => Link(v, box(glue(deref(rest), q))),
+    }};
+}}
+fn add_up(zs: Seq) -> i64 {{
+    return match zs {{
+        End => 0,
+        Link(v, rest) => v + add_up(deref(rest)),
+    }};
+}}
+fn make(first: i64, count: i64) -> Seq {{
+    if count <= 0 {{ return End; }}
+    return Link(first, box(make(first + 1, count - 1)));
+}}
+fn main() -> i64 {{
+    let mut total: i64 = 0;
+    for iteration in 0..{reps} {{
+        let x: Seq = make(1, {len});
+        let y: Seq = make({len} + 1, {len});
+        let z: Seq = make(2 * {len} + 1, {len});
+        let both: Seq = glue(glue(x, y), z);
+        total = total + add_up(both);
+    }}
+    println(total);
+    return total % 256;
+}}
+"#
+    )
+}
+
+fn nrev_program(n: i64, reps: i64) -> String {
+    format!(
+        r#"
+enum Lst {{
+    Nl,
+    Cn(i64, Box<Lst>),
+}}
+fn link_up(xs: Lst, ys: Lst) -> Lst {{
+    return match xs {{
+        Nl => ys,
+        Cn(h, t) => Cn(h, box(link_up(deref(t), ys))),
+    }};
+}}
+fn turn(xs: Lst) -> Lst {{
+    return match xs {{
+        Nl => Nl,
+        Cn(h, t) => link_up(turn(deref(t)), Cn(h, box(Nl))),
+    }};
+}}
+fn tally(xs: Lst) -> i64 {{
+    return match xs {{
+        Nl => 0,
+        Cn(h, t) => h + tally(deref(t)),
+    }};
+}}
+fn build(n: i64) -> Lst {{
+    if n <= 0 {{ return Nl; }}
+    return Cn(n, box(build(n - 1)));
+}}
+fn main() -> i64 {{
+    let mut acc: i64 = 0;
+    for rep in 0..{reps} {{
+        let xs: Lst = build({n});
+        let twice: Lst = turn(turn(xs));
+        acc = acc + tally(twice);
+    }}
+    println(acc);
+    return acc % 256;
+}}
+"#
+    )
+}
+
+fn tree_flip_program(depth: usize, val: i64, reps: i64) -> String {
+    format!(
+        r#"
+enum Tree {{
+    Leaf(i64),
+    Node(Box<Tree>, Box<Tree>),
+}}
+fn mirror(t: Tree) -> Tree {{
+    return match t {{
+        Leaf(v) => Leaf(v),
+        Node(l, r) => Node(box(mirror(deref(r))), box(mirror(deref(l)))),
+    }};
+}}
+fn tally(t: Tree) -> i64 {{
+    return match t {{
+        Leaf(v) => v,
+        Node(l, r) => tally(deref(l)) + tally(deref(r)),
+    }};
+}}
+fn build(d: i64, v: i64) -> Tree {{
+    if d <= 0 {{ return Leaf(v); }}
+    let left: Tree = build(d - 1, v * 2);
+    let right: Tree = build(d - 1, v * 2 + 1);
+    return Node(box(left), box(right));
+}}
+fn main() -> i64 {{
+    let mut acc: i64 = 0;
+    for rep in 0..{reps} {{
+        let t: Tree = build({depth}, {val});
+        let twice: Tree = mirror(mirror(t));
+        acc = acc + tally(twice);
+    }}
+    println(acc);
+    return acc % 256;
+}}
+"#
+    )
+}
+
+fn peano_mul_program(a: i64, b: i64, reps: i64) -> String {
+    format!(
+        r#"
+enum Nat {{
+    Zero,
+    Succ(Box<Nat>),
+}}
+fn plus(x: Nat, y: Nat) -> Nat {{
+    return match x {{
+        Zero => y,
+        Succ(p) => Succ(box(plus(deref(p), y))),
+    }};
+}}
+fn times(x: Nat, y: Nat) -> Nat {{
+    return match x {{
+        Zero => Zero,
+        Succ(p) => plus(y, times(deref(p), y)),
+    }};
+}}
+fn to_i(x: Nat) -> i64 {{
+    return match x {{
+        Zero => 0,
+        Succ(p) => 1 + to_i(deref(p)),
+    }};
+}}
+fn from_i(n: i64) -> Nat {{
+    if n <= 0 {{ return Zero; }}
+    return Succ(box(from_i(n - 1)));
+}}
+fn main() -> i64 {{
+    let mut acc: i64 = 0;
+    for rep in 0..{reps} {{
+        let a: Nat = from_i({a});
+        let b: Nat = from_i({b});
+        let prod: Nat = times(a, b);
+        acc = acc + to_i(prod);
+    }}
+    println(acc);
+    return acc % 256;
+}}
+"#
+    )
+}
+
+fn sum_map_program(n: i64) -> String {
+    format!(
+        r#"
+fn sq(x: i64) -> i64 {{
+    return x * x;
+}}
+fn main() -> i64 {{
+    let mut total: i64 = 0;
+    for i in 1..={n} {{
+        total = total + sq(i);
+    }}
+    println(total);
+    return total % 256;
+}}
+"#
+    )
+}
+
+fn stream_take_program(m: i64, reps: i64) -> String {
+    format!(
+        r#"
+fn even(n: i64) -> bool {{
+    return (n % 2) == 0;
+}}
+fn sq(n: i64) -> i64 {{
+    return n * n;
+}}
+fn pipeline(n: i64) -> i64 {{
+    let mut total: i64 = 0;
+    for i in 0..n {{
+        if even(i) {{
+            total = total + sq(i);
+        }}
+    }}
+    return total;
+}}
+fn main() -> i64 {{
+    let mut grand: i64 = 0;
+    for rep in 0..{reps} {{
+        grand = grand + (pipeline({m}) % 10000);
+    }}
+    println(grand);
+    return grand % 256;
+}}
+"#
+    )
+}
+
+fn compose5_program(count: i64) -> String {
+    format!(
+        r#"
+fn step1(x: i64) -> i64 {{ return x + 1; }}
+fn step2(x: i64) -> i64 {{ return x * 2; }}
+fn step3(x: i64) -> i64 {{ return x + 3; }}
+fn step4(x: i64) -> i64 {{ return x - 5; }}
+fn step5(x: i64) -> i64 {{ return x + 10; }}
+fn chain(v: i64) -> i64 {{
+    return step1(step2(step3(step4(step5(v)))));
+}}
+fn main() -> i64 {{
+    let mut acc: i64 = 0;
+    for i in 0..{count} {{
+        acc = acc + chain(i);
+    }}
+    println(acc);
+    return acc % 256;
+}}
+"#
+    )
+}
+
+/// A multi-pass clamped 2D stencil whose initial grid is generated by a formula
+/// (not materialised as a literal table), so the only way to get the answer is
+/// to execute the nine-tap reduction for every pass.
+fn nested_stencil_program(passes: i64, dim: i64, w0: i64, w1: i64) -> String {
+    let cells = dim * dim;
+    let zeros = "0, ".repeat((cells - 1) as usize) + "0";
+    format!(
+        r#"
+fn limit_idx(v: i64, hi: i64) -> i64 {{
+    if v < 0 {{ return 0; }}
+    if v > hi {{ return hi; }}
+    return v;
+}}
+fn main() -> i64 {{
+    let mut grid: [i64; {cells}] = [{zeros}];
+    let mut out: [i64; {cells}] = [{zeros}];
+    let mut seed: i64 = 0;
+    while seed < {cells} {{
+        grid[seed] = (seed * 7 + 3) % 11;
+        seed = seed + 1;
+    }}
+    let mut p: i64 = 0;
+    while p < {passes} {{
+        let mut r: i64 = 0;
+        while r < {dim} {{
+            let mut c: i64 = 0;
+            while c < {dim} {{
+                let mut acc: i64 = 0;
+                let mut k: i64 = 0;
+                while k < 9 {{
+                    let dr: i64 = k / 3 - 1;
+                    let dc: i64 = k % 3 - 1;
+                    let rr: i64 = limit_idx(r + dr, {dim} - 1);
+                    let cc: i64 = limit_idx(c + dc, {dim} - 1);
+                    let mut coeff: i64 = {w1};
+                    if dr * dr + dc * dc == 0 {{
+                        coeff = 4;
+                    }} else {{
+                        if (dr + dc + 4) % 2 == 0 {{
+                            coeff = {w0};
+                        }}
+                    }}
+                    acc = acc + grid[rr * {dim} + cc] * coeff;
+                    k = k + 1;
+                }}
+                out[r * {dim} + c] = (acc + 8) / 10;
+                c = c + 1;
+            }}
+            r = r + 1;
+        }}
+        let mut idx: i64 = 0;
+        while idx < {cells} {{
+            grid[idx] = out[idx];
+            idx = idx + 1;
+        }}
+        p = p + 1;
+    }}
+    let result: i64 = grid[2 * {dim} + 3];
+    println(result);
+    return result % 256;
+}}
+"#
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Independent reference computations (no answer literals in the assertions)
 // ---------------------------------------------------------------------------
 
@@ -615,6 +999,97 @@ fn ref_sliding_window(steps: usize) -> i64 {
         .sum()
 }
 
+// --- Independent references for the eight fusion workloads -----------------
+// Each one re-implements the *semantics* of its tiny program in plain Rust.
+// No value is copied from the generated source or from a benchmark answer.
+
+/// Three consecutive runs of `len` values starting at 1, `len+1`, `2*len+1`,
+/// appended and summed, repeated `reps` times.
+fn ref_append3(len: i64, reps: i64) -> i64 {
+    let one_run: i64 = (1..=3 * len).sum();
+    reps * one_run
+}
+
+/// Double reverse preserves the list `[n, n-1, ..., 1]`; its sum is the nth
+/// triangular number, repeated `reps` times.
+fn ref_nrev(n: i64, reps: i64) -> i64 {
+    reps * (1..=n).sum::<i64>()
+}
+
+/// Sum of the leaves of the tree built by `build(depth, val)`, computed by
+/// structural recursion rather than by any compiler transformation.
+fn ref_tree_sum(depth: usize, val: i64) -> i64 {
+    if depth == 0 {
+        val
+    } else {
+        ref_tree_sum(depth - 1, val * 2) + ref_tree_sum(depth - 1, val * 2 + 1)
+    }
+}
+
+fn ref_tree_flip(depth: usize, val: i64, reps: i64) -> i64 {
+    reps * ref_tree_sum(depth, val)
+}
+
+fn ref_peano_mul(a: i64, b: i64, reps: i64) -> i64 {
+    reps * a * b
+}
+
+fn ref_sum_map(n: i64) -> i64 {
+    (1..=n).map(|i| i * i).sum()
+}
+
+fn ref_stream_take(m: i64, reps: i64) -> i64 {
+    let one_run: i64 = (0..m).filter(|i| i % 2 == 0).map(|i| i * i).sum();
+    reps * (one_run % 10000)
+}
+
+/// Five-stage chain `step1(step2(step3(step4(step5(i)))))` simplifies to
+/// `2*i + 17`; the reference re-derives it stage by stage to avoid baking the
+/// simplified form.
+fn ref_compose5(count: i64) -> i64 {
+    (0..count)
+        .map(|i| {
+            let a = i + 10;
+            let b = a - 5;
+            let c = b + 3;
+            let d = c * 2;
+            d + 1
+        })
+        .sum()
+}
+
+/// Table-free simulation of the nine-tap clamped stencil, including the same
+/// integer division used by `out = (acc + 8) / 10`.
+fn ref_nested_stencil(passes: i64, dim: i64, w0: i64, w1: i64) -> i64 {
+    let cells = (dim * dim) as usize;
+    let mut grid: Vec<i64> = (0..cells).map(|i| (i as i64 * 7 + 3) % 11).collect();
+    let mut out = vec![0i64; cells];
+    for _ in 0..passes {
+        for r in 0..dim {
+            for c in 0..dim {
+                let mut acc = 0i64;
+                for k in 0..9 {
+                    let dr = k / 3 - 1;
+                    let dc = k % 3 - 1;
+                    let rr = (r + dr).clamp(0, dim - 1);
+                    let cc = (c + dc).clamp(0, dim - 1);
+                    let coeff = if dr * dr + dc * dc == 0 {
+                        4
+                    } else if (dr + dc + 4) % 2 == 0 {
+                        w0
+                    } else {
+                        w1
+                    };
+                    acc += grid[(rr * dim + cc) as usize] * coeff;
+                }
+                out[(r * dim + c) as usize] = (acc + 8) / 10;
+            }
+        }
+        grid.copy_from_slice(&out);
+    }
+    grid[(2 * dim + 3) as usize]
+}
+
 struct Kernel {
     tag: &'static str,
     source: String,
@@ -682,6 +1157,68 @@ fn new_closed_form_kernels() -> Vec<Kernel> {
             tag: "hofstadter_sqrt_form",
             source: hofstadter_sqrt_program(HOF_LIMIT, HOF_CAPACITY),
             expected: ref_hofstadter(HOF_LIMIT),
+        },
+    ]
+}
+
+/// The eight list/tree/fusion workloads being rewritten by the new passes.
+/// Every expected value is produced by the independent references above; none
+/// is a literal from the generated source or a published benchmark answer.
+fn fusion_kernels() -> Vec<Kernel> {
+    vec![
+        Kernel {
+            tag: "append3",
+            source: append3_program(FUSION_APPEND_LEN, FUSION_APPEND_REPS),
+            expected: ref_append3(FUSION_APPEND_LEN, FUSION_APPEND_REPS),
+        },
+        Kernel {
+            tag: "nrev",
+            source: nrev_program(FUSION_NREV_N, FUSION_NREV_REPS),
+            expected: ref_nrev(FUSION_NREV_N, FUSION_NREV_REPS),
+        },
+        Kernel {
+            tag: "tree_flip",
+            source: tree_flip_program(
+                FUSION_TREE_DEPTH,
+                FUSION_TREE_VAL,
+                FUSION_TREE_REPS,
+            ),
+            expected: ref_tree_flip(FUSION_TREE_DEPTH, FUSION_TREE_VAL, FUSION_TREE_REPS),
+        },
+        Kernel {
+            tag: "peano_mul",
+            source: peano_mul_program(FUSION_PEANO_A, FUSION_PEANO_B, FUSION_PEANO_REPS),
+            expected: ref_peano_mul(FUSION_PEANO_A, FUSION_PEANO_B, FUSION_PEANO_REPS),
+        },
+        Kernel {
+            tag: "sum_map",
+            source: sum_map_program(FUSION_SUM_MAP_N),
+            expected: ref_sum_map(FUSION_SUM_MAP_N),
+        },
+        Kernel {
+            tag: "stream_take",
+            source: stream_take_program(FUSION_STREAM_M, FUSION_STREAM_REPS),
+            expected: ref_stream_take(FUSION_STREAM_M, FUSION_STREAM_REPS),
+        },
+        Kernel {
+            tag: "compose5",
+            source: compose5_program(FUSION_COMPOSE_COUNT),
+            expected: ref_compose5(FUSION_COMPOSE_COUNT),
+        },
+        Kernel {
+            tag: "nested_stencil",
+            source: nested_stencil_program(
+                FUSION_STENCIL_PASSES,
+                FUSION_STENCIL_DIM,
+                FUSION_STENCIL_W0,
+                FUSION_STENCIL_W1,
+            ),
+            expected: ref_nested_stencil(
+                FUSION_STENCIL_PASSES,
+                FUSION_STENCIL_DIM,
+                FUSION_STENCIL_W0,
+                FUSION_STENCIL_W1,
+            ),
         },
     ]
 }
@@ -922,6 +1459,226 @@ fn hofstadter_sqrt_form_emits_sqrt_instead_of_a_table() {
 }
 
 // ---------------------------------------------------------------------------
+// Fusion workloads: structural + runtime checks through the exact driver pipeline
+// ---------------------------------------------------------------------------
+
+/// Every fusion workload must still emit executable arithmetic (never the
+/// independently computed answer literal and never a dense lookup table). The
+/// fingerprint comes from [`driver_mir`], the driver's exact `--supercompile
+/// --mode distill` pipeline, so a future fusion pass that bakes an answer fails
+/// here even if its own unit tests pass. Checks are name-agnostic: they inspect
+/// MIR opcodes and literals, never function or benchmark names.
+#[test]
+fn fusion_kernels_keep_their_runtime_derivation() {
+    for kernel in fusion_kernels() {
+        let p = residual_profile(&kernel.source);
+        assert!(
+            p.computes() && p.arithmetic > 0,
+            "{}: residual MIR has no arithmetic/loop/branch: {:?}",
+            kernel.tag,
+            p
+        );
+        assert!(
+            !p.constants.contains(&kernel.expected),
+            "{}: residual MIR emits the independently computed answer {} as a literal: {:?}",
+            kernel.tag,
+            kernel.expected,
+            p
+        );
+        assert!(
+            !p.is_precomputed(Some(kernel.expected)),
+            "{}: residual MIR is class (C) — a baked answer/table: {:?}",
+            kernel.tag,
+            p
+        );
+    }
+}
+
+/// A structural check weaker than the full `is_precomputed` detector still has
+/// to hold: the list/tree kernels must retain their case analysis (residual
+/// branches), while the scalar closed forms must retain arithmetic. Together
+/// these prove that fusion did not replace a derivation with a constant.
+#[test]
+fn fusion_kernels_retain_shape_specific_structure() {
+    let cases = fusion_kernels();
+    assert_eq!(cases.len(), 8, "all eight fusion workloads must be audited");
+    for kernel in &cases {
+        let p = residual_profile(&kernel.source);
+        match kernel.tag {
+            "append3" | "nrev" | "tree_flip" | "peano_mul" => {
+                assert!(
+                    p.branches > 0 && p.arithmetic > 0,
+                    "{}: list/tree derivation lost its case analysis: {:?}",
+                    kernel.tag,
+                    p
+                );
+            }
+            "nested_stencil" => {
+                assert!(
+                    p.branches > 0 && p.arithmetic > 0,
+                    "{}: stencil loops/clamps were replaced: {:?}",
+                    kernel.tag,
+                    p
+                );
+            }
+            _ => {
+                assert!(
+                    p.arithmetic > 0,
+                    "{}: scalar closed form lost its arithmetic: {:?}",
+                    kernel.tag,
+                    p
+                );
+            }
+        }
+    }
+}
+
+/// The recovered derivations must also produce the right numbers at run time;
+/// the expected values come from independent Rust references, so a fusion pass
+/// that hardcodes any of these answers cannot pass both tests.
+#[test]
+fn fusion_kernels_still_return_independent_answers() {
+    for kernel in fusion_kernels() {
+        let (code, stdout) = compile_and_run(&kernel.source, kernel.tag);
+        assert_eq!(
+            stdout,
+            kernel.expected.to_string(),
+            "{}: wrong stdout (expected the independent reference result)",
+            kernel.tag
+        );
+        assert_eq!(
+            code,
+            kernel.expected.rem_euclid(256) as i32,
+            "{}: wrong exit code",
+            kernel.tag
+        );
+    }
+}
+
+/// Same derivation, completely different identifiers: fingerprints must match.
+#[test]
+fn fusion_detector_is_alpha_renaming_invariant() {
+    let a = residual_profile(&append3_program(
+        FUSION_APPEND_LEN,
+        FUSION_APPEND_REPS,
+    ));
+    let b = residual_profile(&append3_program_renamed(
+        FUSION_APPEND_LEN,
+        FUSION_APPEND_REPS,
+    ));
+    assert_eq!(a, b, "detector must not depend on function/local names");
+}
+
+/// Negative control: the independently computed append3 answer is written
+/// straight into MIR. This is the regression the detector must catch.
+#[test]
+fn fusion_detector_rejects_a_baked_answer() {
+    let answer = ref_append3(FUSION_APPEND_LEN, FUSION_APPEND_REPS);
+    let source = format!(
+        "fn main() -> i64 {{\n    let r: i64 = {answer};\n    println(r);\n    return r % 256;\n}}\n"
+    );
+    let p = residual_profile(&source);
+    assert!(p.constants.contains(&answer));
+    assert!(!p.computes(), "negative control must have no derivation");
+    assert!(
+        p.is_precomputed(Some(answer)),
+        "detector must classify a baked fusion answer as class (C): {:?}",
+        p
+    );
+}
+
+/// Negative control: a table of independently derived compose5 results,
+/// indexed at run time, must be rejected as a precomputed lookup table.
+#[test]
+fn fusion_detector_rejects_a_precomputed_result_table() {
+    let values = (0..FUSION_COMPOSE_COUNT)
+        .map(|i| {
+            let a = i + 10;
+            let b = a - 5;
+            let c = b + 3;
+            (c * 2 + 1).to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let answer = ref_compose5(FUSION_COMPOSE_COUNT);
+    let source = format!(
+        "fn main() -> i64 {{\n    let table: [i64; {}] = [{values}];\n    let i: i64 = read_i64();\n    let r: i64 = table[i];\n    println(r);\n    return r % 256;\n}}\n",
+        FUSION_COMPOSE_COUNT
+    );
+    let p = residual_profile(&source);
+    assert!(
+        p.distinct_table_values >= 8,
+        "negative control must look like a dense literal table: {:?}",
+        p
+    );
+    assert!(
+        p.is_precomputed(Some(answer)),
+        "detector must classify a precomputed fusion result table as class (C): {:?}",
+        p
+    );
+}
+
+/// True when the pretty-printed residual MIR contains `Int(<value>, ...)`.
+/// `MirProgram` is printed with `{:#?}`, so an integer literal occupies its
+/// own line immediately after an `Int(` line.
+fn emitted_int_literal(mir_dump: &str, value: i64) -> bool {
+    let lines: Vec<&str> = mir_dump.lines().collect();
+    lines.iter().enumerate().any(|(i, line)| {
+        line.trim() == "Int("
+            && lines
+                .get(i + 1)
+                .is_some_and(|next| next.trim().trim_end_matches(',') == value.to_string())
+    })
+}
+
+/// The real CLI driver must keep a fusion workload computed, not merely the
+/// library callers that set the guard manually. This invokes the `numlang`
+/// binary with the exact `--supercompile --mode distill --emit-supercompiled-mir`
+/// flags on a closed append3-shaped program and inspects the residual MIR.
+#[test]
+fn cli_guard_keeps_fusion_kernel_computed() {
+    let dir = std::env::temp_dir().join(format!(
+        "nl_w7e_cli_guard_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let src = dir.join("fusion.nl");
+    let source = append3_program(FUSION_APPEND_LEN, FUSION_APPEND_REPS);
+    let expected = ref_append3(FUSION_APPEND_LEN, FUSION_APPEND_REPS);
+    fs::write(&src, &source).expect("write source");
+
+    let emitted = Command::new(env!("CARGO_BIN_EXE_numlang"))
+        .arg(&src)
+        .arg("--supercompile")
+        .arg("--mode")
+        .arg("distill")
+        .arg("--no-cache")
+        .arg("--emit-supercompiled-mir")
+        .output()
+        .expect("spawn numlang --emit-supercompiled-mir");
+    let dump = String::from_utf8_lossy(&emitted.stdout);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        emitted.status.success(),
+        "driver failed: {}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    assert!(
+        dump.contains("BinaryOp("),
+        "CLI driver folded the fusion program to a constant; no arithmetic in MIR:\n{dump}"
+    );
+    assert!(
+        !emitted_int_literal(&dump, expected),
+        "CLI driver emitted the independently computed answer {} as a literal:\n{dump}",
+        expected
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Speed sanity (gated): median in-process COMPUTE_NS from `--bench`
 // ---------------------------------------------------------------------------
 
@@ -1077,4 +1834,82 @@ fn perf_helper_reports_expected_case_table() {
         assert!(root.join(source).is_file());
         assert!(limit > 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fusion workloads: gated speed-sanity thresholds (avoid gating CI)
+// ---------------------------------------------------------------------------
+
+/// Documented upper bounds for the six fused kernels that have a published
+/// fast target. Exceeding one means the kernel regressed to its slow/table
+/// baseline. These mirror the thresholds required by the performance push:
+/// append3/nrev/tree_flip < 5 us, sum_map/stream_take < 50 us,
+/// nested_stencil < 3 us. All timing tests are `#[ignore]`d because the current
+/// published baseline may still be slow; enable them with
+/// `cargo test --test runtime_perf_regression_tests -- --ignored --nocapture`.
+const FUSION_PERF_CASES: &[(&str, &str, u128)] = &[
+    ("append3", "bench/showdown/numlang/append3.nl", 5_000),
+    ("nrev", "bench/showdown/numlang/nrev.nl", 5_000),
+    ("tree_flip", "bench/showdown/numlang/tree_flip.nl", 5_000),
+    ("sum_map", "bench/showdown/numlang/sum_map.nl", 50_000),
+    ("stream_take", "bench/showdown/numlang/stream_take.nl", 50_000),
+    (
+        "nested_stencil",
+        "bench/showdown/extended/numlang/nested_stencil.nl",
+        3_000,
+    ),
+];
+
+#[test]
+fn fusion_perf_helper_reports_expected_case_table() {
+    // Always-on wiring check: no builds, no timing assertions.
+    assert_eq!(FUSION_PERF_CASES.len(), 6);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for &(label, source, limit) in FUSION_PERF_CASES {
+        assert!(!label.is_empty());
+        assert!(root.join(source).is_file(), "missing benchmark {source}");
+        assert!(limit > 0);
+    }
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_append3_is_under_five_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[0];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_nrev_is_under_five_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[1];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_tree_flip_is_under_five_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[2];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_sum_map_is_under_fifty_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[3];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_stream_take_is_under_fifty_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[4];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: gated so CI stays green; run with --ignored after fusion lands"]
+fn fusion_nested_stencil_is_under_three_microseconds() {
+    let &(label, source, limit) = &FUSION_PERF_CASES[5];
+    assert_fast(label, source, limit);
 }
