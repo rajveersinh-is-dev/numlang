@@ -6,6 +6,7 @@ pub mod loop_opt;
 pub mod monomorphize;
 pub mod recursion;
 pub mod while_unroll;
+pub mod zero_rem;
 
 use crate::typecheck::typed_ast::TypedProgram;
 
@@ -24,6 +25,12 @@ pub fn optimize_program(program: &mut TypedProgram) {
 
     // Desugar for loops into canonical while loops before optimization
     program.desugar_for_loops();
+
+    // Rewrite zero-tests of power-of-two remainders into bitmask tests.  This
+    // is an always-valid algebraic identity (divisibility == low bits clear),
+    // it never evaluates user code at compile time, and it applies to every
+    // program regardless of whether it reads runtime input.
+    zero_rem::optimize_program(program);
 
     // Fixpoint iteration for canonicalization, constant propagation, and inlining
     const MAX_FIXPOINT_ITERS: usize = 4;
