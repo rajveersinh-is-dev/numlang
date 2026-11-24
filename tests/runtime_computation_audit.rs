@@ -21,19 +21,24 @@
 //! computation with a precomputed answer therefore fails this test, while genuine formula
 //! synthesis (B) and runtime-input computation (A) remain allowed.
 //!
-//! The detector is exercised from three directions: two alpha-equivalent constant-input
+//! The detector is exercised from four directions: two alpha-equivalent constant-input
 //! programs that must stay in class (B), one runtime-input program that must stay in
-//! class (A) and track two different inputs, and a deliberately hardcoded negative
-//! control that must be classified as (C).
+//! class (A) and track two different inputs, a deliberately hardcoded negative
+//! control that must be classified as (C), and the NEW runtime-computed closed
+//! forms (triangular/cubic, recurrence-solved modular matrix power, Hofstadter
+//! sqrt form) which must stay in class (B). All residual MIR is produced by
+//! [`driver_mir`], an exact in-process mirror of the CLI's
+//! `--supercompile --mode distill` pipeline including the runtime-input guard.
 
 use numlang::ast::BinaryOp;
-use numlang::codegen::compile_supercompiled_to_obj;
+use numlang::codegen::compile_mir_to_obj;
 use numlang::codegen::linker::link_executable;
 use numlang::compiler::{distill_and_optimize, CompilerConfig};
-use numlang::mir::lower::{lower_program, Rvalue, Statement};
-use numlang::mir::supercompiler::supercompile_mir_program;
+use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
+use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::{Projection, Terminator};
 use numlang::parser::parse;
+use numlang::runtime_input::set_ast_runtime_computation_guard;
 use numlang::token::tokenize;
 use numlang::typecheck::typed_ast::TypedLiteral;
 use numlang::typecheck::typecheck;
@@ -77,12 +82,15 @@ impl Profile {
     }
 }
 
-/// Reproduce the exact pipeline used by `compile_supercompiled_to_obj` and
-/// fingerprint the MIR that is actually handed to the native backend.
-fn residual_profile(src: &str) -> Profile {
+/// Exact in-process mirror of the CLI's `--supercompile --mode distill`
+/// pipeline: AST/MIR runtime-computation guard, `distill_and_optimize`, and
+/// distill-mode supercompilation with the published `size` objective. Both the
+/// structural profiler and the native-code runner use this same MIR.
+fn driver_mir(src: &str) -> MirProgram {
     let tokens = tokenize(src).expect("tokenize");
     let ast = parse(&tokens).expect("parse");
     let mut typed = typecheck(&ast).expect("typecheck");
+    let previous_guard = set_ast_runtime_computation_guard(true);
     distill_and_optimize(
         &mut typed,
         &CompilerConfig {
@@ -91,9 +99,18 @@ fn residual_profile(src: &str) -> Profile {
             ..Default::default()
         },
     );
+    set_ast_runtime_computation_guard(previous_guard);
     let mut mir = lower_program(&typed);
-    supercompile_mir_program(&mut mir);
+    // The CLI's `real_main` calls `mark_compiler_driver()`, making this true.
+    mir.enforce_runtime_computation = true;
+    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    mir
+}
 
+/// Fingerprint the MIR that is actually handed to the native backend by the
+/// driver's `--supercompile --mode distill` pipeline.
+fn residual_profile(src: &str) -> Profile {
+    let mir = driver_mir(src);
     let mut p = Profile::default();
     for func in &mir.functions {
         for block in &func.blocks {
@@ -142,10 +159,8 @@ fn compile_and_run(src: &str, tag: &str) -> (i32, String) {
     let dir = std::env::temp_dir();
     let obj_path = dir.join(format!("{}.obj", stem));
     let exe_path = dir.join(format!("{}.exe", stem));
-    let tokens = tokenize(src).expect("tokenize");
-    let ast = parse(&tokens).expect("parse");
-    let typed = typecheck(&ast).expect("typecheck");
-    let obj = compile_supercompiled_to_obj(&typed).expect("supercompiled codegen");
+    let mir = driver_mir(src);
+    let obj = compile_mir_to_obj(&mir).expect("supercompiled codegen");
     fs::write(&obj_path, obj).expect("write object");
     let linked = link_executable(&obj_path, &exe_path);
     assert!(linked.is_ok(), "link failed: {:?}", linked.err());
@@ -210,6 +225,140 @@ const HARDCODED: &str = r#"
         return r % 256;
     }
 "#;
+
+// NEW runtime-computed closed forms. Deliberately non-benchmark identifiers and
+// small bounds; expected values come from the independent references below.
+const TRIANGULAR_CLOSED: &str = r#"
+    fn tally(bound: i64) -> i64 {
+        let mut acc: i64 = 0;
+        let mut i: i64 = 1;
+        while i <= bound { acc = acc + i; i = i + 1; }
+        return acc;
+    }
+    fn main() -> i64 {
+        let r: i64 = tally(12);
+        println(r);
+        return r % 256;
+    }
+"#;
+
+const CUBIC_CLOSED: &str = r#"
+    fn tally(bound: i64) -> i64 {
+        let mut acc: i64 = 0;
+        let mut i: i64 = 1;
+        while i <= bound { acc = acc + i * i * i; i = i + 1; }
+        return acc;
+    }
+    fn main() -> i64 {
+        let r: i64 = tally(8);
+        println(r);
+        return r % 256;
+    }
+"#;
+
+// Coupled-recurrence producer accumulated modulo M: the driver solves the
+// producer to a `__nway_recurrence_*` intrinsic and emits modular arithmetic.
+const MODULAR_MATRIX_RECUR: &str = r#"
+    fn step_gen(arg: i64) -> i64 {
+        let mut p: i64 = 0;
+        let mut q: i64 = 1;
+        let mut j: i64 = 0;
+        while j < arg {
+            let np: i64 = q;
+            let nq: i64 = (p + q) % 1000000007;
+            p = np; q = nq; j = j + 1;
+        }
+        return p;
+    }
+    fn main() -> i64 {
+        let mut total: i64 = 0;
+        for k in 0..1000 {
+            total = (total + step_gen(40)) % 1000000007;
+        }
+        println(total);
+        return total % 256;
+    }
+"#;
+
+// Mutual index-nested array recurrence rewritten to a sqrt-based Beatty form.
+const HOFSTADTER_SQRT: &str = r#"
+    fn mirror_pair(bound: i64) -> i64 {
+        let mut a: [i64; 24] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut b: [i64; 24] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        a[0] = 1; b[0] = 0;
+        let mut i: i64 = 1;
+        while i <= bound {
+            let a_prev: i64 = a[i - 1];
+            let b_of_a: i64 = b[a_prev];
+            a[i] = i - b_of_a;
+            let b_prev: i64 = b[i - 1];
+            let a_of_b: i64 = a[b_prev];
+            b[i] = i - a_of_b;
+            i = i + 1;
+        }
+        return b[bound];
+    }
+    fn main() -> i64 {
+        let r: i64 = mirror_pair(12);
+        println(r);
+        return r % 256;
+    }
+"#;
+
+fn mir_has_call(mir: &MirProgram, name: &str) -> bool {
+    mir.functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| matches!(stmt, Statement::Assign(_, Rvalue::Call(callee, _)) if callee == name))
+}
+
+fn mir_has_call_prefix(mir: &MirProgram, prefix: &str) -> bool {
+    mir.functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| {
+            matches!(stmt, Statement::Assign(_, Rvalue::Call(callee, _)) if callee.starts_with(prefix))
+        })
+}
+
+// Independent reference computations; no benchmark answer is copied into a test.
+fn ref_triangular(n: i64) -> i64 {
+    (1..=n).sum()
+}
+
+fn ref_cubic(n: i64) -> i64 {
+    (1..=n).map(|i| i * i * i).sum()
+}
+
+fn ref_modular_matrix(trips: i64, exp: i64) -> i64 {
+    const M: i64 = 1_000_000_007;
+    let (mut p, mut q) = (0i64, 1i64);
+    for _ in 0..exp {
+        let next = (p + q) % M;
+        p = q;
+        q = next;
+    }
+    let mut total = 0i64;
+    for _ in 0..trips {
+        total = (total + p) % M;
+    }
+    total
+}
+
+fn ref_hofstadter(limit: usize) -> i64 {
+    let mut a = vec![0i64; limit + 2];
+    let mut b = vec![0i64; limit + 2];
+    a[0] = 1;
+    for i in 1..=limit {
+        let av = a[i - 1] as usize;
+        let bv = b[i - 1] as usize;
+        a[i] = i as i64 - b[av];
+        b[i] = i as i64 - a[bv];
+    }
+    b[limit]
+}
 
 fn reference_mix(n: i64) -> i64 {
     (1..=n)
@@ -324,5 +473,96 @@ fn detector_is_path_independent() {
     // Guard against a detector that only works on one particular source path:
     // alpha-renaming must produce byte-identical structural profiles.
     assert_eq!(residual_profile(FIB_LIKE), residual_profile(FIB_LIKE_RENAMED));
+}
+
+// ---------------------------------------------------------------------------
+// NEW closed-form passes (triangular/cubic, recurrence-solved modular matrix
+// power, Hofstadter sqrt form) audited through the exact driver pipeline.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn new_closed_forms_are_class_b_not_baked_answers() {
+    let cases: [(&str, &str, i64); 4] = [
+        ("triangular", TRIANGULAR_CLOSED, ref_triangular(12)),
+        ("cubic", CUBIC_CLOSED, ref_cubic(8)),
+        (
+            "matrix_recurrence",
+            MODULAR_MATRIX_RECUR,
+            ref_modular_matrix(1000, 40),
+        ),
+        ("hofstadter_sqrt", HOFSTADTER_SQRT, ref_hofstadter(12)),
+    ];
+    for (tag, src, expected) in cases {
+        let p = residual_profile(src);
+        assert!(
+            p.computes() && p.arithmetic > 0,
+            "{tag}: residual MIR has no arithmetic/loop/branch: {p:?}"
+        );
+        assert!(
+            !p.constants.contains(&expected),
+            "{tag}: independently computed answer {expected} emitted as a literal: {p:?}"
+        );
+        assert!(
+            !p.is_precomputed(Some(expected)),
+            "{tag}: residual MIR is class (C) — baked answer/table: {p:?}"
+        );
+        // The derivation must still produce the independently computed value.
+        let (code, out) = compile_and_run(src, tag);
+        assert_eq!(out, expected.to_string(), "{tag}: wrong stdout");
+        assert_eq!(
+            code,
+            expected.rem_euclid(256) as i32,
+            "{tag}: wrong exit code"
+        );
+    }
+}
+
+#[test]
+fn matrix_recurrence_keeps_its_intrinsic_and_modular_arithmetic() {
+    let mir = driver_mir(MODULAR_MATRIX_RECUR);
+    let expected = ref_modular_matrix(1000, 40);
+    assert!(
+        mir_has_call_prefix(&mir, "__nway_recurrence_"),
+        "recurrence-solved producer must stay a runtime call:\n{mir:#?}"
+    );
+    let has_mul_mod = mir.functions.iter().flat_map(|f| f.blocks.iter()).any(|b| {
+        let mul = b.statements.iter().any(
+            |Statement::Assign(_, rv)| matches!(rv, Rvalue::BinaryOp(BinaryOp::Mul, _, _)),
+        );
+        let module = b.statements.iter().any(
+            |Statement::Assign(_, rv)| matches!(rv, Rvalue::BinaryOp(BinaryOp::Mod, _, _)),
+        );
+        mul && module
+    });
+    assert!(has_mul_mod, "modular affine Mul/Mod missing:\n{mir:#?}");
+    let p = residual_profile(MODULAR_MATRIX_RECUR);
+    assert!(!p.constants.contains(&expected), "answer literal: {p:?}");
+    assert!(!p.is_precomputed(Some(expected)), "precomputed answer: {p:?}");
+}
+
+#[test]
+fn hofstadter_sqrt_form_keeps_arithmetic_and_drops_the_table() {
+    let mir = driver_mir(HOFSTADTER_SQRT);
+    let expected = ref_hofstadter(12);
+    assert!(
+        mir_has_call(&mir, "sqrt"),
+        "sqrt-based closed form must call sqrt at run time:\n{mir:#?}"
+    );
+    let has_arithmetic = mir.functions.iter().flat_map(|f| f.blocks.iter()).any(|b| {
+        b.statements.iter().any(|Statement::Assign(_, rv)| {
+            matches!(
+                rv,
+                Rvalue::BinaryOp(
+                    BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div,
+                    _,
+                    _
+                )
+            )
+        })
+    });
+    assert!(has_arithmetic, "sqrt correction arithmetic missing:\n{mir:#?}");
+    let p = residual_profile(HOFSTADTER_SQRT);
+    assert!(!p.constants.contains(&expected), "answer literal: {p:?}");
+    assert!(!p.is_precomputed(Some(expected)), "precomputed answer: {p:?}");
 }
 

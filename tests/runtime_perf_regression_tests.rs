@@ -5,7 +5,9 @@
 //! cannot see what the compiler actually emits. Here we compile six small,
 //! closed (no `read_i64`) constant-input programs spanning the shapes that are
 //! being turned into runtime-computed closed forms — triangular/cubic sums,
-//! modular matrix power, a mutual recurrence, a KMP-style DFA and a sliding
+//! modular matrix power (both the scalar loop and the recurrence-solved
+//! `__nway_recurrence_*` intrinsic form), the Hofstadter mutual recurrence in
+//! both array and sqrt-based closed form, a KMP-style DFA and a sliding
 //! window — and fingerprint the **residual MIR handed to the native backend**.
 //!
 //! Every check is name-agnostic: it looks at MIR opcodes, literals and control
@@ -15,6 +17,12 @@
 //! derivation with a baked answer (`let r = <answer>;`) or with a dense
 //! precomputed array is rejected by `is_precomputed`; a genuine closed form
 //! (arithmetic over literals, still executed) is accepted.
+//!
+//! Every program is compiled through [`driver_mir`], an exact in-process
+//! mirror of the CLI's `--supercompile --mode distill` pipeline, including the
+//! `src/runtime_input.rs` guard. A dedicated test invokes the real `numlang`
+//! binary with `--emit-supercompiled-mir` to prove that guard is active in the
+//! driver process, not merely in library callers.
 //!
 //! The second half of the file is a reusable `COMPUTE_NS` harness. It builds a
 //! kernel with `--bench` and reports the median in-process timing. The
@@ -27,7 +35,7 @@ use numlang::ast::BinaryOp;
 use numlang::codegen::compile_mir_to_obj;
 use numlang::codegen::linker::link_executable;
 use numlang::compiler::{distill_and_optimize, CompilerConfig};
-use numlang::mir::lower::{lower_program, Rvalue, Statement};
+use numlang::mir::lower::{lower_program, MirProgram, Rvalue, Statement};
 use numlang::mir::supercompiler::{supercompile_mir_program_with_mode, SupercompileMode};
 use numlang::mir::{Projection, Terminator};
 use numlang::parser::parse;
@@ -94,11 +102,15 @@ impl Profile {
     }
 }
 
-/// Reproduce the driver pipeline (including its integrity guard) and fingerprint
-/// the MIR that is actually handed to Cranelift.
-fn residual_profile(src: &str) -> Profile {
+/// Exact in-process mirror of the CLI driver's `--supercompile --mode distill`
+/// pipeline (the path taken by `compile_supercompiled_to_obj_with_cache`):
+/// the AST guard from `src/runtime_input.rs`, the same `distill_and_optimize`
+/// configuration, the MIR integrity marker, and distill-mode supercompilation.
+/// Both the structural profiler and the native-code runner consume the MIR
+/// produced here, so a fingerprint can never drift from the executed code.
+fn driver_mir(src: &str) -> MirProgram {
     let tokens = tokenize(src).expect("tokenize");
-    let ast = parse(&tokens).expect("parse");
+    let ast = parse(&tokens).expect("typecheck-ready AST");
     let mut typed = typecheck(&ast).expect("typecheck");
     let previous_guard = set_ast_runtime_computation_guard(true);
     distill_and_optimize(
@@ -111,10 +123,50 @@ fn residual_profile(src: &str) -> Profile {
     );
     set_ast_runtime_computation_guard(previous_guard);
     let mut mir = lower_program(&typed);
+    // `real_main` calls `mark_compiler_driver()`, which makes this true in the
+    // CLI process; a test process must set the marker explicitly to audit the
+    // same integrity policy.
     mir.enforce_runtime_computation = true;
     // Published benchmark claims use distill mode; audit exactly that pipeline.
     supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    mir
+}
 
+/// True when any residual block assigns a call to `name`.
+fn mir_has_call(mir: &MirProgram, name: &str) -> bool {
+    mir.functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| matches!(stmt, Statement::Assign(_, Rvalue::Call(callee, _)) if callee == name))
+}
+
+/// True when any residual block assigns a call whose name starts with `prefix`
+/// (used for the compiler-generated recurrence intrinsics).
+fn mir_has_call_prefix(mir: &MirProgram, prefix: &str) -> bool {
+    mir.functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| {
+            matches!(stmt, Statement::Assign(_, Rvalue::Call(callee, _)) if callee.starts_with(prefix))
+        })
+}
+
+/// True when the residual MIR executes an arithmetic op matched by `pred`.
+fn mir_has_binary_op(mir: &MirProgram, pred: impl Fn(&BinaryOp) -> bool) -> bool {
+    mir.functions
+        .iter()
+        .flat_map(|f| f.blocks.iter())
+        .flat_map(|b| b.statements.iter())
+        .any(|stmt| {
+            matches!(stmt, Statement::Assign(_, Rvalue::BinaryOp(op, _, _)) if pred(op))
+        })
+}
+
+/// Fingerprint the MIR handed to Cranelift by the driver-equivalent pipeline.
+fn residual_profile(src: &str) -> Profile {
+    let mir = driver_mir(src);
     let mut profile = Profile::default();
     let mut interesting = BTreeSet::new();
     for func in &mir.functions {
@@ -193,25 +245,8 @@ fn compile_and_run(src: &str, tag: &str) -> (i32, String) {
     let obj_path = dir.join(format!("{}.obj", stem));
     let exe_path = dir.join(format!("{}.exe", stem));
 
-    let tokens = tokenize(src).expect("tokenize");
-    let ast = parse(&tokens).expect("parse");
-    let mut typed = typecheck(&ast).expect("typecheck");
-    let previous_guard = set_ast_runtime_computation_guard(true);
-    distill_and_optimize(
-        &mut typed,
-        &CompilerConfig {
-            ho_distill: true,
-            supercompile: true,
-            ..Default::default()
-        },
-    );
-    set_ast_runtime_computation_guard(previous_guard);
-    // Same MIR as `residual_profile`: the driver's integrity marker is applied
-    // explicitly because a test process is not marked as the compiler driver.
-    let mut mir = lower_program(&typed);
-    mir.enforce_runtime_computation = true;
-    // Published benchmark claims use distill mode; audit exactly that pipeline.
-    supercompile_mir_program_with_mode(&mut mir, SupercompileMode::Distill, "size");
+    // Same MIR as `residual_profile`: both go through `driver_mir`.
+    let mir = driver_mir(src);
     let obj = compile_mir_to_obj(&mir).expect("supercompiled codegen");
     fs::write(&obj_path, obj).expect("write object");
     let linked = link_executable(&obj_path, &exe_path);
@@ -236,6 +271,11 @@ const MAT_EXP: usize = 40;
 const HOF_LIMIT: usize = 12;
 const KMP_STEPS: i64 = 15;
 const WINDOW_STEPS: usize = 12;
+// Shapes for the NEW closed-form passes. Small bounds keep the negative-control
+// value easy to check independently; the structural assertions are on the MIR.
+const RECUR_TRIPS: i64 = 1000;
+const RECUR_EXP: i64 = 40;
+const HOF_CAPACITY: usize = 24;
 
 fn triangular_program(n: i64) -> String {
     format!(
@@ -417,6 +457,72 @@ fn main() -> i64 {{
     )
 }
 
+/// NEW closed form: a coupled-recurrence producer whose result is accumulated
+/// modulo M. The full driver pipeline solves the producer into a compiler-
+/// generated `__nway_recurrence_*` intrinsic and collapses the outer
+/// accumulator into modular affine Mul/Mod arithmetic. Identifiers deliberately
+/// differ from every benchmark. Expected values come from `ref_recurrence_matrix`.
+fn recurrence_matrix_program(trips: i64, exp: i64) -> String {
+    format!(
+        r#"
+fn step_gen(arg: i64) -> i64 {{
+    let mut p: i64 = 0;
+    let mut q: i64 = 1;
+    let mut j: i64 = 0;
+    while j < arg {{
+        let np: i64 = q;
+        let nq: i64 = (p + q) % 1000000007;
+        p = np;
+        q = nq;
+        j = j + 1;
+    }}
+    return p;
+}}
+fn main() -> i64 {{
+    let mut total: i64 = 0;
+    for k in 0..{trips} {{
+        total = (total + step_gen({exp})) % 1000000007;
+    }}
+    println(total);
+    return total % 256;
+}}
+"#
+    )
+}
+
+/// NEW closed form: the Hofstadter mutual index-nested array recurrence, which
+/// the driver rewrites to a runtime sqrt-based Beatty formula (no residual
+/// arrays or loop). Capacity and bound are parameters so no compiler logic can
+/// be tied to the published benchmark's 101-element arrays or limit 100.
+fn hofstadter_sqrt_program(limit: usize, capacity: usize) -> String {
+    let zeros = "0, ".repeat(capacity - 1) + "0";
+    format!(
+        r#"
+fn mirror_pair(bound: i64) -> i64 {{
+    let mut a: [i64; {capacity}] = [{zeros}];
+    let mut b: [i64; {capacity}] = [{zeros}];
+    a[0] = 1; b[0] = 0;
+    let mut i: i64 = 1;
+    while i <= bound {{
+        let a_prev: i64 = a[i - 1];
+        let b_of_a: i64 = b[a_prev];
+        a[i] = i - b_of_a;
+        let b_prev: i64 = b[i - 1];
+        let a_of_b: i64 = a[b_prev];
+        b[i] = i - a_of_b;
+        i = i + 1;
+    }}
+    return b[bound];
+}}
+fn main() -> i64 {{
+    let r: i64 = mirror_pair({limit});
+    println(r);
+    return r % 256;
+}}
+"#
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Independent reference computations (no answer literals in the assertions)
 // ---------------------------------------------------------------------------
@@ -444,6 +550,25 @@ fn ref_matrix_power(exp: usize) -> i64 {
         acc = next;
     }
     acc[0][0]
+}
+
+/// Independent reference for the recurrence-solved matrix-power accumulator:
+/// `step_gen(e) == F(e) mod M` and the outer loop adds that addend `trips`
+/// times under the same modulus. No benchmark literal is copied into a test.
+fn ref_recurrence_matrix(trips: i64, exp: i64) -> i64 {
+    const MODULUS: i64 = 1_000_000_007;
+    let (mut p, mut q) = (0i64, 1i64);
+    for _ in 0..exp {
+        let next = (p + q) % MODULUS;
+        p = q;
+        q = next;
+    }
+    let addend = p;
+    let mut total = 0i64;
+    for _ in 0..trips {
+        total = (total + addend) % MODULUS;
+    }
+    total
 }
 
 /// Straightforward array simulation of the mutual f/m recurrence.
@@ -527,6 +652,36 @@ fn kernels() -> Vec<Kernel> {
             tag: "sliding_window",
             source: sliding_window_program(WINDOW_STEPS),
             expected: ref_sliding_window(WINDOW_STEPS),
+        },
+    ]
+}
+
+/// The four NEW runtime-computed closed forms being added in parallel:
+/// triangular/cubic sums, the modular matrix power solved through a recurrence
+/// intrinsic, and the Hofstadter mutual recurrence emitted as a sqrt formula.
+/// Every expected value is derived here from an independent reference, not from
+/// a literal in the source or a benchmark answer.
+fn new_closed_form_kernels() -> Vec<Kernel> {
+    vec![
+        Kernel {
+            tag: "triangular_closed_form",
+            source: triangular_program(TRI_N),
+            expected: ref_triangular(TRI_N),
+        },
+        Kernel {
+            tag: "cubic_closed_form",
+            source: cubic_program(CUBIC_N),
+            expected: ref_cubic(CUBIC_N),
+        },
+        Kernel {
+            tag: "matrix_power_recurrence",
+            source: recurrence_matrix_program(RECUR_TRIPS, RECUR_EXP),
+            expected: ref_recurrence_matrix(RECUR_TRIPS, RECUR_EXP),
+        },
+        Kernel {
+            tag: "hofstadter_sqrt_form",
+            source: hofstadter_sqrt_program(HOF_LIMIT, HOF_CAPACITY),
+            expected: ref_hofstadter(HOF_LIMIT),
         },
     ]
 }
@@ -660,21 +815,134 @@ fn zero_initialised_arrays_are_not_mistaken_for_tables() {
 }
 
 // ---------------------------------------------------------------------------
+// NEW closed-form passes: structural + runtime checks through driver_mir
+// ---------------------------------------------------------------------------
+
+/// Every new closed form must still emit executable arithmetic (Mul/Mod/Add or
+/// a residual loop/branch), never the independently computed answer literal and
+/// never a dense precomputed table. The pipeline is the driver's exact
+/// `--supercompile --mode distill` one, so a future pass that bakes an answer
+/// fails here even if unit tests of that pass in isolation would pass.
+#[test]
+fn new_closed_forms_keep_their_runtime_derivation() {
+    for kernel in new_closed_form_kernels() {
+        let p = residual_profile(&kernel.source);
+        assert!(
+            p.computes() && p.arithmetic > 0,
+            "{}: residual MIR has no arithmetic/loop/branch: {:?}",
+            kernel.tag,
+            p
+        );
+        assert!(
+            !p.constants.contains(&kernel.expected),
+            "{}: residual MIR emits the independently computed answer {} as a literal: {:?}",
+            kernel.tag,
+            kernel.expected,
+            p
+        );
+        assert!(
+            !p.is_precomputed(Some(kernel.expected)),
+            "{}: residual MIR is class (C) — a baked answer/table: {:?}",
+            kernel.tag,
+            p
+        );
+    }
+}
+
+/// The recovered derivation must also produce the right number at run time;
+/// the expected values above come from independent Rust references, so a
+/// compiler pass that hardcodes any of these answers cannot pass both tests.
+#[test]
+fn new_closed_forms_still_return_independent_answers() {
+    for kernel in new_closed_form_kernels() {
+        let (code, stdout) = compile_and_run(&kernel.source, kernel.tag);
+        assert_eq!(
+            stdout,
+            kernel.expected.to_string(),
+            "{}: wrong stdout (expected the independent reference result)",
+            kernel.tag
+        );
+        assert_eq!(
+            code,
+            kernel.expected.rem_euclid(256) as i32,
+            "{}: wrong exit code",
+            kernel.tag
+        );
+    }
+}
+
+/// The modular matrix-power closed form keeps the recurrence-solved producer
+/// as a runtime intrinsic call and emits modular Mul/Mod arithmetic, with no
+/// lookup table and no emitted answer literal.
+#[test]
+fn matrix_power_recurrence_emits_intrinsic_and_modular_arithmetic() {
+    let source = recurrence_matrix_program(RECUR_TRIPS, RECUR_EXP);
+    let expected = ref_recurrence_matrix(RECUR_TRIPS, RECUR_EXP);
+    let mir = driver_mir(&source);
+    assert!(
+        mir_has_call_prefix(&mir, "__nway_recurrence_"),
+        "recurrence-solved producer intrinsic must remain a runtime call:\n{mir:#?}"
+    );
+    assert!(
+        mir_has_binary_op(&mir, |op| matches!(op, BinaryOp::Mul)),
+        "modular affine closed form must emit a Mul:\n{mir:#?}"
+    );
+    assert!(
+        mir_has_binary_op(&mir, |op| matches!(op, BinaryOp::Mod)),
+        "modular affine closed form must emit a Mod:\n{mir:#?}"
+    );
+    let p = residual_profile(&source);
+    assert!(!p.constants.contains(&expected), "answer literal emitted: {p:?}");
+    assert!(!p.is_precomputed(Some(expected)), "precomputed answer/table: {p:?}");
+    assert_eq!(p.constant_array_stores, 0, "matrix form must not materialise a table: {p:?}");
+}
+
+/// The Hofstadter sqrt form computes with `sqrt` plus integer corrections:
+/// no sequence array/loop survives and the answer is not emitted as a literal.
+#[test]
+fn hofstadter_sqrt_form_emits_sqrt_instead_of_a_table() {
+    let source = hofstadter_sqrt_program(HOF_LIMIT, HOF_CAPACITY);
+    let expected = ref_hofstadter(HOF_LIMIT);
+    let mir = driver_mir(&source);
+    assert!(
+        mir_has_call(&mir, "sqrt"),
+        "sqrt-based Beatty closed form missing:\n{mir:#?}"
+    );
+    assert!(
+        mir_has_binary_op(&mir, |op| matches!(
+            op,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div
+        )),
+        "sqrt correction arithmetic missing:\n{mir:#?}"
+    );
+    let p = residual_profile(&source);
+    assert!(p.computes() && p.arithmetic > 0, "sqrt form must compute: {p:?}");
+    assert!(!p.constants.contains(&expected), "answer literal emitted: {p:?}");
+    assert!(!p.is_precomputed(Some(expected)), "precomputed answer/table: {p:?}");
+}
+
+// ---------------------------------------------------------------------------
 // Speed sanity (gated): median in-process COMPUTE_NS from `--bench`
 // ---------------------------------------------------------------------------
 
 /// (label, source path relative to the crate root, maximum median COMPUTE_NS).
 ///
-/// The bounds are deliberately loose upper bounds for a *fast runtime-computed
-/// closed form*, not the exact contract numbers:
+/// Documented thresholds for the five restored kernels. These are *upper bounds*
+/// for a fast runtime-computed closed form, not the exact contract numbers:
+/// exceeding one means the kernel regressed to its slow loop/table baseline.
 ///
 /// * `tri_sum` — 50,000,000 iterations. A closed form finishes far below
-///   1 ms; the current loop takes ~20 ms, so >1 ms flags a return to the loop.
-/// * `hofstadter` — 100-step mutual recurrence. A direct formula is <2 us;
-///   the current array/loop baseline is ~6 us, so >2 us flags the regression.
+///   1 ms; the loop baseline takes ~16 ms, so >1 ms flags a return to the loop.
+/// * `hofstadter` — 100-step mutual recurrence. The sqrt/Beatty form is <2 us;
+///   the array/loop baseline is ~2.7 us, so >2 us flags the regression.
+/// * `fib_matrix` — 1000 coupled-Fibonacci steps via the recurrence intrinsic;
+///   the modular affine form is <2 us (baseline ~113 us).
+/// * `kmp` — three-state DFA over 15 symbols; <10 us.
+/// * `nested_stencil` — multi-pass clamped 2D stencil; <3 us.
 ///
-/// These checks are `#[ignore]`d because the *current* baseline is the slow
-/// loop. Enable them only after the performance patches land with
+/// Every threshold is `#[ignore]`d because the *current* published baseline is
+/// still the slow loop and CI must stay green until the orchestrator confirms
+/// the restored numbers. Enable with
 /// `cargo test --test runtime_perf_regression_tests -- --ignored --nocapture`.
 const PERF_CASES: &[(&str, &str, u128)] = &[
     ("tri_sum", "bench/showdown/numlang/tri_sum.nl", 1_000_000),
@@ -682,6 +950,17 @@ const PERF_CASES: &[(&str, &str, u128)] = &[
         "hofstadter",
         "bench/showdown/numlang/hofstadter.nl",
         2_000,
+    ),
+    (
+        "fib_matrix",
+        "bench/showdown/numlang/fib_matrix.nl",
+        2_000,
+    ),
+    ("kmp", "bench/showdown/numlang/kmp.nl", 10_000),
+    (
+        "nested_stencil",
+        "bench/showdown/extended/numlang/nested_stencil.nl",
+        3_000,
     ),
 ];
 
@@ -767,10 +1046,31 @@ fn hofstadter_closed_form_is_under_two_microseconds() {
 }
 
 #[test]
+#[ignore = "perf sanity: current baseline is the slow loop; run with --ignored after closed forms land"]
+fn fib_matrix_recurrence_form_is_under_two_microseconds() {
+    let &(label, source, limit) = &PERF_CASES[2];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: current baseline is the slow loop; run with --ignored after closed forms land"]
+fn kmp_dfa_is_under_ten_microseconds() {
+    let &(label, source, limit) = &PERF_CASES[3];
+    assert_fast(label, source, limit);
+}
+
+#[test]
+#[ignore = "perf sanity: current baseline is the slow loop; run with --ignored after closed forms land"]
+fn nested_stencil_is_under_three_microseconds() {
+    let &(label, source, limit) = &PERF_CASES[4];
+    assert_fast(label, source, limit);
+}
+
+#[test]
 fn perf_helper_reports_expected_case_table() {
     // Lightweight, always-on guard for the reusable harness itself: no builds,
     // no timing assertions, just the documented case/threshold wiring.
-    assert_eq!(PERF_CASES.len(), 2);
+    assert_eq!(PERF_CASES.len(), 5);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     for &(label, source, limit) in PERF_CASES {
         assert!(!label.is_empty());
