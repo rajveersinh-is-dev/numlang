@@ -134,8 +134,8 @@ All 20 claims in [`docs/CLAIMS_LEDGER.md`](CLAIMS_LEDGER.md) are strictly valida
 | **CLM-06** | Self-applicable specializer `minspec.nl` structures Futamura 1, 2, and 3 projections | **TESTED** | `0aa6825` |
 | **CLM-07** | Lean 4 mechanized operational models have zero `sorry` and zero unproven axioms | **PROVEN (abstract model only)** | `0aa6825` |
 | **CLM-08** | Process tree termination formalization via homeomorphic embedding and sequence pigeonhole | **PARTIAL** | `0aa6825` |
-| **CLM-09** | All 22 NumLang-SC medians are at or below the frozen contract's 500 ns timing floor (100-400 ns), with zero regressions; no numeric geomean is defined because every cell is folded | **TESTED** | `b12ccda` |
-| **CLM-10** | Algorithmic recurrence collapse drives `tri_sum` below the 500 ns timing floor | **TESTED** | `100019d` |
+| **CLM-09** | With runtime computation enforced for closed constant programs, NumLang-SC has 4 wins, 12 ties and 0 regressions vs NumLang-Base (geomean 2.34x); 6 cells fold | **TESTED** | `1fc732c` |
+| **CLM-10** | `tri_sum` executes its full 50M-iteration loop at runtime; no O(1) closed-form speedup is asserted | **TESTED** | `1fc732c` |
 | **CLM-11** | Zero preloaded lookup tables, precomputed answers, or hardcoded shortcuts | **TESTED** | `0aa6825` |
 | **CLM-12** | Algorithmic generality: compiler optimizations never match function or variable names | **TESTED** | `0aa6825` |
 | **CLM-13** | Zero panic in codegen and lowering pipelines | **TESTED** | `0aa6825` |
